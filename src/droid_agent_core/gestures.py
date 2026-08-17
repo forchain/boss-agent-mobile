@@ -121,3 +121,20 @@ class HumanizedGestureExecutor:
             element.click()
 
         self.random_sleep(0.1, 0.3)
+
+    def human_type(self, element, text: str, clear_first: bool = False) -> None:
+        """Type text into an input element with realistic humanized timing."""
+        if not element:
+            return
+
+        if clear_first and hasattr(element, "clear"):
+            try:
+                element.clear()
+            except Exception:
+                pass
+
+        if hasattr(element, "send_keys"):
+            for char in text:
+                element.send_keys(char)
+                time.sleep(random.uniform(0.03, 0.09))
+        self.random_sleep(0.1, 0.3)
