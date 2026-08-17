@@ -28,13 +28,14 @@ import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
-from urllib.request import urlretrieve
 
 DEFAULT_AVD_NAME = "boss_avd_arm64"
 DEFAULT_ANDROID_SDK_ROOT = os.environ.get(
     "ANDROID_HOME", str(Path.home() / "Library" / "Android" / "sdk")
 )
-DEFAULT_BOSS_APK_URL = "https://static.zhipin.com/zhipin-geek/apk/app-bosszhipin-release.apk"
+DEFAULT_BOSS_APK_URL = (
+    "https://www.zhipin.com/wapi/zpCommon/download/index?type=ckand&pkn=intro&code=64"
+)
 DEFAULT_APK_CACHE_PATH = Path.home() / ".boss_agent" / "cache" / "bosszhipin.apk"
 
 
@@ -78,8 +79,10 @@ class EnvironmentProvisioner:
         merged_env = os.environ.copy()
         if env:
             merged_env.update(env)
-        # Ensure Android SDK binaries in PATH
+        # Ensure Android SDK binaries and Homebrew OpenJDK in PATH
         sdk_paths = [
+            "/opt/homebrew/opt/openjdk@17/bin",
+            "/opt/homebrew/opt/openjdk/bin",
             str(self.sdk_root / "cmdline-tools" / "latest" / "bin"),
             str(self.sdk_root / "platform-tools"),
             str(self.sdk_root / "emulator"),
@@ -236,7 +239,22 @@ class EnvironmentProvisioner:
         self.apk_cache.parent.mkdir(parents=True, exist_ok=True)
         print(f"Downloading Boss APK from {self.apk_url} to {self.apk_cache}...")
         try:
-            urlretrieve(self.apk_url, str(self.apk_cache))
+            import requests
+
+            headers = {
+                "User-Agent": (
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                )
+            }
+            resp = requests.get(
+                self.apk_url, headers=headers, stream=True, timeout=60, allow_redirects=True
+            )
+            resp.raise_for_status()
+            with open(self.apk_cache, "wb") as f:
+                for chunk in resp.iter_content(chunk_size=1024 * 1024):
+                    if chunk:
+                        f.write(chunk)
             return self.check_apk().installed
         except Exception as e:
             print(f"Failed to download APK: {e}")

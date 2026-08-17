@@ -31,6 +31,10 @@ packages = ["src/droid_agent_core", "src/boss_agent"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+asyncio_mode = "strict"
+markers = [
+    "live: marks tests requiring live Android device or emulator",
+]
 pythonpath = [".", "src"]
 
 [tool.ruff]
