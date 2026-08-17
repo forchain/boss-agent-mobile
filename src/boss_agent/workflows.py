@@ -9,8 +9,15 @@ from typing import Any
 
 from rich.console import Console
 
-from .models import AuthStatus, JobPosting, SearchConfig
-from .pages import JobDetailPage, JobListPage, LoginPage, SearchPage, StartupDialogPage
+from .models import AuthStatus, FilterConfig, JobPosting, SearchConfig
+from .pages import (
+    FilterDialogPage,
+    JobDetailPage,
+    JobListPage,
+    LoginPage,
+    SearchPage,
+    StartupDialogPage,
+)
 
 console = Console()
 
@@ -54,25 +61,28 @@ class TakeoverHandler:
 
 
 class SmokeHarness:
-    """Executes the End-to-End Smoke Test verifying app launch, optional search, to job extraction."""
+    """Executes the End-to-End Smoke Test verifying app launch, optional search, filtering, to job extraction."""
 
     def __init__(
         self,
         driver: Any,
         takeover_handler: TakeoverHandler | None = None,
         search_config: SearchConfig | None = None,
+        filter_config: FilterConfig | None = None,
     ):
         self.driver = driver
         self.startup_page = StartupDialogPage(driver)
         self.login_page = LoginPage(driver)
         self.list_page = JobListPage(driver)
         self.search_page = SearchPage(driver)
+        self.filter_dialog = FilterDialogPage(driver)
         self.detail_page = JobDetailPage(driver)
         self.takeover = takeover_handler or TakeoverHandler(driver, auto_confirm_for_test=True)
         self.search_config = search_config or SearchConfig()
+        self.filter_config = filter_config or FilterConfig()
 
     def run_smoke_test(self) -> JobPosting:
-        """Run the full smoke harness flow."""
+        """Run the full smoke harness flow with search and filter support."""
         # 1. Dismiss startup privacy dialogs if present
         if self.startup_page.is_dialog_present():
             self.startup_page.dismiss_dialog()
@@ -98,18 +108,25 @@ class SmokeHarness:
                 self.search_page.search(keyword)  # type: ignore[arg-type]
                 time.sleep(1.0)
 
-        # 4. Scroll job list
+        # 4. Optional Filter: If configured, apply job filters
+        if self.filter_config.has_filters:
+            console.print("🎯 [bold cyan]Applying configured job filters...[/bold cyan]")
+            self.filter_dialog.apply_filters(self.filter_config)
+            self.list_page.gestures.random_sleep(0.5, 1.2)
+
+
+        # 5. Scroll job list
         self.list_page.scroll_job_list()
 
-        # 5. Click top job
+        # 6. Click top job
         clicked = self.list_page.select_first_job()
         if not clicked and self.driver:
             pass  # Continue to extraction attempt
 
-        # 6. Extract job details
+        # 7. Extract job details
         posting = self.detail_page.extract_job_posting()
 
-        # 7. Navigate back
+        # 8. Navigate back
         self.detail_page.navigate_back()
 
         return posting

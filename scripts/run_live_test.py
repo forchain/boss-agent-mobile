@@ -6,7 +6,7 @@ Executes the Smoke Harness against a live Virtual Device Session or physical dev
 
 Usage:
   python3 scripts/run_live_test.py [--keyword agent] [--device emulator-5554]
-  python3 scripts/run_live_test.py --no-search
+  python3 scripts/run_live_test.py --no-search --no-filter
 """
 
 import argparse
@@ -16,7 +16,7 @@ from pathlib import Path
 
 from rich.console import Console
 
-from boss_agent.models import SearchConfig
+from boss_agent.models import FilterConfig, SearchConfig
 from boss_agent.workflows import SmokeHarness, TakeoverHandler
 from droid_agent_core.driver import AppiumSession, DriverConfig
 
@@ -25,10 +25,12 @@ console = Console()
 
 def run_live_test(
     keyword: str | None = "agent",
+    filter_config: FilterConfig | None = None,
     device_udid: str = "emulator-5554",
     server_url: str = "http://127.0.0.1:4723",
 ) -> bool:
     search_config = SearchConfig(keyword=keyword)
+    active_filter = filter_config or FilterConfig()
 
     console.print("\n[bold cyan]🚀 Starting Smoke Harness on Virtual Device Session...[/bold cyan]")
     if search_config.should_search:
@@ -37,6 +39,18 @@ def run_live_test(
         )
     else:
         console.print("[dim]Search disabled: proceeding on default recommendation list.[/dim]")
+
+    if active_filter.has_filters:
+        console.print(
+            f"🎯 [bold magenta]Active Filters:[/bold magenta] "
+            f"学历: [yellow]{active_filter.education}[/yellow] | "
+            f"薪资: [yellow]{active_filter.salary}[/yellow] | "
+            f"经验: [yellow]{active_filter.experience}[/yellow] | "
+            f"活跃: [yellow]{active_filter.activity}[/yellow] | "
+            f"规模: [yellow]{','.join(active_filter.company_scales)}[/yellow]"
+        )
+    else:
+        console.print("[dim]Filters disabled: proceeding without filtering.[/dim]")
 
     # Target device configuration
     config = DriverConfig(
@@ -83,6 +97,7 @@ def run_live_test(
             driver=driver,
             takeover_handler=takeover,
             search_config=search_config,
+            filter_config=active_filter,
         )
         job = harness.run_smoke_test()
 
@@ -127,6 +142,11 @@ def main():
         help="Skip search and stay on default recommendation feed",
     )
     parser.add_argument(
+        "--no-filter",
+        action="store_true",
+        help="Disable job filters",
+    )
+    parser.add_argument(
         "--device",
         type=str,
         default="emulator-5554",
@@ -141,8 +161,21 @@ def main():
     args = parser.parse_args()
 
     target_keyword = None if args.no_search else args.keyword
+    target_filter = (
+        FilterConfig(
+            education=None,
+            salary=None,
+            experience=None,
+            activity=None,
+            company_scales=[],
+        )
+        if args.no_filter
+        else FilterConfig()
+    )
+
     success = run_live_test(
         keyword=target_keyword,
+        filter_config=target_filter,
         device_udid=args.device,
         server_url=args.server_url,
     )

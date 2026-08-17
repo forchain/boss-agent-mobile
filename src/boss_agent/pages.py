@@ -9,15 +9,26 @@ from typing import Any
 from droid_agent_core.gestures import BézierTouchSynthesizer, HumanizedGestureExecutor, Point
 from droid_agent_core.locators import By, UISelector
 
-from .models import AuthStatus, JobPosting
+from .models import AuthStatus, FilterConfig, JobPosting
 
 
 class BaseBossPage:
+
     """Base class for all Boss 直聘 Page Objects."""
 
     def __init__(self, driver: Any):
         self.driver = driver
         self.gestures = HumanizedGestureExecutor(driver)
+
+    def _get_window_size(self) -> dict[str, int]:
+        """Get the current screen window dimensions with safe default fallback."""
+        if hasattr(self.driver, "get_window_size"):
+            try:
+                size = self.driver.get_window_size()
+                return {"width": int(size["width"]), "height": int(size["height"])}
+            except Exception:
+                pass
+        return {"width": 1080, "height": 2400}
 
     def find_optional_element(self, selector: UISelector):
         if not self.driver:
@@ -27,6 +38,7 @@ class BaseBossPage:
             return elems[0] if elems else None
         except Exception:
             return None
+
 
 
 class StartupDialogPage(BaseBossPage):
@@ -133,11 +145,7 @@ class JobListPage(BaseBossPage):
         """Perform a humanized scroll downwards on the job list."""
         if not self.driver:
             return
-        size = (
-            self.driver.get_window_size()
-            if hasattr(self.driver, "get_window_size")
-            else {"width": 1080, "height": 2400}
-        )
+        size = self._get_window_size()
         w, h = size["width"], size["height"]
 
         start = Point(w * 0.5, h * 0.75)
@@ -145,6 +153,7 @@ class JobListPage(BaseBossPage):
         _ = BézierTouchSynthesizer.generate_curve(start, end, steps=15)
 
         self.gestures.random_sleep(0.1, 0.3)
+
 
     def select_first_job(self) -> bool:
         """Click on the primary visible job card."""
@@ -210,7 +219,6 @@ class SearchPage(BaseBossPage):
         self.gestures.human_type(elem, keyword, clear_first=False)
         return True
 
-
     def submit_search(self) -> bool:
         """Submit the search by clicking the '搜索' button."""
         elem = self.find_optional_element(self.search_btn_sel)
@@ -232,6 +240,136 @@ class SearchPage(BaseBossPage):
             self.gestures.human_click(elem)
             return True
         return False
+
+
+class FilterDialogPage(BaseBossPage):
+    """Page Object for the Boss 直聘 Job Filter Dialog (筛选)."""
+
+    def __init__(self, driver: Any):
+        super().__init__(driver)
+        self.filter_entry_sel = UISelector(
+            By.XPATH,
+            "//*[@resource-id='com.hpbr.bosszhipin:id/tv_title' and @text='筛选' or @text='筛选']",
+            "Filter entry button",
+        )
+        self.confirm_btn_sel = UISelector(
+            By.XPATH,
+            "//*[@resource-id='com.hpbr.bosszhipin:id/btn_confirm' or @text='确定']",
+            "Confirm filter button",
+        )
+        self.reset_btn_sel = UISelector(
+            By.XPATH,
+            "//*[@resource-id='com.hpbr.bosszhipin:id/btn_reset' or @text='清除']",
+            "Reset filter button",
+        )
+        self.close_btn_sel = UISelector(
+            By.XPATH,
+            "//*[@resource-id='com.hpbr.bosszhipin:id/iv_close' or @content-desc='关闭']",
+            "Close filter dialog",
+        )
+
+    def is_dialog_open(self) -> bool:
+        """Check if filter dialog is currently open."""
+        return self.find_optional_element(self.confirm_btn_sel) is not None
+
+    def open_filter(self) -> bool:
+        """Click the '筛选' entry button to open the filter dialog."""
+        if self.is_dialog_open():
+            return True
+        elem = self.find_optional_element(self.filter_entry_sel)
+        if elem:
+            self.gestures.human_click(elem)
+            return True
+        return False
+
+    def scroll_dialog_down(self) -> None:
+        """Scroll down within the filter dialog to reveal lower sections (e.g. BOSS活跃, 公司规模)."""
+        if not self.driver:
+            return
+        size = self._get_window_size()
+        w, h = size["width"], size["height"]
+        start = Point(w * 0.5, h * 0.70)
+        end = Point(w * 0.5, h * 0.30)
+        self.gestures.human_swipe(start, end, duration_ms=400)
+
+    def select_option(self, option_text: str, auto_scroll: bool = True) -> bool:
+        """Find and click a filter option tag with optional auto-scroll."""
+        if not option_text:
+            return False
+
+        sel = UISelector(
+            By.XPATH,
+            f"//*[@resource-id='com.hpbr.bosszhipin:id/keywords_view_text' and (@text='{option_text}' or contains(@text, '{option_text}'))] | //*[@text='{option_text}']",
+            f"Filter option {option_text}",
+        )
+
+        elem = self.find_optional_element(sel)
+        if elem:
+            self.gestures.human_click(elem)
+            return True
+
+        if auto_scroll:
+            self.scroll_dialog_down()
+            elem = self.find_optional_element(sel)
+            if elem:
+                self.gestures.human_click(elem)
+                return True
+
+        return False
+
+    def confirm_filter(self) -> bool:
+        """Click the '确定' button to apply chosen filters."""
+        elem = self.find_optional_element(self.confirm_btn_sel)
+        if elem:
+            self.gestures.human_click(elem)
+            return True
+        return False
+
+    def reset_filter(self) -> bool:
+        """Click the '清除' button to reset filters to default."""
+        elem = self.find_optional_element(self.reset_btn_sel)
+        if elem:
+            self.gestures.human_click(elem)
+            return True
+        return False
+
+    def close_dialog(self) -> bool:
+        """Close the filter dialog without applying changes."""
+        elem = self.find_optional_element(self.close_btn_sel)
+        if elem:
+            self.gestures.human_click(elem)
+            return True
+        return False
+
+    def apply_filters(self, config: FilterConfig | None) -> bool:
+        """Apply all specified filter dimensions in order."""
+        if not config or not config.has_filters:
+            return False
+
+        if not self.is_dialog_open():
+            self.open_filter()
+
+        # 1. Top visible filters: Education, Salary, Experience
+        if config.education:
+            self.select_option(config.education, auto_scroll=False)
+        if config.salary:
+            self.select_option(config.salary, auto_scroll=False)
+        if config.experience:
+            self.select_option(config.experience, auto_scroll=False)
+
+        # 2. Scroll down for bottom sections: Activity and Company Scales
+        self.scroll_dialog_down()
+
+        if config.activity:
+            self.select_option(config.activity, auto_scroll=True)
+
+        for scale in config.company_scales:
+            self.select_option(scale, auto_scroll=True)
+
+        # 3. Confirm
+        return self.confirm_filter()
+
+
 
 
 class JobDetailPage(BaseBossPage):

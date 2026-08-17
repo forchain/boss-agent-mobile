@@ -138,3 +138,26 @@ class HumanizedGestureExecutor:
 
         self.random_sleep(0.2, 0.5)
 
+    def human_swipe(
+        self,
+        start: Point,
+        end: Point,
+        duration_ms: int = 500,
+    ) -> None:
+        """Perform a humanized vertical/horizontal swipe using Bézier interpolation or driver.swipe."""
+        if not self.driver:
+            return
+
+        curve = BézierTouchSynthesizer.generate_curve(start, end, steps=10)
+        start_pt = curve[0]
+        end_pt = curve[-1]
+
+        if hasattr(self.driver, "swipe"):
+            self.driver.swipe(
+                int(start_pt.x),
+                int(start_pt.y),
+                int(end_pt.x),
+                int(end_pt.y),
+                duration=duration_ms,
+            )
+        self.random_sleep(0.3, 0.6)
