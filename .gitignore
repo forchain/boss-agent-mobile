@@ -1,0 +1,18 @@
+# Python / Virtualenv
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+build/
+dist/
+*.egg-info/
+
+# Pytest / Mypy / Ruff
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Android / Cache
+.boss_agent/
+*.apk
+*.log
