@@ -205,9 +205,11 @@ class SearchPage(BaseBossPage):
         elem = self.find_optional_element(self.search_input_sel)
         if not elem:
             return False
+        self.clear_input()
         self.gestures.human_click(elem)
-        self.gestures.human_type(elem, keyword, clear_first=True)
+        self.gestures.human_type(elem, keyword, clear_first=False)
         return True
+
 
     def submit_search(self) -> bool:
         """Submit the search by clicking the '搜索' button."""
