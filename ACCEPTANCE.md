@@ -197,7 +197,7 @@ flowchart LR
 
 | Criterion | Target Description | Verification Status | Verified By | Evidence / Logs |
 | :--- | :--- | :--- | :--- | :--- |
-| **AC-1** | Idempotent Environment Provisioner | `PENDING_EXECUTION` | - | - |
-| **AC-2** | Framework Independence (`droid_agent_core`) | `PENDING_EXECUTION` | - | - |
-| **AC-3** | App Lifecycle & Safety Takeover | `PENDING_EXECUTION` | - | - |
-| **AC-4** | End-to-End Job Detail Extraction Smoke Test | `PENDING_EXECUTION` | - | - |
+| **AC-1** | Idempotent Environment Provisioner | `VERIFIED` | Test Suite & CLI | `tests/unit/test_bootstrap_provisioner.py`, `scripts/bootstrap.py --check` |
+| **AC-2** | Framework Independence (`droid_agent_core`) | `VERIFIED` | Test Suite & AST | `tests/unit/test_framework_isolation.py`, `tests/unit/test_gestures_and_locators.py` |
+| **AC-3** | App Lifecycle & Safety Takeover | `VERIFIED` | Test Suite | `tests/unit/test_lifecycle_and_takeover.py` |
+| **AC-4** | End-to-End Job Detail Extraction Smoke Test | `VERIFIED` | E2E Harness | `tests/e2e/test_smoke_job_extraction.py` |
