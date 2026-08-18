@@ -1,0 +1,78 @@
+# Boss Agent Mobile - Versioned Default UI Locators Configuration
+# Local overrides can be placed in config/locators.local.yaml (higher priority, git-ignored)
+
+startup:
+  agree_btn:
+    - "//*[@text='同意' or @text='同意并继续' or @text='好的']"
+    - "//*[@text='同意协议']"
+
+login:
+  login_indicators:
+    - "//*[@text='手机号登录' or @text='验证码登录' or @text='密码登录']"
+    - "//*[@text='微信登录' or @text='其他登录方式']"
+  captcha_indicator:
+    - "//*[@text='拖动滑块完成拼图' or @text='安全验证' or @text='向右滑动']"
+
+job_list:
+  job_tab:
+    - "com.hpbr.bosszhipin:id/tv_tab_1"
+    - "//*[@text='职位']"
+  search_icon:
+    - "//android.widget.LinearLayout[@resource-id='com.hpbr.bosszhipin:id/ly_menu']/*[last()]"
+    - "//*[@resource-id='com.hpbr.bosszhipin:id/ly_menu']/android.widget.ImageView[2]"
+    - "//*[@content-desc='搜索' or contains(@resource-id, 'search')]"
+  job_card:
+    - "//*[contains(@resource-id, 'job_name') or contains(@resource-id, 'tv_position_name') or contains(@resource-id, 'cl_card_container') or contains(@resource-id, 'view_job_card')]"
+
+search:
+  search_input:
+    - "com.hpbr.bosszhipin:id/et_search"
+    - "android.widget.EditText"
+  search_btn:
+    - "com.hpbr.bosszhipin:id/tv_search"
+    - "//*[@text='搜索']"
+  clear_btn:
+    - "com.hpbr.bosszhipin:id/iv_clear"
+  back_btn:
+    - "com.hpbr.bosszhipin:id/iv_back_ai"
+    - "//*[@content-desc='返回']"
+
+filter:
+  filter_entry:
+    - "//*[@resource-id='com.hpbr.bosszhipin:id/tv_tab_label' and (starts-with(@text, '筛选') or contains(@text, '筛选'))]"
+    - "//*[starts-with(@text, '筛选') or contains(@text, '筛选')]"
+    - "//*[@resource-id='com.hpbr.bosszhipin:id/tv_title' and (starts-with(@text, '筛选') or contains(@text, '筛选'))]"
+  confirm_btn:
+
+    - "com.hpbr.bosszhipin:id/btn_confirm"
+    - "//*[@text='确定']"
+  reset_btn:
+    - "com.hpbr.bosszhipin:id/btn_reset"
+    - "//*[@text='清除']"
+  close_btn:
+    - "com.hpbr.bosszhipin:id/iv_close"
+    - "//*[@content-desc='关闭']"
+  option_item:
+    - "//*[@resource-id='com.hpbr.bosszhipin:id/keywords_view_text' and (@text='{text}' or contains(@text, '{text}'))]"
+    - "//*[@text='{text}']"
+
+job_detail:
+  title:
+    - "//*[contains(@resource-id, 'tv_job_name') or contains(@resource-id, 'job_title')]"
+  company:
+    - "//*[contains(@resource-id, 'tv_company_name') or contains(@resource-id, 'company_name')]"
+  salary:
+    - "//*[contains(@resource-id, 'tv_job_salary') or contains(@resource-id, 'salary')]"
+  desc:
+    - "//*[contains(@resource-id, 'tv_job_desc') or contains(@resource-id, 'job_description')]"
+  expand_btn:
+    - "//*[@text='查看全部' or @text='展开全文']"
+  back_btn:
+    - "//*[@content-desc='返回' or contains(@resource-id, 'iv_back')]"
+
+system_dialog:
+  permission_buttons:
+    - "com.android.permissioncontroller:id/permission_allow_button"
+    - "com.android.permissioncontroller:id/permission_allow_foreground_only_button"
+    - "//*[@text='允许' or @text='同意' or @text='确定' or @text='好的']"
+    - "//*[@text='SKIP' or @text='Skip' or @text='跳过' or @text='CANCEL' or @text='Cancel' or @text='取消' or @text='稍后']"

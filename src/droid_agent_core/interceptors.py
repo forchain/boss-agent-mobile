@@ -7,7 +7,7 @@ Global dialog, popup, and system permission interceptors.
 from abc import ABC, abstractmethod
 from typing import Any
 
-from .locators import By, UISelector
+from .locators import LocatorRegistry, UISelector, get_global_locator_registry, parse_selector
 
 
 class BaseInterceptor(ABC):
@@ -25,28 +25,19 @@ class BaseInterceptor(ABC):
 class SystemDialogInterceptor(BaseInterceptor):
     """Auto-dismisses Android system permission prompts and privacy alerts."""
 
-    def __init__(self):
-        self.permission_selectors = [
-            UISelector(
-                By.ID, "com.android.permissioncontroller:id/permission_allow_button", "Allow button"
+    def __init__(self, locator_registry: LocatorRegistry | None = None):
+        self.locators = locator_registry or get_global_locator_registry()
+        configured = self.locators.get_selectors("system_dialog.permission_buttons")
+        self.permission_selectors: list[UISelector] = configured or [
+            parse_selector("com.android.permissioncontroller:id/permission_allow_button"),
+            parse_selector(
+                "com.android.permissioncontroller:id/permission_allow_foreground_only_button"
             ),
-            UISelector(
-                By.ID,
-                "com.android.permissioncontroller:id/permission_allow_foreground_only_button",
-                "While using app",
-            ),
-            UISelector(
-                By.XPATH,
-                "//*[@text='允许' or @text='同意' or @text='确定' or @text='好的']",
-                "Allow/Agree Chinese button",
-            ),
-            UISelector(
-                By.XPATH,
-                "//*[@text='SKIP' or @text='Skip' or @text='跳过' or @text='CANCEL' or @text='Cancel' or @text='取消' or @text='稍后']",
-                "Skip/Cancel button",
+            parse_selector("//*[@text='允许' or @text='同意' or @text='确定' or @text='好的']"),
+            parse_selector(
+                "//*[@text='SKIP' or @text='Skip' or @text='跳过' or @text='CANCEL' or @text='Cancel' or @text='取消' or @text='稍后']"
             ),
         ]
-
 
     def can_handle(self, driver: Any) -> bool:
         if not driver:

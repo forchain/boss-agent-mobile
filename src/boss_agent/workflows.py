@@ -102,9 +102,10 @@ class SmokeHarness:
             self.list_page.ensure_job_tab()
 
             # Open search page if not already there
-            if not self.search_page.is_search_page():
-                if not self.list_page.open_search(timeout_sec=10.0):
-                    raise RuntimeError("Failed to open search screen from job tab")
+            if not self.search_page.is_search_page() and not self.list_page.open_search(
+                timeout_sec=10.0
+            ):
+                raise RuntimeError("Failed to open search screen from job tab")
 
             # Wait for search page input to be ready
             if not self.search_page.wait_for_search_page(timeout_sec=10.0):

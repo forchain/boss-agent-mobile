@@ -16,3 +16,11 @@ dist/
 .boss_agent/
 *.apk
 *.log
+
+# Local Config Overrides (Higher Priority)
+*.local.yaml
+*.local.yml
+*.local.json
+config/*.local.*
+locators.local.yaml
+

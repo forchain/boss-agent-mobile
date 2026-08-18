@@ -5,10 +5,10 @@ Domain dataclasses for Boss 直聘 entities.
 """
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 
 
-class AuthStatus(str, Enum):
+class AuthStatus(StrEnum):
     AUTHENTICATED = "AUTHENTICATED"
     UNAUTHENTICATED = "UNAUTHENTICATED"
     CHALLENGE_REQUIRED = "CHALLENGE_REQUIRED"  # Captcha or SMS challenge

@@ -70,7 +70,6 @@ def test_smoke_harness_end_to_end_job_detail_extraction():
 
     job_posting = harness.run_smoke_test()
 
-
     # Assert Criterion 4 specifications
     assert isinstance(job_posting, JobPosting)
     assert job_posting.title == "资深 Python / Android 自动化专家"
@@ -170,4 +169,3 @@ def test_smoke_harness_with_search_disabled():
     job = harness.run_smoke_test()
     assert isinstance(job, JobPosting)
     mock_input_elem.send_keys.assert_not_called()
-
