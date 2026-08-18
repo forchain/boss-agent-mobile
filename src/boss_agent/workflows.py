@@ -9,8 +9,8 @@ from typing import Any
 
 from rich.console import Console
 
-from .models import AuthStatus, JobPosting
-from .pages import JobDetailPage, JobListPage, LoginPage, StartupDialogPage
+from .models import AuthStatus, JobPosting, SearchConfig
+from .pages import JobDetailPage, JobListPage, LoginPage, SearchPage, StartupDialogPage
 
 console = Console()
 
@@ -54,18 +54,25 @@ class TakeoverHandler:
 
 
 class SmokeHarness:
-    """Executes the Phase 1 End-to-End Smoke Test verifying app launch to job extraction."""
+    """Executes the End-to-End Smoke Test verifying app launch, optional search, to job extraction."""
 
-    def __init__(self, driver: Any, takeover_handler: TakeoverHandler | None = None):
+    def __init__(
+        self,
+        driver: Any,
+        takeover_handler: TakeoverHandler | None = None,
+        search_config: SearchConfig | None = None,
+    ):
         self.driver = driver
         self.startup_page = StartupDialogPage(driver)
         self.login_page = LoginPage(driver)
         self.list_page = JobListPage(driver)
+        self.search_page = SearchPage(driver)
         self.detail_page = JobDetailPage(driver)
         self.takeover = takeover_handler or TakeoverHandler(driver, auto_confirm_for_test=True)
+        self.search_config = search_config or SearchConfig()
 
     def run_smoke_test(self) -> JobPosting:
-        """Run the full Phase 1 smoke harness flow."""
+        """Run the full smoke harness flow."""
         # 1. Dismiss startup privacy dialogs if present
         if self.startup_page.is_dialog_present():
             self.startup_page.dismiss_dialog()
@@ -75,18 +82,34 @@ class SmokeHarness:
         if auth_status != AuthStatus.AUTHENTICATED:
             raise RuntimeError(f"Authentication failed: {auth_status}")
 
-        # 3. Scroll job list
+        # 3. Optional Search: If configured, enter search flow
+        if self.search_config.should_search:
+            keyword = self.search_config.keyword
+            console.print(
+                f"🔍 [bold cyan]Executing job search with keyword:[/bold cyan] '{keyword}'..."
+            )
+            # Ensure on job tab
+            self.list_page.ensure_job_tab()
+            time.sleep(0.5)
+
+            # Open search page and search
+            if self.list_page.open_search() or self.search_page.is_search_page():
+                time.sleep(0.8)
+                self.search_page.search(keyword)  # type: ignore[arg-type]
+                time.sleep(1.0)
+
+        # 4. Scroll job list
         self.list_page.scroll_job_list()
 
-        # 4. Click top job
+        # 5. Click top job
         clicked = self.list_page.select_first_job()
         if not clicked and self.driver:
             pass  # Continue to extraction attempt
 
-        # 5. Extract job details
+        # 6. Extract job details
         posting = self.detail_page.extract_job_posting()
 
-        # 6. Navigate back
+        # 7. Navigate back
         self.detail_page.navigate_back()
 
         return posting

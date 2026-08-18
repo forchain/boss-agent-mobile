@@ -68,3 +68,73 @@ def test_smoke_harness_end_to_end_job_detail_extraction():
     assert job_posting.salary_range == "40-65K·16薪"
     assert len(job_posting.job_description) >= 20
     assert "岗位职责" in job_posting.job_description
+
+
+def test_smoke_harness_with_search_enabled():
+    """Verify that SmokeHarness executes search flow when search keyword is configured."""
+    mock_driver = MagicMock()
+    mock_driver.get_window_size.return_value = {"width": 1080, "height": 2400}
+
+    mock_search_icon = MagicMock()
+    mock_search_icon.rect = {"x": 950, "y": 100, "width": 80, "height": 80}
+
+    mock_input_elem = MagicMock()
+    mock_input_elem.rect = {"x": 150, "y": 120, "width": 700, "height": 60}
+
+    mock_submit_elem = MagicMock()
+    mock_submit_elem.rect = {"x": 900, "y": 200, "width": 100, "height": 60}
+
+    mock_title_elem = MagicMock()
+    mock_title_elem.text = "Agent 开发工程师"
+
+    def mock_find_elements(by, value):
+        if "et_search" in value or "EditText" in value:
+            return [mock_input_elem]
+        if "tv_search" in value or "搜索" in value:
+            return [mock_submit_elem]
+        if "ly_menu" in value or "search_icon" in value:
+            return [mock_search_icon]
+        if "tv_job_name" in value:
+            return [mock_title_elem]
+        return []
+
+    mock_driver.find_elements.side_effect = mock_find_elements
+
+    takeover = TakeoverHandler(mock_driver, auto_confirm_for_test=True)
+    harness = SmokeHarness(
+        driver=mock_driver,
+        takeover_handler=takeover,
+        search_config=None,  # default is SearchConfig(keyword="agent")
+    )
+
+    job = harness.run_smoke_test()
+    assert isinstance(job, JobPosting)
+    mock_input_elem.send_keys.assert_called()
+
+
+def test_smoke_harness_with_search_disabled():
+    """Verify that SmokeHarness skips search when keyword is None."""
+    from boss_agent.models import SearchConfig
+
+    mock_driver = MagicMock()
+    mock_driver.get_window_size.return_value = {"width": 1080, "height": 2400}
+
+    mock_input_elem = MagicMock()
+
+    def mock_find_elements(by, value):
+        if "et_search" in value:
+            return [mock_input_elem]
+        return []
+
+    mock_driver.find_elements.side_effect = mock_find_elements
+
+    takeover = TakeoverHandler(mock_driver, auto_confirm_for_test=True)
+    harness = SmokeHarness(
+        driver=mock_driver,
+        takeover_handler=takeover,
+        search_config=SearchConfig(keyword=None),
+    )
+
+    job = harness.run_smoke_test()
+    assert isinstance(job, JobPosting)
+    mock_input_elem.send_keys.assert_not_called()

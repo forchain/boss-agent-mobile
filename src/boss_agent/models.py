@@ -35,3 +35,15 @@ class CandidateProfile:
     city: str
     resume_summary: str
     preferred_industries: list[str] = field(default_factory=list)
+
+
+@dataclass
+class SearchConfig:
+    """Configuration for automated job search on Boss 直聘."""
+
+    keyword: str | None = "agent"
+
+    @property
+    def should_search(self) -> bool:
+        """Returns True if a non-empty search keyword is specified."""
+        return bool(self.keyword and self.keyword.strip())

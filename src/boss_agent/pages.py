@@ -87,8 +87,47 @@ class JobListPage(BaseBossPage):
         super().__init__(driver)
         self.job_card_selector = UISelector(
             By.XPATH,
-            "//*[contains(@resource-id, 'job_name') or contains(@resource-id, 'tv_position_name')]",
+            "//*[contains(@resource-id, 'job_name') or contains(@resource-id, 'tv_position_name') or contains(@resource-id, 'cl_card_container')]",
         )
+        self.job_tab_selector = UISelector(
+            By.XPATH,
+            "//*[@resource-id='com.hpbr.bosszhipin:id/tv_tab_1' or @text='职位']",
+            "Bottom Job Tab",
+        )
+        self.search_icon_selectors = [
+            UISelector(
+                By.XPATH,
+                "//android.widget.LinearLayout[@resource-id='com.hpbr.bosszhipin:id/ly_menu']/*[last()]",
+                "Top search icon in header menu",
+            ),
+            UISelector(
+                By.XPATH,
+                "//*[@resource-id='com.hpbr.bosszhipin:id/ly_menu']/android.widget.ImageView[2]",
+                "Top search icon",
+            ),
+            UISelector(
+                By.XPATH,
+                "//*[@content-desc='搜索' or contains(@resource-id, 'search')]",
+                "Generic search button",
+            ),
+        ]
+
+    def ensure_job_tab(self) -> bool:
+        """Ensure the user is on the primary '职位' (Job) navigation tab."""
+        elem = self.find_optional_element(self.job_tab_selector)
+        if elem:
+            self.gestures.human_click(elem)
+            return True
+        return False
+
+    def open_search(self) -> bool:
+        """Click the search icon in the top header to enter the search page."""
+        for sel in self.search_icon_selectors:
+            elem = self.find_optional_element(sel)
+            if elem:
+                self.gestures.human_click(elem)
+                return True
+        return False
 
     def scroll_job_list(self) -> None:
         """Perform a humanized scroll downwards on the job list."""
@@ -110,6 +149,85 @@ class JobListPage(BaseBossPage):
     def select_first_job(self) -> bool:
         """Click on the primary visible job card."""
         elem = self.find_optional_element(self.job_card_selector)
+        if elem:
+            self.gestures.human_click(elem)
+            return True
+        return False
+
+
+class SearchPage(BaseBossPage):
+    """Page Object for the Boss 直聘 job search screen."""
+
+    def __init__(self, driver: Any):
+        super().__init__(driver)
+        self.search_input_sel = UISelector(
+            By.XPATH,
+            "//*[@resource-id='com.hpbr.bosszhipin:id/et_search' or @class='android.widget.EditText']",
+            "Search input box",
+        )
+        self.search_btn_sel = UISelector(
+            By.XPATH,
+            "//*[@resource-id='com.hpbr.bosszhipin:id/tv_search' or @text='搜索']",
+            "Search submit button",
+        )
+        self.clear_btn_sel = UISelector(
+            By.XPATH,
+            "//*[@resource-id='com.hpbr.bosszhipin:id/iv_clear']",
+            "Clear text button",
+        )
+        self.back_btn_sel = UISelector(
+            By.XPATH,
+            "//*[@resource-id='com.hpbr.bosszhipin:id/iv_back_ai' or @content-desc='返回']",
+            "Back button",
+        )
+
+    def is_search_page(self) -> bool:
+        """Check if currently on the search input screen."""
+        return self.find_optional_element(self.search_input_sel) is not None
+
+    def clear_input(self) -> bool:
+        """Clear search input via clear icon or direct element clear."""
+        clear_elem = self.find_optional_element(self.clear_btn_sel)
+        if clear_elem:
+            self.gestures.human_click(clear_elem)
+            return True
+        input_elem = self.find_optional_element(self.search_input_sel)
+        if input_elem and hasattr(input_elem, "clear"):
+            try:
+                input_elem.clear()
+                return True
+            except Exception:
+                pass
+        return False
+
+    def enter_keyword(self, keyword: str) -> bool:
+        """Type search keyword into search input."""
+        elem = self.find_optional_element(self.search_input_sel)
+        if not elem:
+            return False
+        self.clear_input()
+        self.gestures.human_click(elem)
+        self.gestures.human_type(elem, keyword, clear_first=False)
+        return True
+
+
+    def submit_search(self) -> bool:
+        """Submit the search by clicking the '搜索' button."""
+        elem = self.find_optional_element(self.search_btn_sel)
+        if elem:
+            self.gestures.human_click(elem)
+            return True
+        return False
+
+    def search(self, keyword: str) -> bool:
+        """Convenience method to enter keyword and submit search."""
+        if self.enter_keyword(keyword):
+            return self.submit_search()
+        return False
+
+    def navigate_back(self) -> bool:
+        """Navigate back to the previous screen."""
+        elem = self.find_optional_element(self.back_btn_sel)
         if elem:
             self.gestures.human_click(elem)
             return True
