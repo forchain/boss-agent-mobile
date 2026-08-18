@@ -45,6 +45,7 @@ def test_parse_selector_auto_strategy_detection():
     # 4. Accessibility ID / Content Description
     s4 = parse_selector("desc=返回")
     assert s4.by == By.ACCESSIBILITY_ID
+    assert s4.by.value == "accessibility id"
     assert s4.value == "返回"
 
     s4_acc = parse_selector("accessibility_id=Back")
@@ -54,12 +55,15 @@ def test_parse_selector_auto_strategy_detection():
     # 5. UIAutomator string
     s5 = parse_selector('uiautomator=new UiSelector().text("搜索")')
     assert s5.by == By.ANDROID_UIAUTOMATOR
+    assert s5.by.value == "-android uiautomator"
     assert s5.value == 'new UiSelector().text("搜索")'
 
     # 6. Text shortcut
     s6 = parse_selector("text=确定")
     assert s6.by == By.XPATH
+    assert s6.by.value == "xpath"
     assert "@text='确定'" in s6.value
+
 
 
 def test_locator_registry_loading_and_local_override():

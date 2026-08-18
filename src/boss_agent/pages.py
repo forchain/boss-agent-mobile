@@ -297,29 +297,26 @@ class FilterDialogPage(BaseBossPage):
         if not option_text:
             return False
 
-        elem = self.find_by_key(
-            "filter.option_item",
-            timeout_sec=2.0,
-            format_args={"text": option_text},
-            default=f"//*[@text='{option_text}']",
-        )
-        if elem:
-            self.gestures.human_click(elem)
-            return True
-
-        if auto_scroll:
-            self.scroll_dialog_down()
+        def _try_click_option() -> bool:
             elem = self.find_by_key(
                 "filter.option_item",
-                timeout_sec=2.0,
+                timeout_sec=1.5,
                 format_args={"text": option_text},
-                default=f"//*[@text='{option_text}']",
             )
             if elem:
                 self.gestures.human_click(elem)
                 return True
+            return False
+
+        if _try_click_option():
+            return True
+
+        if auto_scroll:
+            self.scroll_dialog_down()
+            return _try_click_option()
 
         return False
+
 
     def confirm_filter(self, timeout_sec: float = 5.0) -> bool:
         """Click the '确定' button to apply chosen filters."""

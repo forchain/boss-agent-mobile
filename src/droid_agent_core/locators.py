@@ -20,10 +20,11 @@ T = TypeVar("T")
 class By(StrEnum):
     ID = "id"
     XPATH = "xpath"
-    ACCESSIBILITY_ID = "accessibility_id"
-    CLASS_NAME = "class_name"
+    ACCESSIBILITY_ID = "accessibility id"
+    CLASS_NAME = "class name"
     ANDROID_UIAUTOMATOR = "-android uiautomator"
     NAME = "name"
+
 
 
 @dataclass
@@ -137,14 +138,14 @@ class LocatorRegistry:
         if user_path is not None:
             return Path(user_path)
         p = Path(default_path)
-        if p.exists():
+        if p.is_absolute() and p.exists():
             return p
-        # Check relative to repo root
         repo_root = Path(__file__).resolve().parent.parent.parent
         candidate = repo_root / default_path
-        if candidate.exists():
+        if candidate.exists() or not p.exists():
             return candidate
         return p
+
 
     def reload(self) -> None:
         """Reload configuration from disk, applying local override on top of base."""
