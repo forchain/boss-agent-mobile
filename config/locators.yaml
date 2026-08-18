@@ -56,6 +56,22 @@ filter:
     - "//*[@resource-id='com.hpbr.bosszhipin:id/keywords_view_text' and (@text='{text}' or contains(@text, '{text}'))]"
     - "//*[@text='{text}']"
 
+industry:
+  filter_entry:
+    - "//*[@resource-id='com.hpbr.bosszhipin:id/tv_tab_label' and (starts-with(@text, '行业') or contains(@text, '行业'))]"
+    - "//*[starts-with(@text, '行业') or contains(@text, '行业')]"
+    - "//*[@resource-id='com.hpbr.bosszhipin:id/tv_title' and (starts-with(@text, '行业') or contains(@text, '行业'))]"
+  confirm_btn:
+    - "com.hpbr.bosszhipin:id/btn_confirm"
+    - "//*[@text='确定']"
+  cancel_btn:
+    - "com.hpbr.bosszhipin:id/btn_cancel"
+    - "//*[@text='取消']"
+  option_item:
+    - "//*[@resource-id='com.hpbr.bosszhipin:id/keywords_view_text' and (@text='{text}' or contains(@text, '{text}'))]"
+    - "//*[@text='{text}']"
+    - "//*[contains(@resource-id, 'text') and @text='{text}']"
+
 job_detail:
   title:
     - "//*[contains(@resource-id, 'tv_job_name') or contains(@resource-id, 'job_title')]"

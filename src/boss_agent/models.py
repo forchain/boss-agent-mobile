@@ -65,6 +65,7 @@ class FilterConfig:
             "10000人以上",
         ]
     )
+    industries: list[str] = field(default_factory=list)
 
     @property
     def has_filters(self) -> bool:
@@ -76,5 +77,11 @@ class FilterConfig:
                 bool(self.experience and self.experience.strip()),
                 bool(self.activity and self.activity.strip()),
                 bool(self.company_scales),
+                bool(self.industries),
             ]
         )
+
+    @property
+    def has_industry_filters(self) -> bool:
+        """Returns True if any industry filter criteria is active."""
+        return bool(self.industries)

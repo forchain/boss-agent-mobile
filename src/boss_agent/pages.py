@@ -379,6 +379,140 @@ class FilterDialogPage(BaseBossPage):
         return self.confirm_filter()
 
 
+class IndustryFilterDialogPage(BaseBossPage):
+    """Page Object for the Boss 直聘 Industry Filter Dialog (行业筛选)."""
+
+    def is_dialog_open(self) -> bool:
+        """Check if industry filter dialog is currently open."""
+        return (
+            self.find_by_key("industry.confirm_btn", timeout_sec=1.0) is not None
+            or self.find_by_key("industry.cancel_btn", timeout_sec=1.0) is not None
+        )
+
+    def open_industry_filter(self, timeout_sec: float = 10.0) -> bool:
+        """Click the '行业' filter entry button to open the industry selection dialog and wait for it."""
+        if self.is_dialog_open():
+            return True
+        elem = self.find_by_key("industry.filter_entry", timeout_sec=timeout_sec)
+        if elem:
+            self.gestures.human_click(elem)
+            try:
+                wait_until(
+                    self.is_dialog_open,
+                    timeout_sec=5.0,
+                    error_message="Industry filter dialog did not open after clicking industry entry button",
+                )
+                return True
+            except TimeoutError:
+                return False
+        return False
+
+    def scroll_dialog_down(self) -> None:
+        """Scroll down within the industry filter dialog to reveal lower industry categories."""
+        if not self.driver:
+            return
+        size = self._get_window_size()
+        w, h = size["width"], size["height"]
+        start = Point(w * 0.5, h * 0.70)
+        end = Point(w * 0.5, h * 0.30)
+        self.gestures.human_swipe(start, end, duration_ms=400)
+
+    def scroll_dialog_up(self) -> None:
+        """Scroll up within the industry filter dialog."""
+        if not self.driver:
+            return
+        size = self._get_window_size()
+        w, h = size["width"], size["height"]
+        start = Point(w * 0.5, h * 0.30)
+        end = Point(w * 0.5, h * 0.70)
+        self.gestures.human_swipe(start, end, duration_ms=400)
+
+    def select_industry_option(
+        self, option_text: str, auto_scroll: bool = True, max_scroll_attempts: int = 4
+    ) -> bool:
+        """Find and click a specific industry tag option, auto-scrolling if needed."""
+        if not option_text:
+            return False
+
+        def _try_click_option() -> bool:
+            elem = self.find_by_key(
+                "industry.option_item",
+                timeout_sec=1.5,
+                format_args={"text": option_text},
+            )
+            if elem:
+                self.gestures.human_click(elem)
+                return True
+            return False
+
+        if _try_click_option():
+            return True
+
+        if auto_scroll:
+            for _ in range(max_scroll_attempts):
+                self.scroll_dialog_down()
+                if _try_click_option():
+                    return True
+
+        return False
+
+    def select_industries(self, industries: list[str], auto_scroll: bool = True) -> list[str]:
+        """Select multiple industry tag options (multi-select). Returns list of successfully selected industries."""
+        selected: list[str] = []
+        for ind in industries:
+            if self.select_industry_option(ind, auto_scroll=auto_scroll):
+                selected.append(ind)
+        return selected
+
+    def confirm_filter(self, timeout_sec: float = 5.0) -> bool:
+        """Click the '确定' button to apply chosen industry filters."""
+        elem = self.find_by_key("industry.confirm_btn", timeout_sec=timeout_sec)
+        if elem:
+            self.gestures.human_click(elem)
+            with contextlib.suppress(TimeoutError):
+                wait_until(
+                    lambda: not self.is_dialog_open(),
+                    timeout_sec=5.0,
+                    error_message="Industry filter dialog failed to close after confirmation",
+                )
+            return True
+        return False
+
+    def cancel_filter(self, timeout_sec: float = 5.0) -> bool:
+        """Click the '取消' button to dismiss industry filters without applying."""
+        elem = self.find_by_key("industry.cancel_btn", timeout_sec=timeout_sec)
+        if elem:
+            self.gestures.human_click(elem)
+            with contextlib.suppress(TimeoutError):
+                wait_until(
+                    lambda: not self.is_dialog_open(),
+                    timeout_sec=5.0,
+                    error_message="Industry filter dialog failed to close after cancellation",
+                )
+            return True
+        return False
+
+    def apply_industry_filters(
+        self, industries: list[str] | None, timeout_sec: float = 10.0
+    ) -> bool:
+        """Complete workflow to open industry filter dialog, select multiple industries, and confirm."""
+        if not industries:
+            return False
+
+        if not self.is_dialog_open():
+            opened = self.open_industry_filter(timeout_sec=timeout_sec)
+            if not opened:
+                return False
+
+        # Select all specified industry options (multi-select)
+        selected = self.select_industries(industries, auto_scroll=True)
+        if not selected:
+            self.cancel_filter()
+            return False
+
+        return self.confirm_filter()
+
+
 class JobDetailPage(BaseBossPage):
     """Extracts job posting details and interacts with the job detail screen."""
 

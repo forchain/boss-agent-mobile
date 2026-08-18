@@ -12,6 +12,7 @@ from rich.console import Console
 from .models import AuthStatus, FilterConfig, JobPosting, SearchConfig
 from .pages import (
     FilterDialogPage,
+    IndustryFilterDialogPage,
     JobDetailPage,
     JobListPage,
     LoginPage,
@@ -76,6 +77,7 @@ class SmokeHarness:
         self.list_page = JobListPage(driver)
         self.search_page = SearchPage(driver)
         self.filter_dialog = FilterDialogPage(driver)
+        self.industry_filter_dialog = IndustryFilterDialogPage(driver)
         self.detail_page = JobDetailPage(driver)
         self.takeover = takeover_handler or TakeoverHandler(driver, auto_confirm_for_test=True)
         self.search_config = search_config or SearchConfig()
@@ -119,9 +121,33 @@ class SmokeHarness:
             if not self.list_page.wait_for_jobs_loaded(timeout_sec=15.0):
                 raise RuntimeError(f"Timed out waiting for search results to load for '{keyword}'")
 
-        # 4. Optional Filter: If configured, apply job filters
-        if self.filter_config.has_filters:
-            console.print("🎯 [bold cyan]Applying configured job filters...[/bold cyan]")
+        # 4. Optional Filters
+        # 4.1 Industry Filter (Multi-select)
+        if self.filter_config.has_industry_filters:
+            console.print(
+                f"🏢 [bold cyan]Applying industry filters:[/bold cyan] {self.filter_config.industries}..."
+            )
+            if not self.industry_filter_dialog.apply_industry_filters(
+                self.filter_config.industries, timeout_sec=10.0
+            ):
+                raise RuntimeError("Failed to open or apply configured industry filters")
+
+            # Wait until filtered job list reloads
+            if not self.list_page.wait_for_jobs_loaded(timeout_sec=15.0):
+                raise RuntimeError("Timed out waiting for industry-filtered job list to load")
+
+        # 4.2 General Filters (Education, Salary, Experience, Activity, Company Scales)
+        has_general_filters = any(
+            [
+                bool(self.filter_config.education and self.filter_config.education.strip()),
+                bool(self.filter_config.salary and self.filter_config.salary.strip()),
+                bool(self.filter_config.experience and self.filter_config.experience.strip()),
+                bool(self.filter_config.activity and self.filter_config.activity.strip()),
+                bool(self.filter_config.company_scales),
+            ]
+        )
+        if has_general_filters:
+            console.print("🎯 [bold cyan]Applying configured general job filters...[/bold cyan]")
             if not self.filter_dialog.apply_filters(self.filter_config, timeout_sec=10.0):
                 raise RuntimeError("Failed to open or apply configured job filters")
 

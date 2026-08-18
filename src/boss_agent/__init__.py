@@ -8,6 +8,7 @@ from .models import AuthStatus, CandidateProfile, FilterConfig, JobPosting, Sear
 from .pages import (
     BaseBossPage,
     FilterDialogPage,
+    IndustryFilterDialogPage,
     JobDetailPage,
     JobListPage,
     LoginPage,
@@ -22,6 +23,7 @@ __all__ = [
     "CandidateProfile",
     "FilterConfig",
     "FilterDialogPage",
+    "IndustryFilterDialogPage",
     "JobDetailPage",
     "JobListPage",
     "JobPosting",
