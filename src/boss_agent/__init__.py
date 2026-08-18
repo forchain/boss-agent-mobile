@@ -4,9 +4,10 @@ boss_agent
 Boss 直聘 Android application automation domain layer.
 """
 
-from .models import AuthStatus, CandidateProfile, JobPosting, SearchConfig
+from .models import AuthStatus, CandidateProfile, FilterConfig, JobPosting, SearchConfig
 from .pages import (
     BaseBossPage,
+    FilterDialogPage,
     JobDetailPage,
     JobListPage,
     LoginPage,
@@ -19,6 +20,8 @@ __all__ = [
     "AuthStatus",
     "BaseBossPage",
     "CandidateProfile",
+    "FilterConfig",
+    "FilterDialogPage",
     "JobDetailPage",
     "JobListPage",
     "JobPosting",

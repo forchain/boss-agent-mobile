@@ -7,7 +7,7 @@ Universal, application-agnostic Android automation framework.
 from .driver import AppiumSession, DriverConfig
 from .gestures import BézierTouchSynthesizer, HumanizedGestureExecutor, Point
 from .interceptors import BaseInterceptor, InterceptorRegistry, SystemDialogInterceptor
-from .locators import By, UISelector, ViewDescriptor
+from .locators import By, UISelector, ViewDescriptor, wait_until
 
 __all__ = [
     "AppiumSession",
@@ -21,4 +21,6 @@ __all__ = [
     "SystemDialogInterceptor",
     "UISelector",
     "ViewDescriptor",
+    "wait_until",
 ]
+

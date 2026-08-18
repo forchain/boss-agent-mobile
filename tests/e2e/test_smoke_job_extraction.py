@@ -57,9 +57,19 @@ def test_smoke_harness_end_to_end_job_detail_extraction():
     mock_driver.find_elements.side_effect = mock_find_elements
 
     takeover = TakeoverHandler(mock_driver, auto_confirm_for_test=True)
-    harness = SmokeHarness(driver=mock_driver, takeover_handler=takeover)
+    from boss_agent.models import FilterConfig, SearchConfig
+
+    harness = SmokeHarness(
+        driver=mock_driver,
+        takeover_handler=takeover,
+        search_config=SearchConfig(keyword=None),
+        filter_config=FilterConfig(
+            education=None, salary=None, experience=None, activity=None, company_scales=[]
+        ),
+    )
 
     job_posting = harness.run_smoke_test()
+
 
     # Assert Criterion 4 specifications
     assert isinstance(job_posting, JobPosting)
@@ -84,8 +94,14 @@ def test_smoke_harness_with_search_enabled():
     mock_submit_elem = MagicMock()
     mock_submit_elem.rect = {"x": 900, "y": 200, "width": 100, "height": 60}
 
+    mock_job_card = MagicMock()
+    mock_job_card.rect = {"x": 50, "y": 300, "width": 980, "height": 220}
+
     mock_title_elem = MagicMock()
     mock_title_elem.text = "Agent 开发工程师"
+
+    mock_btn = MagicMock()
+    mock_btn.rect = {"x": 500, "y": 100, "width": 80, "height": 40}
 
     def mock_find_elements(by, value):
         if "et_search" in value or "EditText" in value:
@@ -96,6 +112,10 @@ def test_smoke_harness_with_search_enabled():
             return [mock_search_icon]
         if "tv_job_name" in value:
             return [mock_title_elem]
+        if "job_name" in value or "tv_position_name" in value or "cl_card_container" in value:
+            return [mock_job_card]
+        if "btn_confirm" in value or "确定" in value or "筛选" in value:
+            return [mock_btn]
         return []
 
     mock_driver.find_elements.side_effect = mock_find_elements
@@ -105,6 +125,7 @@ def test_smoke_harness_with_search_enabled():
         driver=mock_driver,
         takeover_handler=takeover,
         search_config=None,  # default is SearchConfig(keyword="agent")
+        filter_config=None,
     )
 
     job = harness.run_smoke_test()
@@ -114,16 +135,24 @@ def test_smoke_harness_with_search_enabled():
 
 def test_smoke_harness_with_search_disabled():
     """Verify that SmokeHarness skips search when keyword is None."""
-    from boss_agent.models import SearchConfig
+    from boss_agent.models import FilterConfig, SearchConfig
 
     mock_driver = MagicMock()
     mock_driver.get_window_size.return_value = {"width": 1080, "height": 2400}
 
     mock_input_elem = MagicMock()
+    mock_job_card = MagicMock()
+    mock_job_card.rect = {"x": 50, "y": 300, "width": 980, "height": 220}
+    mock_title_elem = MagicMock()
+    mock_title_elem.text = "推荐职位工程师"
 
     def mock_find_elements(by, value):
         if "et_search" in value:
             return [mock_input_elem]
+        if "job_name" in value or "tv_position_name" in value or "cl_card_container" in value:
+            return [mock_job_card]
+        if "tv_job_name" in value:
+            return [mock_title_elem]
         return []
 
     mock_driver.find_elements.side_effect = mock_find_elements
@@ -133,8 +162,12 @@ def test_smoke_harness_with_search_disabled():
         driver=mock_driver,
         takeover_handler=takeover,
         search_config=SearchConfig(keyword=None),
+        filter_config=FilterConfig(
+            education=None, salary=None, experience=None, activity=None, company_scales=[]
+        ),
     )
 
     job = harness.run_smoke_test()
     assert isinstance(job, JobPosting)
     mock_input_elem.send_keys.assert_not_called()
+

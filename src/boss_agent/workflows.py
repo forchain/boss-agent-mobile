@@ -1,7 +1,7 @@
 """
 boss_agent.workflows
 ====================
-High-level automation workflows and safety takeover orchestrator.
+High-level operational workflows for Boss 直聘 automation.
 """
 
 import time
@@ -9,8 +9,15 @@ from typing import Any
 
 from rich.console import Console
 
-from .models import AuthStatus, JobPosting, SearchConfig
-from .pages import JobDetailPage, JobListPage, LoginPage, SearchPage, StartupDialogPage
+from .models import AuthStatus, FilterConfig, JobPosting, SearchConfig
+from .pages import (
+    FilterDialogPage,
+    JobDetailPage,
+    JobListPage,
+    LoginPage,
+    SearchPage,
+    StartupDialogPage,
+)
 
 console = Console()
 
@@ -54,25 +61,28 @@ class TakeoverHandler:
 
 
 class SmokeHarness:
-    """Executes the End-to-End Smoke Test verifying app launch, optional search, to job extraction."""
+    """Executes the End-to-End Smoke Test verifying app launch, optional search, filtering, to job extraction."""
 
     def __init__(
         self,
         driver: Any,
         takeover_handler: TakeoverHandler | None = None,
         search_config: SearchConfig | None = None,
+        filter_config: FilterConfig | None = None,
     ):
         self.driver = driver
         self.startup_page = StartupDialogPage(driver)
         self.login_page = LoginPage(driver)
         self.list_page = JobListPage(driver)
         self.search_page = SearchPage(driver)
+        self.filter_dialog = FilterDialogPage(driver)
         self.detail_page = JobDetailPage(driver)
         self.takeover = takeover_handler or TakeoverHandler(driver, auto_confirm_for_test=True)
         self.search_config = search_config or SearchConfig()
+        self.filter_config = filter_config or FilterConfig()
 
     def run_smoke_test(self) -> JobPosting:
-        """Run the full smoke harness flow."""
+        """Run the full smoke harness flow with robust synchronization and verification."""
         # 1. Dismiss startup privacy dialogs if present
         if self.startup_page.is_dialog_present():
             self.startup_page.dismiss_dialog()
@@ -90,26 +100,45 @@ class SmokeHarness:
             )
             # Ensure on job tab
             self.list_page.ensure_job_tab()
-            time.sleep(0.5)
 
-            # Open search page and search
-            if self.list_page.open_search() or self.search_page.is_search_page():
-                time.sleep(0.8)
-                self.search_page.search(keyword)  # type: ignore[arg-type]
-                time.sleep(1.0)
+            # Open search page if not already there
+            if not self.search_page.is_search_page():
+                if not self.list_page.open_search(timeout_sec=10.0):
+                    raise RuntimeError("Failed to open search screen from job tab")
 
-        # 4. Scroll job list
+            # Wait for search page input to be ready
+            if not self.search_page.wait_for_search_page(timeout_sec=10.0):
+                raise RuntimeError("Timed out waiting for search input screen to become ready")
+
+            # Execute search and submit
+            if not self.search_page.search(keyword, timeout_sec=15.0):  # type: ignore[arg-type]
+                raise RuntimeError(f"Failed to submit search for keyword: '{keyword}'")
+
+            # Wait until search results job cards appear
+            if not self.list_page.wait_for_jobs_loaded(timeout_sec=15.0):
+                raise RuntimeError(f"Timed out waiting for search results to load for '{keyword}'")
+
+        # 4. Optional Filter: If configured, apply job filters
+        if self.filter_config.has_filters:
+            console.print("🎯 [bold cyan]Applying configured job filters...[/bold cyan]")
+            if not self.filter_dialog.apply_filters(self.filter_config, timeout_sec=10.0):
+                raise RuntimeError("Failed to open or apply configured job filters")
+
+            # Wait until filtered job list reloads
+            if not self.list_page.wait_for_jobs_loaded(timeout_sec=15.0):
+                raise RuntimeError("Timed out waiting for filtered job list to load")
+
+        # 5. Scroll job list
         self.list_page.scroll_job_list()
 
-        # 5. Click top job
-        clicked = self.list_page.select_first_job()
-        if not clicked and self.driver:
-            pass  # Continue to extraction attempt
+        # 6. Click top job and wait for detail page
+        if not self.list_page.select_first_job(timeout_sec=10.0):
+            raise RuntimeError("Failed to select first job posting in list")
 
-        # 6. Extract job details
-        posting = self.detail_page.extract_job_posting()
+        # 7. Extract real job details from detail screen
+        posting = self.detail_page.extract_job_posting(timeout_sec=10.0)
 
-        # 7. Navigate back
+        # 8. Navigate back
         self.detail_page.navigate_back()
 
         return posting
