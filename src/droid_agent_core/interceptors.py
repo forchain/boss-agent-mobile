@@ -37,10 +37,16 @@ class SystemDialogInterceptor(BaseInterceptor):
             ),
             UISelector(
                 By.XPATH,
-                "//*[@text='允许' or @text='同意' or @text='确定']",
+                "//*[@text='允许' or @text='同意' or @text='确定' or @text='好的']",
                 "Allow/Agree Chinese button",
             ),
+            UISelector(
+                By.XPATH,
+                "//*[@text='SKIP' or @text='Skip' or @text='跳过' or @text='CANCEL' or @text='Cancel' or @text='取消' or @text='稍后']",
+                "Skip/Cancel button",
+            ),
         ]
+
 
     def can_handle(self, driver: Any) -> bool:
         if not driver:
