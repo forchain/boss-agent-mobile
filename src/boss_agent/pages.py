@@ -1,23 +1,24 @@
-"""
-boss_agent.pages
-================
-Page Objects for Boss 直聘 Android screens with robust wait_until synchronization.
-"""
-
+import contextlib
 from typing import Any
 
 from droid_agent_core.gestures import BézierTouchSynthesizer, HumanizedGestureExecutor, Point
-from droid_agent_core.locators import By, UISelector, wait_until
+from droid_agent_core.locators import (
+    LocatorRegistry,
+    UISelector,
+    get_global_locator_registry,
+    wait_until,
+)
 
 from .models import AuthStatus, FilterConfig, JobPosting
 
 
 class BaseBossPage:
-    """Base class for all Boss 直聘 Page Objects."""
+    """Base class for all Boss 直聘 Page Objects using key-based locator resolution."""
 
-    def __init__(self, driver: Any):
+    def __init__(self, driver: Any, locator_registry: LocatorRegistry | None = None):
         self.driver = driver
         self.gestures = HumanizedGestureExecutor(driver)
+        self.locators = locator_registry or get_global_locator_registry()
 
     def _get_window_size(self) -> dict[str, int]:
         """Get the current screen window dimensions with safe default fallback."""
@@ -29,33 +30,81 @@ class BaseBossPage:
                 pass
         return {"width": 1080, "height": 2400}
 
-    def _find_single(self, selector: UISelector):
-        try:
-            elems = self.driver.find_elements(by=selector.by.value, value=selector.value)
-            return elems[0] if elems else None
-        except Exception:
+    def _find_by_selectors(self, selectors: list[UISelector]):
+        if not self.driver or not selectors:
+            return None
+        for sel in selectors:
+            try:
+                elems = self.driver.find_elements(by=sel.by.value, value=sel.value)
+                if elems:
+                    return elems[0]
+            except Exception:
+                continue
+        return None
+
+    def find_by_key(
+        self,
+        key: str,
+        timeout_sec: float = 0.0,
+        format_args: dict[str, Any] | None = None,
+        default: str | list[str] | None = None,
+    ):
+        """Find an element using its configured key with automatic strategy detection."""
+        selectors = self.locators.get_selectors(key, format_args=format_args, default=default)
+        if not selectors:
             return None
 
+        if timeout_sec > 0:
+            try:
+                return wait_until(
+                    lambda: self._find_by_selectors(selectors),
+                    timeout_sec=timeout_sec,
+                    error_message=f"Element not found for key '{key}'",
+                )
+            except TimeoutError:
+                return None
+        return self._find_by_selectors(selectors)
+
+    def wait_for_key(
+        self,
+        key: str,
+        timeout_sec: float = 10.0,
+        format_args: dict[str, Any] | None = None,
+        default: str | list[str] | None = None,
+    ):
+        """Wait until an element for the given key is found on screen."""
+        if not self.driver:
+            raise RuntimeError("Driver session is not initialized")
+        selectors = self.locators.get_selectors(key, format_args=format_args, default=default)
+        if not selectors:
+            raise ValueError(f"No selector defined in configuration for key '{key}'")
+        return wait_until(
+            lambda: self._find_by_selectors(selectors),
+            timeout_sec=timeout_sec,
+            error_message=f"Timed out waiting for element key '{key}'",
+        )
+
     def find_optional_element(self, selector: UISelector, timeout_sec: float = 0.0):
+        """Backward compatible selector lookup."""
         if not self.driver:
             return None
         if timeout_sec > 0:
             try:
                 return wait_until(
-                    lambda: self._find_single(selector),
+                    lambda: self._find_by_selectors([selector]),
                     timeout_sec=timeout_sec,
                     error_message=f"Element not found: {selector.description or selector.value}",
                 )
             except TimeoutError:
                 return None
-        return self._find_single(selector)
+        return self._find_by_selectors([selector])
 
     def wait_for_element(self, selector: UISelector, timeout_sec: float = 10.0):
-        """Wait until an element matching the selector is found on the current screen."""
+        """Backward compatible selector wait."""
         if not self.driver:
             raise RuntimeError("Driver session is not initialized")
         return wait_until(
-            lambda: self._find_single(selector),
+            lambda: self._find_by_selectors([selector]),
             timeout_sec=timeout_sec,
             error_message=f"Timed out waiting for element: {selector.description or selector.value}",
         )
@@ -64,19 +113,11 @@ class BaseBossPage:
 class StartupDialogPage(BaseBossPage):
     """Handles startup privacy policy and permission dialogs."""
 
-    def __init__(self, driver: Any):
-        super().__init__(driver)
-        self.agree_btn = UISelector(
-            By.XPATH,
-            "//*[@text='同意' or @text='同意并继续' or @text='好的']",
-            "Agree and continue button",
-        )
-
     def is_dialog_present(self) -> bool:
-        return self.find_optional_element(self.agree_btn, timeout_sec=2.0) is not None
+        return self.find_by_key("startup.agree_btn", timeout_sec=2.0) is not None
 
     def dismiss_dialog(self) -> bool:
-        elem = self.find_optional_element(self.agree_btn, timeout_sec=2.0)
+        elem = self.find_by_key("startup.agree_btn", timeout_sec=2.0)
         if elem:
             self.gestures.human_click(elem)
             return True
@@ -86,26 +127,11 @@ class StartupDialogPage(BaseBossPage):
 class LoginPage(BaseBossPage):
     """Detects login state and authentication challenges."""
 
-    def __init__(self, driver: Any):
-        super().__init__(driver)
-        self.login_indicators = [
-            UISelector(
-                By.XPATH, "//*[@text='手机号登录' or @text='验证码登录' or @text='密码登录']"
-            ),
-            UISelector(By.XPATH, "//*[@text='微信登录' or @text='其他登录方式']"),
-        ]
-        self.captcha_indicator = UISelector(
-            By.XPATH, "//*[@text='拖动滑块完成拼图' or @text='安全验证' or @text='向右滑动']"
-        )
-
     def is_login_screen(self) -> bool:
-        return any(
-            self.find_optional_element(sel, timeout_sec=1.0) is not None
-            for sel in self.login_indicators
-        )
+        return self.find_by_key("login.login_indicators", timeout_sec=1.0) is not None
 
     def is_captcha_present(self) -> bool:
-        return self.find_optional_element(self.captcha_indicator, timeout_sec=1.0) is not None
+        return self.find_by_key("login.captcha_indicator", timeout_sec=1.0) is not None
 
     def get_auth_status(self) -> AuthStatus:
         if self.is_captcha_present():
@@ -118,39 +144,9 @@ class LoginPage(BaseBossPage):
 class JobListPage(BaseBossPage):
     """Interacts with the main job recommendation/search list."""
 
-    def __init__(self, driver: Any):
-        super().__init__(driver)
-        self.job_card_selector = UISelector(
-            By.XPATH,
-            "//*[contains(@resource-id, 'job_name') or contains(@resource-id, 'tv_position_name') or contains(@resource-id, 'cl_card_container') or contains(@resource-id, 'view_job_card')]",
-            "Job card item",
-        )
-        self.job_tab_selector = UISelector(
-            By.XPATH,
-            "//*[@resource-id='com.hpbr.bosszhipin:id/tv_tab_1' or @text='职位']",
-            "Bottom Job Tab",
-        )
-        self.search_icon_selectors = [
-            UISelector(
-                By.XPATH,
-                "//android.widget.LinearLayout[@resource-id='com.hpbr.bosszhipin:id/ly_menu']/*[last()]",
-                "Top search icon in header menu",
-            ),
-            UISelector(
-                By.XPATH,
-                "//*[@resource-id='com.hpbr.bosszhipin:id/ly_menu']/android.widget.ImageView[2]",
-                "Top search icon",
-            ),
-            UISelector(
-                By.XPATH,
-                "//*[@content-desc='搜索' or contains(@resource-id, 'search')]",
-                "Generic search button",
-            ),
-        ]
-
     def ensure_job_tab(self) -> bool:
         """Ensure the user is on the primary '职位' (Job) navigation tab."""
-        elem = self.find_optional_element(self.job_tab_selector, timeout_sec=2.0)
+        elem = self.find_by_key("job_list.job_tab", timeout_sec=2.0)
         if elem:
             self.gestures.human_click(elem)
             return True
@@ -158,11 +154,10 @@ class JobListPage(BaseBossPage):
 
     def open_search(self, timeout_sec: float = 10.0) -> bool:
         """Click the search icon in the top header to enter the search page."""
-        for sel in self.search_icon_selectors:
-            elem = self.find_optional_element(sel, timeout_sec=timeout_sec)
-            if elem:
-                self.gestures.human_click(elem)
-                return True
+        elem = self.find_by_key("job_list.search_icon", timeout_sec=timeout_sec)
+        if elem:
+            self.gestures.human_click(elem)
+            return True
         return False
 
     def wait_for_jobs_loaded(self, timeout_sec: float = 15.0) -> bool:
@@ -170,7 +165,7 @@ class JobListPage(BaseBossPage):
         if not self.driver:
             return False
         try:
-            self.wait_for_element(self.job_card_selector, timeout_sec=timeout_sec)
+            self.wait_for_key("job_list.job_card", timeout_sec=timeout_sec)
             return True
         except TimeoutError:
             return False
@@ -190,7 +185,7 @@ class JobListPage(BaseBossPage):
 
     def select_first_job(self, timeout_sec: float = 10.0) -> bool:
         """Click on the primary visible job card."""
-        elem = self.find_optional_element(self.job_card_selector, timeout_sec=timeout_sec)
+        elem = self.find_by_key("job_list.job_card", timeout_sec=timeout_sec)
         if elem:
             self.gestures.human_click(elem)
             return True
@@ -200,48 +195,25 @@ class JobListPage(BaseBossPage):
 class SearchPage(BaseBossPage):
     """Page Object for the Boss 直聘 job search screen."""
 
-    def __init__(self, driver: Any):
-        super().__init__(driver)
-        self.search_input_sel = UISelector(
-            By.XPATH,
-            "//*[@resource-id='com.hpbr.bosszhipin:id/et_search' or @class='android.widget.EditText']",
-            "Search input box",
-        )
-        self.search_btn_sel = UISelector(
-            By.XPATH,
-            "//*[@resource-id='com.hpbr.bosszhipin:id/tv_search' or @text='搜索']",
-            "Search submit button",
-        )
-        self.clear_btn_sel = UISelector(
-            By.XPATH,
-            "//*[@resource-id='com.hpbr.bosszhipin:id/iv_clear']",
-            "Clear text button",
-        )
-        self.back_btn_sel = UISelector(
-            By.XPATH,
-            "//*[@resource-id='com.hpbr.bosszhipin:id/iv_back_ai' or @content-desc='返回']",
-            "Back button",
-        )
-
     def is_search_page(self) -> bool:
         """Check if currently on the search input screen."""
-        return self.find_optional_element(self.search_input_sel, timeout_sec=1.0) is not None
+        return self.find_by_key("search.search_input", timeout_sec=1.0) is not None
 
     def wait_for_search_page(self, timeout_sec: float = 10.0) -> bool:
         """Wait until search input box is present on screen."""
         try:
-            self.wait_for_element(self.search_input_sel, timeout_sec=timeout_sec)
+            self.wait_for_key("search.search_input", timeout_sec=timeout_sec)
             return True
         except TimeoutError:
             return False
 
     def clear_input(self) -> bool:
         """Clear search input via clear icon or direct element clear."""
-        clear_elem = self.find_optional_element(self.clear_btn_sel, timeout_sec=1.0)
+        clear_elem = self.find_by_key("search.clear_btn", timeout_sec=1.0)
         if clear_elem:
             self.gestures.human_click(clear_elem)
             return True
-        input_elem = self.find_optional_element(self.search_input_sel, timeout_sec=1.0)
+        input_elem = self.find_by_key("search.search_input", timeout_sec=1.0)
         if input_elem and hasattr(input_elem, "clear"):
             try:
                 input_elem.clear()
@@ -252,7 +224,7 @@ class SearchPage(BaseBossPage):
 
     def enter_keyword(self, keyword: str, timeout_sec: float = 10.0) -> bool:
         """Type search keyword into search input."""
-        elem = self.find_optional_element(self.search_input_sel, timeout_sec=timeout_sec)
+        elem = self.find_by_key("search.search_input", timeout_sec=timeout_sec)
         if not elem:
             return False
         self.clear_input()
@@ -262,7 +234,7 @@ class SearchPage(BaseBossPage):
 
     def submit_search(self, timeout_sec: float = 10.0) -> bool:
         """Submit the search by clicking the '搜索' button."""
-        elem = self.find_optional_element(self.search_btn_sel, timeout_sec=timeout_sec)
+        elem = self.find_by_key("search.search_btn", timeout_sec=timeout_sec)
         if elem:
             self.gestures.human_click(elem)
             return True
@@ -278,7 +250,7 @@ class SearchPage(BaseBossPage):
 
     def navigate_back(self) -> bool:
         """Navigate back to the previous screen."""
-        elem = self.find_optional_element(self.back_btn_sel, timeout_sec=2.0)
+        elem = self.find_by_key("search.back_btn", timeout_sec=2.0)
         if elem:
             self.gestures.human_click(elem)
             return True
@@ -288,38 +260,15 @@ class SearchPage(BaseBossPage):
 class FilterDialogPage(BaseBossPage):
     """Page Object for the Boss 直聘 Job Filter Dialog (筛选)."""
 
-    def __init__(self, driver: Any):
-        super().__init__(driver)
-        self.filter_entry_sel = UISelector(
-            By.XPATH,
-            "//*[@resource-id='com.hpbr.bosszhipin:id/tv_title' and @text='筛选'] | //*[@text='筛选']",
-            "Filter entry button",
-        )
-        self.confirm_btn_sel = UISelector(
-            By.XPATH,
-            "//*[@resource-id='com.hpbr.bosszhipin:id/btn_confirm' or @text='确定']",
-            "Confirm filter button",
-        )
-        self.reset_btn_sel = UISelector(
-            By.XPATH,
-            "//*[@resource-id='com.hpbr.bosszhipin:id/btn_reset' or @text='清除']",
-            "Reset filter button",
-        )
-        self.close_btn_sel = UISelector(
-            By.XPATH,
-            "//*[@resource-id='com.hpbr.bosszhipin:id/iv_close' or @content-desc='关闭']",
-            "Close filter dialog",
-        )
-
     def is_dialog_open(self) -> bool:
         """Check if filter dialog is currently open."""
-        return self.find_optional_element(self.confirm_btn_sel, timeout_sec=1.0) is not None
+        return self.find_by_key("filter.confirm_btn", timeout_sec=1.0) is not None
 
     def open_filter(self, timeout_sec: float = 10.0) -> bool:
         """Click the '筛选' entry button to open the filter dialog and wait for it."""
         if self.is_dialog_open():
             return True
-        elem = self.find_optional_element(self.filter_entry_sel, timeout_sec=timeout_sec)
+        elem = self.find_by_key("filter.filter_entry", timeout_sec=timeout_sec)
         if elem:
             self.gestures.human_click(elem)
             try:
@@ -348,45 +297,44 @@ class FilterDialogPage(BaseBossPage):
         if not option_text:
             return False
 
-        sel = UISelector(
-            By.XPATH,
-            f"//*[@resource-id='com.hpbr.bosszhipin:id/keywords_view_text' and (@text='{option_text}' or contains(@text, '{option_text}'))] | //*[@text='{option_text}']",
-            f"Filter option {option_text}",
-        )
+        def _try_click_option() -> bool:
+            elem = self.find_by_key(
+                "filter.option_item",
+                timeout_sec=1.5,
+                format_args={"text": option_text},
+            )
+            if elem:
+                self.gestures.human_click(elem)
+                return True
+            return False
 
-        elem = self.find_optional_element(sel, timeout_sec=2.0)
-        if elem:
-            self.gestures.human_click(elem)
+        if _try_click_option():
             return True
 
         if auto_scroll:
             self.scroll_dialog_down()
-            elem = self.find_optional_element(sel, timeout_sec=2.0)
-            if elem:
-                self.gestures.human_click(elem)
-                return True
+            return _try_click_option()
 
         return False
 
+
     def confirm_filter(self, timeout_sec: float = 5.0) -> bool:
         """Click the '确定' button to apply chosen filters."""
-        elem = self.find_optional_element(self.confirm_btn_sel, timeout_sec=timeout_sec)
+        elem = self.find_by_key("filter.confirm_btn", timeout_sec=timeout_sec)
         if elem:
             self.gestures.human_click(elem)
-            try:
+            with contextlib.suppress(TimeoutError):
                 wait_until(
                     lambda: not self.is_dialog_open(),
                     timeout_sec=5.0,
                     error_message="Filter dialog failed to close",
                 )
-            except TimeoutError:
-                pass
             return True
         return False
 
     def reset_filter(self) -> bool:
         """Click the '清除' button to reset filters to default."""
-        elem = self.find_optional_element(self.reset_btn_sel, timeout_sec=2.0)
+        elem = self.find_by_key("filter.reset_btn", timeout_sec=2.0)
         if elem:
             self.gestures.human_click(elem)
             return True
@@ -394,7 +342,7 @@ class FilterDialogPage(BaseBossPage):
 
     def close_dialog(self) -> bool:
         """Close the filter dialog without applying changes."""
-        elem = self.find_optional_element(self.close_btn_sel, timeout_sec=2.0)
+        elem = self.find_by_key("filter.close_btn", timeout_sec=2.0)
         if elem:
             self.gestures.human_click(elem)
             return True
@@ -434,41 +382,8 @@ class FilterDialogPage(BaseBossPage):
 class JobDetailPage(BaseBossPage):
     """Extracts job posting details and interacts with the job detail screen."""
 
-    def __init__(self, driver: Any):
-        super().__init__(driver)
-        self.title_sel = UISelector(
-            By.XPATH,
-            "//*[contains(@resource-id, 'tv_job_name') or contains(@resource-id, 'job_title')]",
-            "Job Title",
-        )
-        self.company_sel = UISelector(
-            By.XPATH,
-            "//*[contains(@resource-id, 'tv_company_name') or contains(@resource-id, 'company_name')]",
-            "Company Name",
-        )
-        self.salary_sel = UISelector(
-            By.XPATH,
-            "//*[contains(@resource-id, 'tv_job_salary') or contains(@resource-id, 'salary')]",
-            "Salary Range",
-        )
-        self.desc_sel = UISelector(
-            By.XPATH,
-            "//*[contains(@resource-id, 'tv_job_desc') or contains(@resource-id, 'job_description')]",
-            "Job Description",
-        )
-        self.expand_btn = UISelector(
-            By.XPATH,
-            "//*[@text='查看全部' or @text='展开全文']",
-            "Expand Description Button",
-        )
-        self.back_btn = UISelector(
-            By.XPATH,
-            "//*[@content-desc='返回' or contains(@resource-id, 'iv_back')]",
-            "Back Button",
-        )
-
     def expand_description_if_collapsed(self) -> None:
-        elem = self.find_optional_element(self.expand_btn, timeout_sec=1.0)
+        elem = self.find_by_key("job_detail.expand_btn", timeout_sec=1.0)
         if elem:
             self.gestures.human_click(elem)
 
@@ -479,24 +394,26 @@ class JobDetailPage(BaseBossPage):
         """
         # Explicit wait for title or salary element on detail page
         try:
-            self.wait_for_element(self.title_sel, timeout_sec=timeout_sec)
+            self.wait_for_key("job_detail.title", timeout_sec=timeout_sec)
         except TimeoutError:
-            if not self.find_optional_element(self.salary_sel, timeout_sec=2.0):
+            if not self.find_by_key("job_detail.salary", timeout_sec=2.0):
                 raise RuntimeError(
                     "Failed to extract job posting: Job detail screen did not load within timeout. "
                     "Ensure job card was clicked and navigation to detail screen completed."
-                )
+                ) from None
 
         self.expand_description_if_collapsed()
 
-        title_elem = self.find_optional_element(self.title_sel)
-        company_elem = self.find_optional_element(self.company_sel)
-        salary_elem = self.find_optional_element(self.salary_sel)
-        desc_elem = self.find_optional_element(self.desc_sel)
+        title_elem = self.find_by_key("job_detail.title")
+        company_elem = self.find_by_key("job_detail.company")
+        salary_elem = self.find_by_key("job_detail.salary")
+        desc_elem = self.find_by_key("job_detail.desc")
 
         title = title_elem.text.strip() if title_elem and getattr(title_elem, "text", None) else ""
         company = (
-            company_elem.text.strip() if company_elem and getattr(company_elem, "text", None) else ""
+            company_elem.text.strip()
+            if company_elem and getattr(company_elem, "text", None)
+            else ""
         )
         salary = (
             salary_elem.text.strip() if salary_elem and getattr(salary_elem, "text", None) else ""
@@ -516,7 +433,7 @@ class JobDetailPage(BaseBossPage):
         )
 
     def navigate_back(self) -> bool:
-        elem = self.find_optional_element(self.back_btn, timeout_sec=2.0)
+        elem = self.find_by_key("job_detail.back_btn", timeout_sec=2.0)
         if elem:
             self.gestures.human_click(elem)
             return True

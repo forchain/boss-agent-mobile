@@ -4,6 +4,7 @@ droid_agent_core.gestures
 Humanized gesture synthesis, Bézier touch movements, and spatial jitter.
 """
 
+import contextlib
 import random
 import time
 from dataclasses import dataclass
@@ -128,10 +129,8 @@ class HumanizedGestureExecutor:
             return
 
         if clear_first and hasattr(element, "clear"):
-            try:
+            with contextlib.suppress(Exception):
                 element.clear()
-            except Exception:
-                pass
 
         if hasattr(element, "send_keys"):
             element.send_keys(text)
