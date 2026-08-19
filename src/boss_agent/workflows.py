@@ -9,7 +9,7 @@ from typing import Any
 
 from rich.console import Console
 
-from .models import AuthStatus, FilterConfig, JobPosting, SearchConfig
+from .models import AuthStatus, FilterConfig, JobPosting, SavedSearch, SearchConfig
 from .pages import (
     FilterDialogPage,
     IndustryFilterDialogPage,
@@ -70,6 +70,8 @@ class SmokeHarness:
         takeover_handler: TakeoverHandler | None = None,
         search_config: SearchConfig | None = None,
         filter_config: FilterConfig | None = None,
+        saved_search: SavedSearch | None = None,
+        saved_search_id: str | None = None,
     ):
         self.driver = driver
         self.startup_page = StartupDialogPage(driver)
@@ -80,8 +82,20 @@ class SmokeHarness:
         self.industry_filter_dialog = IndustryFilterDialogPage(driver)
         self.detail_page = JobDetailPage(driver)
         self.takeover = takeover_handler or TakeoverHandler(driver, auto_confirm_for_test=True)
-        self.search_config = search_config or SearchConfig()
-        self.filter_config = filter_config or FilterConfig()
+
+        if saved_search:
+            self.search_config = saved_search.search
+            self.filter_config = saved_search.filter
+        elif saved_search_id:
+            from .searches import get_global_search_registry
+
+            reg = get_global_search_registry()
+            loaded_search = reg.get(saved_search_id)
+            self.search_config = loaded_search.search
+            self.filter_config = loaded_search.filter
+        else:
+            self.search_config = search_config or SearchConfig()
+            self.filter_config = filter_config or FilterConfig()
 
     def ensure_app_active(
         self, package_name: str = "com.hpbr.bosszhipin", timeout_sec: float = 5.0

@@ -4,7 +4,14 @@ boss_agent
 Boss 直聘 Android application automation domain layer.
 """
 
-from .models import AuthStatus, CandidateProfile, FilterConfig, JobPosting, SearchConfig
+from .models import (
+    AuthStatus,
+    CandidateProfile,
+    FilterConfig,
+    JobPosting,
+    SavedSearch,
+    SearchConfig,
+)
 from .pages import (
     BaseBossPage,
     FilterDialogPage,
@@ -15,6 +22,7 @@ from .pages import (
     SearchPage,
     StartupDialogPage,
 )
+from .searches import SavedSearchRegistry, get_global_search_registry
 from .workflows import SmokeHarness, TakeoverHandler
 
 __all__ = [
@@ -28,9 +36,12 @@ __all__ = [
     "JobListPage",
     "JobPosting",
     "LoginPage",
+    "SavedSearch",
+    "SavedSearchRegistry",
     "SearchConfig",
     "SearchPage",
     "SmokeHarness",
     "StartupDialogPage",
     "TakeoverHandler",
+    "get_global_search_registry",
 ]
