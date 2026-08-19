@@ -5,11 +5,11 @@
 > 专为 Android 移动端打造的智能求职交互框架：基于真实移动设备/模拟器环境、拟人化贝塞尔手势（Bézier Gestures）轨迹与多维筛选流程，实现职位智能检索、HR 沟通与全自动求职流。
 
 <p align="center">
-  <a href="https://github.com/forchain/boss-agent-mobile/raw/assets/demo.mp4" target="_blank" rel="noopener noreferrer">
-    <img src="https://raw.githubusercontent.com/forchain/boss-agent-mobile/assets/demo-preview.gif" alt="Boss Agent Mobile Demo Preview" width="360" style="border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.12);" />
+  <a href="https://github.com/forchain/boss-agent-mobile/blob/assets/demo.mp4">
+    <img src="https://raw.githubusercontent.com/forchain/boss-agent-mobile/assets/demo-preview.gif" alt="Boss Agent Mobile Demo Preview" width="360" />
   </a>
   <br>
-  <sub>🎬 <b><a href="https://github.com/forchain/boss-agent-mobile/raw/assets/demo.mp4">▶️ 点击查看完整高清演示视频 (52s MP4)</a></b></sub>
+  <sub>🎬 <b><a href="https://github.com/forchain/boss-agent-mobile/blob/assets/demo.mp4">▶️ 点击在 GitHub 播放完整高清演示视频 (52s MP4)</a></b></sub>
 </p>
 
 ---

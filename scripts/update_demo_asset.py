@@ -64,20 +64,16 @@ def update_demo_asset(
         target_video = temp_path / "demo.mp4"
         shutil.copyfile(video_file, target_video)
 
-        # 3. Generate preview gif
+        # 3. Generate full-workflow fast-forward preview gif
         target_gif = temp_path / "demo-preview.gif"
-        print("🎬 Generating optimized preview GIF...")
+        print("🎬 Generating optimized fast-forward preview GIF...")
         subprocess.run(
             [
                 "ffmpeg",
-                "-ss",
-                gif_start_time,
-                "-t",
-                str(gif_duration),
                 "-i",
                 str(target_video),
                 "-vf",
-                "fps=10,scale=360:-1:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse",
+                "setpts=0.5*PTS,fps=10,scale=320:-1:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse",
                 "-loop",
                 "0",
                 str(target_gif),
