@@ -1,0 +1,42 @@
+# Boss Agent Mobile - Saved Searches and Filter Presets Configuration
+# Defines preconfigured query parameters that can be triggered by ID on server/smoke test boot.
+
+searches:
+  default_agent_search:
+    name: "AI Agent Default Startup Search"
+    description: "Default search query executing on startup targeting Agent roles across Online Education, Gaming, and AI industries"
+    search:
+      keyword: "agent"
+    filter:
+      education: "硕士"
+      salary: "5万元以上"
+      experience: "10年以上"
+      activity: "今日活跃"
+      company_scales:
+        - "100-499人"
+        - "500-999人"
+        - "1000-9999人"
+        - "10000人以上"
+      industries:
+        - "在线教育"
+        - "游戏"
+        - "人工智能"
+
+  ai_llm_engineer:
+    name: "AI & LLM Engineer Search"
+    description: "Search targeting Large Language Model and AI algorithm engineering positions"
+    search:
+      keyword: "大模型算法"
+    filter:
+      education: "硕士"
+      salary: "5万元以上"
+      experience: "5-10年"
+      activity: "今日活跃"
+      company_scales:
+        - "500-999人"
+        - "1000-9999人"
+        - "10000人以上"
+      industries:
+        - "人工智能"
+        - "游戏"
+        - "在线教育"

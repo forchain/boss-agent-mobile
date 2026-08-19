@@ -15,30 +15,81 @@ import time
 from pathlib import Path
 
 from rich.console import Console
+from rich.table import Table
 
 from boss_agent.models import FilterConfig, SearchConfig
+from boss_agent.searches import get_global_search_registry
 from boss_agent.workflows import SmokeHarness, TakeoverHandler
 from droid_agent_core.driver import AppiumSession, DriverConfig
 
 console = Console()
 
 
+def list_saved_searches() -> None:
+    """Print all available preconfigured saved searches."""
+    reg = get_global_search_registry()
+    searches = reg.list_all()
+
+    table = Table(title="📋 Available Saved Searches & Filter Presets")
+    table.add_column("Search ID", style="cyan", no_wrap=True)
+    table.add_column("Name", style="magenta")
+    table.add_column("Keyword", style="green")
+    table.add_column("Industries", style="yellow")
+    table.add_column("Education / Salary / Exp", style="dim")
+
+    for s in searches:
+        industries_str = ", ".join(s.filter.industries) if s.filter.industries else "全部"
+        other_filters = (
+            f"{s.filter.education or '不限'} | {s.filter.salary or '不限'} | {s.filter.experience or '不限'}"
+        )
+        table.add_row(
+            s.id,
+            s.name,
+            s.search.keyword or "(无)",
+            industries_str,
+            other_filters,
+        )
+
+    console.print(table)
+
+
 def run_live_test(
-    keyword: str | None = "agent",
+    search_id: str | None = "default_agent_search",
+    keyword: str | None = None,
     filter_config: FilterConfig | None = None,
     device_udid: str = "emulator-5554",
     server_url: str = "http://127.0.0.1:4723",
 ) -> bool:
-    search_config = SearchConfig(keyword=keyword)
-    active_filter = filter_config or FilterConfig()
+    reg = get_global_search_registry()
+    if search_id:
+        try:
+            saved_search = reg.get(search_id)
+            search_config = (
+                SearchConfig(keyword=keyword) if keyword is not None else saved_search.search
+            )
+            active_filter = filter_config or saved_search.filter
+            console.print(
+                f"\n[bold cyan]🚀 Starting Smoke Harness using Saved Search:[/bold cyan] [bold yellow]'{search_id}'[/bold yellow] ({saved_search.name})"
+            )
+        except KeyError as e:
+            console.print(f"[bold red]❌ {e}[/bold red]")
+            return False
+    else:
+        search_config = SearchConfig(keyword=keyword)
+        active_filter = filter_config or FilterConfig()
+        console.print("\n[bold cyan]🚀 Starting Smoke Harness on Virtual Device Session...[/bold cyan]")
 
-    console.print("\n[bold cyan]🚀 Starting Smoke Harness on Virtual Device Session...[/bold cyan]")
     if search_config.should_search:
         console.print(
             f"🔎 [bold magenta]Target Search Keyword:[/bold magenta] [yellow]'{search_config.keyword}'[/yellow]"
         )
     else:
         console.print("[dim]Search disabled: proceeding on default recommendation list.[/dim]")
+
+    if active_filter.has_industry_filters:
+        console.print(
+            f"🏢 [bold magenta]Active Industries (多选):[/bold magenta] [yellow]{', '.join(active_filter.industries)}[/yellow]"
+        )
 
     if active_filter.has_filters:
         console.print(
@@ -79,11 +130,17 @@ def run_live_test(
     try:
         console.print(f"[dim]Connecting to Appium server at {server_url}...[/dim]")
         driver = session.start()
+        if hasattr(driver, "activate_app"):
+            try:
+                driver.activate_app(config.app_package or "com.hpbr.bosszhipin")
+                time.sleep(1.0)
+            except Exception:
+                pass
         console.print(
             "[bold green]✅ Connected to virtual device session and launched Boss 直聘![/bold green]"
         )
 
-        time.sleep(2.0)
+        time.sleep(1.0)
 
         # 1. Capture initial launch screenshot & page source
         screen_1_path = output_dir / "live_launch_screen.png"
@@ -131,10 +188,21 @@ def main():
         description="Boss Agent Mobile Smoke Harness on Virtual Device Session"
     )
     parser.add_argument(
+        "--search-id",
+        type=str,
+        default="default_agent_search",
+        help="Saved search preset ID to execute (default: 'default_agent_search')",
+    )
+    parser.add_argument(
+        "--list-searches",
+        action="store_true",
+        help="List all preconfigured saved search presets and exit",
+    )
+    parser.add_argument(
         "--keyword",
         type=str,
-        default="agent",
-        help="Search keyword (default: 'agent')",
+        default=None,
+        help="Custom search keyword (overrides saved search preset keyword)",
     )
     parser.add_argument(
         "--no-search",
@@ -160,6 +228,10 @@ def main():
     )
     args = parser.parse_args()
 
+    if args.list_searches:
+        list_saved_searches()
+        sys.exit(0)
+
     target_keyword = None if args.no_search else args.keyword
     target_filter = (
         FilterConfig(
@@ -168,12 +240,14 @@ def main():
             experience=None,
             activity=None,
             company_scales=[],
+            industries=[],
         )
         if args.no_filter
-        else FilterConfig()
+        else None
     )
 
     success = run_live_test(
+        search_id=None if args.no_search else args.search_id,
         keyword=target_keyword,
         filter_config=target_filter,
         device_udid=args.device,

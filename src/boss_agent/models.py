@@ -6,6 +6,7 @@ Domain dataclasses for Boss 直聘 entities.
 
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import Any
 
 
 class AuthStatus(StrEnum):
@@ -65,6 +66,7 @@ class FilterConfig:
             "10000人以上",
         ]
     )
+    industries: list[str] = field(default_factory=list)
 
     @property
     def has_filters(self) -> bool:
@@ -76,5 +78,68 @@ class FilterConfig:
                 bool(self.experience and self.experience.strip()),
                 bool(self.activity and self.activity.strip()),
                 bool(self.company_scales),
+                bool(self.industries),
             ]
         )
+
+    @property
+    def has_industry_filters(self) -> bool:
+        """Returns True if any industry filter criteria is active."""
+        return bool(self.industries)
+
+
+@dataclass
+class SavedSearch:
+    """Represents a named and persistent search & filter query configuration."""
+
+    id: str
+    name: str = ""
+    description: str = ""
+    search: SearchConfig = field(default_factory=SearchConfig)
+    filter: FilterConfig = field(default_factory=FilterConfig)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "search": {
+                "keyword": self.search.keyword,
+            },
+            "filter": {
+                "education": self.filter.education,
+                "salary": self.filter.salary,
+                "experience": self.filter.experience,
+                "activity": self.filter.activity,
+                "company_scales": self.filter.company_scales,
+                "industries": self.filter.industries,
+            },
+        }
+
+    @classmethod
+    def from_dict(cls, search_id: str, data: dict[str, Any]) -> "SavedSearch":
+        search_data = data.get("search", {}) or {}
+        filter_data = data.get("filter", {}) or {}
+
+        search_cfg = SearchConfig(
+            keyword=search_data.get("keyword", "agent"),
+        )
+        filter_cfg = FilterConfig(
+            education=filter_data.get("education", "硕士"),
+            salary=filter_data.get("salary", "5万元以上"),
+            experience=filter_data.get("experience", "10年以上"),
+            activity=filter_data.get("activity", "今日活跃"),
+            company_scales=filter_data.get(
+                "company_scales",
+                ["100-499人", "500-999人", "1000-9999人", "10000人以上"],
+            ),
+            industries=filter_data.get("industries", ["在线教育", "游戏", "人工智能"]),
+        )
+        return cls(
+            id=search_id,
+            name=data.get("name", search_id),
+            description=data.get("description", ""),
+            search=search_cfg,
+            filter=filter_cfg,
+        )
+

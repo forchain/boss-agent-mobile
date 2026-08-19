@@ -9,9 +9,10 @@ from typing import Any
 
 from rich.console import Console
 
-from .models import AuthStatus, FilterConfig, JobPosting, SearchConfig
+from .models import AuthStatus, FilterConfig, JobPosting, SavedSearch, SearchConfig
 from .pages import (
     FilterDialogPage,
+    IndustryFilterDialogPage,
     JobDetailPage,
     JobListPage,
     LoginPage,
@@ -69,6 +70,8 @@ class SmokeHarness:
         takeover_handler: TakeoverHandler | None = None,
         search_config: SearchConfig | None = None,
         filter_config: FilterConfig | None = None,
+        saved_search: SavedSearch | None = None,
+        saved_search_id: str | None = None,
     ):
         self.driver = driver
         self.startup_page = StartupDialogPage(driver)
@@ -76,13 +79,42 @@ class SmokeHarness:
         self.list_page = JobListPage(driver)
         self.search_page = SearchPage(driver)
         self.filter_dialog = FilterDialogPage(driver)
+        self.industry_filter_dialog = IndustryFilterDialogPage(driver)
         self.detail_page = JobDetailPage(driver)
         self.takeover = takeover_handler or TakeoverHandler(driver, auto_confirm_for_test=True)
-        self.search_config = search_config or SearchConfig()
-        self.filter_config = filter_config or FilterConfig()
+
+        if saved_search:
+            self.search_config = saved_search.search
+            self.filter_config = saved_search.filter
+        elif saved_search_id:
+            from .searches import get_global_search_registry
+
+            reg = get_global_search_registry()
+            loaded_search = reg.get(saved_search_id)
+            self.search_config = loaded_search.search
+            self.filter_config = loaded_search.filter
+        else:
+            self.search_config = search_config or SearchConfig()
+            self.filter_config = filter_config or FilterConfig()
+
+    def ensure_app_active(
+        self, package_name: str = "com.hpbr.bosszhipin", timeout_sec: float = 5.0
+    ) -> bool:
+        """Ensure Boss 直聘 application is activated and brought to foreground."""
+        if hasattr(self.driver, "activate_app"):
+            try:
+                self.driver.activate_app(package_name)
+                time.sleep(1.0)
+                return True
+            except Exception:
+                pass
+        return False
 
     def run_smoke_test(self) -> JobPosting:
         """Run the full smoke harness flow with robust synchronization and verification."""
+        # 0. Ensure Boss app is active and in foreground
+        self.ensure_app_active()
+
         # 1. Dismiss startup privacy dialogs if present
         if self.startup_page.is_dialog_present():
             self.startup_page.dismiss_dialog()
@@ -92,7 +124,12 @@ class SmokeHarness:
         if auth_status != AuthStatus.AUTHENTICATED:
             raise RuntimeError(f"Authentication failed: {auth_status}")
 
-        # 3. Optional Search: If configured, enter search flow
+        # 3. Ensure navigation is reset to home page before starting query
+        console.print("🏠 [dim]Ensuring navigation is reset to Home Page...[/dim]")
+        if not self.list_page.navigate_to_home():
+            raise RuntimeError("Failed to navigate back to Home Page before query execution")
+
+        # 4. Optional Search: If configured, enter search flow
         if self.search_config.should_search:
             keyword = self.search_config.keyword
             console.print(
@@ -119,9 +156,33 @@ class SmokeHarness:
             if not self.list_page.wait_for_jobs_loaded(timeout_sec=15.0):
                 raise RuntimeError(f"Timed out waiting for search results to load for '{keyword}'")
 
-        # 4. Optional Filter: If configured, apply job filters
-        if self.filter_config.has_filters:
-            console.print("🎯 [bold cyan]Applying configured job filters...[/bold cyan]")
+        # 4. Optional Filters
+        # 4.1 Industry Filter (Multi-select)
+        if self.filter_config.has_industry_filters:
+            console.print(
+                f"🏢 [bold cyan]Applying industry filters:[/bold cyan] {self.filter_config.industries}..."
+            )
+            if not self.industry_filter_dialog.apply_industry_filters(
+                self.filter_config.industries, timeout_sec=10.0
+            ):
+                raise RuntimeError("Failed to open or apply configured industry filters")
+
+            # Wait until filtered job list reloads
+            if not self.list_page.wait_for_jobs_loaded(timeout_sec=15.0):
+                raise RuntimeError("Timed out waiting for industry-filtered job list to load")
+
+        # 4.2 General Filters (Education, Salary, Experience, Activity, Company Scales)
+        has_general_filters = any(
+            [
+                bool(self.filter_config.education and self.filter_config.education.strip()),
+                bool(self.filter_config.salary and self.filter_config.salary.strip()),
+                bool(self.filter_config.experience and self.filter_config.experience.strip()),
+                bool(self.filter_config.activity and self.filter_config.activity.strip()),
+                bool(self.filter_config.company_scales),
+            ]
+        )
+        if has_general_filters:
+            console.print("🎯 [bold cyan]Applying configured general job filters...[/bold cyan]")
             if not self.filter_dialog.apply_filters(self.filter_config, timeout_sec=10.0):
                 raise RuntimeError("Failed to open or apply configured job filters")
 
