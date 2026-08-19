@@ -79,11 +79,17 @@ def run_live_test(
     try:
         console.print(f"[dim]Connecting to Appium server at {server_url}...[/dim]")
         driver = session.start()
+        if hasattr(driver, "activate_app"):
+            try:
+                driver.activate_app(config.app_package or "com.hpbr.bosszhipin")
+                time.sleep(1.0)
+            except Exception:
+                pass
         console.print(
             "[bold green]✅ Connected to virtual device session and launched Boss 直聘![/bold green]"
         )
 
-        time.sleep(2.0)
+        time.sleep(1.0)
 
         # 1. Capture initial launch screenshot & page source
         screen_1_path = output_dir / "live_launch_screen.png"

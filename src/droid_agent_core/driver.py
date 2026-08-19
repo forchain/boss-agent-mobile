@@ -4,6 +4,7 @@ droid_agent_core.driver
 Appium & ADB session lifecycle management.
 """
 
+import contextlib
 import subprocess
 from dataclasses import dataclass, field
 from typing import Any
@@ -53,17 +54,28 @@ class AppiumSession:
         """Initialize and connect to the Appium server."""
         options = self.config.to_options()
         self.driver = webdriver.Remote(command_executor=self.config.server_url, options=options)
+        if self.config.app_package and hasattr(self.driver, "activate_app"):
+            with contextlib.suppress(Exception):
+                self.driver.activate_app(self.config.app_package)
         return self.driver
+
+    def activate_app(self, app_id: str | None = None) -> bool:
+        """Activate the specified application or the configured app_package."""
+        target = app_id or self.config.app_package
+        if target and self.driver and hasattr(self.driver, "activate_app"):
+            try:
+                self.driver.activate_app(target)
+                return True
+            except Exception:
+                pass
+        return False
 
     def stop(self) -> None:
         """Gracefully terminate the WebDriver session."""
         if self.driver:
-            try:
+            with contextlib.suppress(Exception):
                 self.driver.quit()
-            except Exception:
-                pass
-            finally:
-                self.driver = None
+            self.driver = None
 
     def is_active(self) -> bool:
         return self.driver is not None

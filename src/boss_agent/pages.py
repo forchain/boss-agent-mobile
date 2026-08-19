@@ -15,10 +15,22 @@ from .models import AuthStatus, FilterConfig, JobPosting
 class BaseBossPage:
     """Base class for all Boss 直聘 Page Objects using key-based locator resolution."""
 
+    BOSS_PACKAGE_NAME: str = "com.hpbr.bosszhipin"
+
     def __init__(self, driver: Any, locator_registry: LocatorRegistry | None = None):
         self.driver = driver
         self.gestures = HumanizedGestureExecutor(driver)
         self.locators = locator_registry or get_global_locator_registry()
+
+    def activate_app(self, package_name: str = BOSS_PACKAGE_NAME) -> bool:
+        """Ensure the Boss application is active and in foreground."""
+        if hasattr(self.driver, "activate_app"):
+            try:
+                self.driver.activate_app(package_name)
+                return True
+            except Exception:
+                pass
+        return False
 
     def _get_window_size(self) -> dict[str, int]:
         """Get the current screen window dimensions with safe default fallback."""

@@ -83,8 +83,24 @@ class SmokeHarness:
         self.search_config = search_config or SearchConfig()
         self.filter_config = filter_config or FilterConfig()
 
+    def ensure_app_active(
+        self, package_name: str = "com.hpbr.bosszhipin", timeout_sec: float = 5.0
+    ) -> bool:
+        """Ensure Boss 直聘 application is activated and brought to foreground."""
+        if hasattr(self.driver, "activate_app"):
+            try:
+                self.driver.activate_app(package_name)
+                time.sleep(1.0)
+                return True
+            except Exception:
+                pass
+        return False
+
     def run_smoke_test(self) -> JobPosting:
         """Run the full smoke harness flow with robust synchronization and verification."""
+        # 0. Ensure Boss app is active and in foreground
+        self.ensure_app_active()
+
         # 1. Dismiss startup privacy dialogs if present
         if self.startup_page.is_dialog_present():
             self.startup_page.dismiss_dialog()
