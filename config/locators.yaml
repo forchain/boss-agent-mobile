@@ -13,6 +13,14 @@ login:
   captcha_indicator:
     - "//*[@text='拖动滑块完成拼图' or @text='安全验证' or @text='向右滑动']"
 
+navigation:
+  back_btn:
+    - "//*[@content-desc='返回']"
+    - "//*[contains(@resource-id, 'iv_back')]"
+    - "//*[contains(@resource-id, 'btn_back')]"
+    - "//*[@resource-id='com.hpbr.bosszhipin:id/iv_back_ai']"
+    - "//*[@resource-id='com.hpbr.bosszhipin:id/iv_back']"
+
 job_list:
   job_tab:
     - "com.hpbr.bosszhipin:id/tv_tab_1"

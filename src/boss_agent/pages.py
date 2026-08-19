@@ -1,4 +1,5 @@
 import contextlib
+import time
 from typing import Any
 
 from droid_agent_core.gestures import BézierTouchSynthesizer, HumanizedGestureExecutor, Point
@@ -155,6 +156,68 @@ class LoginPage(BaseBossPage):
 
 class JobListPage(BaseBossPage):
     """Interacts with the main job recommendation/search list."""
+
+    def is_on_home_page(self) -> bool:
+        """Check if currently on the main job recommendation home page."""
+        return (
+            self.find_by_key("job_list.search_icon", timeout_sec=1.0) is not None
+            or self.find_by_key("job_list.job_card", timeout_sec=1.0) is not None
+        )
+
+    def navigate_to_home(self, max_attempts: int = 6) -> bool:
+        """Ensure the app navigates back to the primary Job Recommendation Home page.
+
+        Handles:
+        1. Closing/canceling open filter or industry dialogs if present.
+        2. Clicking back buttons or driver back from subpages (JobDetail, Search, etc.).
+        3. Switching to the primary '职位' tab.
+        """
+        if self.is_on_home_page():
+            self.ensure_job_tab()
+            return True
+
+        # Check for open filter dialogs and dismiss
+        close_dialog_btn = self.find_by_key("filter.close_btn", timeout_sec=0.5)
+        if close_dialog_btn:
+            self.gestures.human_click(close_dialog_btn)
+            time.sleep(0.5)
+
+        cancel_industry_btn = self.find_by_key("industry.cancel_btn", timeout_sec=0.5)
+        if cancel_industry_btn:
+            self.gestures.human_click(cancel_industry_btn)
+            time.sleep(0.5)
+
+        for _ in range(max_attempts):
+            if self.is_on_home_page():
+                self.ensure_job_tab()
+                return True
+
+            # If job_tab is visible on bottom navigation bar, click it directly
+            job_tab_elem = self.find_by_key("job_list.job_tab", timeout_sec=0.8)
+            if job_tab_elem:
+                self.gestures.human_click(job_tab_elem)
+                time.sleep(0.5)
+                if self.is_on_home_page():
+                    return True
+
+            # Look for back button on current screen
+            back_elem = self.find_by_key("navigation.back_btn", timeout_sec=0.8)
+            if not back_elem:
+                back_elem = self.find_by_key("search.back_btn", timeout_sec=0.5)
+            if not back_elem:
+                back_elem = self.find_by_key("job_detail.back_btn", timeout_sec=0.5)
+
+            if back_elem:
+                self.gestures.human_click(back_elem)
+                time.sleep(0.5)
+            elif hasattr(self.driver, "back"):
+                with contextlib.suppress(Exception):
+                    self.driver.back()
+                    time.sleep(0.5)
+
+        # Final attempt: click job tab
+        self.ensure_job_tab()
+        return self.is_on_home_page()
 
     def ensure_job_tab(self) -> bool:
         """Ensure the user is on the primary '职位' (Job) navigation tab."""

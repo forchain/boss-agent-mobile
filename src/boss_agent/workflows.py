@@ -124,7 +124,12 @@ class SmokeHarness:
         if auth_status != AuthStatus.AUTHENTICATED:
             raise RuntimeError(f"Authentication failed: {auth_status}")
 
-        # 3. Optional Search: If configured, enter search flow
+        # 3. Ensure navigation is reset to home page before starting query
+        console.print("🏠 [dim]Ensuring navigation is reset to Home Page...[/dim]")
+        if not self.list_page.navigate_to_home():
+            raise RuntimeError("Failed to navigate back to Home Page before query execution")
+
+        # 4. Optional Search: If configured, enter search flow
         if self.search_config.should_search:
             keyword = self.search_config.keyword
             console.print(
