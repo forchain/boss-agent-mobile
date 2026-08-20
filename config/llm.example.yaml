@@ -1,0 +1,41 @@
+# ==============================================================================
+# Boss Agent Mobile - LLM Configuration Template
+# ==============================================================================
+# Copy this file to `config/llm.local.yaml` (which is git-ignored) to store your
+# local API keys and customize endpoint settings securely.
+#
+# Priority Order:
+# 1. Explicit arguments passed in code/CLI
+# 2. Environment variables: LLM_API_KEY, MINIMAX_API_KEY, LLM_BASE_URL, LLM_MODEL
+# 3. Local configuration file: `config/llm.local.yaml`
+# 4. Built-in defaults
+# ==============================================================================
+
+# Provider type (default: "openai" for all OpenAI-compatible REST endpoints)
+provider: "openai"
+
+# OpenAI-compatible API base URL
+# Examples:
+# - MiniMax:  "https://api.minimaxi.com/v1"
+# - DeepSeek: "https://api.deepseek.com/v1"
+# - OpenAI:   "https://api.openai.com/v1"
+base_url: "https://api.minimaxi.com/v1"
+
+# API Key (replace with your real secret key in config/llm.local.yaml)
+api_key: "your-api-key-here"
+
+# Model name
+# Examples:
+# - MiniMax:  "MiniMax-M3"
+# - DeepSeek: "deepseek-chat"
+# - OpenAI:   "gpt-4o-mini"
+model: "MiniMax-M3"
+
+# Sampling temperature (0.0 to 1.0, lower means more deterministic, default: 0.2)
+temperature: 0.2
+
+# Request timeout in seconds (default: 30.0)
+timeout_sec: 30.0
+
+# Max completion tokens in response (default: 2048)
+max_tokens: 2048

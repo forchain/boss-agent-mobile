@@ -125,6 +125,7 @@ class LLMDecisionClient(ABC):
         messages: list[dict[str, str]],
         temperature: float | None = None,
         max_tokens: int | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> str:
         """Send chat messages and return assistant text response."""
 
@@ -134,6 +135,7 @@ class LLMDecisionClient(ABC):
         messages: list[dict[str, str]],
         temperature: float | None = None,
         max_tokens: int | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Send chat messages and return parsed JSON response."""
 
@@ -161,6 +163,7 @@ class OpenAIChatClient(LLMDecisionClient):
         messages: list[dict[str, str]],
         temperature: float | None = None,
         max_tokens: int | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> str:
         url = f"{self.config.base_url}/chat/completions"
         payload: dict[str, Any] = {
@@ -169,6 +172,8 @@ class OpenAIChatClient(LLMDecisionClient):
             "temperature": temperature if temperature is not None else self.config.temperature,
             "max_tokens": max_tokens or self.config.max_tokens,
         }
+        if response_format is not None:
+            payload["response_format"] = response_format
 
         try:
             response = requests.post(
@@ -182,7 +187,20 @@ class OpenAIChatClient(LLMDecisionClient):
         except requests.exceptions.RequestException as e:
             raise LLMError(f"LLM connection error: {e}") from e
 
-        if response.status_code == 401 or response.status_code == 403:
+        # Handle fallback if response_format is not supported by a specific OpenAI-compatible provider
+        if response.status_code == 400 and response_format is not None:
+            try:
+                fallback_payload = {k: v for k, v in payload.items() if k != "response_format"}
+                response = requests.post(
+                    url,
+                    headers=self._get_headers(),
+                    json=fallback_payload,
+                    timeout=self.config.timeout_sec,
+                )
+            except Exception:
+                pass
+
+        if response.status_code in (401, 403):
             raise LLMAuthError(f"LLM authentication failed ({response.status_code}): {response.text}")
         if response.status_code != 200:
             raise LLMError(f"LLM API returned HTTP {response.status_code}: {response.text}")
@@ -219,11 +237,15 @@ class OpenAIChatClient(LLMDecisionClient):
         messages: list[dict[str, str]],
         temperature: float | None = None,
         max_tokens: int | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Default to OpenAI standard JSON mode format: {"type": "json_object"}
+        target_format = response_format or {"type": "json_object"}
         raw_text = self.chat_completion(
             messages=messages,
             temperature=temperature,
             max_tokens=max_tokens,
+            response_format=target_format,
         )
         json_str = self._extract_json_block(raw_text)
         try:
@@ -246,3 +268,4 @@ class OpenAIChatClient(LLMDecisionClient):
             {"role": "user", "content": prompt},
         ]
         return self.chat_completion_json(messages)
+

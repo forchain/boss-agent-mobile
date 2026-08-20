@@ -107,10 +107,50 @@ def test_openai_client_chat_completion_json():
         ]
     }
 
-    with patch("requests.post", return_value=mock_response):
+    with patch("requests.post", return_value=mock_response) as mock_post:
         parsed = client.chat_completion_json([{"role": "user", "content": "Analyze"}])
         assert parsed["match_score"] == 95
         assert parsed["greeting"] == "Hello"
+
+        mock_post.assert_called_once()
+        _, kwargs = mock_post.call_args
+        assert kwargs["json"]["response_format"] == {"type": "json_object"}
+
+
+def test_openai_client_response_format_fallback_on_400():
+    config = LLMConfig(api_key="sk-test-key")
+    client = OpenAIChatClient(config)
+
+    # First call with response_format fails with 400, second call without response_format succeeds
+    mock_fail = MagicMock()
+    mock_fail.status_code = 400
+    mock_fail.text = "response_format is not supported"
+
+    mock_success = MagicMock()
+    mock_success.status_code = 200
+    mock_success.json.return_value = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "Fallback success",
+                }
+            }
+        ]
+    }
+
+    with patch("requests.post", side_effect=[mock_fail, mock_success]) as mock_post:
+        result = client.chat_completion(
+            [{"role": "user", "content": "Hello"}],
+            response_format={"type": "json_object"},
+        )
+        assert result == "Fallback success"
+        assert mock_post.call_count == 2
+        # First call has response_format
+        assert "response_format" in mock_post.call_args_list[0][1]["json"]
+        # Second call does not have response_format
+        assert "response_format" not in mock_post.call_args_list[1][1]["json"]
+
 
 
 def test_openai_client_auth_error():
