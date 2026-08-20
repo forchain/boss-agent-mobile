@@ -33,7 +33,9 @@ def update_demo_asset(
     # Check dependencies
     for tool in ("git", "ffmpeg"):
         if not shutil.which(tool):
-            print(f"Error: Required tool '{tool}' is not installed or not in PATH.", file=sys.stderr)
+            print(
+                f"Error: Required tool '{tool}' is not installed or not in PATH.", file=sys.stderr
+            )
             return False
 
     # Get remote URL from git
@@ -58,7 +60,9 @@ def update_demo_asset(
 
         # 1. Initialize clean git repo
         subprocess.run(["git", "init"], cwd=temp_path, check=True, capture_output=True)
-        subprocess.run(["git", "checkout", "--orphan", branch], cwd=temp_path, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "checkout", "--orphan", branch], cwd=temp_path, check=True, capture_output=True
+        )
 
         # 2. Copy and standardize video name
         target_video = temp_path / "demo.mp4"
@@ -152,7 +156,9 @@ def main() -> None:
     parser.add_argument("video_path", help="Path to the new demo video MP4 file")
     parser.add_argument("--remote", default="origin", help="Git remote name (default: origin)")
     parser.add_argument("--branch", default="assets", help="Target orphan branch (default: assets)")
-    parser.add_argument("--dry-run", action="store_true", help="Perform asset generation without pushing")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Perform asset generation without pushing"
+    )
 
     args = parser.parse_args()
     success = update_demo_asset(
