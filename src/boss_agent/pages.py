@@ -641,9 +641,59 @@ class JobDetailPage(BaseBossPage):
             job_description=desc or "无详细岗位描述",
         )
 
+    def open_chat(self, timeout_sec: float = 5.0) -> bool:
+        """Click '立即沟通' / chat entry button to open chat dialog from job detail screen."""
+        elem = self.find_by_key("chat.chat_entry_btn", timeout_sec=timeout_sec)
+        if elem:
+            self.gestures.human_click(elem)
+            return True
+        return False
+
     def navigate_back(self) -> bool:
         elem = self.find_by_key("job_detail.back_btn", timeout_sec=2.0)
         if elem:
             self.gestures.human_click(elem)
             return True
         return False
+
+
+class ChatPage(BaseBossPage):
+    """Interacts with the Boss 直聘 chat/greeting communication page."""
+
+    def is_chat_page(self, timeout_sec: float = 3.0) -> bool:
+        """Check if currently inside chat dialog/page."""
+        return bool(self.find_by_key("chat.message_input", timeout_sec=timeout_sec))
+
+    def open_chat(self, timeout_sec: float = 5.0) -> bool:
+        """Click '立即沟通' / chat entry button to open chat dialogue."""
+        elem = self.find_by_key("chat.chat_entry_btn", timeout_sec=timeout_sec)
+        if elem:
+            self.gestures.human_click(elem)
+            return True
+        return False
+
+    def type_greeting_message(self, message: str, timeout_sec: float = 5.0) -> bool:
+        """Type greeting message into the chat message input box.
+
+        IMPORTANT SAFETY GUARANTEE: Does NOT click the send button.
+        Allows user to review, edit, or manually send during testing.
+        """
+        elem = self.find_by_key("chat.message_input", timeout_sec=timeout_sec)
+        if elem:
+            self.gestures.human_type(elem, message)
+            return True
+        return False
+
+    def navigate_back(self, timeout_sec: float = 3.0) -> bool:
+        """Click back button from chat dialog."""
+        elem = self.find_by_key("chat.back_btn", timeout_sec=timeout_sec)
+        if elem:
+            self.gestures.human_click(elem)
+            return True
+        # Fallback to driver back if element not found
+        try:
+            self.driver.back()
+            return True
+        except Exception:
+            return False
+

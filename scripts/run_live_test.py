@@ -59,6 +59,10 @@ def run_live_test(
     filter_config: FilterConfig | None = None,
     device_udid: str = "emulator-5554",
     server_url: str = "http://127.0.0.1:4723",
+    resume_file: str | None = None,
+    force_refresh_memory: bool = False,
+    preview_timeout_sec: float = 3.0,
+    enable_greeting_draft: bool = True,
 ) -> bool:
     reg = get_global_search_registry()
     if search_id:
@@ -148,13 +152,17 @@ def run_live_test(
         page_source_path = output_dir / "live_page_source.xml"
         page_source_path.write_text(driver.page_source, encoding="utf-8")
 
-        # 2. Run Smoke Harness
+        # 2. Run Smoke Harness with AI matching and greeting drafting
         takeover = TakeoverHandler(driver, auto_confirm_for_test=False)
         harness = SmokeHarness(
             driver=driver,
             takeover_handler=takeover,
             search_config=search_config,
             filter_config=active_filter,
+            resume_file=resume_file,
+            force_refresh_memory=force_refresh_memory,
+            preview_timeout_sec=preview_timeout_sec,
+            enable_greeting_draft=enable_greeting_draft,
         )
         job = harness.run_smoke_test()
 
@@ -215,6 +223,28 @@ def main():
         help="Disable job filters",
     )
     parser.add_argument(
+        "--resume",
+        type=str,
+        default=None,
+        help="Path to candidate resume file (.pdf, .docx, .txt, .md) to initialize or refresh memory",
+    )
+    parser.add_argument(
+        "--force-refresh-memory",
+        action="store_true",
+        help="Force re-generation of candidate memory profile from resume using LLM",
+    )
+    parser.add_argument(
+        "--preview-timeout",
+        type=float,
+        default=3.0,
+        help="Timeout in seconds to preview typed greeting message in chat box before navigating back (default: 3.0)",
+    )
+    parser.add_argument(
+        "--no-greeting",
+        action="store_true",
+        help="Disable LLM match analysis and greeting draft generation",
+    )
+    parser.add_argument(
         "--device",
         type=str,
         default="emulator-5554",
@@ -252,8 +282,13 @@ def main():
         filter_config=target_filter,
         device_udid=args.device,
         server_url=args.server_url,
+        resume_file=args.resume,
+        force_refresh_memory=args.force_refresh_memory,
+        preview_timeout_sec=args.preview_timeout,
+        enable_greeting_draft=not args.no_greeting,
     )
     sys.exit(0 if success else 1)
+
 
 
 if __name__ == "__main__":

@@ -8,14 +8,13 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
-def run_cmd(cmd: List[str], dry_run: bool = False) -> subprocess.CompletedProcess[str]:
+def run_cmd(cmd: list[str], dry_run: bool = False) -> subprocess.CompletedProcess[str]:
     """Run a shell command or simulate in dry-run mode."""
     print(f"[{'DRY-RUN' if dry_run else 'EXEC'}] {' '.join(cmd)}")
     if dry_run:
@@ -23,7 +22,7 @@ def run_cmd(cmd: List[str], dry_run: bool = False) -> subprocess.CompletedProces
     return subprocess.run(cmd, capture_output=True, text=True, check=True)
 
 
-def execute_release_plan(plan: Dict[str, Any], dry_run: bool = False) -> None:
+def execute_release_plan(plan: dict[str, Any], dry_run: bool = False) -> None:
     """Execute tag creation, GitHub release, and out-of-order backfills."""
     current = plan.get("current_pr", {})
     tag_name = current.get("tag_name")

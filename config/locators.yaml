@@ -100,3 +100,21 @@ system_dialog:
     - "com.android.permissioncontroller:id/permission_allow_foreground_only_button"
     - "//*[@text='允许' or @text='同意' or @text='确定' or @text='好的']"
     - "//*[@text='SKIP' or @text='Skip' or @text='跳过' or @text='CANCEL' or @text='Cancel' or @text='取消' or @text='稍后']"
+
+chat:
+  chat_entry_btn:
+    - "//*[@text='立即沟通' or @text='继续沟通' or @text='聊一聊' or @text='发消息']"
+    - "//*[contains(@resource-id, 'btn_chat') or contains(@resource-id, 'btn_communicate') or contains(@resource-id, 'tv_chat')]"
+    - "//*[@resource-id='com.hpbr.bosszhipin:id/btn_chat']"
+  message_input:
+    - "//*[@resource-id='com.hpbr.bosszhipin:id/chat_editor']"
+    - "//*[@resource-id='com.hpbr.bosszhipin:id/et_sendmessage']"
+    - "//*[@resource-id='com.hpbr.bosszhipin:id/et_message']"
+    - "//android.widget.EditText"
+  send_btn:
+    - "//*[@resource-id='com.hpbr.bosszhipin:id/btn_send']"
+    - "//*[@text='发送']"
+  back_btn:
+    - "//*[@content-desc='返回' or contains(@resource-id, 'iv_back') or contains(@resource-id, 'btn_back')]"
+    - "//*[@resource-id='com.hpbr.bosszhipin:id/iv_back']"
+
