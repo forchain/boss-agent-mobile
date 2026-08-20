@@ -1,0 +1,25 @@
+# ==============================================================================
+# Boss Agent Mobile - Live Runner & Automation Settings Template
+# ==============================================================================
+# Copy this file to `config/settings.local.yaml` (which is git-ignored) to store
+# your local device, search, and greeting preferences.
+#
+# Every command-line argument in `scripts/run_live_test.py` maps to a configuration
+# key here. Specifying CLI arguments will override these configuration settings.
+# ==============================================================================
+
+# Device UDID and Appium Server URL
+device: "emulator-5554"
+server_url: "http://127.0.0.1:4723"
+
+# Search & Filter Settings
+search_id: "default_agent_search"   # Preset ID from config/searches.yaml
+keyword: null                       # Override search keyword (e.g. "agent", "python", "Android")
+enable_search: true                 # Set to false to browse default home recommendations without search
+enable_filter: true                 # Set to false to disable all job filters
+
+# Candidate Resume & AI Greeting Settings
+resume_path: "resumes/my_resume.txt" # Path to candidate's local resume file (.pdf, .docx, .txt, .md)
+force_refresh_memory: false          # Force re-extracting resume and re-calling LLM to update memory
+preview_timeout_sec: 3.0             # Preview duration (seconds) inside chat box before navigating back
+enable_greeting: true                # Set to false to disable LLM match scoring and greeting drafting

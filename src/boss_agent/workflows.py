@@ -97,10 +97,14 @@ class SmokeHarness:
 
         self.resume_file = resume_file
         self.force_refresh_memory = force_refresh_memory
-        self.preview_timeout_sec = preview_timeout_sec
         self.enable_greeting_draft = enable_greeting_draft
         self.memory_manager = memory_manager or ResumeMemoryManager()
         self.matching_service = matching_service or JobMatchGreetingService()
+        self.preview_timeout_sec = (
+            preview_timeout_sec
+            if preview_timeout_sec is not None
+            else float(self.memory_manager.candidate_config.get("preview_timeout_sec", 3.0))
+        )
 
         if saved_search:
             self.search_config = saved_search.search

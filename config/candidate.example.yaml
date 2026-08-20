@@ -1,0 +1,18 @@
+# ==============================================================================
+# Boss Agent Mobile - Candidate & Resume Configuration Template
+# ==============================================================================
+# Copy this file to `config/candidate.local.yaml` (which is git-ignored) to store
+# your local resume path and personal candidate settings.
+#
+# When `resume_path` is configured here, you can run `scripts/run_live_test.py`
+# directly without needing to specify `--resume <path>` every time on CLI.
+# ==============================================================================
+
+# Path to candidate's local resume file (.pdf, .docx, .txt, .md)
+resume_path: "resumes/my_resume.txt"
+
+# Destination path for the generated structured memory profile JSON (default: config/candidate_memory.json)
+memory_path: "config/candidate_memory.json"
+
+# Duration in seconds to pause and preview the greeting message in the chat input box (default: 3.0)
+preview_timeout_sec: 3.0

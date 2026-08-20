@@ -107,3 +107,40 @@ def test_resume_memory_manager_cache_miss_calls_llm(tmp_path):
     assert memory_file.is_file()
     saved = json.loads(memory_file.read_text(encoding="utf-8"))
     assert saved["name"] == "赵六"
+
+
+def test_resume_memory_manager_loads_from_candidate_config_yaml(tmp_path):
+    candidate_config_file = tmp_path / "candidate.local.yaml"
+    resume_file = tmp_path / "configured_resume.txt"
+    memory_file = tmp_path / "configured_memory.json"
+    resume_file.write_text("孙七，5年开发经验", encoding="utf-8")
+
+    candidate_config_file.write_text(
+        f"""
+resume_path: "{resume_file}"
+memory_path: "{memory_file}"
+""",
+        encoding="utf-8",
+    )
+
+    mock_llm = MagicMock()
+    mock_llm.chat_completion_json.return_value = {
+        "name": "孙七",
+        "years_of_experience": 5,
+        "education": [],
+        "core_skills": ["Python"],
+        "project_highlights": [],
+        "target_positions": ["工程师"],
+        "raw_summary": "5年经验",
+    }
+
+    manager = ResumeMemoryManager(
+        llm_client=mock_llm,
+        candidate_config_path=candidate_config_file,
+    )
+    profile = manager.load_memory()
+
+    assert profile.name == "孙七"
+    assert profile.years_of_experience == 5
+    assert memory_file.is_file()
+

@@ -9,6 +9,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+import yaml
 from rich.console import Console
 
 from droid_agent_core.llm import LLMDecisionClient, OpenAIChatClient
@@ -135,10 +136,50 @@ class ResumeMemoryManager:
         self,
         llm_client: LLMDecisionClient | None = None,
         memory_file_path: str | Path | None = None,
+        candidate_config_path: str | Path | None = None,
     ):
         self.llm_client = llm_client or OpenAIChatClient()
-        self.memory_path = Path(memory_file_path or self.DEFAULT_MEMORY_PATH)
         self.extractor = ResumeTextExtractor()
+
+        # Load candidate config if available
+        self.candidate_config = self._load_candidate_config(candidate_config_path)
+
+        configured_memory = (
+            memory_file_path
+            or self.candidate_config.get("memory_path")
+            or self.DEFAULT_MEMORY_PATH
+        )
+        self.memory_path = Path(configured_memory)
+        self.configured_resume_path = self.candidate_config.get("resume_path")
+
+    @staticmethod
+    def _load_candidate_config(config_path: str | Path | None = None) -> dict[str, Any]:
+        search_paths: list[Path] = []
+        if config_path:
+            search_paths.append(Path(config_path))
+        else:
+            search_paths.extend(
+                [
+                    Path("config/candidate.local.yaml"),
+                    Path("config/candidate.local.json"),
+                    Path("config/candidate.yaml"),
+                    Path("config/candidate.json"),
+                ]
+            )
+
+        for p in search_paths:
+            if p.is_file():
+                try:
+                    content = p.read_text(encoding="utf-8")
+                    if p.suffix in [".yaml", ".yml"]:
+                        loaded = yaml.safe_load(content) or {}
+                    else:
+                        loaded = json.loads(content) or {}
+                    if isinstance(loaded, dict):
+                        return loaded
+                except Exception:
+                    pass
+        return {}
 
     def has_memory_file(self) -> bool:
         """Return True if candidate memory profile file exists and is non-empty."""
@@ -206,7 +247,9 @@ class ResumeMemoryManager:
         resume_file: str | Path | None = None,
     ) -> StructuredCandidateProfile:
         """Load candidate profile memory idempotently or regenerate from resume."""
-        if not force_refresh and not resume_file:
+        target_resume = resume_file or self.configured_resume_path
+
+        if not force_refresh and not target_resume:
             cached = self.load_cached_memory()
             if cached is not None:
                 console.print(
@@ -214,8 +257,16 @@ class ResumeMemoryManager:
                 )
                 return cached
 
-        if resume_file:
-            return self.generate_and_save_memory(resume_file)
+        if target_resume and (force_refresh or not self.has_memory_file()):
+            return self.generate_and_save_memory(target_resume)
+
+        if not force_refresh:
+            cached = self.load_cached_memory()
+            if cached is not None:
+                console.print(
+                    f"💾 [dim]Loaded existing candidate memory from {self.memory_path}[/dim]"
+                )
+                return cached
 
         # Look for default resumes directory
         default_resumes_dir = Path("resumes")
@@ -233,5 +284,6 @@ class ResumeMemoryManager:
 
         raise FileNotFoundError(
             f"No candidate memory file found at '{self.memory_path}' and no resume file provided. "
-            "Please provide a resume file using --resume <path> to initialize your candidate memory."
+            "Please provide a resume file in config/candidate.local.yaml or via --resume <path>."
         )
+

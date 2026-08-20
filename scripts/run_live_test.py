@@ -10,10 +10,13 @@ Usage:
 """
 
 import argparse
+import json
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
+import yaml
 from rich.console import Console
 from rich.table import Table
 
@@ -191,15 +194,70 @@ def run_live_test(
         console.print("[dim]Virtual device session terminated cleanly.[/dim]")
 
 
+def load_runner_settings(config_path: str | Path | None = None) -> dict[str, Any]:
+    """Load settings from configuration files with priority: local overrides -> configs -> defaults."""
+    search_paths: list[Path] = []
+    if config_path:
+        search_paths.append(Path(config_path))
+    else:
+        search_paths.extend(
+            [
+                Path("config/settings.local.yaml"),
+                Path("config/settings.local.json"),
+                Path("config/candidate.local.yaml"),
+                Path("config/settings.yaml"),
+                Path("config/settings.example.yaml"),
+            ]
+        )
+
+    merged: dict[str, Any] = {
+        "device": "emulator-5554",
+        "server_url": "http://127.0.0.1:4723",
+        "search_id": "default_agent_search",
+        "keyword": None,
+        "enable_search": True,
+        "enable_filter": True,
+        "resume_path": None,
+        "force_refresh_memory": False,
+        "preview_timeout_sec": 3.0,
+        "enable_greeting": True,
+    }
+
+    # Load from lowest to highest priority so higher priority files overwrite
+    for p in reversed(search_paths):
+        if p.is_file():
+            try:
+                content = p.read_text(encoding="utf-8")
+                loaded = (
+                    yaml.safe_load(content)
+                    if p.suffix in [".yaml", ".yml"]
+                    else json.loads(content)
+                )
+                if isinstance(loaded, dict):
+                    for k, v in loaded.items():
+                        if v is not None:
+                            merged[k] = v
+            except Exception:
+                pass
+
+    return merged
+
+
 def main():
     parser = argparse.ArgumentParser(
-        description="Boss Agent Mobile Smoke Harness on Virtual Device Session"
+        description="Boss Agent Mobile Smoke Harness on Virtual Device Session (Config-First)"
+    )
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="Path to custom settings configuration YAML/JSON file",
     )
     parser.add_argument(
         "--search-id",
         type=str,
-        default="default_agent_search",
-        help="Saved search preset ID to execute (default: 'default_agent_search')",
+        default=None,
+        help="Saved search preset ID to execute (overrides config setting)",
     )
     parser.add_argument(
         "--list-searches",
@@ -215,11 +273,13 @@ def main():
     parser.add_argument(
         "--no-search",
         action="store_true",
+        default=None,
         help="Skip search and stay on default recommendation feed",
     )
     parser.add_argument(
         "--no-filter",
         action="store_true",
+        default=None,
         help="Disable job filters",
     )
     parser.add_argument(
@@ -231,30 +291,32 @@ def main():
     parser.add_argument(
         "--force-refresh-memory",
         action="store_true",
+        default=None,
         help="Force re-generation of candidate memory profile from resume using LLM",
     )
     parser.add_argument(
         "--preview-timeout",
         type=float,
-        default=3.0,
-        help="Timeout in seconds to preview typed greeting message in chat box before navigating back (default: 3.0)",
+        default=None,
+        help="Timeout in seconds to preview typed greeting message in chat box before navigating back",
     )
     parser.add_argument(
         "--no-greeting",
         action="store_true",
+        default=None,
         help="Disable LLM match analysis and greeting draft generation",
     )
     parser.add_argument(
         "--device",
         type=str,
-        default="emulator-5554",
-        help="Target ADB device UDID (default: 'emulator-5554')",
+        default=None,
+        help="Target ADB device UDID (overrides config setting)",
     )
     parser.add_argument(
         "--server-url",
         type=str,
-        default="http://127.0.0.1:4723",
-        help="Appium server URL (default: 'http://127.0.0.1:4723')",
+        default=None,
+        help="Appium server URL (overrides config setting)",
     )
     args = parser.parse_args()
 
@@ -262,7 +324,33 @@ def main():
         list_saved_searches()
         sys.exit(0)
 
-    target_keyword = None if args.no_search else args.keyword
+    cfg = load_runner_settings(args.config)
+
+    # Resolve settings: CLI flags take precedence over configuration file values
+    search_id = args.search_id if args.search_id is not None else cfg.get("search_id", "default_agent_search")
+    keyword = args.keyword if args.keyword is not None else cfg.get("keyword")
+
+    enable_search = False if args.no_search else cfg.get("enable_search", True)
+    enable_filter = False if args.no_filter else cfg.get("enable_filter", True)
+
+    device_udid = args.device or cfg.get("device", "emulator-5554")
+    server_url = args.server_url or cfg.get("server_url", "http://127.0.0.1:4723")
+
+    resume_file = args.resume or cfg.get("resume_path")
+    force_refresh = (
+        True if args.force_refresh_memory else bool(cfg.get("force_refresh_memory", False))
+    )
+    preview_timeout = (
+        args.preview_timeout
+        if args.preview_timeout is not None
+        else float(cfg.get("preview_timeout_sec", 3.0))
+    )
+    enable_greeting = (
+        False if args.no_greeting else bool(cfg.get("enable_greeting", True))
+    )
+
+    target_keyword = keyword if enable_search else None
+    target_search_id = search_id if enable_search else None
     target_filter = (
         FilterConfig(
             education=None,
@@ -272,22 +360,23 @@ def main():
             company_scales=[],
             industries=[],
         )
-        if args.no_filter
+        if not enable_filter
         else None
     )
 
     success = run_live_test(
-        search_id=None if args.no_search else args.search_id,
+        search_id=target_search_id,
         keyword=target_keyword,
         filter_config=target_filter,
-        device_udid=args.device,
-        server_url=args.server_url,
-        resume_file=args.resume,
-        force_refresh_memory=args.force_refresh_memory,
-        preview_timeout_sec=args.preview_timeout,
-        enable_greeting_draft=not args.no_greeting,
+        device_udid=device_udid,
+        server_url=server_url,
+        resume_file=resume_file,
+        force_refresh_memory=force_refresh,
+        preview_timeout_sec=preview_timeout,
+        enable_greeting_draft=enable_greeting,
     )
     sys.exit(0 if success else 1)
+
 
 
 
