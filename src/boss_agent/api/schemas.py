@@ -50,3 +50,11 @@ class CancelTaskResponse(BaseModel):
     task_id: str
     status: TaskStatus
     message: str = "Task cancelled successfully"
+
+
+class ResumeTaskResponse(BaseModel):
+    """Response after requesting task resume from takeover."""
+
+    task_id: str
+    status: TaskStatus
+    message: str = "Task resumed successfully"

@@ -12,6 +12,7 @@ from boss_agent.api.schemas import (
     CancelTaskResponse,
     CreateTaskRequest,
     CreateTaskResponse,
+    ResumeTaskResponse,
     TaskDetailResponse,
 )
 from boss_agent.broker.models import TaskStatus
@@ -96,4 +97,33 @@ async def cancel_task(
         task_id=updated.id,
         status=updated.status,
         message="Task cancelled successfully",
+    )
+
+
+@router.post("/{task_id}/resume", response_model=ResumeTaskResponse)
+async def resume_task(
+    task_id: str,
+    broker: TaskBrokerDep,
+) -> ResumeTaskResponse:
+    """Resume a task that was paused for manual takeover."""
+    task = await broker.get_task(task_id)
+    if not task:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Task {task_id} not found",
+        )
+    if task.status != TaskStatus.PAUSED_FOR_TAKEOVER:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Task {task_id} is not paused for takeover (current status: {task.status})",
+        )
+
+    updated = await broker.update_task_status(
+        task_id=task_id,
+        status=TaskStatus.RESUMING,
+    )
+    return ResumeTaskResponse(
+        task_id=updated.id,
+        status=updated.status,
+        message="Task resumed successfully",
     )
