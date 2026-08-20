@@ -67,6 +67,18 @@ class BaseTaskBroker(ABC):
         pass
 
     @abstractmethod
+    async def list_stale_running_tasks(
+        self, lease_timeout_sec: float = 60.0
+    ) -> list[AutomationTask]:
+        """List running tasks whose heartbeat has expired."""
+        pass
+
+    @abstractmethod
+    async def requeue_task(self, task_id: str, retry_count: int) -> AutomationTask:
+        """Re-queue an expired task back to PENDING state."""
+        pass
+
+    @abstractmethod
     def subscribe_tasks(self, callback: Callable[[str, AutomationTask], Any]) -> None:
         """Register a callback for task lifecycle events (create, update)."""
         pass
@@ -186,6 +198,39 @@ class InMemoryTaskBroker(BaseTaskBroker):
             ]
             pending.sort(key=lambda x: x.created)
             return pending[:limit]
+
+    async def list_stale_running_tasks(
+        self, lease_timeout_sec: float = 60.0
+    ) -> list[AutomationTask]:
+        async with self._lock:
+            now = datetime.now(UTC)
+            stale: list[AutomationTask] = []
+            for t in self._tasks.values():
+                if t.status == TaskStatus.RUNNING:
+                    hb = t.last_heartbeat_at or t.locked_at or t.created
+                    # Normalize timezone
+                    if hb.tzinfo is None:
+                        hb = hb.replace(tzinfo=UTC)
+                    if (now - hb).total_seconds() > lease_timeout_sec:
+                        stale.append(t.model_copy(deep=True))
+            return stale
+
+    async def requeue_task(self, task_id: str, retry_count: int) -> AutomationTask:
+        async with self._lock:
+            task = self._tasks.get(task_id)
+            if not task:
+                raise KeyError(f"Task {task_id} not found")
+            now = datetime.now(UTC)
+            task.status = TaskStatus.PENDING
+            task.worker_id = None
+            task.locked_at = None
+            task.last_heartbeat_at = None
+            task.retry_count = retry_count
+            task.updated = now
+            requeued = task.model_copy(deep=True)
+
+        await self._notify_subscribers("update", requeued)
+        return requeued
 
     def subscribe_tasks(self, callback: Callable[[str, AutomationTask], Any]) -> None:
         self._subscribers.append(callback)
@@ -359,6 +404,43 @@ class PocketBaseTaskBroker(BaseTaskBroker):
         resp.raise_for_status()
         items = resp.json().get("items", [])
         return [self._record_to_task(item) for item in items]
+
+    async def list_stale_running_tasks(
+        self, lease_timeout_sec: float = 60.0
+    ) -> list[AutomationTask]:
+        url = f"{self._collection_url()}?filter=(status='running')&perPage=50"
+        loop = asyncio.get_running_loop()
+        resp = await loop.run_in_executor(
+            None, lambda: self.session.get(url, headers=self._headers())
+        )
+        resp.raise_for_status()
+        items = resp.json().get("items", [])
+        tasks = [self._record_to_task(item) for item in items]
+        now = datetime.now(UTC)
+        stale: list[AutomationTask] = []
+        for t in tasks:
+            hb = t.last_heartbeat_at or t.locked_at or t.created
+            if hb.tzinfo is None:
+                hb = hb.replace(tzinfo=UTC)
+            if (now - hb).total_seconds() > lease_timeout_sec:
+                stale.append(t)
+        return stale
+
+    async def requeue_task(self, task_id: str, retry_count: int) -> AutomationTask:
+        url = f"{self._collection_url()}/{task_id}"
+        body = {
+            "status": TaskStatus.PENDING.value,
+            "worker_id": "",
+            "locked_at": None,
+            "last_heartbeat_at": None,
+            "retry_count": retry_count,
+        }
+        loop = asyncio.get_running_loop()
+        resp = await loop.run_in_executor(
+            None, lambda: self.session.patch(url, json=body, headers=self._headers())
+        )
+        resp.raise_for_status()
+        return self._record_to_task(resp.json())
 
     def subscribe_tasks(self, callback: Callable[[str, AutomationTask], Any]) -> None:
         self._subscribers.append(callback)

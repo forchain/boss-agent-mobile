@@ -1,7 +1,7 @@
 """
 src/boss_agent/broker
 =====================
-State Stream Broker package for PocketBase integration and asynchronous worker coordination.
+State Stream Task Broker package.
 """
 
 from boss_agent.broker.models import (
@@ -15,13 +15,15 @@ from boss_agent.broker.pocketbase_adapter import (
     InMemoryTaskBroker,
     PocketBaseTaskBroker,
 )
+from boss_agent.broker.sweeper import TaskLeaseSweeper
 
 __all__ = [
-    "POCKETBASE_AUTOMATION_TASKS_SCHEMA",
     "AutomationTask",
     "BaseTaskBroker",
     "InMemoryTaskBroker",
+    "POCKETBASE_AUTOMATION_TASKS_SCHEMA",
     "PocketBaseTaskBroker",
+    "TaskLeaseSweeper",
     "TaskStatus",
     "TaskType",
 ]

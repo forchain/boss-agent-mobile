@@ -43,6 +43,8 @@ class AutomationTask(BaseModel):
     worker_id: str | None = None
     locked_at: datetime | None = None
     last_heartbeat_at: datetime | None = None
+    retry_count: int = 0
+    max_retries: int = 2
     logs: list[str] = Field(default_factory=list)
     error_message: str | None = None
     created: datetime = Field(default_factory=lambda: datetime.now(UTC))
