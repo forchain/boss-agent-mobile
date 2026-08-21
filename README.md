@@ -39,6 +39,9 @@
 
 ### 1. 环境准备
 ```bash
+# 快速初始化独立 Git Worktree（自动同步最新 main 并软链接本地配置）
+./init_worktree.sh <feature_name>
+
 # 安装依赖
 uv sync --extra dev
 
