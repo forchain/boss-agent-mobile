@@ -160,52 +160,44 @@ class JobListPage(BaseBossPage):
     def is_on_home_page(self) -> bool:
         """Check if currently on the main job recommendation home page."""
         return (
-            self.find_by_key("job_list.search_icon", timeout_sec=1.0) is not None
-            or self.find_by_key("job_list.job_card", timeout_sec=1.0) is not None
+            self.find_by_key("job_list.search_icon", timeout_sec=0.5) is not None
+            or self.find_by_key("job_list.job_card", timeout_sec=0.5) is not None
         )
 
     def navigate_to_home(self, max_attempts: int = 6) -> bool:
         """Ensure the app navigates back to the primary Job Recommendation Home page.
 
         Handles:
-        1. Closing/canceling open filter or industry dialogs if present.
-        2. Clicking back buttons or driver back from subpages (JobDetail, Search, etc.).
+        1. Dismissing open chat screens or dialogs if present.
+        2. Clicking back buttons or driver back from subpages.
         3. Switching to the primary '职位' tab.
         """
-        if self.is_on_home_page():
-            self.ensure_job_tab()
-            return True
-
-        # Check for open filter dialogs and dismiss
-        close_dialog_btn = self.find_by_key("filter.close_btn", timeout_sec=0.5)
-        if close_dialog_btn:
-            self.gestures.human_click(close_dialog_btn)
-            time.sleep(0.5)
-
-        cancel_industry_btn = self.find_by_key("industry.cancel_btn", timeout_sec=0.5)
-        if cancel_industry_btn:
-            self.gestures.human_click(cancel_industry_btn)
-            time.sleep(0.5)
-
         for _ in range(max_attempts):
             if self.is_on_home_page():
                 self.ensure_job_tab()
                 return True
 
-            # If job_tab is visible on bottom navigation bar, click it directly
-            job_tab_elem = self.find_by_key("job_list.job_tab", timeout_sec=0.8)
-            if job_tab_elem:
-                self.gestures.human_click(job_tab_elem)
-                time.sleep(0.5)
-                if self.is_on_home_page():
-                    return True
+            # Dismiss open filter / industry dialogs if present
+            close_dialog_btn = self.find_by_key("filter.close_btn", timeout_sec=0.3)
+            if close_dialog_btn:
+                self.gestures.human_click(close_dialog_btn)
+                time.sleep(0.3)
+                continue
 
-            # Look for back button on current screen
-            back_elem = self.find_by_key("navigation.back_btn", timeout_sec=0.8)
+            cancel_industry_btn = self.find_by_key("industry.cancel_btn", timeout_sec=0.3)
+            if cancel_industry_btn:
+                self.gestures.human_click(cancel_industry_btn)
+                time.sleep(0.3)
+                continue
+
+            # Look for chat/search/navigation back button
+            back_elem = self.find_by_key("chat.back_btn", timeout_sec=0.3)
             if not back_elem:
-                back_elem = self.find_by_key("search.back_btn", timeout_sec=0.5)
+                back_elem = self.find_by_key("navigation.back_btn", timeout_sec=0.3)
             if not back_elem:
-                back_elem = self.find_by_key("job_detail.back_btn", timeout_sec=0.5)
+                back_elem = self.find_by_key("search.back_btn", timeout_sec=0.3)
+            if not back_elem:
+                back_elem = self.find_by_key("job_detail.back_btn", timeout_sec=0.3)
 
             if back_elem:
                 self.gestures.human_click(back_elem)
@@ -215,7 +207,12 @@ class JobListPage(BaseBossPage):
                     self.driver.back()
                     time.sleep(0.5)
 
-        # Final attempt: click job tab
+            # Try clicking job tab
+            job_tab_elem = self.find_by_key("job_list.job_tab", timeout_sec=0.5)
+            if job_tab_elem:
+                self.gestures.human_click(job_tab_elem)
+                time.sleep(0.5)
+
         self.ensure_job_tab()
         return self.is_on_home_page()
 
@@ -272,7 +269,7 @@ class SearchPage(BaseBossPage):
 
     def is_search_page(self) -> bool:
         """Check if currently on the search input screen."""
-        return self.find_by_key("search.search_input", timeout_sec=1.0) is not None
+        return self.find_by_key("search.search_input", timeout_sec=0.5) is not None
 
     def wait_for_search_page(self, timeout_sec: float = 10.0) -> bool:
         """Wait until search input box is present on screen."""

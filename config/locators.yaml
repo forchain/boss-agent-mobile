@@ -35,7 +35,9 @@ job_list:
 search:
   search_input:
     - "com.hpbr.bosszhipin:id/et_search"
-    - "android.widget.EditText"
+    - "//*[@resource-id='com.hpbr.bosszhipin:id/et_search']"
+    - "//*[contains(@resource-id, 'et_search')]"
+    - "//android.widget.EditText[contains(@resource-id, 'search') or contains(@hint, '搜索') or @text='搜索' or contains(@text, '搜索')]"
   search_btn:
     - "com.hpbr.bosszhipin:id/tv_search"
     - "//*[@text='搜索']"
@@ -110,11 +112,12 @@ chat:
     - "//*[@resource-id='com.hpbr.bosszhipin:id/chat_editor']"
     - "//*[@resource-id='com.hpbr.bosszhipin:id/et_sendmessage']"
     - "//*[@resource-id='com.hpbr.bosszhipin:id/et_message']"
-    - "//android.widget.EditText"
+    - "//android.widget.EditText[contains(@resource-id, 'chat') or contains(@resource-id, 'send') or contains(@resource-id, 'msg') or contains(@resource-id, 'editor')]"
   send_btn:
     - "//*[@resource-id='com.hpbr.bosszhipin:id/btn_send']"
     - "//*[@text='发送']"
   back_btn:
     - "//*[@content-desc='返回' or contains(@resource-id, 'iv_back') or contains(@resource-id, 'btn_back')]"
     - "//*[@resource-id='com.hpbr.bosszhipin:id/iv_back']"
+
 

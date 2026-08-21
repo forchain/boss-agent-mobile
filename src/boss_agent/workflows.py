@@ -11,7 +11,7 @@ from typing import Any
 from rich.console import Console
 
 from .matching import JobMatchGreetingService
-from .memory import ResumeMemoryManager
+from .memory import ResumeMemoryManager, StructuredCandidateProfile
 from .models import AuthStatus, FilterConfig, JobPosting, SavedSearch, SearchConfig
 from .pages import (
     ChatPage,
@@ -105,6 +105,30 @@ class SmokeHarness:
             if preview_timeout_sec is not None
             else float(self.memory_manager.candidate_config.get("preview_timeout_sec", 3.0))
         )
+
+        # Pre-flight upfront candidate memory initialization
+        self.candidate_profile: StructuredCandidateProfile | None = None
+        if self.enable_greeting_draft:
+            try:
+                self.candidate_profile = self.memory_manager.load_memory(
+                    force_refresh=self.force_refresh_memory,
+                    resume_file=self.resume_file,
+                )
+                if self.candidate_profile:
+                    self.matching_service.set_candidate_profile(self.candidate_profile)
+                    console.print(
+                        f"👤 [bold green]Candidate Memory Profile Active:[/bold green] "
+                        f"[bold cyan]{self.candidate_profile.name}[/bold cyan] "
+                        f"({self.candidate_profile.years_of_experience}年经验, "
+                        f"核心技能: {', '.join(self.candidate_profile.core_skills[:3])})"
+                    )
+            except FileNotFoundError:
+                console.print(
+                    "[dim]No candidate resume or memory profile configured. Greeting draft will be skipped.[/dim]"
+                )
+            except Exception as e:
+                console.print(f"[yellow]⚠️  Failed to pre-load candidate memory upfront: {e}[/yellow]")
+
 
         if saved_search:
             self.search_config = saved_search.search
@@ -224,16 +248,14 @@ class SmokeHarness:
         posting = self.detail_page.extract_job_posting(timeout_sec=10.0)
 
         # 8. Optional Match Evaluation and Greeting Draft (Fill in Chat, Do NOT send)
-        if self.enable_greeting_draft:
+        if self.enable_greeting_draft and self.candidate_profile:
             try:
-                profile = self.memory_manager.load_memory(
-                    force_refresh=self.force_refresh_memory,
-                    resume_file=self.resume_file,
-                )
                 console.print(
-                    f"📊 [bold cyan]Evaluating job match for candidate:[/bold cyan] {profile.name}..."
+                    f"📊 [bold cyan]Evaluating job match for candidate:[/bold cyan] {self.candidate_profile.name}..."
                 )
-                match_result = self.matching_service.evaluate_and_draft_greeting(profile, posting)
+                match_result = self.matching_service.evaluate_and_draft_greeting(
+                    posting, profile=self.candidate_profile
+                )
                 self.matching_service.render_match_card(posting, match_result)
 
                 # Open chat dialog and type greeting
@@ -250,10 +272,6 @@ class SmokeHarness:
                         time.sleep(self.preview_timeout_sec)
                     # Navigate back from chat dialog to job detail screen
                     self.chat_page.navigate_back()
-            except FileNotFoundError:
-                console.print(
-                    "[dim]No resume or memory profile found. Skipping greeting draft generation.[/dim]"
-                )
             except Exception as e:
                 console.print(f"[yellow]⚠️  Matching/Greeting draft skipped due to error:[/yellow] {e}")
 

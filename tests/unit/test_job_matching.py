@@ -72,3 +72,44 @@ def test_job_match_greeting_service_fallback_on_error():
     result = service.evaluate_and_draft_greeting(profile=profile, job=job)
     assert result.match_score == 50  # Default fallback score
     assert "您好" in result.greeting_message
+
+
+def test_persistent_candidate_profile_context():
+    mock_llm = MagicMock()
+    mock_llm.chat_completion_json.return_value = {
+        "match_score": 88,
+        "jd_key_requirements": ["深入理解移动端多端通信", "精通LLM Agent工程化"],
+        "match_reasons": ["主导过大模型移动端架构落地", "具备完整自动化SDK设计经验"],
+        "greeting_message": "针对贵司移动端多端通信与 Agent 落地的挑战，我主导过类似高可用自动化系统架构，期待进一步探讨！",
+    }
+
+    profile = StructuredCandidateProfile(
+        name="王五",
+        years_of_experience=8,
+        core_skills=["Python", "Android", "LLM Agent"],
+        raw_summary="8年高并发与大模型架构经验",
+    )
+
+    # Initialize service with persistent candidate profile
+    service = JobMatchGreetingService(llm_client=mock_llm, candidate_profile=profile)
+    job = JobPosting(
+        title="移动端 Agent 架构师",
+        company_name="智能终端科技",
+        salary_range="40-60K",
+        job_description="负责Android端Agent通信框架与大模型系统研发",
+    )
+
+    result = service.evaluate_and_draft_greeting(job=job)
+
+    assert result.match_score == 88
+    assert len(result.jd_key_requirements) == 2
+    assert "移动端多端通信" in result.jd_key_requirements[0]
+    assert "Agent" in result.greeting_message
+
+    # Verify the LLM call system prompt contained candidate background
+    messages_passed = mock_llm.chat_completion_json.call_args[0][0]
+    system_msg = messages_passed[0]["content"]
+    assert "王五" in system_msg
+    assert "8年" in system_msg
+    assert "【打招呼破冰铁律与原则】" in system_msg
+

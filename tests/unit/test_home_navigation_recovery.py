@@ -131,3 +131,28 @@ def test_smoke_harness_recovers_to_home_before_search():
     job = harness.run_smoke_test()
     assert isinstance(job, JobPosting)
     assert job.title == "大模型 Agent 架构师"
+
+
+def test_chat_screen_does_not_collide_with_search_or_home():
+    from boss_agent.pages import SearchPage
+
+    mock_driver = MagicMock()
+    mock_chat_input = MagicMock()
+    mock_chat_input.rect = {"x": 100, "y": 2000, "width": 800, "height": 100}
+
+    # When on chat screen with chat_editor visible
+    def mock_find_elements(by, value):
+        if "chat_editor" in value or "et_sendmessage" in value or "et_message" in value:
+            return [mock_chat_input]
+        return []
+
+    mock_driver.find_elements.side_effect = mock_find_elements
+
+    job_list_page = JobListPage(mock_driver)
+    search_page = SearchPage(mock_driver)
+
+    # Must NOT be identified as home page
+    assert job_list_page.is_on_home_page() is False
+    # Must NOT be identified as search page
+    assert search_page.is_search_page() is False
+
