@@ -65,7 +65,6 @@ def test_parse_selector_auto_strategy_detection():
     assert "@text='确定'" in s6.value
 
 
-
 def test_locator_registry_loading_and_local_override():
     with tempfile.TemporaryDirectory() as tmpdir:
         base_path = Path(tmpdir) / "locators.yaml"

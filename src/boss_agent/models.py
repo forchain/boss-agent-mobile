@@ -142,4 +142,3 @@ class SavedSearch:
             search=search_cfg,
             filter=filter_cfg,
         )
-

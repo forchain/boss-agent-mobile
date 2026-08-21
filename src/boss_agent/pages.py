@@ -386,7 +386,6 @@ class FilterDialogPage(BaseBossPage):
 
         return False
 
-
     def confirm_filter(self, timeout_sec: float = 5.0) -> bool:
         """Click the '确定' button to apply chosen filters."""
         elem = self.find_by_key("filter.confirm_btn", timeout_sec=timeout_sec)

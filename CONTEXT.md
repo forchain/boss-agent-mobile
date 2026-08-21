@@ -43,3 +43,20 @@ _Avoid_: Test doc, checklist, PRD, spec doc
 **Agent Triad**:
 The role separation protocol between Dev Agent (implementer), Test Agent (runner & edge-case explorer), and Acceptance Agent (clean-context gatekeeper) operating with isolated contexts.
 _Avoid_: Multi-agent pipeline, subagent team
+
+**Backend Application Service**:
+The modular monolith FastAPI service handling authentication, rule configuration, task validation, and command submission into the persistent state stream.
+_Avoid_: API gateway, microservice gateway, proxy service
+
+**State Stream Broker**:
+The lightweight persistence and event mechanism utilizing PocketBase tables and Realtime SSE subscriptions for task queueing, optimistic lease locks, and live UI status updates.
+_Avoid_: Redis broker, RabbitMQ cluster, in-memory queue
+
+**Automation Worker**:
+The dedicated out-of-process execution daemon bound 1:1 to a Virtual Device Session that claims pending tasks from the State Stream Broker, executes mobile UI automation workflows, and reports execution telemetry.
+_Avoid_: In-process background task, Celery pool, worker thread
+
+**Task Handler Strategy**:
+The polymorphic workflow dispatch within the Automation Worker that executes concrete automation jobs (`CHECK_LOGIN`, `SCRAPE_JOBS`, `AUTO_APPLY`, `CHECK_CHAT`) without inter-process device contention.
+_Avoid_: Multi-worker router, sub-worker cluster
+
