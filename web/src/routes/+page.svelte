@@ -3,6 +3,7 @@
 	import type { CandidateProfile, LLMSettings, MatchEvaluateResponse, AutomationTask, TaskStatus } from '$lib/types';
 	import {
 		pb,
+		checkPocketBaseHealth,
 		getCandidateProfile,
 		saveCandidateProfile,
 		createAutomationTask,
@@ -76,22 +77,24 @@
 			console.error('Failed to load profile', e);
 		}
 
-		// Subscribe to PocketBase Realtime SSE for automation_tasks
-		try {
-			pb.collection('automation_tasks').subscribe('*', (e) => {
-				if (e.action === 'create' || e.action === 'update') {
-					const t = e.record as unknown as AutomationTask;
-					if (activeTaskId && t.id === activeTaskId) {
-						activeTask = t;
-						if (t.logs && t.logs.length) {
-							logLines = t.logs;
+		// Subscribe to PocketBase Realtime SSE only when online
+		if (await checkPocketBaseHealth()) {
+			try {
+				pb.collection('automation_tasks').subscribe('*', (e) => {
+					if (e.action === 'create' || e.action === 'update') {
+						const t = e.record as unknown as AutomationTask;
+						if (activeTaskId && t.id === activeTaskId) {
+							activeTask = t;
+							if (t.logs && t.logs.length) {
+								logLines = t.logs;
+							}
+							isPausedForTakeover = t.status === 'paused_for_takeover';
 						}
-						isPausedForTakeover = t.status === 'paused_for_takeover';
 					}
-				}
-			});
-		} catch (err) {
-			console.warn('PocketBase realtime subscribe not available:', err);
+				});
+			} catch (err) {
+				console.warn('PocketBase realtime subscribe not available:', err);
+			}
 		}
 	});
 

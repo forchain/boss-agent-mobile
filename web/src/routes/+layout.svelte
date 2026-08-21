@@ -1,6 +1,24 @@
 <script lang="ts">
 	import '../app.css';
+	import { onMount, onDestroy } from 'svelte';
+	import { checkPocketBaseHealth } from '$lib/pocketbase';
+
 	let { children } = $props();
+	let isPocketBaseOnline = $state(false);
+	let healthTimer: any = null;
+
+	async function updateHealth() {
+		isPocketBaseOnline = await checkPocketBaseHealth();
+	}
+
+	onMount(() => {
+		updateHealth();
+		healthTimer = setInterval(updateHealth, 3000);
+	});
+
+	onDestroy(() => {
+		if (healthTimer) clearInterval(healthTimer);
+	});
 </script>
 
 <div class="min-h-screen bg-slate-950 text-slate-100 flex flex-col selection:bg-cyan-500 selection:text-white">
@@ -23,9 +41,16 @@
 			</div>
 
 			<div class="flex items-center space-x-4 text-xs">
-				<div class="flex items-center space-x-2 bg-slate-800/80 border border-slate-700/60 px-3 py-1.5 rounded-full">
-					<span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-					<span class="text-slate-300 font-medium font-mono">PocketBase Broker: Connected</span>
+				<div class="flex items-center space-x-2 bg-slate-800/80 border border-slate-700/60 px-3 py-1.5 rounded-full transition-colors">
+					{#if isPocketBaseOnline}
+						<span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+						<span class="text-slate-300 font-medium font-mono">PocketBase: Connected (8090)</span>
+					{:else}
+						<span class="w-2 h-2 rounded-full bg-rose-500"></span>
+						<span class="text-rose-300 font-medium font-mono text-[11px]" title="请运行 pocketbase serve --http 127.0.0.1:8090 启动数据流">
+							PocketBase: Offline (Local Fallback)
+						</span>
+					{/if}
 				</div>
 				<a
 					href="#task-console"

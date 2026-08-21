@@ -7,6 +7,7 @@ PocketBase State Stream Broker Adapter and In-Memory Broker implementations.
 import asyncio
 import json
 import logging
+import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -24,7 +25,7 @@ class BaseTaskBroker(ABC):
 
     @abstractmethod
     async def create_task(
-        self, task_type: TaskType, payload: dict[str, Any] | None = None
+        self, task_type: TaskType | str, payload: dict[str, Any] | None = None
     ) -> AutomationTask:
         """Create and persist a new task with PENDING status."""
         pass
@@ -143,11 +144,12 @@ class InMemoryTaskBroker(BaseTaskBroker):
 
 
     async def create_task(
-        self, task_type: TaskType, payload: dict[str, Any] | None = None
+        self, task_type: TaskType | str, payload: dict[str, Any] | None = None
     ) -> AutomationTask:
+        resolved_type = task_type if isinstance(task_type, TaskType) else TaskType(task_type)
         now = datetime.now(UTC)
         task = AutomationTask(
-            task_type=task_type,
+            task_type=resolved_type,
             status=TaskStatus.PENDING,
             payload=payload or {},
             worker_id=None,
@@ -321,11 +323,13 @@ class PocketBaseTaskBroker(BaseTaskBroker):
         return f"{self.base_url}/api/collections/{self.collection_name}/records"
 
     async def create_task(
-        self, task_type: TaskType, payload: dict[str, Any] | None = None
+        self, task_type: TaskType | str, payload: dict[str, Any] | None = None
     ) -> AutomationTask:
+        resolved_type = task_type if isinstance(task_type, TaskType) else TaskType(task_type)
         url = self._collection_url()
         body: dict[str, Any] = {
-            "task_type": task_type.value,
+            "id": uuid.uuid4().hex[:15],
+            "task_type": resolved_type.value,
             "status": TaskStatus.PENDING.value,
             "payload": payload or {},
             "worker_id": None,

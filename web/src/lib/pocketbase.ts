@@ -7,6 +7,19 @@ export const PB_URL = (typeof window !== 'undefined' && window.location.port ===
 
 export const pb = new PocketBase(PB_URL);
 
+export async function checkPocketBaseHealth(): Promise<boolean> {
+	try {
+		const res = await fetch(`${PB_URL}/api/health`, { method: 'GET', signal: AbortSignal.timeout(1500) });
+		if (res.ok) {
+			const data = await res.json().catch(() => ({}));
+			return data.code === 200 || res.status === 200;
+		}
+		return false;
+	} catch (e) {
+		return false;
+	}
+}
+
 // Fallback in-memory/local storage cache if PocketBase is not yet launched
 let localCandidateMemory: CandidateProfile = {
 	name: '求职者',
@@ -40,6 +53,15 @@ export async function getCandidateProfile(userId = 'default'): Promise<Candidate
 	return { ...localCandidateMemory };
 }
 
+function generatePbId(): string {
+	const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+	let id = '';
+	for (let i = 0; i < 15; i++) {
+		id += chars.charAt(Math.floor(Math.random() * chars.length));
+	}
+	return id;
+}
+
 export async function saveCandidateProfile(profile: Partial<CandidateProfile>, userId = 'default'): Promise<CandidateProfile> {
 	localCandidateMemory = { ...localCandidateMemory, ...profile };
 	try {
@@ -59,7 +81,7 @@ export async function saveCandidateProfile(profile: Partial<CandidateProfile>, u
 			const updated = await pb.collection('candidate_profiles').update(existing.id, data);
 			return { id: updated.id, ...data };
 		} else {
-			const created = await pb.collection('candidate_profiles').create(data);
+			const created = await pb.collection('candidate_profiles').create({ id: generatePbId(), ...data });
 			return { id: created.id, ...data };
 		}
 	} catch (err) {
@@ -69,7 +91,9 @@ export async function saveCandidateProfile(profile: Partial<CandidateProfile>, u
 }
 
 export async function createAutomationTask(taskType: string, payload: Record<string, any>): Promise<AutomationTask> {
+	const taskId = generatePbId();
 	const taskData = {
+		id: taskId,
 		task_type: taskType,
 		status: 'pending',
 		payload: payload,
