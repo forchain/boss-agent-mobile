@@ -159,16 +159,13 @@ class JobListPage(BaseBossPage):
 
     def is_on_home_page(self) -> bool:
         """Check if currently on the main job recommendation home page."""
-        return (
-            self.find_by_key("job_list.search_icon", timeout_sec=0.5) is not None
-            or self.find_by_key("job_list.job_card", timeout_sec=0.5) is not None
-        )
+        return self.find_by_key("job_list.search_icon", timeout_sec=0.5) is not None
 
     def navigate_to_home(self, max_attempts: int = 6) -> bool:
         """Ensure the app navigates back to the primary Job Recommendation Home page.
 
         Handles:
-        1. Dismissing open chat screens or dialogs if present.
+        1. Dismissing open chat screens, job details, or dialogs if present.
         2. Clicking back buttons or driver back from subpages.
         3. Switching to the primary '职位' tab.
         """
@@ -190,8 +187,8 @@ class JobListPage(BaseBossPage):
                 time.sleep(0.3)
                 continue
 
-            # Look for chat/search/navigation back button
-            back_elem = self.find_by_key("chat.back_btn", timeout_sec=0.3)
+            # Look for chat/search/navigation/job_detail back button
+            back_elem = self.find_by_key("chat.back_btn", timeout_sec=0.5)
             if not back_elem:
                 back_elem = self.find_by_key("navigation.back_btn", timeout_sec=0.3)
             if not back_elem:
@@ -201,11 +198,11 @@ class JobListPage(BaseBossPage):
 
             if back_elem:
                 self.gestures.human_click(back_elem)
-                time.sleep(0.5)
+                time.sleep(0.8)
             elif hasattr(self.driver, "back"):
                 with contextlib.suppress(Exception):
                     self.driver.back()
-                    time.sleep(0.5)
+                    time.sleep(0.8)
 
             # Try clicking job tab
             job_tab_elem = self.find_by_key("job_list.job_tab", timeout_sec=0.5)

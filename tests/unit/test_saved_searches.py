@@ -76,6 +76,8 @@ def test_smoke_harness_with_saved_search_id():
     def mock_find_elements(by, value):
         if "tv_job_name" in value:
             return [mock_title_elem]
+        if "chat" in value or "editText_with_scrollbar" in value or "btn_chat" in value:
+            return []
         return [mock_btn]
 
     mock_driver.find_elements.side_effect = mock_find_elements

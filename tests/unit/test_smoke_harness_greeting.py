@@ -30,7 +30,10 @@ def test_smoke_harness_runs_matching_and_types_greeting():
     mock_desc_elem = MagicMock()
     mock_desc_elem.text = "负责移动端自动化与大模型结合研发。"
 
+    step_in_chat = False
+
     def mock_find_elements(by, value):
+        nonlocal step_in_chat
         if "tv_job_name" in value:
             return [mock_title_elem]
         if "tv_company_name" in value:
@@ -39,6 +42,13 @@ def test_smoke_harness_runs_matching_and_types_greeting():
             return [mock_salary_elem]
         if "tv_job_desc" in value:
             return [mock_desc_elem]
+        if "btn_chat" in value or "立即沟通" in value:
+            step_in_chat = True
+            return [mock_btn]
+        if "editText_with_scrollbar" in value or "chat_editor" in value:
+            return [mock_btn] if step_in_chat else []
+        if "chat" in value:
+            return [mock_btn] if step_in_chat else []
         return [mock_btn]
 
     mock_driver.find_elements.side_effect = mock_find_elements

@@ -109,15 +109,17 @@ chat:
     - "//*[contains(@resource-id, 'btn_chat') or contains(@resource-id, 'btn_communicate') or contains(@resource-id, 'tv_chat')]"
     - "//*[@resource-id='com.hpbr.bosszhipin:id/btn_chat']"
   message_input:
+    - "//*[@resource-id='com.hpbr.bosszhipin:id/editText_with_scrollbar']"
     - "//*[@resource-id='com.hpbr.bosszhipin:id/chat_editor']"
     - "//*[@resource-id='com.hpbr.bosszhipin:id/et_sendmessage']"
     - "//*[@resource-id='com.hpbr.bosszhipin:id/et_message']"
-    - "//android.widget.EditText[contains(@resource-id, 'chat') or contains(@resource-id, 'send') or contains(@resource-id, 'msg') or contains(@resource-id, 'editor')]"
+    - "//android.widget.EditText[@hint='介绍自己回复率更高哦~']"
+    - "//android.widget.EditText[contains(@resource-id, 'scrollbar') or contains(@resource-id, 'chat') or contains(@resource-id, 'send') or contains(@resource-id, 'msg') or contains(@resource-id, 'editor')]"
   send_btn:
     - "//*[@resource-id='com.hpbr.bosszhipin:id/btn_send']"
     - "//*[@text='发送']"
   back_btn:
-    - "//*[@content-desc='返回' or contains(@resource-id, 'iv_back') or contains(@resource-id, 'btn_back')]"
     - "//*[@resource-id='com.hpbr.bosszhipin:id/iv_back']"
+    - "//*[@content-desc='返回' or contains(@resource-id, 'iv_back') or contains(@resource-id, 'btn_back')]"
 
 
