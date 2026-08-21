@@ -8,9 +8,7 @@ import asyncio
 from unittest.mock import MagicMock
 
 import pytest
-from fastapi.testclient import TestClient
 
-from boss_agent.api.app import create_app
 from boss_agent.broker.models import TaskStatus, TaskType
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
 from boss_agent.worker.config import WorkerConfig
@@ -63,34 +61,9 @@ def broker():
     return InMemoryTaskBroker()
 
 
-@pytest.fixture
-def client(broker):
-    app = create_app(broker=broker)
-    return TestClient(app)
-
-
-def test_resume_task_api_validation(client, broker):
-    """Verify resume API transitions PAUSED_FOR_TAKEOVER to RESUMING and rejects non-paused tasks."""
-    # Test resume non-existent
-    res404 = client.post("/api/tasks/not-found/resume")
-    assert res404.status_code == 404
-
-    # Create a pending task (not paused)
-    task_res = client.post("/api/tasks", json={"task_type": "CHECK_LOGIN", "payload": {}})
-    task_id = task_res.json()["task_id"]
-
-    # Resume on pending task should fail with 400
-    res400 = client.post(f"/api/tasks/{task_id}/resume")
-    assert res400.status_code == 400
-    assert "not paused" in res400.json()["detail"].lower()
-
-
 @pytest.mark.asyncio
 async def test_takeover_pause_and_resume_end_to_end(broker):
-    """Verify worker pauses on challenge, and resumes when resume API is called."""
-    app = create_app(broker=broker)
-    client = TestClient(app)
-
+    """Verify worker pauses on challenge, and resumes when resume signal is sent to broker."""
     driver = MagicMock()
     config = WorkerConfig(worker_id="test-takeover-worker", poll_interval_sec=0.01)
     context = WorkerContext(config=config, driver=driver)
@@ -119,10 +92,8 @@ async def test_takeover_pause_and_resume_end_to_end(broker):
     assert paused_task is not None
     assert paused_task.status == TaskStatus.PAUSED_FOR_TAKEOVER
 
-    # User clicks Resume in UI -> FastAPI POST /api/tasks/{id}/resume
-    resume_res = client.post(f"/api/tasks/{task.id}/resume")
-    assert resume_res.status_code == 200
-    assert resume_res.json()["status"] == "resuming"
+    # User clicks Resume in SvelteKit UI -> updates status to RESUMING in PocketBase Broker
+    await broker.update_task_status(task.id, status=TaskStatus.RESUMING)
 
     # Wait for worker to finish
     await worker_task
@@ -131,3 +102,4 @@ async def test_takeover_pause_and_resume_end_to_end(broker):
     assert finished_task is not None
     assert finished_task.status == TaskStatus.SUCCESS
     assert any("resuming" in log.lower() for log in finished_task.logs)
+

@@ -29,10 +29,17 @@ fi
 
 if [[ "${1:-}" == "--web" || "${1:-}" == "web" ]]; then
     shift || true
-    echo "🌐 Starting Boss Agent Mobile Web Dashboard on http://127.0.0.1:8000/dashboard..."
-    exec "${RUNNER[@]}" -m uvicorn boss_agent.api.app:create_app --factory --host 127.0.0.1 --port "${PORT:-8000}" "$@"
+    echo "🌐 Starting Boss Agent Mobile SvelteKit Web Dashboard on http://127.0.0.1:5173..."
+    exec npm --prefix web run dev "$@"
+fi
+
+if [[ "${1:-}" == "--worker" || "${1:-}" == "worker" ]]; then
+    shift || true
+    echo "🤖 Starting Boss Agent Mobile Out-of-Process Worker Daemon..."
+    exec "${RUNNER[@]}" scripts/worker.py "$@"
 fi
 
 echo "🚀 Launching Boss Agent Mobile Live Harness..."
 exec "${RUNNER[@]}" scripts/run_live_test.py "$@"
+
 

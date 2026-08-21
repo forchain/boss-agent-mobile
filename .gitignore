@@ -28,4 +28,12 @@ candidate_memory.json
 resumes/
 *.resume.*
 
+# Node / SvelteKit / Web
+node_modules/
+web/node_modules/
+.svelte-kit/
+web/.svelte-kit/
+web/build/
+
+
 
