@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Boss Agent Mobile - 控制台</title>
+  <!-- Tailwind CSS & Inter Font -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+    pre, code, .font-mono { font-family: 'JetBrains Mono', monospace; }
+    .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
+    .custom-scrollbar::-webkit-scrollbar-track { background: #1f2937; }
+    .custom-scrollbar::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 3px; }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen">
+  <!-- Top Navigation Bar -->
+  <header class="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-50">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <div class="flex items-center space-x-3">
+        <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center font-bold text-white shadow-lg shadow-cyan-500/20">
+          🤖
+        </div>
+        <div>
+          <h1 class="font-bold text-lg leading-tight bg-gradient-to-r from-white to-slate-300 bg-clip-text text-transparent">Boss Agent Mobile</h1>
+          <p class="text-xs text-slate-400">智能移动端求职自动化工作台</p>
+        </div>
+      </div>
+      <div class="flex items-center space-x-4 text-xs">
+        <div class="flex items-center space-x-2 bg-slate-800/80 border border-slate-700/60 px-3 py-1.5 rounded-full">
+          <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+          <span class="text-slate-300 font-medium" id="system-status">FastAPI Backend: Ready</span>
+        </div>
+        <a href="#tasks-panel" class="bg-cyan-600 hover:bg-cyan-500 text-white font-medium px-3.5 py-1.5 rounded-lg shadow transition">
+          🚀 发起新任务
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+    
+    <!-- Takeover Alert Banner (Hidden by default) -->
+    <div id="takeover-banner" class="hidden border border-amber-500/50 bg-amber-950/40 p-4 rounded-xl flex items-center justify-between shadow-lg shadow-amber-900/20 animate-bounce">
+      <div class="flex items-center space-x-3">
+        <div class="text-2xl">⚠️</div>
+        <div>
+          <h3 class="font-semibold text-amber-300">检测到安全验证（需要人工接管）</h3>
+          <p class="text-xs text-amber-200/80" id="takeover-msg">请在 Android 模拟器/实机窗口完成滑动验证码或登录验证，完成后点击右侧恢复按钮。</p>
+        </div>
+      </div>
+      <div class="flex items-center space-x-2">
+        <button onclick="resumeCurrentTask()" class="bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold px-4 py-2 rounded-lg text-sm transition">
+          ✅ 我已完成验证，继续任务
+        </button>
+        <button onclick="cancelCurrentTask()" class="bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium px-3 py-2 rounded-lg text-sm transition">
+          取消任务
+        </button>
+      </div>
+    </div>
+
+    <!-- Grid Layout: 2 Columns -->
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+      
+      <!-- Left Column: Candidate Profile & LLM Settings (5 cols) -->
+      <div class="lg:col-span-5 space-y-8">
+        
+        <!-- Candidate Profile Card -->
+        <div class="bg-slate-900/70 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-5">
+          <div class="flex items-center justify-between border-b border-slate-800/80 pb-4">
+            <div class="flex items-center space-x-2">
+              <span class="text-xl">👤</span>
+              <h2 class="font-semibold text-base text-slate-100">求职者画像与结构化记忆</h2>
+            </div>
+            <span class="text-xs px-2.5 py-1 rounded bg-slate-800 text-slate-300 font-mono" id="candidate-sync-tag">DB Synced</span>
+          </div>
+
+          <!-- Resume Upload Dropzone -->
+          <div>
+            <label class="block text-xs font-medium text-slate-400 mb-2">上传最新简历 (PDF / Docx / TXT / MD)</label>
+            <div id="dropzone" class="border-2 border-dashed border-slate-700 hover:border-cyan-500 bg-slate-950/60 rounded-xl p-4 text-center cursor-pointer transition">
+              <input type="file" id="resume-file-input" class="hidden" accept=".pdf,.docx,.doc,.txt,.md">
+              <div class="space-y-1">
+                <div class="text-2xl">📄</div>
+                <p class="text-xs text-slate-300 font-medium">点击或拖拽简历文件至此</p>
+                <p class="text-[11px] text-slate-500">大模型将自动提取并更新求职者画像记忆</p>
+              </div>
+            </div>
+            <div id="upload-status" class="hidden mt-2 text-xs font-medium text-cyan-400 flex items-center space-x-2">
+              <span class="animate-spin">🌀</span>
+              <span id="upload-status-text">正在解析简历结构化数据...</span>
+            </div>
+          </div>
+
+          <!-- Candidate Form -->
+          <form id="candidate-form" class="space-y-4" onsubmit="event.preventDefault(); saveCandidateProfile();">
+            <div class="grid grid-cols-2 gap-4">
+              <div>
+                <label class="block text-xs font-medium text-slate-400 mb-1">姓名</label>
+                <input type="text" id="candidate-name" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-cyan-500">
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-slate-400 mb-1">工作经验 (年)</label>
+                <input type="number" id="candidate-exp" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-cyan-500">
+              </div>
+            </div>
+
+            <div>
+              <label class="block text-xs font-medium text-slate-400 mb-1">核心技能标签 (逗号分隔)</label>
+              <input type="text" id="candidate-skills" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-cyan-500" placeholder="Python, LLM, Android, Agent">
+            </div>
+
+            <div>
+              <label class="block text-xs font-medium text-slate-400 mb-1">期望职位 (逗号分隔)</label>
+              <input type="text" id="candidate-positions" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-cyan-500" placeholder="AI Agent 架构师, 大模型专家">
+            </div>
+
+            <div>
+              <label class="block text-xs font-medium text-slate-400 mb-1">核心背景亮点摘要</label>
+              <textarea id="candidate-summary" rows="3" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-cyan-500 custom-scrollbar" placeholder="精简背景与项目亮点..."></textarea>
+            </div>
+
+            <div class="flex justify-end pt-2">
+              <button type="submit" class="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-medium px-4 py-2 rounded-lg text-xs transition">
+                💾 保存画像修改
+              </button>
+            </div>
+          </form>
+        </div>
+
+        <!-- LLM Settings Panel -->
+        <div class="bg-slate-900/70 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
+          <div class="flex items-center space-x-2 border-b border-slate-800/80 pb-4">
+            <span class="text-xl">⚙️</span>
+            <h2 class="font-semibold text-base text-slate-100">大模型配置 (LLM Settings)</h2>
+          </div>
+
+          <form id="llm-form" class="space-y-4" onsubmit="event.preventDefault(); saveLLMSettings();">
+            <div class="grid grid-cols-2 gap-4">
+              <div>
+                <label class="block text-xs font-medium text-slate-400 mb-1">Provider</label>
+                <select id="llm-provider" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-cyan-500">
+                  <option value="openai">OpenAI / 兼容接口</option>
+                  <option value="minimax">MiniMax (海螺大模型)</option>
+                  <option value="deepseek">DeepSeek</option>
+                </select>
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-slate-400 mb-1">Model Name</label>
+                <input type="text" id="llm-model" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-cyan-500">
+              </div>
+            </div>
+
+            <div>
+              <label class="block text-xs font-medium text-slate-400 mb-1">Base URL</label>
+              <input type="text" id="llm-base-url" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono text-slate-300 focus:outline-none focus:border-cyan-500">
+            </div>
+
+            <div>
+              <label class="block text-xs font-medium text-slate-400 mb-1">API Key</label>
+              <input type="password" id="llm-api-key" placeholder="保留原密钥请留空或输入新 Key" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono text-slate-300 focus:outline-none focus:border-cyan-500">
+            </div>
+
+            <div class="flex justify-end pt-2">
+              <button type="submit" class="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-medium px-4 py-2 rounded-lg text-xs transition">
+                💾 更新大模型配置
+              </button>
+            </div>
+          </form>
+        </div>
+
+      </div>
+
+      <!-- Right Column: Live Match Sandbox & Task Control Center (7 cols) -->
+      <div class="lg:col-span-7 space-y-8">
+        
+        <!-- Live Job Match & Greeting Sandbox -->
+        <div class="bg-slate-900/70 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-5">
+          <div class="flex items-center justify-between border-b border-slate-800/80 pb-4">
+            <div class="flex items-center space-x-2">
+              <span class="text-xl">🎯</span>
+              <h2 class="font-semibold text-base text-slate-100">岗位匹配与 AI 破冰招呼语沙盒</h2>
+            </div>
+            <button onclick="runMatchEvaluation()" class="bg-cyan-600 hover:bg-cyan-500 text-white font-medium px-3.5 py-1.5 rounded-lg text-xs transition flex items-center space-x-1.5">
+              <span>⚡ 立即评估匹配度</span>
+            </button>
+          </div>
+
+          <div class="grid grid-cols-3 gap-3">
+            <div>
+              <label class="block text-xs font-medium text-slate-400 mb-1">测试职位</label>
+              <input type="text" id="match-job-title" value="AI Agent 架构师" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-cyan-500">
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-slate-400 mb-1">目标公司</label>
+              <input type="text" id="match-company" value="某创新人工智能公司" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-cyan-500">
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-slate-400 mb-1">薪资范围</label>
+              <input type="text" id="match-salary" value="40-60K·15薪" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-cyan-500">
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-xs font-medium text-slate-400 mb-1">岗位描述 (JD 文本)</label>
+            <textarea id="match-jd" rows="3" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-cyan-500 custom-scrollbar" placeholder="粘贴岗位详细要求...">负责大模型与移动端自动化 Agent 框架设计，精通 Python 和多端协同通信架构，要求5年以上实战落地经验。</textarea>
+          </div>
+
+          <!-- Sandbox Evaluation Result Card -->
+          <div id="match-result-card" class="bg-slate-950/80 border border-slate-800 rounded-xl p-4 space-y-3">
+            <div class="flex items-center justify-between">
+              <span class="text-xs text-slate-400 font-medium">评估结果预览</span>
+              <div class="flex items-center space-x-2">
+                <span class="text-xs text-slate-400">匹配评分:</span>
+                <span id="result-score" class="font-bold text-sm text-cyan-400 font-mono">-- / 100</span>
+              </div>
+            </div>
+
+            <div>
+              <span class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">🔍 JD 核心诉求提炼</span>
+              <ul id="result-reqs" class="text-xs text-slate-300 space-y-1 mt-1 list-disc list-inside">
+                <li class="text-slate-500">点击上方按钮开始评估</li>
+              </ul>
+            </div>
+
+            <div>
+              <span class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">💬 定制破冰打招呼语 (结合 JD 痛点)</span>
+              <p id="result-greeting" class="text-xs text-cyan-200/90 bg-cyan-950/30 border border-cyan-900/40 p-3 rounded-lg mt-1 font-mono leading-relaxed">
+                暂无生成文案
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Automation Task Control Center -->
+        <div id="tasks-panel" class="bg-slate-900/70 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-5">
+          <div class="flex items-center justify-between border-b border-slate-800/80 pb-4">
+            <div class="flex items-center space-x-2">
+              <span class="text-xl">🤖</span>
+              <h2 class="font-semibold text-base text-slate-100">自动化任务控制台 (Task Control Center)</h2>
+            </div>
+            <div class="flex items-center space-x-2">
+              <span id="active-task-badge" class="hidden text-xs px-2.5 py-1 rounded-full bg-cyan-950 text-cyan-400 border border-cyan-800 font-medium">
+                Running: Task
+              </span>
+            </div>
+          </div>
+
+          <!-- Task Launch Form -->
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div>
+              <label class="block text-xs font-medium text-slate-400 mb-1">搜索关键词</label>
+              <input type="text" id="task-keyword" value="agent" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-cyan-500">
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-slate-400 mb-1">最低匹配分 (0-100)</label>
+              <input type="number" id="task-min-score" value="75" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-cyan-500">
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-slate-400 mb-1">执行模式</label>
+              <select id="task-mode" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-cyan-500">
+                <option value="preview">安全预览模式 (打出草稿，不发送)</option>
+                <option value="auto_send">自动发送模式 (达标自动点击发送)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="flex items-center justify-between pt-2">
+            <div class="flex items-center space-x-2">
+              <button onclick="launchTask('AUTO_APPLY')" class="bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-semibold px-4 py-2 rounded-lg text-xs shadow-lg shadow-cyan-500/20 transition">
+                🚀 下发 AUTO_APPLY 智能投递任务
+              </button>
+              <button onclick="launchTask('SCRAPE_JOBS')" class="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 font-medium px-3.5 py-2 rounded-lg text-xs transition">
+                🔍 仅抓取职位 (SCRAPE)
+              </button>
+            </div>
+            <button onclick="launchTask('CHECK_LOGIN')" class="text-xs text-slate-400 hover:text-slate-200 underline">
+              检查登录状态
+            </button>
+          </div>
+
+          <!-- Real-Time Terminal Log Stream -->
+          <div class="space-y-2">
+            <div class="flex items-center justify-between text-xs text-slate-400">
+              <span>实时执行日志流 (Realtime Log Stream)</span>
+              <span id="log-task-id" class="font-mono text-[11px] text-slate-500">No active task</span>
+            </div>
+            <div id="log-console" class="bg-slate-950 border border-slate-800 rounded-xl p-4 h-64 overflow-y-auto font-mono text-xs text-slate-300 space-y-1 custom-scrollbar leading-relaxed">
+              <div class="text-slate-600">[System] 准备就绪，等待下发自动化任务...</div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+  </main>
+
+  <script>
+    let currentTaskId = null;
+    let pollInterval = null;
+
+    // Load initial data
+    document.addEventListener("DOMContentLoaded", () => {
+      loadCandidateProfile();
+      loadLLMSettings();
+      setupDropzone();
+    });
+
+    // Dropzone setup
+    function setupDropzone() {
+      const dropzone = document.getElementById("dropzone");
+      const fileInput = document.getElementById("resume-file-input");
+
+      dropzone.addEventListener("click", () => fileInput.click());
+      dropzone.addEventListener("dragover", (e) => { e.preventDefault(); dropzone.classList.add("border-cyan-500"); });
+      dropzone.addEventListener("dragleave", () => dropzone.classList.remove("border-cyan-500"));
+      dropzone.addEventListener("drop", (e) => {
+        e.preventDefault();
+        dropzone.classList.remove("border-cyan-500");
+        if (e.dataTransfer.files.length) uploadResumeFile(e.dataTransfer.files[0]);
+      });
+      fileInput.addEventListener("change", (e) => {
+        if (e.target.files.length) uploadResumeFile(e.target.files[0]);
+      });
+    }
+
+    // Upload Resume
+    async function uploadResumeFile(file) {
+      const statusDiv = document.getElementById("upload-status");
+      const statusText = document.getElementById("upload-status-text");
+      statusDiv.classList.remove("hidden");
+      statusText.innerText = `正在解析简历: ${file.name}...`;
+
+      const formData = new FormData();
+      formData.append("file", file);
+
+      try {
+        const resp = await fetch("/api/candidate/resume", { method: "POST", body: formData });
+        const res = await resp.json();
+        if (resp.ok && res.success) {
+          statusText.innerText = `✅ 解析成功！画像已更新`;
+          populateCandidateForm(res.profile);
+          setTimeout(() => statusDiv.classList.add("hidden"), 3000);
+        } else {
+          statusText.innerText = `❌ 解析失败: ${res.detail || res.message}`;
+        }
+      } catch (err) {
+        statusText.innerText = `❌ 请求错误: ${err}`;
+      }
+    }
+
+    // Load Candidate Profile
+    async function loadCandidateProfile() {
+      try {
+        const resp = await fetch("/api/candidate/profile");
+        const res = await resp.json();
+        if (resp.ok && res.profile) {
+          populateCandidateForm(res.profile);
+        }
+      } catch (e) {
+        console.error("Failed to load candidate profile", e);
+      }
+    }
+
+    function populateCandidateForm(p) {
+      document.getElementById("candidate-name").value = p.name || "";
+      document.getElementById("candidate-exp").value = p.years_of_experience || 0;
+      document.getElementById("candidate-skills").value = (p.core_skills || []).join(", ");
+      document.getElementById("candidate-positions").value = (p.target_positions || []).join(", ");
+      document.getElementById("candidate-summary").value = p.raw_summary || "";
+    }
+
+    // Save Candidate Profile
+    async function saveCandidateProfile() {
+      const payload = {
+        name: document.getElementById("candidate-name").value,
+        years_of_experience: parseInt(document.getElementById("candidate-exp").value || 0),
+        core_skills: document.getElementById("candidate-skills").value.split(",").map(s => s.trim()).filter(Boolean),
+        target_positions: document.getElementById("candidate-positions").value.split(",").map(s => s.trim()).filter(Boolean),
+        raw_summary: document.getElementById("candidate-summary").value,
+      };
+      try {
+        const resp = await fetch("/api/candidate/profile", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (resp.ok) alert("✅ 求职者画像保存成功！");
+      } catch (e) {
+        alert("保存失败: " + e);
+      }
+    }
+
+    // Load LLM Settings
+    async function loadLLMSettings() {
+      try {
+        const resp = await fetch("/api/settings/llm");
+        const res = await resp.json();
+        if (resp.ok) {
+          document.getElementById("llm-provider").value = res.provider || "openai";
+          document.getElementById("llm-model").value = res.model || "";
+          document.getElementById("llm-base-url").value = res.base_url || "";
+        }
+      } catch (e) {
+        console.error("Failed to load LLM settings", e);
+      }
+    }
+
+    // Save LLM Settings
+    async function saveLLMSettings() {
+      const payload = {
+        provider: document.getElementById("llm-provider").value,
+        model: document.getElementById("llm-model").value,
+        base_url: document.getElementById("llm-base-url").value,
+      };
+      const apiKey = document.getElementById("llm-api-key").value;
+      if (apiKey) payload.api_key = apiKey;
+
+      try {
+        const resp = await fetch("/api/settings/llm", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (resp.ok) alert("✅ LLM 配置已更新！");
+      } catch (e) {
+        alert("更新失败: " + e);
+      }
+    }
+
+    // Run Match Evaluation Sandbox
+    async function runMatchEvaluation() {
+      const payload = {
+        job_title: document.getElementById("match-job-title").value,
+        company_name: document.getElementById("match-company").value,
+        salary_range: document.getElementById("match-salary").value,
+        job_description: document.getElementById("match-jd").value,
+      };
+      document.getElementById("result-score").innerText = "评估中...";
+      try {
+        const resp = await fetch("/api/match/evaluate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const res = await resp.json();
+        if (resp.ok) {
+          document.getElementById("result-score").innerText = `${res.match_score} / 100`;
+          const reqsList = document.getElementById("result-reqs");
+          reqsList.innerHTML = (res.jd_key_requirements || []).map(r => `<li>${r}</li>`).join("") || "<li>无特定核心诉求提炼</li>";
+          document.getElementById("result-greeting").innerText = res.greeting_message || "";
+        }
+      } catch (e) {
+        alert("评估失败: " + e);
+      }
+    }
+
+    // Launch Task
+    async function launchTask(taskType) {
+      const isAutoApply = taskType === "AUTO_APPLY";
+      const isPreview = document.getElementById("task-mode").value === "preview";
+      const payload = {
+        keyword: document.getElementById("task-keyword").value,
+        min_score: parseInt(document.getElementById("task-min-score").value || 75),
+        preview_only: isPreview,
+        auto_send: !isPreview,
+        preview_timeout_sec: 3.0,
+      };
+
+      try {
+        const resp = await fetch("/api/tasks", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ task_type: taskType, payload: payload }),
+        });
+        const res = await resp.json();
+        if (resp.ok && res.task_id) {
+          currentTaskId = res.task_id;
+          document.getElementById("log-task-id").innerText = `Task ID: ${currentTaskId}`;
+          startTaskPolling(currentTaskId);
+        }
+      } catch (e) {
+        alert("下发任务失败: " + e);
+      }
+    }
+
+    // Polling Task Logs & Status
+    function startTaskPolling(taskId) {
+      if (pollInterval) clearInterval(pollInterval);
+      const consoleDiv = document.getElementById("log-console");
+      consoleDiv.innerHTML = `<div class="text-cyan-400">[Task ${taskId}] 任务已加入队列，等待 Worker 领取...</div>`;
+
+      pollInterval = setInterval(async () => {
+        try {
+          const resp = await fetch(`/api/tasks/${taskId}`);
+          if (!resp.ok) return;
+          const task = await resp.json();
+
+          // Update active badge
+          const badge = document.getElementById("active-task-badge");
+          badge.classList.remove("hidden");
+          badge.innerText = `${task.status.toUpperCase()}: ${task.task_type}`;
+
+          // Takeover banner
+          const takeoverBanner = document.getElementById("takeover-banner");
+          if (task.status === "paused_for_takeover") {
+            takeoverBanner.classList.remove("hidden");
+          } else {
+            takeoverBanner.classList.add("hidden");
+          }
+
+          // Update Logs
+          if (task.logs && task.logs.length) {
+            consoleDiv.innerHTML = task.logs.map(line => `<div class="text-slate-300">${escapeHtml(line)}</div>`).join("");
+            consoleDiv.scrollTop = consoleDiv.scrollHeight;
+          }
+
+          // End polling on terminal states
+          if (["success", "failed", "cancelled"].includes(task.status)) {
+            clearInterval(pollInterval);
+            if (task.status === "success") {
+              consoleDiv.innerHTML += `<div class="text-emerald-400 font-bold">[Completed] 任务执行圆满成功！</div>`;
+            } else {
+              consoleDiv.innerHTML += `<div class="text-rose-400 font-bold">[Terminated] 任务结束: ${task.error_message || task.status}</div>`;
+            }
+          }
+        } catch (e) {
+          console.error("Polling error", e);
+        }
+      }, 1000);
+    }
+
+    // Resume Task
+    async function resumeCurrentTask() {
+      if (!currentTaskId) return;
+      try {
+        await fetch(`/api/tasks/${currentTaskId}/resume`, { method: "POST" });
+        document.getElementById("takeover-banner").classList.add("hidden");
+      } catch (e) {
+        alert("恢复失败: " + e);
+      }
+    }
+
+    // Cancel Task
+    async function cancelCurrentTask() {
+      if (!currentTaskId) return;
+      try {
+        await fetch(`/api/tasks/${currentTaskId}/cancel`, { method: "POST" });
+        document.getElementById("takeover-banner").classList.add("hidden");
+      } catch (e) {
+        alert("取消失败: " + e);
+      }
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement("div");
+      div.innerText = text;
+      return div.innerHTML;
+    }
+  </script>
+</body>
+</html>

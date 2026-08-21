@@ -119,3 +119,71 @@ POCKETBASE_AUTOMATION_TASKS_SCHEMA = {
         "CREATE INDEX idx_worker_id ON automation_tasks (worker_id)",
     ],
 }
+
+
+POCKETBASE_CANDIDATE_PROFILES_SCHEMA = {
+    "name": "candidate_profiles",
+    "type": "base",
+    "fields": [
+        {
+            "name": "id",
+            "type": "text",
+            "primaryKey": True,
+            "required": True,
+        },
+        {
+            "name": "user_id",
+            "type": "text",
+            "required": True,
+        },
+        {
+            "name": "name",
+            "type": "text",
+            "required": False,
+        },
+        {
+            "name": "years_of_experience",
+            "type": "number",
+            "required": False,
+        },
+        {
+            "name": "education",
+            "type": "json",
+            "required": False,
+        },
+        {
+            "name": "core_skills",
+            "type": "json",
+            "required": False,
+        },
+        {
+            "name": "project_highlights",
+            "type": "json",
+            "required": False,
+        },
+        {
+            "name": "target_positions",
+            "type": "json",
+            "required": False,
+        },
+        {
+            "name": "raw_summary",
+            "type": "text",
+            "required": False,
+        },
+        {
+            "name": "created",
+            "type": "date",
+            "required": False,
+        },
+        {
+            "name": "updated",
+            "type": "date",
+            "required": False,
+        },
+    ],
+    "indexes": [
+        "CREATE UNIQUE INDEX idx_candidate_user_id ON candidate_profiles (user_id)",
+    ],
+}
+

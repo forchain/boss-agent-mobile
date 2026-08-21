@@ -677,6 +677,14 @@ class ChatPage(BaseBossPage):
             return True
         return False
 
+    def click_send(self, timeout_sec: float = 3.0) -> bool:
+        """Click the send button on the chat page."""
+        elem = self.find_by_key("chat.send_btn", timeout_sec=timeout_sec)
+        if elem:
+            self.gestures.human_click(elem)
+            return True
+        return False
+
     def navigate_back(self, timeout_sec: float = 3.0) -> bool:
         """Click back button from chat dialog."""
         elem = self.find_by_key("chat.back_btn", timeout_sec=timeout_sec)
@@ -689,4 +697,5 @@ class ChatPage(BaseBossPage):
             return True
         except Exception:
             return False
+
 
