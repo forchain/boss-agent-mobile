@@ -26,7 +26,6 @@ class By(StrEnum):
     NAME = "name"
 
 
-
 @dataclass
 class UISelector:
     by: By
@@ -145,7 +144,6 @@ class LocatorRegistry:
         if candidate.exists() or not p.exists():
             return candidate
         return p
-
 
     def reload(self) -> None:
         """Reload configuration from disk, applying local override on top of base."""

@@ -39,9 +39,7 @@ def list_saved_searches() -> None:
 
     for s in searches:
         industries_str = ", ".join(s.filter.industries) if s.filter.industries else "全部"
-        other_filters = (
-            f"{s.filter.education or '不限'} | {s.filter.salary or '不限'} | {s.filter.experience or '不限'}"
-        )
+        other_filters = f"{s.filter.education or '不限'} | {s.filter.salary or '不限'} | {s.filter.experience or '不限'}"
         table.add_row(
             s.id,
             s.name,
@@ -77,7 +75,9 @@ def run_live_test(
     else:
         search_config = SearchConfig(keyword=keyword)
         active_filter = filter_config or FilterConfig()
-        console.print("\n[bold cyan]🚀 Starting Smoke Harness on Virtual Device Session...[/bold cyan]")
+        console.print(
+            "\n[bold cyan]🚀 Starting Smoke Harness on Virtual Device Session...[/bold cyan]"
+        )
 
     if search_config.should_search:
         console.print(
