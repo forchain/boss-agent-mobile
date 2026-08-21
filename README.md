@@ -30,6 +30,7 @@
 - `src/boss_agent/`: Boss 直聘业务领域实现（Page Object 模型、多维检索工作流、会话持久化与职位解析器）。
 - `config/locators.yaml`: UI 控件定位器配置（支持本地覆盖与多策略自动解析）。
 - `scripts/bootstrap.py`: 幂等式自动化环境初始化工具（JDK、Android SDK、AVD 模拟器、Appium 服务及 APK 安装）。
+- `scripts/init_worktree.py`: Git Worktree 与本地共享配置初始化工具（自动同步 main 分支、创建隔离工作区并软链接共享配置）。
 - `scripts/update_demo_asset.py`: 演示视频资产一键同步工具（自动生成预览 GIF 并推送到独立的 `assets` 孤儿分支）。
 
 ---
