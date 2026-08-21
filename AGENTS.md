@@ -13,3 +13,8 @@ Canonical triage roles mapped to repo labels. See `docs/agents/triage-labels.md`
 ### Domain docs
 
 Single-context layout at repo root (`CONTEXT.md` + `docs/adr/`). See `docs/agents/domain.md`.
+
+### Demo and multimedia assets
+
+Zero git history bloat rule: NEVER commit binary media files (`.mp4`, `.mov`, `.gif`, etc.) directly into code branches. See `docs/agents/demo-assets.md`.
+
