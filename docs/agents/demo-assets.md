@@ -7,18 +7,35 @@ Guidelines and hard rules for handling demo videos, animations, and heavy multim
 **NEVER commit binary multimedia files directly into code branches or git history.**
 Committing `.mp4`, `.mov`, high-resolution `.png`, or large `.gif` files into feature branches or `main` bloats repository clone sizes and slows down workspace sync across agents and contributors.
 
-## Asset Storage & Hosting Options
+## Asset Storage & Hosting Standards
 
-All demo and preview media must use one of the following approaches:
+All demo and preview media must be hosted as **GitHub Attachments** (`user-attachments`), keeping the entire git repository and branch tree 100% free of binary media files:
 
-1. **Orphan `assets` Branch (Preferred for repo-hosted demo assets)**:
-   - Use `uv run python scripts/update_demo_asset.py /path/to/recording.mp4` to automatically generate optimized preview GIF / poster and force-push to the isolated `assets` branch (`origin/assets`).
-   - Reference via raw GitHub URL: `https://raw.githubusercontent.com/forchain/boss-agent-mobile/assets/demo-preview.gif` and blob link: `https://github.com/forchain/boss-agent-mobile/blob/assets/demo.mp4`.
-2. **GitHub Attachments / Releases (Alternative)**:
-   - Upload media as a GitHub Issue / PR attachment (drag & drop to obtain `https://github.com/user-attachments/assets/...`) or attach to a GitHub Release.
-   - Reference the external attachment URL in `README.md` or PR description.
+1. **CLI Upload via `gh-attach` (Recommended for Agents)**:
+   ```bash
+   # Upload video directly to GitHub user-attachments CDN
+   gh attach /path/to/demo.mp4 -R forchain/boss-agent-mobile
+   ```
+   This outputs a URL in the form `https://github.com/user-attachments/assets/<uuid>`.
+
+2. **Web UI Drag-and-Drop (Alternative for Humans)**:
+   - Drag and drop the MP4 video into an Issue/PR comment or description box on GitHub.
+   - Copy the generated `https://github.com/user-attachments/assets/<uuid>` link.
+
+3. **Markdown Presentation in `README.md`**:
+   - Embed the video using standard centered markdown:
+     ```markdown
+     <div align="center">
+
+     https://github.com/user-attachments/assets/<uuid>
+
+     *Demo: Boss 直聘 Android 移动端自动化求职交互全流程*
+
+     </div>
+     ```
+   - GitHub automatically parses and renders standalone `user-attachments` video links as native HTML5 video players in the README.
 
 ## Agent Checklist Before Committing
 
-- [ ] Check `git status` and `git diff --stat` to ensure NO binary files (`.mp4`, `.avi`, `.mov`, large `.png`, `.gif`) are staged in the working tree.
-- [ ] Ensure all media URLs in `README.md` point to external attachment URLs or `origin/assets` URLs.
+- [ ] Check `git status` and `git diff --stat` to ensure NO binary files (`.mp4`, `.mov`, `.png`, `.gif`, etc.) are added or modified in the working tree.
+- [ ] Ensure all demo media URLs in `README.md` use external `https://github.com/user-attachments/assets/...` links.

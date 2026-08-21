@@ -4,13 +4,13 @@
 >
 > 专为 Android 移动端打造的智能求职交互框架：基于真实移动设备/模拟器环境、拟人化贝塞尔手势（Bézier Gestures）轨迹与多维筛选流程，实现职位智能检索、HR 沟通与全自动求职流。
 
-<p align="center">
-  <a href="https://github.com/forchain/boss-agent-mobile/blob/assets/demo.mp4">
-    <img src="https://raw.githubusercontent.com/forchain/boss-agent-mobile/assets/demo-preview.gif" alt="Boss Agent Mobile Demo Preview" width="360" />
-  </a>
-  <br>
-  <sub>🎬 <b><a href="https://github.com/forchain/boss-agent-mobile/blob/assets/demo.mp4">▶️ 点击在 GitHub 播放完整高清演示视频 (52s MP4)</a></b></sub>
-</p>
+<div align="center">
+
+https://github.com/user-attachments/assets/ec8a2864-54fe-4e13-8f33-5ad4e7104f11
+
+*Demo: Boss 直聘 Android 移动端自动化求职交互全流程*
+
+</div>
 
 ---
 
@@ -20,7 +20,7 @@
 - **🎯 拟人化手势与防检测**：内置三次贝塞尔曲线手势引擎（Bézier Gesture Synthesis）与高斯随机停顿，完美模拟真人滑动与点击轨迹。
 - **🔍 多维多级筛选体系**：支持城市、职位关键词、薪资区间、学历要求以及多级行业分类（如互联网/金融/医疗）等精确筛选。
 - **🛡️ 弹窗与打扰拦截器**：通用弹窗自动拦截体系（自动处理青少年模式、系统升级、定位授权等各类偶发弹窗），保障无人值守持续运行。
-- **📦 零历史膨胀媒体管理**：演示视频与预览图独立托管于孤儿分支（`assets`），主仓库体积保持极致轻量、秒级克隆。
+- **📦 零历史膨胀媒体管理**：演示视频通过 GitHub 附件（`user-attachments`）独立托管，主仓库体积保持极致轻量、秒级克隆与同步。
 
 ---
 
@@ -31,7 +31,6 @@
 - `config/locators.yaml`: UI 控件定位器配置（支持本地覆盖与多策略自动解析）。
 - `scripts/bootstrap.py`: 幂等式自动化环境初始化工具（JDK、Android SDK、AVD 模拟器、Appium 服务及 APK 安装）。
 - `scripts/init_worktree.py`: Git Worktree 与本地共享配置初始化工具（自动同步 main 分支、创建隔离工作区并软链接共享配置）。
-- `scripts/update_demo_asset.py`: 演示视频资产一键同步工具（自动生成预览 GIF 并推送到独立的 `assets` 孤儿分支）。
 
 ---
 
@@ -62,13 +61,13 @@ uv run python scripts/run_live_test.py
 
 ## 🎬 演示视频更新说明 (Updating Demo Assets)
 
-为避免大体积多媒体文件在 Git 历史中不断累积，本项目将视频文件隔离在独立的 `assets` 孤儿分支中：
+为避免大体积多媒体文件在 Git 历史中不断累积，本项目将演示视频以 GitHub 附件形式托管：
 
 ```bash
-# 未来更新演示视频时，只需执行单条脚本：
-uv run python scripts/update_demo_asset.py /path/to/new_recording.mp4
+# 未来更新演示视频时，上传至 GitHub 附件并替换 README.md 中的 URL：
+gh attach /path/to/new_recording.mp4 -R forchain/boss-agent-mobile
 ```
-该脚本会自动标准化视频文件、使用 `ffmpeg` 重新生成优化后的预览 GIF 与 Poster，并以覆盖形式推送到 `origin/assets` 分支，无需在主分支保留历史记录。
+将命令输出的 `https://github.com/user-attachments/assets/<uuid>` 填入 `README.md` 即可，零 Git 仓库体积膨胀。
 
 ---
 
