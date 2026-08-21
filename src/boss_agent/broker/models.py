@@ -186,4 +186,3 @@ POCKETBASE_CANDIDATE_PROFILES_SCHEMA = {
         "CREATE UNIQUE INDEX idx_candidate_user_id ON candidate_profiles (user_id)",
     ],
 }
-

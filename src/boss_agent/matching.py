@@ -175,4 +175,3 @@ class JobMatchGreetingService:
                 expand=False,
             )
         )
-

@@ -152,7 +152,6 @@ def test_openai_client_response_format_fallback_on_400():
         assert "response_format" not in mock_post.call_args_list[1][1]["json"]
 
 
-
 def test_openai_client_auth_error():
     config = LLMConfig(api_key="invalid-key")
     client = OpenAIChatClient(config)

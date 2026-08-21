@@ -327,7 +327,11 @@ def main():
     cfg = load_runner_settings(args.config)
 
     # Resolve settings: CLI flags take precedence over configuration file values
-    search_id = args.search_id if args.search_id is not None else cfg.get("search_id", "default_agent_search")
+    search_id = (
+        args.search_id
+        if args.search_id is not None
+        else cfg.get("search_id", "default_agent_search")
+    )
     keyword = args.keyword if args.keyword is not None else cfg.get("keyword")
 
     enable_search = False if args.no_search else cfg.get("enable_search", True)
@@ -345,9 +349,7 @@ def main():
         if args.preview_timeout is not None
         else float(cfg.get("preview_timeout_sec", 3.0))
     )
-    enable_greeting = (
-        False if args.no_greeting else bool(cfg.get("enable_greeting", True))
-    )
+    enable_greeting = False if args.no_greeting else bool(cfg.get("enable_greeting", True))
 
     target_keyword = keyword if enable_search else None
     target_search_id = search_id if enable_search else None
@@ -376,8 +378,6 @@ def main():
         enable_greeting_draft=enable_greeting,
     )
     sys.exit(0 if success else 1)
-
-
 
 
 if __name__ == "__main__":

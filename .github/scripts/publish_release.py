@@ -75,7 +75,10 @@ def execute_release_plan(plan: dict[str, Any], dry_run: bool = False) -> None:
 
         # Create new tag pointing to old tag / release commit
         try:
-            run_cmd(["git", "tag", "-a", new_tag, old_tag, "-m", f"Bump patch to {new_tag}"], dry_run=dry_run)
+            run_cmd(
+                ["git", "tag", "-a", new_tag, old_tag, "-m", f"Bump patch to {new_tag}"],
+                dry_run=dry_run,
+            )
             run_cmd(["git", "push", "origin", new_tag], dry_run=dry_run)
         except subprocess.CalledProcessError as exc:
             print(f"Warning: Backfill tag creation/push error: {exc.stderr}", file=sys.stderr)
@@ -121,13 +124,18 @@ def execute_release_plan(plan: dict[str, Any], dry_run: bool = False) -> None:
                 print(f"[DRY-RUN] gh pr edit {higher_pr_id} --body <existing_body + backfill_note>")
             print(f"✓ Updated PR #{higher_pr_id} description with backfill reference")
         except subprocess.CalledProcessError as exc:
-            print(f"Warning: Updating PR #{higher_pr_id} description failed: {exc.stderr}", file=sys.stderr)
+            print(
+                f"Warning: Updating PR #{higher_pr_id} description failed: {exc.stderr}",
+                file=sys.stderr,
+            )
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Publish release based on calculated plan.")
     parser.add_argument("--plan", help="Path to plan JSON file", required=True)
-    parser.add_argument("--dry-run", action="store_true", help="Simulate without executing API calls")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Simulate without executing API calls"
+    )
     args = parser.parse_args()
 
     plan_path = Path(args.plan)

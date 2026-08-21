@@ -86,21 +86,9 @@ class LLMConfig:
         model = os.getenv("LLM_MODEL") or data.get("model") or "MiniMax-M3"
         provider = os.getenv("LLM_PROVIDER") or data.get("provider") or "openai"
 
-        temperature = float(
-            os.getenv("LLM_TEMPERATURE")
-            or data.get("temperature")
-            or 0.2
-        )
-        timeout_sec = float(
-            os.getenv("LLM_TIMEOUT_SEC")
-            or data.get("timeout_sec")
-            or 30.0
-        )
-        max_tokens = int(
-            os.getenv("LLM_MAX_TOKENS")
-            or data.get("max_tokens")
-            or 2048
-        )
+        temperature = float(os.getenv("LLM_TEMPERATURE") or data.get("temperature") or 0.2)
+        timeout_sec = float(os.getenv("LLM_TIMEOUT_SEC") or data.get("timeout_sec") or 30.0)
+        max_tokens = int(os.getenv("LLM_MAX_TOKENS") or data.get("max_tokens") or 2048)
 
         return cls(
             provider=provider,
@@ -201,7 +189,9 @@ class OpenAIChatClient(LLMDecisionClient):
                 pass
 
         if response.status_code in (401, 403):
-            raise LLMAuthError(f"LLM authentication failed ({response.status_code}): {response.text}")
+            raise LLMAuthError(
+                f"LLM authentication failed ({response.status_code}): {response.text}"
+            )
         if response.status_code != 200:
             raise LLMError(f"LLM API returned HTTP {response.status_code}: {response.text}")
 
@@ -264,8 +254,10 @@ class OpenAIChatClient(LLMDecisionClient):
             "- greeting_message: 适合发给招聘者的礼貌且突显匹配亮点的简短打招呼文案\n"
         )
         messages = [
-            {"role": "system", "content": "You are a professional HR and recruitment assistant. Output valid JSON only."},
+            {
+                "role": "system",
+                "content": "You are a professional HR and recruitment assistant. Output valid JSON only.",
+            },
             {"role": "user", "content": prompt},
         ]
         return self.chat_completion_json(messages)
-

@@ -27,7 +27,6 @@ from .pages import (
 console = Console()
 
 
-
 class TakeoverHandler:
     """Detects security challenges (captchas, SMS, login expired) and facilitates manual takeover."""
 
@@ -127,8 +126,9 @@ class SmokeHarness:
                     "[dim]No candidate resume or memory profile configured. Greeting draft will be skipped.[/dim]"
                 )
             except Exception as e:
-                console.print(f"[yellow]⚠️  Failed to pre-load candidate memory upfront: {e}[/yellow]")
-
+                console.print(
+                    f"[yellow]⚠️  Failed to pre-load candidate memory upfront: {e}[/yellow]"
+                )
 
         if saved_search:
             self.search_config = saved_search.search
@@ -259,7 +259,9 @@ class SmokeHarness:
                 self.matching_service.render_match_card(posting, match_result)
 
                 # Open chat dialog and type greeting
-                console.print("💬 [bold cyan]Opening chat dialog to type greeting draft...[/bold cyan]")
+                console.print(
+                    "💬 [bold cyan]Opening chat dialog to type greeting draft...[/bold cyan]"
+                )
                 if self.detail_page.open_chat(timeout_sec=5.0):
                     typed = self.chat_page.type_greeting_message(
                         match_result.greeting_message, timeout_sec=5.0
@@ -273,10 +275,11 @@ class SmokeHarness:
                     # Navigate back from chat dialog to job detail screen
                     self.chat_page.navigate_back()
             except Exception as e:
-                console.print(f"[yellow]⚠️  Matching/Greeting draft skipped due to error:[/yellow] {e}")
+                console.print(
+                    f"[yellow]⚠️  Matching/Greeting draft skipped due to error:[/yellow] {e}"
+                )
 
         # 9. Navigate back to job list
         self.detail_page.navigate_back()
 
         return posting
-

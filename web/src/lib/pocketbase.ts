@@ -1,15 +1,24 @@
 import PocketBase from 'pocketbase';
 import type { AutomationTask, CandidateProfile, LLMSettings } from './types';
 
-export const PB_URL = (typeof window !== 'undefined' && window.location.port === '5173')
-	? 'http://127.0.0.1:8090'
-	: 'http://127.0.0.1:8090';
+export function getPocketBaseUrl(): string {
+	if (typeof window !== 'undefined') {
+		const custom = (window as any).__POCKETBASE_URL__ || (import.meta as any).env?.VITE_POCKETBASE_URL;
+		if (custom) return custom;
+		const hostname = window.location.hostname || '127.0.0.1';
+		return `http://${hostname}:8090`;
+	}
+	const globalEnv = (globalThis as any).process?.env;
+	return globalEnv?.POCKETBASE_URL || globalEnv?.PUBLIC_POCKETBASE_URL || 'http://127.0.0.1:8090';
+}
+
+export const PB_URL = getPocketBaseUrl();
 
 export const pb = new PocketBase(PB_URL);
 
-export async function checkPocketBaseHealth(): Promise<boolean> {
+export async function checkPocketBaseHealth(url = PB_URL): Promise<boolean> {
 	try {
-		const res = await fetch(`${PB_URL}/api/health`, { method: 'GET', signal: AbortSignal.timeout(1500) });
+		const res = await fetch(`${url}/api/health`, { method: 'GET', signal: AbortSignal.timeout(1500) });
 		if (res.ok) {
 			const data = await res.json().catch(() => ({}));
 			return data.code === 200 || res.status === 200;

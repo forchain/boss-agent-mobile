@@ -102,4 +102,3 @@ async def test_takeover_pause_and_resume_end_to_end(broker):
     assert finished_task is not None
     assert finished_task.status == TaskStatus.SUCCESS
     assert any("resuming" in log.lower() for log in finished_task.logs)
-

@@ -697,5 +697,3 @@ class ChatPage(BaseBossPage):
             return True
         except Exception:
             return False
-
-

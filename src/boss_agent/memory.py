@@ -53,8 +53,7 @@ class StructuredCandidateProfile:
         skills_str = ", ".join(self.core_skills)
         targets_str = ", ".join(self.target_positions)
         projects_str = "\n".join(
-            f"- {p.get('name', '')}: {p.get('description', '')}"
-            for p in self.project_highlights
+            f"- {p.get('name', '')}: {p.get('description', '')}" for p in self.project_highlights
         )
 
         return (
@@ -107,7 +106,9 @@ class ResumeTextExtractor:
                     pages_text.append(extracted)
             return "\n\n".join(pages_text)
         except Exception as e:
-            console.print(f"[yellow]⚠️  pypdf extraction failed ({e}), falling back to text read[/yellow]")
+            console.print(
+                f"[yellow]⚠️  pypdf extraction failed ({e}), falling back to text read[/yellow]"
+            )
             return self._read_text_file(path)
 
     def _read_docx(self, path: Path) -> str:
@@ -123,7 +124,9 @@ class ResumeTextExtractor:
                         paragraphs.append(" | ".join(row_text))
             return "\n".join(paragraphs)
         except Exception as e:
-            console.print(f"[yellow]⚠️  python-docx extraction failed ({e}), falling back to text read[/yellow]")
+            console.print(
+                f"[yellow]⚠️  python-docx extraction failed ({e}), falling back to text read[/yellow]"
+            )
             return self._read_text_file(path)
 
 
@@ -145,9 +148,7 @@ class ResumeMemoryManager:
         self.candidate_config = self._load_candidate_config(candidate_config_path)
 
         configured_memory = (
-            memory_file_path
-            or self.candidate_config.get("memory_path")
-            or self.DEFAULT_MEMORY_PATH
+            memory_file_path or self.candidate_config.get("memory_path") or self.DEFAULT_MEMORY_PATH
         )
         self.memory_path = Path(configured_memory)
         self.configured_resume_path = self.candidate_config.get("resume_path")
@@ -194,7 +195,9 @@ class ResumeMemoryManager:
             data = json.loads(content)
             return StructuredCandidateProfile.from_dict(data)
         except Exception as e:
-            console.print(f"[yellow]⚠️  Failed to read cached memory from {self.memory_path}: {e}[/yellow]")
+            console.print(
+                f"[yellow]⚠️  Failed to read cached memory from {self.memory_path}: {e}[/yellow]"
+            )
             return None
 
     def generate_and_save_memory(self, resume_path: str | Path) -> StructuredCandidateProfile:
@@ -273,7 +276,9 @@ class ResumeMemoryManager:
         if default_resumes_dir.is_dir():
             candidates = list(default_resumes_dir.glob("*.*"))
             valid_candidates = [
-                c for c in candidates if c.suffix.lower() in [".pdf", ".docx", ".doc", ".txt", ".md"]
+                c
+                for c in candidates
+                if c.suffix.lower() in [".pdf", ".docx", ".doc", ".txt", ".md"]
             ]
             if valid_candidates:
                 return self.generate_and_save_memory(valid_candidates[0])
@@ -286,4 +291,3 @@ class ResumeMemoryManager:
             f"No candidate memory file found at '{self.memory_path}' and no resume file provided. "
             "Please provide a resume file in config/candidate.local.yaml or via --resume <path>."
         )
-

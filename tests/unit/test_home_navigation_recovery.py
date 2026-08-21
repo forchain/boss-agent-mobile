@@ -157,4 +157,3 @@ def test_chat_screen_does_not_collide_with_search_or_home():
     assert job_list_page.is_on_home_page() is False
     # Must NOT be identified as search page
     assert search_page.is_search_page() is False
-

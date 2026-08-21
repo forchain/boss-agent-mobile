@@ -112,4 +112,3 @@ def test_persistent_candidate_profile_context():
     assert "王五" in system_msg
     assert "8年" in system_msg
     assert "【打招呼破冰铁律与原则】" in system_msg
-

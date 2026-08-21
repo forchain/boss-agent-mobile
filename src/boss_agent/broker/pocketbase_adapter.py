@@ -7,6 +7,7 @@ PocketBase State Stream Broker Adapter and In-Memory Broker implementations.
 import asyncio
 import json
 import logging
+import os
 import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Callable
@@ -85,9 +86,7 @@ class BaseTaskBroker(ABC):
         pass
 
     @abstractmethod
-    async def get_candidate_profile(
-        self, user_id: str = "default"
-    ) -> dict[str, Any] | None:
+    async def get_candidate_profile(self, user_id: str = "default") -> dict[str, Any] | None:
         """Fetch candidate structured memory profile for a user."""
         pass
 
@@ -111,6 +110,7 @@ class InMemoryTaskBroker(BaseTaskBroker):
 
     def _load_local_profile(self) -> None:
         from pathlib import Path
+
         config_path = Path("config/candidate_memory.json")
         if config_path.exists():
             try:
@@ -119,9 +119,7 @@ class InMemoryTaskBroker(BaseTaskBroker):
             except Exception:
                 pass
 
-    async def get_candidate_profile(
-        self, user_id: str = "default"
-    ) -> dict[str, Any] | None:
+    async def get_candidate_profile(self, user_id: str = "default") -> dict[str, Any] | None:
         async with self._lock:
             prof = self._candidate_profiles.get(user_id)
             return dict(prof) if prof else None
@@ -133,6 +131,7 @@ class InMemoryTaskBroker(BaseTaskBroker):
             self._candidate_profiles[user_id] = dict(profile_data)
             try:
                 from pathlib import Path
+
                 Path("config").mkdir(parents=True, exist_ok=True)
                 Path("config/candidate_memory.json").write_text(
                     json.dumps(profile_data, ensure_ascii=False, indent=2),
@@ -141,7 +140,6 @@ class InMemoryTaskBroker(BaseTaskBroker):
             except Exception as e:
                 logger.warning("Failed to dual-sync candidate profile to local JSON: %s", e)
             return dict(profile_data)
-
 
     async def create_task(
         self, task_type: TaskType | str, payload: dict[str, Any] | None = None
@@ -302,14 +300,15 @@ class PocketBaseTaskBroker(BaseTaskBroker):
 
     def __init__(
         self,
-        base_url: str = "http://127.0.0.1:8090",
+        base_url: str | None = None,
         collection_name: str = "automation_tasks",
         auth_token: str | None = None,
         session: requests.Session | None = None,
     ) -> None:
-        self.base_url = base_url.rstrip("/")
+        raw_url = base_url or os.getenv("POCKETBASE_URL") or "http://127.0.0.1:8090"
+        self.base_url = raw_url.rstrip("/")
         self.collection_name = collection_name
-        self.auth_token = auth_token
+        self.auth_token = auth_token or os.getenv("POCKETBASE_AUTH_TOKEN")
         self.session = session or requests.Session()
         self._subscribers: list[Callable[[str, AutomationTask], Any]] = []
 
@@ -550,9 +549,7 @@ class PocketBaseTaskBroker(BaseTaskBroker):
     def _candidate_collection_url(self) -> str:
         return f"{self.base_url}/api/collections/candidate_profiles/records"
 
-    async def get_candidate_profile(
-        self, user_id: str = "default"
-    ) -> dict[str, Any] | None:
+    async def get_candidate_profile(self, user_id: str = "default") -> dict[str, Any] | None:
         url = self._candidate_collection_url()
         loop = asyncio.get_running_loop()
         try:
@@ -577,6 +574,7 @@ class PocketBaseTaskBroker(BaseTaskBroker):
 
     def _fallback_local_profile(self) -> dict[str, Any] | None:
         from pathlib import Path
+
         config_path = Path("config/candidate_memory.json")
         if config_path.exists():
             try:
@@ -593,6 +591,7 @@ class PocketBaseTaskBroker(BaseTaskBroker):
         # Dual-sync local file first
         try:
             from pathlib import Path
+
             Path("config").mkdir(parents=True, exist_ok=True)
             Path("config/candidate_memory.json").write_text(
                 json.dumps(profile_data, ensure_ascii=False, indent=2),
@@ -630,4 +629,3 @@ class PocketBaseTaskBroker(BaseTaskBroker):
             logger.warning("PocketBase save_candidate_profile failed: %s", e)
 
         return profile_data
-

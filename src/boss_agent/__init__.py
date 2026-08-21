@@ -58,5 +58,3 @@ __all__ = [
     "TakeoverHandler",
     "get_global_search_registry",
 ]
-
-

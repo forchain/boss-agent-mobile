@@ -42,14 +42,16 @@ class AutoApplyHandler(BaseTaskHandler):
         profile_data = payload.get("candidate_profile")
         if not profile_data:
             profile_data = await broker.get_candidate_profile(user_id="default")
-        
+
         profile = (
             StructuredCandidateProfile.from_dict(profile_data)
             if profile_data
             else StructuredCandidateProfile()
         )
 
-        mode_desc = "Auto-Send" if (auto_send and not preview_only) else "Preview Draft Only (Safe Mode)"
+        mode_desc = (
+            "Auto-Send" if (auto_send and not preview_only) else "Preview Draft Only (Safe Mode)"
+        )
         await broker.append_log(
             task.id,
             f"Starting AUTO_APPLY (candidate='{profile.name}', keyword='{keyword}', "
@@ -88,7 +90,11 @@ class AutoApplyHandler(BaseTaskHandler):
         )
         match_result = matching_svc.evaluate_and_draft_greeting(job=job_posting, profile=profile)
 
-        req_summary = "; ".join(match_result.jd_key_requirements) if match_result.jd_key_requirements else "无"
+        req_summary = (
+            "; ".join(match_result.jd_key_requirements)
+            if match_result.jd_key_requirements
+            else "无"
+        )
         await broker.append_log(
             task.id,
             f"Evaluated '{job_posting.title}' @ '{job_posting.company_name}': "
@@ -96,7 +102,7 @@ class AutoApplyHandler(BaseTaskHandler):
         )
         await broker.append_log(
             task.id,
-            f"Tailored Greeting Draft: \"{match_result.greeting_message}\"",
+            f'Tailored Greeting Draft: "{match_result.greeting_message}"',
         )
 
         # 6. Branch Execution: Preview vs Auto-Send
@@ -143,4 +149,3 @@ class AutoApplyHandler(BaseTaskHandler):
                 },
             },
         )
-

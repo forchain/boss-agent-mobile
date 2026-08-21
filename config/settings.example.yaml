@@ -11,6 +11,7 @@
 # Device UDID and Appium Server URL
 device: "emulator-5554"
 server_url: "http://127.0.0.1:4723"
+pocketbase_url: "http://127.0.0.1:8090" # PocketBase State Stream URL (env: POCKETBASE_URL)
 
 # Search & Filter Settings
 search_id: "default_agent_search"   # Preset ID from config/searches.yaml

@@ -206,5 +206,6 @@ async def test_auto_apply_handler_auto_send_mode(broker, mock_driver):
     finished_task = await broker.get_task(task.id)
     assert finished_task is not None
     assert finished_task.status == TaskStatus.SUCCESS
-    assert any("auto_send" in log.lower() or "dispatched" in log.lower() for log in finished_task.logs)
-
+    assert any(
+        "auto_send" in log.lower() or "dispatched" in log.lower() for log in finished_task.logs
+    )

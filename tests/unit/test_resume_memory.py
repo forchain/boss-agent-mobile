@@ -20,9 +20,7 @@ def test_structured_candidate_profile_serialization():
         years_of_experience=8,
         education=[{"school": "清华大学", "degree": "硕士", "major": "计算机"}],
         core_skills=["Python", "Android", "LLM Agent", "Appium"],
-        project_highlights=[
-            {"name": "自动化 Agent", "description": "构建高可用移动端自动化架构"}
-        ],
+        project_highlights=[{"name": "自动化 Agent", "description": "构建高可用移动端自动化架构"}],
         target_positions=["AI Agent 专家", "高级 Python 架构师"],
         raw_summary="8年架构经验，主导移动端与大模型结合项目。",
     )
@@ -143,4 +141,3 @@ memory_path: "{memory_file}"
     assert profile.name == "孙七"
     assert profile.years_of_experience == 5
     assert memory_file.is_file()
-
