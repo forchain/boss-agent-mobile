@@ -7,6 +7,7 @@ and shared config symlink manager.
 
 from unittest.mock import MagicMock, patch
 
+import pytest
 from scripts.init_worktree import (
     ConfigSymlinkManager,
     GitWorktreeManager,
@@ -62,8 +63,8 @@ def test_worktree_manager_get_default_workspaces_dir(tmp_path):
     assert resolved_ws == ws_dir.resolve()
 
 
-def test_worktree_manager_sync_main(tmp_path):
-    """Test fetch and update main branch."""
+def test_worktree_manager_sync_main_fast_forward(tmp_path):
+    """Test fetch and update main branch with fast forward."""
     manager = GitWorktreeManager(cwd=str(tmp_path))
     with patch.object(manager, "_run_git") as mock_git:
         def mock_git_side_effect(args, **kwargs):
@@ -73,6 +74,8 @@ def test_worktree_manager_sync_main(tmp_path):
                 return MagicMock(returncode=0, stdout="Fetched", stderr="")
             if "rev-parse" in args and "refs/remotes/origin/main" in args:
                 return MagicMock(returncode=0, stdout="sha_remote_main\n", stderr="")
+            if "merge-base" in args:
+                return MagicMock(returncode=0, stdout="is ancestor", stderr="")
             if "update-ref" in args:
                 return MagicMock(returncode=0, stdout="", stderr="")
             if "rev-parse" in args and "refs/heads/main" in args:
@@ -165,6 +168,47 @@ def test_worktree_manager_update_existing_worktree(tmp_path):
         assert res["rebased"] is True
 
 
+def test_worktree_manager_rebase_conflict_abort(tmp_path):
+    """Test rebase conflict triggers abort and raises RuntimeError."""
+    target = tmp_path / "existing_wt"
+    target.mkdir()
+    (target / ".git").write_text("gitdir: ...")
+
+    manager = GitWorktreeManager(cwd=str(tmp_path))
+    with patch.object(manager, "_run_git") as mock_git:
+        def mock_git_side_effect(args, **kwargs):
+            if "rebase" in args and "--abort" not in args:
+                return MagicMock(returncode=1, stdout="", stderr="CONFLICT (content): Merge conflict")
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        mock_git.side_effect = mock_git_side_effect
+        with pytest.raises(RuntimeError, match="failed with conflicts"):
+            manager.create_or_update_worktree(
+                target_path=target,
+                branch_name="feat/conflict",
+                base_ref="main",
+                rebase=True,
+                dry_run=False,
+            )
+
+
+def test_worktree_manager_non_worktree_collision(tmp_path):
+    """Test non-worktree non-empty directory raises RuntimeError."""
+    target = tmp_path / "non_wt_dir"
+    target.mkdir()
+    (target / "some_random_file.txt").write_text("hello")
+
+    manager = GitWorktreeManager(cwd=str(tmp_path))
+    with pytest.raises(RuntimeError, match="is not a valid git worktree"):
+        manager.create_or_update_worktree(
+            target_path=target,
+            branch_name="feat/test",
+            base_ref="main",
+            rebase=False,
+            dry_run=False,
+        )
+
+
 def test_config_symlink_manager_discovery(tmp_path):
     """Test discovery of non-git-tracked local configs."""
     main_repo = tmp_path / "main_repo"
@@ -200,7 +244,7 @@ def test_config_symlink_manager_discovery(tmp_path):
 
 
 def test_config_symlink_manager_linking_and_idempotency(tmp_path):
-    """Test symlink creation, idempotency, and broken symlink recovery."""
+    """Test symlink creation, idempotency, broken symlink recovery, and skipped files."""
     main_repo = tmp_path / "main_repo"
     src_config = main_repo / "config"
     src_config.mkdir(parents=True)
@@ -235,6 +279,13 @@ def test_config_symlink_manager_linking_and_idempotency(tmp_path):
         assert len(links3) == 1
         assert links3[0].status == "relinked"
         assert link_target.read_text() == "name: Tony"
+
+        # 4. Fourth run: regular file skipped
+        link_target.unlink()
+        link_target.write_text("custom user copy")
+        links4 = manager.link_shared_configs(target_worktree=target_wt)
+        assert len(links4) == 1
+        assert links4[0].status == "skipped"
 
 
 def test_init_worktree_e2e_dry_run(tmp_path):

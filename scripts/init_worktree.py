@@ -14,7 +14,7 @@ Features:
 
 Usage:
   python3 scripts/init_worktree.py <name> [--branch <branch>] [--path <custom_path>]
-  python3 scripts/init_worktree.py <name> --rebase
+  python3 scripts/init_worktree.py <name> --no-rebase
   python3 scripts/init_worktree.py <name> --json
   python3 scripts/init_worktree.py <name> --dry-run
 """
@@ -107,7 +107,6 @@ class GitWorktreeManager:
 
         # 2. Check if current worktree is inside an existing workspaces tree (e.g. /workspaces/boss-agent-mobile/<wt>)
         if "workspaces" in self.cwd.parts:
-            # Climb up to the workspaces/<repo_name> level
             parts = list(self.cwd.parts)
             ws_idx = parts.index("workspaces")
             if ws_idx + 1 < len(parts):
@@ -123,7 +122,7 @@ class GitWorktreeManager:
         return sibling_ws.resolve()
 
     def sync_main_branch(self, remote: str = "origin", fetch: bool = True) -> str | None:
-        """Fetch remote main and fast-forward local main branch."""
+        """Fetch remote main and fast-forward local main branch safely."""
         if not fetch:
             rev_res = self._run_git(["rev-parse", "refs/heads/main"])
             return rev_res.stdout.strip() if rev_res.returncode == 0 else None
@@ -140,13 +139,23 @@ class GitWorktreeManager:
         if fetch_res.returncode != 0:
             pass  # Proceed with local main if fetch fails / offline
 
-        # 2. Update local main ref safely
+        # 2. Update local main ref safely (fast-forward only check)
         remote_ref_res = self._run_git(["rev-parse", f"refs/remotes/{remote}/main"])
         if remote_ref_res.returncode == 0 and remote_ref_res.stdout.strip():
             target_sha = remote_ref_res.stdout.strip()
-            # Try to update local refs/heads/main to remote SHA
-            self._run_git(["update-ref", "refs/heads/main", target_sha])
-            return target_sha
+            local_ref_res = self._run_git(["rev-parse", "--verify", "refs/heads/main"])
+            if local_ref_res.returncode == 0:
+                ff_check = self._run_git(
+                    ["merge-base", "--is-ancestor", "refs/heads/main", target_sha]
+                )
+                if ff_check.returncode == 0:
+                    self._run_git(["update-ref", "refs/heads/main", target_sha])
+                    return target_sha
+                else:
+                    return local_ref_res.stdout.strip()
+            else:
+                self._run_git(["update-ref", "refs/heads/main", target_sha])
+                return target_sha
 
         local_ref_res = self._run_git(["rev-parse", "refs/heads/main"])
         return local_ref_res.stdout.strip() if local_ref_res.returncode == 0 else None
@@ -163,19 +172,36 @@ class GitWorktreeManager:
         target_path = target_path.resolve()
 
         if target_path.exists():
-            # Existing path
             is_wt = (target_path / ".git").exists()
-            rebased = False
-            if is_wt and rebase and not dry_run:
-                rebase_res = self._run_git(["rebase", base_ref], cwd=target_path)
-                rebased = rebase_res.returncode == 0
-            return {
-                "created": False,
-                "updated": True,
-                "path": str(target_path),
-                "branch": branch_name,
-                "rebased": rebased,
-            }
+            if not is_wt:
+                try:
+                    is_empty = not any(target_path.iterdir())
+                except Exception:
+                    is_empty = False
+                if not is_empty:
+                    raise RuntimeError(
+                        f"Target path '{target_path}' exists and is not a valid git worktree."
+                    )
+                if not dry_run:
+                    target_path.rmdir()
+            else:
+                # Valid existing worktree
+                rebased = False
+                if rebase and not dry_run:
+                    rebase_res = self._run_git(["rebase", base_ref], cwd=target_path)
+                    if rebase_res.returncode != 0:
+                        self._run_git(["rebase", "--abort"], cwd=target_path)
+                        raise RuntimeError(
+                            f"Rebase on '{base_ref}' failed with conflicts: {rebase_res.stderr or rebase_res.stdout}"
+                        )
+                    rebased = True
+                return {
+                    "created": False,
+                    "updated": True,
+                    "path": str(target_path),
+                    "branch": branch_name,
+                    "rebased": rebased,
+                }
 
         if dry_run:
             return {
@@ -199,7 +225,12 @@ class GitWorktreeManager:
             rebased = False
             if rebase:
                 rebase_res = self._run_git(["rebase", base_ref], cwd=target_path)
-                rebased = rebase_res.returncode == 0
+                if rebase_res.returncode != 0:
+                    self._run_git(["rebase", "--abort"], cwd=target_path)
+                    raise RuntimeError(
+                        f"Rebase on '{base_ref}' failed with conflicts: {rebase_res.stderr or rebase_res.stdout}"
+                    )
+                rebased = True
             return {
                 "created": True,
                 "updated": False,
@@ -310,7 +341,6 @@ class ConfigSymlinkManager:
                 rel_symlink_src = str(src_file)
 
             if target_file.is_symlink():
-                # Check if it points to the correct location
                 current_target = target_file.resolve()
                 if current_target == src_file.resolve():
                     results.append(
@@ -455,7 +485,9 @@ def print_rich_report(result: WorktreeInitResult, dry_run: bool = False) -> None
         print(f"Symlinks: {len(result.symlinks)} configured")
         return
 
-    status_str = "[bold yellow]DRY-RUN[/bold yellow]" if dry_run else "[bold green]READY[/bold green]"
+    status_str = (
+        "[bold yellow]DRY-RUN[/bold yellow]" if dry_run else "[bold green]READY[/bold green]"
+    )
     title = f"🚀 Worktree Provisioner: {result.name} ({status_str})"
 
     info_table = Table(show_header=False, box=None)
@@ -502,13 +534,22 @@ def main() -> None:
         "--workspaces-dir", help="Custom parent workspaces directory", default=None
     )
     parser.add_argument(
-        "--no-fetch", action="store_true", help="Skip fetching origin/main from remote"
+        "--fetch",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Fetch origin/main from remote (default: True)",
     )
     parser.add_argument(
-        "--no-rebase", action="store_true", help="Skip rebasing worktree onto latest main"
+        "--rebase",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Rebase worktree branch onto latest main (default: True)",
     )
     parser.add_argument(
-        "--no-link", action="store_true", help="Skip creating shared config symlinks"
+        "--link-config",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Create shared config symlinks (default: True)",
     )
     parser.add_argument("--dry-run", action="store_true", help="Simulate without making changes")
     parser.add_argument("--json", action="store_true", help="Output results in JSON format")
@@ -520,9 +561,9 @@ def main() -> None:
         branch=args.branch,
         workspaces_dir=args.workspaces_dir,
         custom_path=args.path,
-        fetch=not args.no_fetch,
-        rebase=not args.no_rebase,
-        link_config=not args.no_link,
+        fetch=args.fetch,
+        rebase=args.rebase,
+        link_config=args.link_config,
         dry_run=args.dry_run,
     )
 
