@@ -63,6 +63,15 @@ def test_worktree_manager_get_default_workspaces_dir(tmp_path):
     assert resolved_ws == ws_dir.resolve()
 
 
+def test_worktree_manager_get_current_branch(tmp_path):
+    """Test getting current branch name."""
+    manager = GitWorktreeManager(cwd=str(tmp_path))
+    with patch.object(manager, "_run_git") as mock_git:
+        mock_git.return_value = MagicMock(returncode=0, stdout="feat/my-feature\n", stderr="")
+        branch = manager.get_current_branch()
+        assert branch == "feat/my-feature"
+
+
 def test_worktree_manager_sync_main_fast_forward(tmp_path):
     """Test fetch and update main branch with fast forward."""
     manager = GitWorktreeManager(cwd=str(tmp_path))
@@ -155,7 +164,14 @@ def test_worktree_manager_update_existing_worktree(tmp_path):
 
     manager = GitWorktreeManager(cwd=str(tmp_path))
     with patch.object(manager, "_run_git") as mock_git:
-        mock_git.return_value = MagicMock(returncode=0, stdout="Rebased", stderr="")
+        def mock_git_side_effect(args, **kwargs):
+            if "branch" in args and "--show-current" in args:
+                return MagicMock(returncode=0, stdout="feat/existing\n", stderr="")
+            if "rebase" in args:
+                return MagicMock(returncode=0, stdout="Rebased", stderr="")
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        mock_git.side_effect = mock_git_side_effect
         res = manager.create_or_update_worktree(
             target_path=target,
             branch_name="feat/existing",
@@ -177,6 +193,8 @@ def test_worktree_manager_rebase_conflict_abort(tmp_path):
     manager = GitWorktreeManager(cwd=str(tmp_path))
     with patch.object(manager, "_run_git") as mock_git:
         def mock_git_side_effect(args, **kwargs):
+            if "branch" in args and "--show-current" in args:
+                return MagicMock(returncode=0, stdout="feat/conflict\n", stderr="")
             if "rebase" in args and "--abort" not in args:
                 return MagicMock(returncode=1, stdout="", stderr="CONFLICT (content): Merge conflict")
             return MagicMock(returncode=0, stdout="", stderr="")
@@ -286,6 +304,42 @@ def test_config_symlink_manager_linking_and_idempotency(tmp_path):
         links4 = manager.link_shared_configs(target_worktree=target_wt)
         assert len(links4) == 1
         assert links4[0].status == "skipped"
+
+
+def test_init_worktree_default_current_worktree(tmp_path):
+    """Test init_worktree with name=None (defaults to current directory)."""
+    current_wt = tmp_path / "my_current_wt"
+    current_wt.mkdir()
+    (current_wt / ".git").write_text("gitdir: ...")
+    (current_wt / "config").mkdir()
+
+    main_repo = tmp_path / "main_repo"
+    main_repo.mkdir()
+    (main_repo / ".git").mkdir()
+    (main_repo / "config").mkdir()
+    (main_repo / "config" / "settings.local.yaml").write_text("k: v")
+
+    with (
+        patch("scripts.init_worktree.GitWorktreeManager.get_main_repo_root", return_value=main_repo),
+        patch("scripts.init_worktree.GitWorktreeManager.get_current_branch", return_value="feat/current"),
+        patch("scripts.init_worktree.GitWorktreeManager.sync_main_branch", return_value="main_commit_123"),
+        patch("scripts.init_worktree.GitWorktreeManager._run_git") as mock_git,
+    ):
+        mock_git.return_value = MagicMock(returncode=0, stdout="Rebased\n", stderr="")
+
+        result = init_worktree(
+            name=None,
+            cwd=current_wt,
+            dry_run=False,
+        )
+
+        assert isinstance(result, WorktreeInitResult)
+        assert result.success is True
+        assert result.worktree_path == str(current_wt.resolve())
+        assert result.branch == "feat/current"
+        assert result.rebased is True
+        assert len(result.symlinks) == 1
+        assert (current_wt / "config" / "settings.local.yaml").is_symlink()
 
 
 def test_init_worktree_e2e_dry_run(tmp_path):

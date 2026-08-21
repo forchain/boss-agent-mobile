@@ -2,21 +2,23 @@
 """
 scripts/init_worktree.py
 ========================
-Automated Git Worktree Initializer for Boss Agent Mobile.
+Automated Git Worktree Initializer & Synchronizer for Boss Agent Mobile.
 
 Features:
-1. Locates the main repository root across worktrees and clones.
-2. Synchronizes local `main` branch with `origin/main` before creation.
-3. Creates a new isolated worktree on the latest `main` (or rebases existing).
-4. Automatically discovers and symlinks untracked shared local configs (`*.local.*`, `.env`, memory files)
-   into the new worktree's `config/` directory without clobbering git-tracked assets.
-5. Ergonomic CLI interface for humans (Rich output) and AFK Agents (`--json` output).
+1. Operates on the current worktree by default (no required arguments), or a named worktree.
+2. Locates the primary repository root across worktrees and clones.
+3. Synchronizes local `main` branch with `origin/main` before creation/rebase.
+4. Rebases current (or target) worktree branch onto the latest `main`.
+5. Automatically discovers and symlinks untracked shared local configs (`*.local.*`, `.env`, memory files)
+   into the worktree's `config/` directory without clobbering git-tracked assets.
+6. Ergonomic CLI interface for humans (Rich output) and AFK Agents (`--json` output).
 
 Usage:
-  python3 scripts/init_worktree.py <name> [--branch <branch>] [--path <custom_path>]
-  python3 scripts/init_worktree.py <name> --no-rebase
-  python3 scripts/init_worktree.py <name> --json
-  python3 scripts/init_worktree.py <name> --dry-run
+  python3 scripts/init_worktree.py                        # Sync & rebase current worktree
+  python3 scripts/init_worktree.py [name] [--branch <b>]  # Initialize/sync named worktree
+  python3 scripts/init_worktree.py --no-rebase
+  python3 scripts/init_worktree.py --json
+  python3 scripts/init_worktree.py --dry-run
 """
 
 import argparse
@@ -80,6 +82,16 @@ class GitWorktreeManager:
             text=True,
             check=False,
         )
+
+    def get_current_branch(self, cwd: Path | None = None) -> str:
+        """Get the name of the currently checked out branch."""
+        res = self._run_git(["branch", "--show-current"], cwd=cwd)
+        if res.returncode == 0 and res.stdout.strip():
+            return res.stdout.strip()
+        res = self._run_git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=cwd)
+        if res.returncode == 0 and res.stdout.strip():
+            return res.stdout.strip()
+        return "HEAD"
 
     def get_main_repo_root(self) -> Path:
         """Find the root directory of the primary repository."""
@@ -168,7 +180,7 @@ class GitWorktreeManager:
         rebase: bool = False,
         dry_run: bool = False,
     ) -> dict[str, Any]:
-        """Create a new worktree or update an existing one."""
+        """Create a new worktree or update/rebase an existing one."""
         target_path = target_path.resolve()
 
         if target_path.exists():
@@ -187,7 +199,10 @@ class GitWorktreeManager:
             else:
                 # Valid existing worktree
                 rebased = False
-                if rebase and not dry_run:
+                current_br = self.get_current_branch(cwd=target_path)
+                target_branch = branch_name or current_br
+
+                if rebase and not dry_run and target_branch != base_ref and target_branch != "main":
                     rebase_res = self._run_git(["rebase", base_ref], cwd=target_path)
                     if rebase_res.returncode != 0:
                         self._run_git(["rebase", "--abort"], cwd=target_path)
@@ -199,7 +214,7 @@ class GitWorktreeManager:
                     "created": False,
                     "updated": True,
                     "path": str(target_path),
-                    "branch": branch_name,
+                    "branch": target_branch,
                     "rebased": rebased,
                 }
 
@@ -223,7 +238,7 @@ class GitWorktreeManager:
             if add_res.returncode != 0:
                 raise RuntimeError(f"Failed to add worktree: {add_res.stderr or add_res.stdout}")
             rebased = False
-            if rebase:
+            if rebase and branch_name != base_ref and branch_name != "main":
                 rebase_res = self._run_git(["rebase", base_ref], cwd=target_path)
                 if rebase_res.returncode != 0:
                     self._run_git(["rebase", "--abort"], cwd=target_path)
@@ -402,7 +417,7 @@ class ConfigSymlinkManager:
 
 
 def init_worktree(
-    name: str,
+    name: str | None = None,
     branch: str | None = None,
     workspaces_dir: str | Path | None = None,
     custom_path: str | Path | None = None,
@@ -413,23 +428,39 @@ def init_worktree(
     cwd: str | Path | None = None,
     dry_run: bool = False,
 ) -> WorktreeInitResult:
-    """Master orchestrator for initializing a synchronized worktree with shared configs."""
+    """Master orchestrator for initializing/synchronizing a worktree with latest main and shared configs."""
     manager = GitWorktreeManager(cwd=cwd)
     main_repo_root = manager.get_main_repo_root()
 
-    # 1. Resolve target path
+    # 1. Resolve target path and workspace name
     if custom_path:
         target_path = Path(custom_path).resolve()
+        ws_name = name or target_path.name
+    elif name:
+        candidate_path = Path(name)
+        if candidate_path.is_absolute() or candidate_path.exists():
+            target_path = candidate_path.resolve()
+            ws_name = target_path.name
+        else:
+            ws_root = (
+                Path(workspaces_dir).resolve()
+                if workspaces_dir
+                else manager.get_default_workspaces_dir(main_repo_root)
+            )
+            target_path = ws_root / name
+            ws_name = name
     else:
-        ws_root = (
-            Path(workspaces_dir).resolve()
-            if workspaces_dir
-            else manager.get_default_workspaces_dir(main_repo_root)
-        )
-        target_path = ws_root / name
+        # Default: initialize / synchronize the CURRENT worktree directory
+        target_path = manager.cwd
+        ws_name = target_path.name
 
     # 2. Resolve branch name
-    branch_name = branch or f"feat/{name}"
+    if branch:
+        branch_name = branch
+    elif target_path == manager.cwd:
+        branch_name = manager.get_current_branch(cwd=target_path)
+    else:
+        branch_name = f"feat/{ws_name}"
 
     # 3. Synchronize main branch
     main_commit = manager.sync_main_branch(remote=remote, fetch=fetch)
@@ -446,11 +477,11 @@ def init_worktree(
     except Exception as e:
         return WorktreeInitResult(
             success=False,
-            name=name,
+            name=ws_name,
             worktree_path=str(target_path),
             branch=branch_name,
             main_commit=main_commit,
-            message=f"Worktree creation failed: {e}",
+            message=f"Worktree synchronization failed: {e}",
         )
 
     # 5. Link shared configs
@@ -464,31 +495,32 @@ def init_worktree(
 
     return WorktreeInitResult(
         success=True,
-        name=name,
+        name=ws_name,
         worktree_path=str(target_path),
         branch=branch_name,
         main_commit=main_commit,
         created=wt_info.get("created", False),
         rebased=wt_info.get("rebased", False),
         symlinks=symlinks_data,
-        message="Worktree initialized and configs linked successfully.",
+        message="Worktree synchronized and configs linked successfully.",
     )
 
 
 def print_rich_report(result: WorktreeInitResult, dry_run: bool = False) -> None:
     """Render a human-friendly Rich report to terminal."""
     if not HAS_RICH or console is None:
-        print(f"=== Worktree Initialized: {result.name} ===")
+        print(f"=== Worktree Synchronized: {result.name} ===")
         print(f"Path: {result.worktree_path}")
         print(f"Branch: {result.branch}")
         print(f"Main Commit: {result.main_commit}")
+        print(f"Rebased: {'Yes' if result.rebased else 'No'}")
         print(f"Symlinks: {len(result.symlinks)} configured")
         return
 
     status_str = (
         "[bold yellow]DRY-RUN[/bold yellow]" if dry_run else "[bold green]READY[/bold green]"
     )
-    title = f"🚀 Worktree Provisioner: {result.name} ({status_str})"
+    title = f"🚀 Worktree Initializer: {result.name} ({status_str})"
 
     info_table = Table(show_header=False, box=None)
     info_table.add_column("Key", style="bold cyan")
@@ -523,11 +555,16 @@ def print_rich_report(result: WorktreeInitResult, dry_run: bool = False) -> None
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Initialize a new git worktree synchronized with main and shared local configs."
+        description="Initialize and synchronize current (or named) git worktree with main and shared local configs."
     )
-    parser.add_argument("name", help="Name of the worktree / workspace folder")
     parser.add_argument(
-        "--branch", "-b", help="Git branch name (defaults to feat/<name>)", default=None
+        "name",
+        nargs="?",
+        default=None,
+        help="Optional name/path of the worktree (defaults to current worktree directory)",
+    )
+    parser.add_argument(
+        "--branch", "-b", help="Git branch name (defaults to current branch)", default=None
     )
     parser.add_argument("--path", "-p", help="Custom worktree destination directory", default=None)
     parser.add_argument(

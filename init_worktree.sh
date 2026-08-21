@@ -2,14 +2,14 @@
 # ==============================================================================
 # Boss Agent Mobile - Worktree Initializer Launcher
 # ==============================================================================
-# Convenient root entrypoint to initialize synchronized git worktrees with
-# automated main sync, rebasing, and shared local configuration symlinks.
+# Convenient root entrypoint to initialize/synchronize git worktrees with
+# automated main sync, rebasing onto latest main, and shared config symlinks.
 #
 # Usage:
-#   ./init_worktree.sh <name> [--branch <branch>] [--path <custom_path>]
-#   ./init_worktree.sh <name> --no-rebase
-#   ./init_worktree.sh <name> --json
-#   ./init_worktree.sh <name> --dry-run
+#   ./init_worktree.sh                     # Sync current worktree & rebase on main
+#   ./init_worktree.sh <name>              # Initialize/sync named worktree
+#   ./init_worktree.sh --dry-run           # Simulate without modifying files
+#   ./init_worktree.sh --json              # Output structured JSON for agents
 # ==============================================================================
 
 set -euo pipefail
