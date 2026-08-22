@@ -15,6 +15,8 @@ set -uo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${ROOT_DIR}"
 
+mkdir -p ".boss_agent"
+
 # ANSI Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -61,7 +63,12 @@ POCKETBASE_URL="${POCKETBASE_URL:-http://127.0.0.1:8090}"
 HEALTH_URL="${POCKETBASE_URL%/}/api/health"
 
 if curl -s -f "${HEALTH_URL}" >/dev/null 2>&1; then
-    log_pass "PocketBase 服务在线 (${POCKETBASE_URL})"
+    PB_PID="$(cat .boss_agent/pocketbase.pid 2>/dev/null || lsof -ti :8090 2>/dev/null | head -n 1 || echo '')"
+    if [[ -n "${PB_PID}" ]]; then
+        log_pass "PocketBase 服务在线 (${POCKETBASE_URL}, PID: ${PB_PID}, 日志: .boss_agent/pocketbase.log)"
+    else
+        log_pass "PocketBase 服务在线 (${POCKETBASE_URL})"
+    fi
 
     # Check collections
     if curl -s -f "${POCKETBASE_URL%/}/api/collections/automation_tasks/records?perPage=1" >/dev/null 2>&1; then
@@ -101,7 +108,8 @@ else
 fi
 
 if curl -s -f "http://127.0.0.1:5173" >/dev/null 2>&1; then
-    log_pass "SvelteKit Web 服务正在运行 (http://127.0.0.1:5173)"
+    WEB_PID="$(cat .boss_agent/web.pid 2>/dev/null || lsof -ti :5173 2>/dev/null | head -n 1 || echo '')"
+    log_pass "SvelteKit Web 服务正在运行 (http://127.0.0.1:5173${WEB_PID:+, PID: ${WEB_PID}}, 日志: .boss_agent/web.log)"
 else
     log_warn "SvelteKit Web 服务尚未启动" "运行: ./web.sh"
 fi
@@ -125,7 +133,7 @@ fi
 
 if pgrep -f "scripts/worker.py" >/dev/null 2>&1; then
     WORKER_PID="$(pgrep -f "scripts/worker.py" | head -n 1)"
-    log_pass "Python Worker 守护进程正在运行 (PID: ${WORKER_PID})"
+    log_pass "Python Worker 守护进程正在运行 (PID: ${WORKER_PID}, 日志: .boss_agent/worker.log)"
 else
     log_warn "Python Worker 守护进程尚未启动" "运行: ./run.sh (监听并消费 PocketBase 自动化任务)"
 fi
@@ -137,7 +145,6 @@ echo ""
 # ------------------------------------------------------------------------------
 echo -e "${BOLD}${BLUE}[4/5] Appium 服务与专用 Android AVD 模拟器${NC}"
 
-# Resolve target AVD name
 TARGET_AVD="${ANDROID_AVD:-${AVD_NAME:-}}"
 if [[ -z "${TARGET_AVD}" && -f "config/settings.local.yaml" ]]; then
     TARGET_AVD="$(grep -E "^[[:space:]]*avd_name:" config/settings.local.yaml 2>/dev/null | awk '{print $2}' | tr -d '"' | tr -d "'" || true)"
@@ -145,7 +152,6 @@ fi
 TARGET_AVD="${TARGET_AVD:-boss_avd_arm64}"
 
 if command -v adb >/dev/null 2>&1; then
-    # Find serial matching TARGET_AVD
     RUNNING_AVD_SERIAL=""
     DEV_LIST="$(adb devices 2>/dev/null | grep -E "emulator-[0-9]+" | awk '{print $1}' || true)"
     for dev in ${DEV_LIST}; do
@@ -159,7 +165,7 @@ if command -v adb >/dev/null 2>&1; then
     if [[ -n "${RUNNING_AVD_SERIAL}" ]]; then
         BOOT_STATUS="$(adb -s "${RUNNING_AVD_SERIAL}" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r\n' || true)"
         if [[ "${BOOT_STATUS}" == "1" ]]; then
-            log_pass "专用 Android AVD '${TARGET_AVD}' 已开机并就绪 (${RUNNING_AVD_SERIAL})"
+            log_pass "专用 Android AVD '${TARGET_AVD}' 已开机并就绪 (${RUNNING_AVD_SERIAL}, 日志: .boss_agent/emulator.log)"
         else
             log_warn "专用 Android AVD '${TARGET_AVD}' 正在启动中..." "请等待模拟器启动完毕: ./emulator.sh status"
         fi

@@ -2,11 +2,12 @@
 # ==============================================================================
 # Boss Agent Mobile - Dedicated Android Virtual Device (AVD) Runner
 # ==============================================================================
-# Manages the dedicated Android Virtual Device with boot synchronization.
+# Manages the dedicated Android Virtual Device with boot synchronization,
+# persistent logging, and live log auto-attach.
 #
 # Usage:
-#   ./emulator.sh                     # Start dedicated AVD in background and wait for boot
-#   ./emulator.sh start               # Start dedicated AVD in background and wait for boot
+#   ./emulator.sh                     # Start dedicated AVD in background or attach to logs
+#   ./emulator.sh start               # Start dedicated AVD in background or attach to logs
 #   ./emulator.sh start --foreground  # Start dedicated AVD in foreground
 #   ./emulator.sh status              # Check if dedicated AVD is online and booted
 #   ./emulator.sh list                # List all installed local AVDs
@@ -20,7 +21,9 @@ cd "${ROOT_DIR}"
 
 mkdir -p ".boss_agent"
 
-# Locate Android emulator binary
+PID_FILE=".boss_agent/emulator.pid"
+LOG_FILE=".boss_agent/emulator.log"
+
 find_emulator_binary() {
     if command -v emulator >/dev/null 2>&1; then
         echo "emulator"
@@ -35,7 +38,6 @@ find_emulator_binary() {
     fi
 }
 
-# Locate adb binary
 find_adb_binary() {
     if command -v adb >/dev/null 2>&1; then
         echo "adb"
@@ -53,7 +55,6 @@ find_adb_binary() {
 EMULATOR_BIN="$(find_emulator_binary)"
 ADB_BIN="$(find_adb_binary)"
 
-# Resolve target AVD name (CLI flag -> ENV -> config -> default)
 resolve_target_avd() {
     if [[ -n "${TARGET_AVD_OVERRIDE:-}" ]]; then
         echo "${TARGET_AVD_OVERRIDE}"
@@ -70,7 +71,6 @@ resolve_target_avd() {
         return 0
     fi
 
-    # Read from config/settings.local.yaml or config/settings.example.yaml
     if [[ -f "config/settings.local.yaml" ]]; then
         local CONF_AVD
         CONF_AVD="$(grep -E "^[[:space:]]*avd_name:" config/settings.local.yaml 2>/dev/null | awk '{print $2}' | tr -d '"' | tr -d "'" || true)"
@@ -89,7 +89,6 @@ resolve_target_avd() {
         fi
     fi
 
-    # Check if boss_avd_arm64 exists in list
     if [[ -n "${EMULATOR_BIN}" ]]; then
         local LIST_AVDS
         LIST_AVDS="$("${EMULATOR_BIN}" -list-avds 2>/dev/null || true)"
@@ -97,7 +96,6 @@ resolve_target_avd() {
             echo "boss_avd_arm64"
             return 0
         fi
-        # If boss_avd_arm64 not found, fallback to first available AVD
         local FIRST_AVD
         FIRST_AVD="$(echo "${LIST_AVDS}" | head -n 1)"
         if [[ -n "${FIRST_AVD}" ]]; then
@@ -111,7 +109,6 @@ resolve_target_avd() {
 
 TARGET_AVD_OVERRIDE=""
 
-# Parse optional global flags
 ARGS=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -129,7 +126,6 @@ set -- "${ARGS[@]:-start}"
 
 TARGET_AVD="$(resolve_target_avd)"
 
-# Find serial of device running TARGET_AVD (e.g. emulator-5554)
 get_running_device_serial() {
     if [[ -z "${ADB_BIN}" ]]; then
         echo ""
@@ -148,6 +144,24 @@ get_running_device_serial() {
         fi
     done
     echo ""
+}
+
+attach_logs() {
+    local SERIAL="$1"
+    local PID
+    PID="$(cat "${PID_FILE}" 2>/dev/null || echo "active")"
+
+    echo "ℹ️ Dedicated AVD '${TARGET_AVD}' is already running (${SERIAL}, PID: ${PID})"
+    echo "👀 Attaching to live log stream (${LOG_FILE})... (Press Ctrl+C to detach)"
+    echo "----------------------------------------------------------------------"
+
+    trap 'echo -e "\n👋 Detached from emulator logs (AVD is still running in background)."; exit 0' INT TERM
+
+    if [[ ! -f "${LOG_FILE}" ]]; then
+        touch "${LOG_FILE}"
+    fi
+
+    exec tail -n 30 -f "${LOG_FILE}"
 }
 
 cmd_list() {
@@ -181,12 +195,12 @@ cmd_status() {
         return 1
     fi
 
-    # Check boot completion status
     local BOOT_STATUS
     BOOT_STATUS="$("${ADB_BIN}" -s "${SERIAL}" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r\n' || true)"
 
     if [[ "${BOOT_STATUS}" == "1" ]]; then
         echo "🟢 Dedicated AVD '${TARGET_AVD}' is ONLINE and READY (${SERIAL})."
+        echo "   Log file : ${LOG_FILE}"
         return 0
     else
         echo "🟡 Dedicated AVD '${TARGET_AVD}' is BOOTING (${SERIAL}, sys.boot_completed='${BOOT_STATUS}')."
@@ -203,10 +217,10 @@ cmd_stop() {
         "${ADB_BIN}" -s "${SERIAL}" emu kill 2>/dev/null || true
         echo "✅ Sent emu kill to ${SERIAL} (${TARGET_AVD})."
     else
-        # Fallback process kill
         pkill -f "emulator.*@${TARGET_AVD}" 2>/dev/null || true
         echo "ℹ️ Stopped emulator processes for ${TARGET_AVD}."
     fi
+    rm -f "${PID_FILE}"
 }
 
 cmd_start() {
@@ -232,29 +246,29 @@ cmd_start() {
     # Check if already booted and ready
     local SERIAL
     SERIAL="$(get_running_device_serial)"
-    if [[ -n "${SERIAL}" ]]; then
+    if [[ -n "${SERIAL}" && -n "${ADB_BIN}" ]]; then
         local BOOT_STATUS
         BOOT_STATUS="$("${ADB_BIN}" -s "${SERIAL}" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r\n' || true)"
         if [[ "${BOOT_STATUS}" == "1" ]]; then
-            echo "ℹ️ Dedicated AVD '${TARGET_AVD}' is already online and ready (${SERIAL})."
-            exit 0
+            attach_logs "${SERIAL}"
         fi
     fi
 
-    local LOG_FILE=".boss_agent/emulator.log"
-
     if [[ ${FOREGROUND} -eq 1 ]]; then
         echo "🚀 Starting Dedicated AVD '${TARGET_AVD}' in foreground..."
-        exec "${EMULATOR_BIN}" @"${TARGET_AVD}" -no-snapshot-load
+        echo "   Log File : ${LOG_FILE}"
+        echo "   Press Ctrl+C to stop."
+        echo ""
+        exec "${EMULATOR_BIN}" @"${TARGET_AVD}" -no-snapshot-load 2>&1 | tee -a "${LOG_FILE}"
     else
         echo "🚀 Starting Dedicated AVD '${TARGET_AVD}' in background..."
-        "${EMULATOR_BIN}" @"${TARGET_AVD}" -no-snapshot-load > "${LOG_FILE}" 2>&1 &
+        "${EMULATOR_BIN}" @"${TARGET_AVD}" -no-snapshot-load >> "${LOG_FILE}" 2>&1 &
         local EMU_PID=$!
-        echo "${EMU_PID}" > ".boss_agent/emulator.pid"
+        echo "${EMU_PID}" > "${PID_FILE}"
 
         echo "⏳ Waiting for Android system boot completion (AVD: ${TARGET_AVD})..."
         local BOOTED=0
-        for i in {1..90}; do
+        for _ in {1..90}; do
             SERIAL="$(get_running_device_serial)"
             if [[ -n "${SERIAL}" && -n "${ADB_BIN}" ]]; then
                 local BOOT_STATUS
@@ -269,6 +283,7 @@ cmd_start() {
 
         if [[ ${BOOTED} -eq 1 ]]; then
             echo "✅ Dedicated AVD '${TARGET_AVD}' is fully booted and ready (${SERIAL}, PID: ${EMU_PID})!"
+            echo "   Log File : ${LOG_FILE}"
             exit 0
         else
             echo "⚠️ Timeout waiting for '${TARGET_AVD}' to boot. Check logs: ${LOG_FILE}" >&2

@@ -2,11 +2,12 @@
 # ==============================================================================
 # Boss Agent Mobile - PocketBase Standalone Runner
 # ==============================================================================
-# Manages local PocketBase State Stream instance with automatic schema provisioning.
+# Manages local PocketBase State Stream instance with persistent logging and
+# auto-attach to live log stream if already running.
 #
 # Usage:
-#   ./pb.sh                   # Start PocketBase in foreground
-#   ./pb.sh start             # Start PocketBase in foreground
+#   ./pb.sh                   # Start or attach to PocketBase in foreground
+#   ./pb.sh start             # Start or attach to PocketBase in foreground
 #   ./pb.sh start --daemon    # Start PocketBase in background
 #   ./pb.sh stop              # Stop running background PocketBase
 #   ./pb.sh status            # Check PocketBase health and status
@@ -18,12 +19,13 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${ROOT_DIR}"
 
+mkdir -p ".boss_agent"
+
 PB_DATA_DIR="${PB_DATA_DIR:-.boss_agent/pb_data}"
 PB_HTTP="${PB_HTTP:-127.0.0.1:8090}"
 PID_FILE=".boss_agent/pocketbase.pid"
 LOG_FILE=".boss_agent/pocketbase.log"
 
-# Locate pocketbase binary
 find_pb_binary() {
     if command -v pocketbase >/dev/null 2>&1; then
         echo "pocketbase"
@@ -46,25 +48,63 @@ run_provisioner() {
     fi
 }
 
+get_running_pb_pid() {
+    if [[ -f "${PID_FILE}" ]]; then
+        local PID
+        PID="$(cat "${PID_FILE}" 2>/dev/null || true)"
+        if [[ -n "${PID}" ]] && ps -p "${PID}" >/dev/null 2>&1; then
+            echo "${PID}"
+            return 0
+        fi
+    fi
+
+    # Fallback to lsof on port 8090
+    local PORT_PID
+    PORT_PID="$(lsof -ti :8090 2>/dev/null | head -n 1 || true)"
+    if [[ -n "${PORT_PID}" ]]; then
+        echo "${PORT_PID}" > "${PID_FILE}"
+        echo "${PORT_PID}"
+        return 0
+    fi
+    echo ""
+}
+
+attach_logs() {
+    local PID="$1"
+    local ENDPOINT="http://${PB_HTTP}"
+
+    echo "ℹ️ PocketBase is already running (PID: ${PID}) at ${ENDPOINT}"
+    echo "👀 Attaching to live log stream (${LOG_FILE})... (Press Ctrl+C to detach)"
+    echo "----------------------------------------------------------------------"
+
+    # Trap Ctrl+C to exit cleanly without killing the background PocketBase daemon
+    trap 'echo -e "\n👋 Detached from PocketBase logs (PocketBase is still running in background)."; exit 0' INT TERM
+
+    if [[ ! -f "${LOG_FILE}" ]]; then
+        touch "${LOG_FILE}"
+    fi
+
+    exec tail -n 30 -f "${LOG_FILE}"
+}
+
 cmd_status() {
     echo "🔍 Checking PocketBase status..."
     local HEALTH_URL="http://${PB_HTTP}/api/health"
+    local PID
+    PID="$(get_running_pb_pid)"
+
     if curl -s -f "${HEALTH_URL}" >/dev/null 2>&1; then
         echo "🟢 PocketBase is RUNNING and HEALTHY at ${HEALTH_URL}"
-        if [[ -f "${PID_FILE}" ]]; then
-            local PID="$(cat "${PID_FILE}")"
-            echo "   Process PID: ${PID}"
+        if [[ -n "${PID}" ]]; then
+            echo "   Process PID : ${PID}"
         fi
+        echo "   Log file    : ${LOG_FILE}"
         return 0
     else
         echo "🔴 PocketBase is NOT REACHABLE at ${HEALTH_URL}"
-        if [[ -f "${PID_FILE}" ]]; then
-            local PID="$(cat "${PID_FILE}")"
-            if ps -p "${PID}" >/dev/null 2>&1; then
-                echo "   (Warning: Process with PID ${PID} exists but health check failed)"
-            else
-                rm -f "${PID_FILE}"
-            fi
+        if [[ -n "${PID}" ]]; then
+            echo "   (Warning: Stale process ${PID} detected)"
+            rm -f "${PID_FILE}"
         fi
         return 1
     fi
@@ -73,16 +113,16 @@ cmd_status() {
 cmd_stop() {
     echo "🛑 Stopping local PocketBase instance..."
     local STOPPED=0
-    if [[ -f "${PID_FILE}" ]]; then
-        local PID="$(cat "${PID_FILE}")"
-        if ps -p "${PID}" >/dev/null 2>&1; then
-            kill "${PID}" 2>/dev/null || true
-            sleep 0.5
-            kill -9 "${PID}" 2>/dev/null || true
-            STOPPED=1
-        fi
-        rm -f "${PID_FILE}"
+    local PID
+    PID="$(get_running_pb_pid)"
+
+    if [[ -n "${PID}" ]]; then
+        kill "${PID}" 2>/dev/null || true
+        sleep 0.5
+        kill -9 "${PID}" 2>/dev/null || true
+        STOPPED=1
     fi
+    rm -f "${PID_FILE}"
 
     # Cleanup any lingering process matching pocketbase serve
     pkill -f "pocketbase serve --http ${PB_HTTP}" 2>/dev/null || true
@@ -123,21 +163,27 @@ cmd_start() {
     fi
 
     mkdir -p "${PB_DATA_DIR}"
-    mkdir -p ".boss_agent"
 
     # Pre-provision SQLite DB if data.db already exists
     run_provisioner
 
     local HEALTH_URL="http://${PB_HTTP}/api/health"
 
+    # Check if already running
     if curl -s -f "${HEALTH_URL}" >/dev/null 2>&1; then
-        echo "ℹ️ PocketBase is already running at ${HEALTH_URL}"
-        exit 0
+        local RUNNING_PID
+        RUNNING_PID="$(get_running_pb_pid)"
+        if [[ ${DAEMON} -eq 1 ]]; then
+            echo "ℹ️ PocketBase is already running in background (PID: ${RUNNING_PID:-unknown}) at ${HEALTH_URL}"
+            exit 0
+        else
+            attach_logs "${RUNNING_PID:-unknown}"
+        fi
     fi
 
     if [[ ${DAEMON} -eq 1 ]]; then
         echo "🚀 Starting PocketBase in background on http://${PB_HTTP}..."
-        "${PB_BIN}" serve --http "${PB_HTTP}" --dir "${PB_DATA_DIR}" > "${LOG_FILE}" 2>&1 &
+        "${PB_BIN}" serve --http "${PB_HTTP}" --dir "${PB_DATA_DIR}" >> "${LOG_FILE}" 2>&1 &
         local PID=$!
         echo "${PID}" > "${PID_FILE}"
 
@@ -146,8 +192,9 @@ cmd_start() {
             if curl -s -f "${HEALTH_URL}" >/dev/null 2>&1; then
                 run_provisioner
                 echo "✅ PocketBase successfully started in background (PID: ${PID})"
-                echo "   Dashboard: http://${PB_HTTP}/_/"
-                echo "   REST API:  http://${PB_HTTP}/api/"
+                echo "   Dashboard : http://${PB_HTTP}/_/"
+                echo "   REST API  : http://${PB_HTTP}/api/"
+                echo "   Log File  : ${LOG_FILE}"
                 exit 0
             fi
             sleep 0.2
@@ -155,14 +202,24 @@ cmd_start() {
         echo "⚠️ PocketBase failed to respond to health check within 6s. Check ${LOG_FILE}" >&2
         exit 1
     else
-        echo "🚀 Starting PocketBase in foreground on http://${PB_HTTP}..."
-        echo "   Data directory: ${PB_DATA_DIR}"
-        echo "   Dashboard:      http://${PB_HTTP}/_/"
-        echo "   REST API:       http://${PB_HTTP}/api/"
+        echo "🚀 Starting PocketBase on http://${PB_HTTP}..."
+        echo "   Data directory : ${PB_DATA_DIR}"
+        echo "   Dashboard      : http://${PB_HTTP}/_/"
+        echo "   REST API       : http://${PB_HTTP}/api/"
+        echo "   Log File       : ${LOG_FILE}"
         echo "   Press Ctrl+C to stop."
         echo ""
+
+        "${PB_BIN}" serve --http "${PB_HTTP}" --dir "${PB_DATA_DIR}" >> "${LOG_FILE}" 2>&1 &
+        local PID=$!
+        echo "${PID}" > "${PID_FILE}"
+
         (sleep 1 && run_provisioner) &
-        exec "${PB_BIN}" serve --http "${PB_HTTP}" --dir "${PB_DATA_DIR}"
+
+        # Handle shutdown on Ctrl+C for foreground mode
+        trap 'echo -e "\n🛑 Stopping PocketBase (PID: '"${PID}"')..."; kill '"${PID}"' 2>/dev/null || true; rm -f '"${PID_FILE}"'; exit 0' INT TERM
+
+        tail -n 0 -f "${LOG_FILE}"
     fi
 }
 
@@ -184,7 +241,6 @@ case "${ACTION}" in
         echo "✅ Schema provisioning complete."
         ;;
     *)
-        # Default start with any passed args
         cmd_start "$@"
         ;;
 esac

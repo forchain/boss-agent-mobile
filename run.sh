@@ -7,7 +7,9 @@
 #
 # Usage:
 #   ./run.sh                              # Start Worker daemon (default, with PB & AVD pre-flight gates)
-#   ./run.sh worker                       # Start Worker daemon
+#   ./run.sh worker                       # Start Worker daemon or attach to logs
+#   ./run.sh worker stop                  # Stop background Worker daemon
+#   ./run.sh worker status                # Check Worker status
 #   ./run.sh web                          # Start SvelteKit Web dashboard (./web.sh)
 #   ./run.sh pb                           # Manage/Start PocketBase (./pb.sh)
 #   ./run.sh pocketbase                   # Manage/Start PocketBase (./pb.sh)
@@ -22,6 +24,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${ROOT_DIR}"
+
+mkdir -p ".boss_agent"
 
 # Pre-flight environment check
 if command -v uv >/dev/null 2>&1; then
@@ -53,6 +57,74 @@ case "${SUBCOMMAND}" in
         exec ./doctor.sh "$@"
         ;;
 esac
+
+# ------------------------------------------------------------------------------
+# Worker Management Helpers
+# ------------------------------------------------------------------------------
+WORKER_PID_FILE=".boss_agent/worker.pid"
+WORKER_LOG_FILE=".boss_agent/worker.log"
+
+get_running_worker_pid() {
+    if [[ -f "${WORKER_PID_FILE}" ]]; then
+        local PID
+        PID="$(cat "${WORKER_PID_FILE}" 2>/dev/null || true)"
+        if [[ -n "${PID}" ]] && ps -p "${PID}" >/dev/null 2>&1; then
+            echo "${PID}"
+            return 0
+        fi
+    fi
+
+    local FOUND_PID
+    FOUND_PID="$(pgrep -f "scripts/worker.py" 2>/dev/null | head -n 1 || true)"
+    if [[ -n "${FOUND_PID}" ]]; then
+        echo "${FOUND_PID}" > "${WORKER_PID_FILE}"
+        echo "${FOUND_PID}"
+        return 0
+    fi
+    echo ""
+}
+
+attach_worker_logs() {
+    local PID="$1"
+    echo "ℹ️ Automation Worker Daemon is already running (PID: ${PID})."
+    echo "👀 Attaching to live log stream (${WORKER_LOG_FILE})... (Press Ctrl+C to detach)"
+    echo "----------------------------------------------------------------------"
+
+    trap 'echo -e "\n👋 Detached from Worker logs (Worker daemon is still running in background)."; exit 0' INT TERM
+
+    if [[ ! -f "${WORKER_LOG_FILE}" ]]; then
+        touch "${WORKER_LOG_FILE}"
+    fi
+
+    exec tail -n 30 -f "${WORKER_LOG_FILE}"
+}
+
+# Handle worker subcommands: stop / status
+if [[ "${SUBCOMMAND}" == "worker" && "${2:-}" == "stop" ]]; then
+    PID="$(get_running_worker_pid)"
+    if [[ -n "${PID}" ]]; then
+        kill "${PID}" 2>/dev/null || true
+        rm -f "${WORKER_PID_FILE}"
+        echo "✅ Automation Worker daemon stopped (PID: ${PID})."
+    else
+        pkill -f "scripts/worker.py" 2>/dev/null || true
+        rm -f "${WORKER_PID_FILE}"
+        echo "ℹ️ No running Worker daemon found."
+    fi
+    exit 0
+fi
+
+if [[ "${SUBCOMMAND}" == "worker" && "${2:-}" == "status" ]]; then
+    PID="$(get_running_worker_pid)"
+    if [[ -n "${PID}" ]]; then
+        echo "🟢 Automation Worker daemon is RUNNING (PID: ${PID})."
+        echo "   Log File: ${WORKER_LOG_FILE}"
+        exit 0
+    else
+        echo "🔴 Automation Worker daemon is NOT RUNNING."
+        exit 1
+    fi
+fi
 
 # ------------------------------------------------------------------------------
 # Pre-Flight Verification Gates (Required for Worker and Live Harness)
@@ -127,10 +199,28 @@ if [[ $# -eq 0 || "${1:-}" == "worker" || "${1:-}" == "--worker" ]]; then
     if [[ "${1:-}" == "worker" || "${1:-}" == "--worker" ]]; then
         shift || true
     fi
+
+    # Check if worker is already running locally
+    RUNNING_PID="$(get_running_worker_pid)"
+    if [[ -n "${RUNNING_PID}" ]]; then
+        attach_worker_logs "${RUNNING_PID}"
+    fi
+
     echo "🤖 Starting Boss Agent Mobile Automation Worker Daemon..."
     echo "   PocketBase Broker : ${POCKETBASE_URL}"
     echo "   Dedicated AVD     : ${TARGET_AVD}"
-    exec "${RUNNER[@]}" scripts/worker.py "$@"
+    echo "   Log File          : ${WORKER_LOG_FILE}"
+    echo "   Press Ctrl+C to stop."
+    echo ""
+
+    # Start worker and pipe output
+    "${RUNNER[@]}" scripts/worker.py "$@" >> "${WORKER_LOG_FILE}" 2>&1 &
+    PID=$!
+    echo "${PID}" > "${WORKER_PID_FILE}"
+
+    trap 'echo -e "\n🛑 Stopping Worker daemon (PID: '"${PID}"')..."; kill '"${PID}"' 2>/dev/null || true; rm -f '"${WORKER_PID_FILE}"'; exit 0' INT TERM
+
+    tail -n 0 -f "${WORKER_LOG_FILE}"
 fi
 
 if [[ "${1:-}" == "live" ]]; then
