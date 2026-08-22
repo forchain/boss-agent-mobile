@@ -4,6 +4,12 @@ boss_agent
 Boss 直聘 Android application automation domain layer.
 """
 
+from .matching import JobMatchGreetingService, MatchGreetingResult
+from .memory import (
+    ResumeMemoryManager,
+    ResumeTextExtractor,
+    StructuredCandidateProfile,
+)
 from .models import (
     AuthStatus,
     CandidateProfile,
@@ -14,6 +20,7 @@ from .models import (
 )
 from .pages import (
     BaseBossPage,
+    ChatPage,
     FilterDialogPage,
     IndustryFilterDialogPage,
     JobDetailPage,
@@ -29,19 +36,25 @@ __all__ = [
     "AuthStatus",
     "BaseBossPage",
     "CandidateProfile",
+    "ChatPage",
     "FilterConfig",
     "FilterDialogPage",
     "IndustryFilterDialogPage",
     "JobDetailPage",
     "JobListPage",
+    "JobMatchGreetingService",
     "JobPosting",
     "LoginPage",
+    "MatchGreetingResult",
+    "ResumeMemoryManager",
+    "ResumeTextExtractor",
     "SavedSearch",
     "SavedSearchRegistry",
     "SearchConfig",
     "SearchPage",
     "SmokeHarness",
     "StartupDialogPage",
+    "StructuredCandidateProfile",
     "TakeoverHandler",
     "get_global_search_registry",
 ]

@@ -5,12 +5,16 @@ High-level operational workflows for Boss 直聘 automation.
 """
 
 import time
+from pathlib import Path
 from typing import Any
 
 from rich.console import Console
 
+from .matching import JobMatchGreetingService
+from .memory import ResumeMemoryManager, StructuredCandidateProfile
 from .models import AuthStatus, FilterConfig, JobPosting, SavedSearch, SearchConfig
 from .pages import (
+    ChatPage,
     FilterDialogPage,
     IndustryFilterDialogPage,
     JobDetailPage,
@@ -72,6 +76,12 @@ class SmokeHarness:
         filter_config: FilterConfig | None = None,
         saved_search: SavedSearch | None = None,
         saved_search_id: str | None = None,
+        resume_file: str | Path | None = None,
+        force_refresh_memory: bool = False,
+        preview_timeout_sec: float = 3.0,
+        enable_greeting_draft: bool = True,
+        memory_manager: ResumeMemoryManager | None = None,
+        matching_service: JobMatchGreetingService | None = None,
     ):
         self.driver = driver
         self.startup_page = StartupDialogPage(driver)
@@ -81,7 +91,44 @@ class SmokeHarness:
         self.filter_dialog = FilterDialogPage(driver)
         self.industry_filter_dialog = IndustryFilterDialogPage(driver)
         self.detail_page = JobDetailPage(driver)
+        self.chat_page = ChatPage(driver)
         self.takeover = takeover_handler or TakeoverHandler(driver, auto_confirm_for_test=True)
+
+        self.resume_file = resume_file
+        self.force_refresh_memory = force_refresh_memory
+        self.enable_greeting_draft = enable_greeting_draft
+        self.memory_manager = memory_manager or ResumeMemoryManager()
+        self.matching_service = matching_service or JobMatchGreetingService()
+        self.preview_timeout_sec = (
+            preview_timeout_sec
+            if preview_timeout_sec is not None
+            else float(self.memory_manager.candidate_config.get("preview_timeout_sec", 3.0))
+        )
+
+        # Pre-flight upfront candidate memory initialization
+        self.candidate_profile: StructuredCandidateProfile | None = None
+        if self.enable_greeting_draft:
+            try:
+                self.candidate_profile = self.memory_manager.load_memory(
+                    force_refresh=self.force_refresh_memory,
+                    resume_file=self.resume_file,
+                )
+                if self.candidate_profile:
+                    self.matching_service.set_candidate_profile(self.candidate_profile)
+                    console.print(
+                        f"👤 [bold green]Candidate Memory Profile Active:[/bold green] "
+                        f"[bold cyan]{self.candidate_profile.name}[/bold cyan] "
+                        f"({self.candidate_profile.years_of_experience}年经验, "
+                        f"核心技能: {', '.join(self.candidate_profile.core_skills[:3])})"
+                    )
+            except FileNotFoundError:
+                console.print(
+                    "[dim]No candidate resume or memory profile configured. Greeting draft will be skipped.[/dim]"
+                )
+            except Exception as e:
+                console.print(
+                    f"[yellow]⚠️  Failed to pre-load candidate memory upfront: {e}[/yellow]"
+                )
 
         if saved_search:
             self.search_config = saved_search.search
@@ -200,7 +247,39 @@ class SmokeHarness:
         # 7. Extract real job details from detail screen
         posting = self.detail_page.extract_job_posting(timeout_sec=10.0)
 
-        # 8. Navigate back
+        # 8. Optional Match Evaluation and Greeting Draft (Fill in Chat, Do NOT send)
+        if self.enable_greeting_draft and self.candidate_profile:
+            try:
+                console.print(
+                    f"📊 [bold cyan]Evaluating job match for candidate:[/bold cyan] {self.candidate_profile.name}..."
+                )
+                match_result = self.matching_service.evaluate_and_draft_greeting(
+                    posting, profile=self.candidate_profile
+                )
+                self.matching_service.render_match_card(posting, match_result)
+
+                # Open chat dialog and type greeting
+                console.print(
+                    "💬 [bold cyan]Opening chat dialog to type greeting draft...[/bold cyan]"
+                )
+                if self.detail_page.open_chat(timeout_sec=5.0):
+                    typed = self.chat_page.type_greeting_message(
+                        match_result.greeting_message, timeout_sec=5.0
+                    )
+                    if typed:
+                        console.print(
+                            f"⏳ [bold yellow]Greeting message entered in chat box. "
+                            f"Pausing for {self.preview_timeout_sec}s preview (NOT SENT)...[/bold yellow]"
+                        )
+                        time.sleep(self.preview_timeout_sec)
+                    # Navigate back from chat dialog to job detail screen
+                    self.chat_page.navigate_back()
+            except Exception as e:
+                console.print(
+                    f"[yellow]⚠️  Matching/Greeting draft skipped due to error:[/yellow] {e}"
+                )
+
+        # 9. Navigate back to job list
         self.detail_page.navigate_back()
 
         return posting

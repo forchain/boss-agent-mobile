@@ -8,14 +8,13 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
-def run_cmd(cmd: List[str], dry_run: bool = False) -> subprocess.CompletedProcess[str]:
+def run_cmd(cmd: list[str], dry_run: bool = False) -> subprocess.CompletedProcess[str]:
     """Run a shell command or simulate in dry-run mode."""
     print(f"[{'DRY-RUN' if dry_run else 'EXEC'}] {' '.join(cmd)}")
     if dry_run:
@@ -23,7 +22,7 @@ def run_cmd(cmd: List[str], dry_run: bool = False) -> subprocess.CompletedProces
     return subprocess.run(cmd, capture_output=True, text=True, check=True)
 
 
-def execute_release_plan(plan: Dict[str, Any], dry_run: bool = False) -> None:
+def execute_release_plan(plan: dict[str, Any], dry_run: bool = False) -> None:
     """Execute tag creation, GitHub release, and out-of-order backfills."""
     current = plan.get("current_pr", {})
     tag_name = current.get("tag_name")
@@ -76,7 +75,10 @@ def execute_release_plan(plan: Dict[str, Any], dry_run: bool = False) -> None:
 
         # Create new tag pointing to old tag / release commit
         try:
-            run_cmd(["git", "tag", "-a", new_tag, old_tag, "-m", f"Bump patch to {new_tag}"], dry_run=dry_run)
+            run_cmd(
+                ["git", "tag", "-a", new_tag, old_tag, "-m", f"Bump patch to {new_tag}"],
+                dry_run=dry_run,
+            )
             run_cmd(["git", "push", "origin", new_tag], dry_run=dry_run)
         except subprocess.CalledProcessError as exc:
             print(f"Warning: Backfill tag creation/push error: {exc.stderr}", file=sys.stderr)
@@ -122,13 +124,18 @@ def execute_release_plan(plan: Dict[str, Any], dry_run: bool = False) -> None:
                 print(f"[DRY-RUN] gh pr edit {higher_pr_id} --body <existing_body + backfill_note>")
             print(f"✓ Updated PR #{higher_pr_id} description with backfill reference")
         except subprocess.CalledProcessError as exc:
-            print(f"Warning: Updating PR #{higher_pr_id} description failed: {exc.stderr}", file=sys.stderr)
+            print(
+                f"Warning: Updating PR #{higher_pr_id} description failed: {exc.stderr}",
+                file=sys.stderr,
+            )
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Publish release based on calculated plan.")
     parser.add_argument("--plan", help="Path to plan JSON file", required=True)
-    parser.add_argument("--dry-run", action="store_true", help="Simulate without executing API calls")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Simulate without executing API calls"
+    )
     args = parser.parse_args()
 
     plan_path = Path(args.plan)

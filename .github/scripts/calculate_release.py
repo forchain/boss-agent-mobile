@@ -22,12 +22,12 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 TAG_PATTERN = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
 
 
-def parse_major_version(content: Optional[str]) -> int:
+def parse_major_version(content: str | None) -> int:
     """Parse major version integer from string content or file."""
     if not content:
         return 0
@@ -52,7 +52,7 @@ def calculate_current_release(
     pr_body: str,
     pr_author: str,
     repo_name: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Calculate tag name and release notes for the current PR."""
     tag_name = f"v{major}.{pr_id}.{commits}"
     release_title = f"{tag_name} - {pr_title}"
@@ -83,8 +83,8 @@ def detect_and_calculate_backfill(
     current_major: int,
     current_pr_id: int,
     current_commits: int,
-    existing_releases: List[Dict[str, Any]],
-) -> Optional[Dict[str, Any]]:
+    existing_releases: list[dict[str, Any]],
+) -> dict[str, Any] | None:
     """Detect if higher PR IDs exist in releases, and calculate backfill for the highest one."""
     higher_candidates = []
 
@@ -139,10 +139,10 @@ def detect_and_calculate_backfill(
 
 
 def plan_release(
-    major_str: Optional[str],
-    event_payload: Dict[str, Any],
-    existing_releases: List[Dict[str, Any]],
-) -> Dict[str, Any]:
+    major_str: str | None,
+    event_payload: dict[str, Any],
+    existing_releases: list[dict[str, Any]],
+) -> dict[str, Any]:
     """Build the complete execution plan."""
     major = parse_major_version(major_str)
     pr = event_payload.get("pull_request", {})
@@ -203,12 +203,12 @@ def main() -> int:
 
     # Read Event Path
     event_path = args.event_path or os.environ.get("GITHUB_EVENT_PATH")
-    event_payload: Dict[str, Any] = {}
+    event_payload: dict[str, Any] = {}
     if event_path and Path(event_path).exists():
         event_payload = json.loads(Path(event_path).read_text(encoding="utf-8"))
 
     # Read Existing Releases
-    existing_releases: List[Dict[str, Any]] = []
+    existing_releases: list[dict[str, Any]] = []
     if args.releases_json:
         if Path(args.releases_json).exists():
             existing_releases = json.loads(Path(args.releases_json).read_text(encoding="utf-8"))

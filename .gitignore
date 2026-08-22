@@ -17,10 +17,23 @@ dist/
 *.apk
 *.log
 
-# Local Config Overrides (Higher Priority)
+# Local Config Overrides & Candidate Memory (Higher Priority)
 *.local.yaml
 *.local.yml
 *.local.json
 config/*.local.*
 locators.local.yaml
+config/candidate_memory.json
+candidate_memory.json
+resumes/
+*.resume.*
+
+# Node / SvelteKit / Web
+node_modules/
+web/node_modules/
+.svelte-kit/
+web/.svelte-kit/
+web/build/
+
+
 

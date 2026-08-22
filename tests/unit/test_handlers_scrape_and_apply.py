@@ -77,17 +77,15 @@ async def test_scrape_jobs_handler_extracts_and_persists_jobs(broker, mock_drive
 
 
 @pytest.mark.asyncio
-async def test_auto_apply_handler_evaluates_and_applies(broker, mock_driver):
-    """Verify AutoApplyHandler scores job match, applies to matching jobs, and skips unmatched."""
+async def test_auto_apply_handler_preview_mode_drafts_greeting(broker, mock_driver):
+    """Verify AutoApplyHandler in preview_only mode types greeting draft and pauses without sending."""
     mock_title = MagicMock(text="Senior Python Agent Engineer")
     mock_company = MagicMock(text="Future Robotics")
     mock_salary = MagicMock(text="45-70K")
     mock_desc = MagicMock(text="Expertise in Python, LLM agents, and Android automation.")
-    mock_greet_btn = MagicMock()
+    mock_elem = MagicMock()
 
     def mock_find(by, value):
-        if "btn_chat" in value or "沟通" in value or "chat" in value:
-            return [mock_greet_btn]
         if "tv_job_name" in value or "job_name" in value:
             return [mock_title]
         if "tv_company_name" in value or "company_name" in value:
@@ -96,9 +94,7 @@ async def test_auto_apply_handler_evaluates_and_applies(broker, mock_driver):
             return [mock_salary]
         if "tv_job_desc" in value or "desc" in value:
             return [mock_desc]
-        if "search" in value or "tv_tab" in value or "ly_menu" in value:
-            return [MagicMock()]
-        return []
+        return [mock_elem]
 
     mock_driver.find_elements.side_effect = mock_find
 
@@ -106,10 +102,11 @@ async def test_auto_apply_handler_evaluates_and_applies(broker, mock_driver):
     context = WorkerContext(config=config, driver=mock_driver)
 
     mock_llm_client = MagicMock()
-    mock_llm_client.evaluate_text_match.return_value = {
-        "score": 85,
-        "reasoning": "Strong match with candidate background in Python and agents.",
-        "greeting": "您好！我对该岗位非常感兴趣，具备丰富的大模型与自动化经验。",
+    mock_llm_client.chat_completion_json.return_value = {
+        "match_score": 88,
+        "jd_key_requirements": ["精通 Python", "大模型 Agent 经验"],
+        "match_reasons": ["具备移动端开发与 Agent 落地经验"],
+        "greeting_message": "针对贵司大模型 Agent 落地需求，我具备完整实战经验！",
     }
 
     apply_handler = AutoApplyHandler(llm_client=mock_llm_client)
@@ -126,7 +123,13 @@ async def test_auto_apply_handler_evaluates_and_applies(broker, mock_driver):
         payload={
             "keyword": "Python",
             "min_score": 75,
-            "candidate_profile": {"name": "Candidate", "skills": ["Python", "Agents"]},
+            "preview_only": True,
+            "preview_timeout_sec": 0.01,
+            "candidate_profile": {
+                "name": "Candidate",
+                "years_of_experience": 6,
+                "core_skills": ["Python", "Agents"],
+            },
         },
     )
 
@@ -136,4 +139,73 @@ async def test_auto_apply_handler_evaluates_and_applies(broker, mock_driver):
     finished_task = await broker.get_task(task.id)
     assert finished_task is not None
     assert finished_task.status == TaskStatus.SUCCESS
-    assert any("applied" in log.lower() or "greeting" in log.lower() for log in finished_task.logs)
+    assert any("preview" in log.lower() or "greeting" in log.lower() for log in finished_task.logs)
+    assert finished_task.payload.get("preview_only") is True
+
+
+@pytest.mark.asyncio
+async def test_auto_apply_handler_auto_send_mode(broker, mock_driver):
+    """Verify AutoApplyHandler in auto_send mode clicks send when score meets threshold."""
+    mock_title = MagicMock(text="Senior Python Agent Engineer")
+    mock_company = MagicMock(text="Future Robotics")
+    mock_salary = MagicMock(text="45-70K")
+    mock_desc = MagicMock(text="Expertise in Python, LLM agents, and Android automation.")
+    mock_elem = MagicMock()
+
+    def mock_find(by, value):
+        if "tv_job_name" in value or "job_name" in value:
+            return [mock_title]
+        if "tv_company_name" in value or "company_name" in value:
+            return [mock_company]
+        if "tv_job_salary" in value or "salary" in value:
+            return [mock_salary]
+        if "tv_job_desc" in value or "desc" in value:
+            return [mock_desc]
+        return [mock_elem]
+
+    mock_driver.find_elements.side_effect = mock_find
+
+    config = WorkerConfig(worker_id="test-worker-send", poll_interval_sec=0.01)
+    context = WorkerContext(config=config, driver=mock_driver)
+
+    mock_llm_client = MagicMock()
+    mock_llm_client.chat_completion_json.return_value = {
+        "match_score": 90,
+        "jd_key_requirements": ["精通 Python", "大模型 Agent 经验"],
+        "match_reasons": ["具备移动端开发与 Agent 落地经验"],
+        "greeting_message": "针对贵司大模型 Agent 落地需求，我具备完整实战经验！",
+    }
+
+    apply_handler = AutoApplyHandler(llm_client=mock_llm_client)
+
+    worker = AutomationWorker(
+        config=config,
+        broker=broker,
+        context=context,
+        handlers=[apply_handler],
+    )
+
+    task = await broker.create_task(
+        task_type=TaskType.AUTO_APPLY,
+        payload={
+            "keyword": "Python",
+            "min_score": 75,
+            "preview_only": False,
+            "auto_send": True,
+            "candidate_profile": {
+                "name": "Candidate",
+                "years_of_experience": 6,
+                "core_skills": ["Python", "Agents"],
+            },
+        },
+    )
+
+    executed = await worker.run_once()
+    assert executed is True
+
+    finished_task = await broker.get_task(task.id)
+    assert finished_task is not None
+    assert finished_task.status == TaskStatus.SUCCESS
+    assert any(
+        "auto_send" in log.lower() or "dispatched" in log.lower() for log in finished_task.logs
+    )

@@ -7,6 +7,8 @@ PocketBase State Stream Broker Adapter and In-Memory Broker implementations.
 import asyncio
 import json
 import logging
+import os
+import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -24,7 +26,7 @@ class BaseTaskBroker(ABC):
 
     @abstractmethod
     async def create_task(
-        self, task_type: TaskType, payload: dict[str, Any] | None = None
+        self, task_type: TaskType | str, payload: dict[str, Any] | None = None
     ) -> AutomationTask:
         """Create and persist a new task with PENDING status."""
         pass
@@ -83,21 +85,69 @@ class BaseTaskBroker(ABC):
         """Register a callback for task lifecycle events (create, update)."""
         pass
 
+    @abstractmethod
+    async def get_candidate_profile(self, user_id: str = "default") -> dict[str, Any] | None:
+        """Fetch candidate structured memory profile for a user."""
+        pass
+
+    @abstractmethod
+    async def save_candidate_profile(
+        self, profile_data: dict[str, Any], user_id: str = "default"
+    ) -> dict[str, Any]:
+        """Save or update candidate structured memory profile for a user."""
+        pass
+
 
 class InMemoryTaskBroker(BaseTaskBroker):
     """Thread-safe & asyncio-safe in-memory broker for tests and local development."""
 
     def __init__(self) -> None:
         self._tasks: dict[str, AutomationTask] = {}
+        self._candidate_profiles: dict[str, dict[str, Any]] = {}
         self._lock = asyncio.Lock()
         self._subscribers: list[Callable[[str, AutomationTask], Any]] = []
+        self._load_local_profile()
+
+    def _load_local_profile(self) -> None:
+        from pathlib import Path
+
+        config_path = Path("config/candidate_memory.json")
+        if config_path.exists():
+            try:
+                data = json.loads(config_path.read_text(encoding="utf-8"))
+                self._candidate_profiles["default"] = data
+            except Exception:
+                pass
+
+    async def get_candidate_profile(self, user_id: str = "default") -> dict[str, Any] | None:
+        async with self._lock:
+            prof = self._candidate_profiles.get(user_id)
+            return dict(prof) if prof else None
+
+    async def save_candidate_profile(
+        self, profile_data: dict[str, Any], user_id: str = "default"
+    ) -> dict[str, Any]:
+        async with self._lock:
+            self._candidate_profiles[user_id] = dict(profile_data)
+            try:
+                from pathlib import Path
+
+                Path("config").mkdir(parents=True, exist_ok=True)
+                Path("config/candidate_memory.json").write_text(
+                    json.dumps(profile_data, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+            except Exception as e:
+                logger.warning("Failed to dual-sync candidate profile to local JSON: %s", e)
+            return dict(profile_data)
 
     async def create_task(
-        self, task_type: TaskType, payload: dict[str, Any] | None = None
+        self, task_type: TaskType | str, payload: dict[str, Any] | None = None
     ) -> AutomationTask:
+        resolved_type = task_type if isinstance(task_type, TaskType) else TaskType(task_type)
         now = datetime.now(UTC)
         task = AutomationTask(
-            task_type=task_type,
+            task_type=resolved_type,
             status=TaskStatus.PENDING,
             payload=payload or {},
             worker_id=None,
@@ -250,14 +300,15 @@ class PocketBaseTaskBroker(BaseTaskBroker):
 
     def __init__(
         self,
-        base_url: str = "http://127.0.0.1:8090",
+        base_url: str | None = None,
         collection_name: str = "automation_tasks",
         auth_token: str | None = None,
         session: requests.Session | None = None,
     ) -> None:
-        self.base_url = base_url.rstrip("/")
+        raw_url = base_url or os.getenv("POCKETBASE_URL") or "http://127.0.0.1:8090"
+        self.base_url = raw_url.rstrip("/")
         self.collection_name = collection_name
-        self.auth_token = auth_token
+        self.auth_token = auth_token or os.getenv("POCKETBASE_AUTH_TOKEN")
         self.session = session or requests.Session()
         self._subscribers: list[Callable[[str, AutomationTask], Any]] = []
 
@@ -271,11 +322,13 @@ class PocketBaseTaskBroker(BaseTaskBroker):
         return f"{self.base_url}/api/collections/{self.collection_name}/records"
 
     async def create_task(
-        self, task_type: TaskType, payload: dict[str, Any] | None = None
+        self, task_type: TaskType | str, payload: dict[str, Any] | None = None
     ) -> AutomationTask:
+        resolved_type = task_type if isinstance(task_type, TaskType) else TaskType(task_type)
         url = self._collection_url()
         body: dict[str, Any] = {
-            "task_type": task_type.value,
+            "id": uuid.uuid4().hex[:15],
+            "task_type": resolved_type.value,
             "status": TaskStatus.PENDING.value,
             "payload": payload or {},
             "worker_id": None,
@@ -492,3 +545,87 @@ class PocketBaseTaskBroker(BaseTaskBroker):
             return datetime.fromisoformat(str(val).replace("Z", "+00:00"))
         except Exception:
             return None
+
+    def _candidate_collection_url(self) -> str:
+        return f"{self.base_url}/api/collections/candidate_profiles/records"
+
+    async def get_candidate_profile(self, user_id: str = "default") -> dict[str, Any] | None:
+        url = self._candidate_collection_url()
+        loop = asyncio.get_running_loop()
+        try:
+            resp = await loop.run_in_executor(
+                None,
+                lambda: self.session.get(
+                    url,
+                    params={"filter": f"user_id='{user_id}'", "perPage": "1"},
+                    headers=self._headers(),
+                ),
+            )
+            if resp.status_code == 404:
+                return self._fallback_local_profile()
+            resp.raise_for_status()
+            items = resp.json().get("items", [])
+            if items:
+                return items[0]
+            return self._fallback_local_profile()
+        except Exception as e:
+            logger.warning("PocketBase get_candidate_profile failed, fallback to local: %s", e)
+            return self._fallback_local_profile()
+
+    def _fallback_local_profile(self) -> dict[str, Any] | None:
+        from pathlib import Path
+
+        config_path = Path("config/candidate_memory.json")
+        if config_path.exists():
+            try:
+                return json.loads(config_path.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        return None
+
+    async def save_candidate_profile(
+        self, profile_data: dict[str, Any], user_id: str = "default"
+    ) -> dict[str, Any]:
+        url = self._candidate_collection_url()
+        loop = asyncio.get_running_loop()
+        # Dual-sync local file first
+        try:
+            from pathlib import Path
+
+            Path("config").mkdir(parents=True, exist_ok=True)
+            Path("config/candidate_memory.json").write_text(
+                json.dumps(profile_data, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except Exception as e:
+            logger.warning("Failed to dual-sync candidate profile to local JSON: %s", e)
+
+        # Attempt to save to PocketBase
+        try:
+            existing = await self.get_candidate_profile(user_id=user_id)
+            body = {**profile_data, "user_id": user_id}
+            if existing and existing.get("id"):
+                rec_id = existing["id"]
+                resp = await loop.run_in_executor(
+                    None,
+                    lambda: self.session.patch(
+                        f"{url}/{rec_id}",
+                        json=body,
+                        headers=self._headers(),
+                    ),
+                )
+            else:
+                resp = await loop.run_in_executor(
+                    None,
+                    lambda: self.session.post(
+                        url,
+                        json=body,
+                        headers=self._headers(),
+                    ),
+                )
+            if resp.ok:
+                return resp.json()
+        except Exception as e:
+            logger.warning("PocketBase save_candidate_profile failed: %s", e)
+
+        return profile_data

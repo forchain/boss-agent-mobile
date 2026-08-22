@@ -8,6 +8,7 @@ CLI entrypoint for running the out-of-process Automation Worker daemon.
 import argparse
 import asyncio
 import logging
+import os
 import sys
 
 from boss_agent.broker.pocketbase_adapter import PocketBaseTaskBroker
@@ -30,7 +31,10 @@ def main() -> None:
         "--appium-url", type=str, default="http://127.0.0.1:4723", help="Appium server URL"
     )
     parser.add_argument(
-        "--pb-url", type=str, default="http://127.0.0.1:8090", help="PocketBase server URL"
+        "--pb-url",
+        type=str,
+        default=os.getenv("POCKETBASE_URL", "http://127.0.0.1:8090"),
+        help="PocketBase server URL (default: env POCKETBASE_URL or http://127.0.0.1:8090)",
     )
     parser.add_argument(
         "--poll-interval", type=float, default=2.0, help="Polling interval in seconds"

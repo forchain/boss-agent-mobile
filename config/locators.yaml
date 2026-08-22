@@ -35,7 +35,9 @@ job_list:
 search:
   search_input:
     - "com.hpbr.bosszhipin:id/et_search"
-    - "android.widget.EditText"
+    - "//*[@resource-id='com.hpbr.bosszhipin:id/et_search']"
+    - "//*[contains(@resource-id, 'et_search')]"
+    - "//android.widget.EditText[contains(@resource-id, 'search') or contains(@hint, '搜索') or @text='搜索' or contains(@text, '搜索')]"
   search_btn:
     - "com.hpbr.bosszhipin:id/tv_search"
     - "//*[@text='搜索']"
@@ -100,3 +102,24 @@ system_dialog:
     - "com.android.permissioncontroller:id/permission_allow_foreground_only_button"
     - "//*[@text='允许' or @text='同意' or @text='确定' or @text='好的']"
     - "//*[@text='SKIP' or @text='Skip' or @text='跳过' or @text='CANCEL' or @text='Cancel' or @text='取消' or @text='稍后']"
+
+chat:
+  chat_entry_btn:
+    - "//*[@text='立即沟通' or @text='继续沟通' or @text='聊一聊' or @text='发消息']"
+    - "//*[contains(@resource-id, 'btn_chat') or contains(@resource-id, 'btn_communicate') or contains(@resource-id, 'tv_chat')]"
+    - "//*[@resource-id='com.hpbr.bosszhipin:id/btn_chat']"
+  message_input:
+    - "//*[@resource-id='com.hpbr.bosszhipin:id/editText_with_scrollbar']"
+    - "//*[@resource-id='com.hpbr.bosszhipin:id/chat_editor']"
+    - "//*[@resource-id='com.hpbr.bosszhipin:id/et_sendmessage']"
+    - "//*[@resource-id='com.hpbr.bosszhipin:id/et_message']"
+    - "//android.widget.EditText[@hint='介绍自己回复率更高哦~']"
+    - "//android.widget.EditText[contains(@resource-id, 'scrollbar') or contains(@resource-id, 'chat') or contains(@resource-id, 'send') or contains(@resource-id, 'msg') or contains(@resource-id, 'editor')]"
+  send_btn:
+    - "//*[@resource-id='com.hpbr.bosszhipin:id/btn_send']"
+    - "//*[@text='发送']"
+  back_btn:
+    - "//*[@resource-id='com.hpbr.bosszhipin:id/iv_back']"
+    - "//*[@content-desc='返回' or contains(@resource-id, 'iv_back') or contains(@resource-id, 'btn_back')]"
+
+
