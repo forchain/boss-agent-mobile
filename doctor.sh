@@ -177,9 +177,10 @@ else
 fi
 
 if curl -s -f "http://127.0.0.1:4723/status" >/dev/null 2>&1; then
-    log_pass "Appium 服务正在运行 (http://127.0.0.1:4723)"
+    APPIUM_PID="$(cat .boss_agent/appium.pid 2>/dev/null || lsof -ti :4723 2>/dev/null | head -n 1 || echo '')"
+    log_pass "Appium 服务正在运行 (http://127.0.0.1:4723${APPIUM_PID:+, PID: ${APPIUM_PID}}, 日志: .boss_agent/appium.log)"
 else
-    log_warn "Appium 服务未启动" "如需执行实机自动化投递，请运行: appium"
+    log_warn "Appium 服务尚未启动" "运行: ./appium.sh 或 ./run.sh appium (或 ./appium.sh start --daemon)"
 fi
 
 echo ""

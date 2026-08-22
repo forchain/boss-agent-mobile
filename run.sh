@@ -52,6 +52,10 @@ case "${SUBCOMMAND}" in
         shift
         exec ./emulator.sh "$@"
         ;;
+    appium|app)
+        shift
+        exec ./appium.sh "$@"
+        ;;
     doctor|check)
         shift
         exec ./doctor.sh "$@"
@@ -190,9 +194,25 @@ check_dedicated_avd_ready() {
     fi
 }
 
+# 3. Resolve and check Appium server status
+APPIUM_URL="${APPIUM_URL:-http://127.0.0.1:4723}"
+check_appium_health() {
+    local STATUS_URL="${APPIUM_URL%/}/status"
+    if ! curl -s -f "${STATUS_URL}" >/dev/null 2>&1; then
+        echo "❌ Error: Appium server is not reachable at ${APPIUM_URL}" >&2
+        echo "" >&2
+        echo "💡 The automation worker requires Appium server to drive the Android device:" >&2
+        echo "   - Start Appium: run './appium.sh' or './run.sh appium' (or './appium.sh start --daemon')" >&2
+        echo "   - Check status: run './appium.sh status'" >&2
+        echo "" >&2
+        exit 1
+    fi
+}
+
 # Run Pre-flight Gates
 check_pocketbase_health
 check_dedicated_avd_ready
+check_appium_health
 
 # Route to Worker or Live Harness
 if [[ $# -eq 0 || "${1:-}" == "worker" || "${1:-}" == "--worker" ]]; then
