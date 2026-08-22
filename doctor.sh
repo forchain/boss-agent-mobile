@@ -133,17 +133,38 @@ fi
 echo ""
 
 # ------------------------------------------------------------------------------
-# 4. Appium & Android Mobile Environment Check
+# 4. Appium & Dedicated Android AVD Environment Check
 # ------------------------------------------------------------------------------
-echo -e "${BOLD}${BLUE}[4/5] Appium 服务与 Android 真机 / 模拟器${NC}"
+echo -e "${BOLD}${BLUE}[4/5] Appium 服务与专用 Android AVD 模拟器${NC}"
+
+# Resolve target AVD name
+TARGET_AVD="${ANDROID_AVD:-${AVD_NAME:-}}"
+if [[ -z "${TARGET_AVD}" && -f "config/settings.local.yaml" ]]; then
+    TARGET_AVD="$(grep -E "^[[:space:]]*avd_name:" config/settings.local.yaml 2>/dev/null | awk '{print $2}' | tr -d '"' | tr -d "'" || true)"
+fi
+TARGET_AVD="${TARGET_AVD:-boss_avd_arm64}"
 
 if command -v adb >/dev/null 2>&1; then
-    DEVICES_OUTPUT="$(adb devices 2>/dev/null | grep -v "List of devices attached" | grep "device$" || true)"
-    if [[ -n "${DEVICES_OUTPUT}" ]]; then
-        DEVICE_COUNT="$(echo "${DEVICES_OUTPUT}" | wc -l | tr -d ' ')"
-        log_pass "已检测到 ${DEVICE_COUNT} 台 Android 在线设备:\n    $(echo "${DEVICES_OUTPUT}" | tr '\n' ' ')"
+    # Find serial matching TARGET_AVD
+    RUNNING_AVD_SERIAL=""
+    DEV_LIST="$(adb devices 2>/dev/null | grep -E "emulator-[0-9]+" | awk '{print $1}' || true)"
+    for dev in ${DEV_LIST}; do
+        AVD_FOUND="$(adb -s "${dev}" emu avd name 2>/dev/null | head -n 1 | tr -d '\r\n' || true)"
+        if [[ "${AVD_FOUND}" == "${TARGET_AVD}" ]]; then
+            RUNNING_AVD_SERIAL="${dev}"
+            break
+        fi
+    done
+
+    if [[ -n "${RUNNING_AVD_SERIAL}" ]]; then
+        BOOT_STATUS="$(adb -s "${RUNNING_AVD_SERIAL}" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r\n' || true)"
+        if [[ "${BOOT_STATUS}" == "1" ]]; then
+            log_pass "专用 Android AVD '${TARGET_AVD}' 已开机并就绪 (${RUNNING_AVD_SERIAL})"
+        else
+            log_warn "专用 Android AVD '${TARGET_AVD}' 正在启动中..." "请等待模拟器启动完毕: ./emulator.sh status"
+        fi
     else
-        log_warn "未检测到已连接的 Android 实机或模拟器" "启动 Android 模拟器或连接手机并开启 USB 调试 (adb devices)"
+        log_warn "专用 Android AVD '${TARGET_AVD}' 尚未启动" "运行: ./emulator.sh 或 ./run.sh emu (启动专用模拟器)"
     fi
 else
     log_warn "未在 PATH 中找到 'adb' 命令" "请安装 Android Platform Tools: brew install android-platform-tools"

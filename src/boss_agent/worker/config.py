@@ -14,6 +14,7 @@ class WorkerConfig(BaseModel):
 
     worker_id: str = Field(default_factory=lambda: f"worker-{uuid.uuid4().hex[:6]}")
     device_id: str = "emulator-5554"
+    avd_name: str = "boss_avd_arm64"
     appium_url: str = "http://127.0.0.1:4723"
     poll_interval_sec: float = 2.0
     heartbeat_interval_sec: float = 15.0

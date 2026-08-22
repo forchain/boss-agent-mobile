@@ -8,8 +8,9 @@
 # key here. Specifying CLI arguments will override these configuration settings.
 # ==============================================================================
 
-# Device UDID and Appium Server URL
+# Device UDID, Dedicated AVD Name, and Appium Server URL
 device: "emulator-5554"
+avd_name: "boss_avd_arm64"          # Dedicated Android Virtual Device name (env: ANDROID_AVD)
 server_url: "http://127.0.0.1:4723"
 pocketbase_url: "http://127.0.0.1:8090" # PocketBase State Stream URL (env: POCKETBASE_URL)
 
