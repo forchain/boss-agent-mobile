@@ -34,8 +34,8 @@ model: "MiniMax-M3"
 # Sampling temperature (0.0 to 1.0, lower means more deterministic, default: 0.2)
 temperature: 0.2
 
-# Request timeout in seconds (default: 30.0)
-timeout_sec: 30.0
+# Request timeout in seconds (default: 120.0)
+timeout_sec: 120.0
 
-# Max completion tokens in response (default: 2048)
-max_tokens: 2048
+# Max completion tokens in response (default: 262144 for MiniMax/large models)
+max_tokens: 262144

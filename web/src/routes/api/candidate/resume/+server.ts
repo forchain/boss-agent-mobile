@@ -1,52 +1,84 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
+import { runPythonScript, getProjectRoot } from '$lib/server/pythonRunner';
+import path from 'path';
+import fs from 'fs';
+import os from 'os';
 
 export const POST: RequestHandler = async ({ request }) => {
+	let tempFilePath: string | null = null;
 	try {
 		const formData = await request.formData();
 		const file = formData.get('file') as File | null;
+		const llmSettingsStr = (formData.get('llmSettings') as string) || '';
 
 		if (!file) {
-			return json({ success: false, message: 'No file uploaded' }, { status: 400 });
+			return json({ success: false, message: '请上传有效的简历文件' }, { status: 400 });
 		}
 
 		const fileName = file.name || 'resume.pdf';
-		const textContent = await file.text();
+		const ext = path.extname(fileName).toLowerCase() || '.pdf';
 
-		// Smart extraction / LLM fallback simulation
-		let name = '求职者';
-		let yearsOfExp = 5;
-		const skills: string[] = ['Python', 'FastAPI', 'LLM Agent', 'Android'];
-		const positions: string[] = ['AI Agent 架构师'];
+		// Create upload directory
+		const projectRoot = getProjectRoot();
+		const uploadDir = path.join(projectRoot, '.boss_agent', 'uploads');
+		if (!fs.existsSync(uploadDir)) {
+			fs.mkdirSync(uploadDir, { recursive: true });
+		}
 
-		// Heuristic extraction from resume text
-		if (textContent.includes('周黄金')) name = '周黄金';
-		if (textContent.includes('19年') || textContent.includes('19 年')) yearsOfExp = 19;
-		if (textContent.includes('Unity')) skills.push('Unity', 'C#');
-		if (textContent.includes('DeepSeek')) skills.push('DeepSeek');
-		if (textContent.includes('TypeScript')) skills.push('TypeScript');
+		const safeTempName = `resume_${Date.now()}_${Math.random().toString(36).substring(2, 8)}${ext}`;
+		tempFilePath = path.join(uploadDir, safeTempName);
 
-		const profile = {
-			name,
-			years_of_experience: yearsOfExp,
-			education: [{ school: '重点大学', degree: '硕士', major: '计算机软件' }],
-			core_skills: Array.from(new Set(skills)),
-			project_highlights: [
-				{
-					name: '大模型与移动端自动化 Agent',
-					description: '主导研发多端协同的大模型求职自动化系统，实现端侧精准交互。'
-				}
-			],
-			target_positions: positions,
-			raw_summary: `${yearsOfExp}年研发经验，专注于大模型 Agent 架构与移动端自动化落地。`
-		};
+		// Write uploaded file buffer
+		const buffer = Buffer.from(await file.arrayBuffer());
+		fs.writeFileSync(tempFilePath, buffer);
 
-		return json({
-			success: true,
-			fileName,
-			profile
-		});
+		const args = ['--file', tempFilePath];
+		if (llmSettingsStr) {
+			args.push('--llm-config', llmSettingsStr);
+		}
+
+		console.log(`[ResumeAPI] Received file upload: ${fileName} (${buffer.length} bytes), temp path: ${tempFilePath}`);
+		const { stdout, stderr, code } = await runPythonScript('scripts/parse_resume.py', args);
+
+		// Parse the JSON output from stdout
+		let parsedResult: any = null;
+		if (stdout) {
+			const jsonMatch = stdout.match(/\{[\s\S]*\}/);
+			if (jsonMatch) {
+				try {
+					parsedResult = JSON.parse(jsonMatch[0]);
+				} catch (e) {}
+			}
+		}
+
+		if (parsedResult && parsedResult.success && parsedResult.profile) {
+			console.log(`[ResumeAPI] Successfully parsed resume for: ${parsedResult.profile.name}`);
+			return json({
+				success: true,
+				fileName,
+				profile: parsedResult.profile,
+				message: parsedResult.message || '简历解析成功'
+			});
+		} else {
+			const errMsg = parsedResult?.message || stderr || '大模型解析简历失败，请检查文件格式或大模型配置';
+			console.error(`[ResumeAPI] Resume parsing failed (code: ${code}): ${errMsg}`);
+			return json({
+				success: false,
+				message: errMsg
+			}, { status: 500 });
+		}
 	} catch (err: any) {
-		return json({ success: false, message: err?.message || 'Resume parsing failed' }, { status: 500 });
+		console.error(`[ResumeAPI] Exception occurred: ${err?.message || err}`);
+		return json({
+			success: false,
+			message: err?.message || '简历解析发生未知异常'
+		}, { status: 500 });
+	} finally {
+		if (tempFilePath && fs.existsSync(tempFilePath)) {
+			try {
+				fs.unlinkSync(tempFilePath);
+			} catch (e) {}
+		}
 	}
 };

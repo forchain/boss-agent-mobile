@@ -28,15 +28,17 @@
 	let positionsInput = $state('AI Agent 架构师, 全栈技术专家');
 	let isUploadingResume = $state(false);
 	let uploadStatusText = $state('');
+	let uploadedFileName = $state('');
+	let isDraggingOver = $state(false);
 	let profileSavedSuccess = $state(false);
 
 	// LLM Settings State
 	let llmSettings = $state<LLMSettings>({
 		provider: 'openai',
-		model: 'gpt-4o-mini',
-		base_url: 'https://api.openai.com/v1',
+		model: 'MiniMax-M3',
+		base_url: 'https://api.minimaxi.com/v1',
 		api_key: '',
-		temperature: 0.3
+		temperature: 0.2
 	});
 	let llmSavedSuccess = $state(false);
 
@@ -77,6 +79,23 @@
 			console.error('Failed to load profile', e);
 		}
 
+		// Load active LLM settings from backend
+		try {
+			const res = await fetch('/api/llm/settings');
+			if (res.ok) {
+				const conf = await res.json();
+				llmSettings = {
+					provider: conf.provider || 'openai',
+					model: conf.model || 'MiniMax-M3',
+					base_url: conf.base_url || 'https://api.minimaxi.com/v1',
+					api_key: conf.api_key || '',
+					temperature: conf.temperature ?? 0.2
+				};
+			}
+		} catch (e) {
+			console.warn('Failed to load LLM settings:', e);
+		}
+
 		// Subscribe to PocketBase Realtime SSE only when online
 		if (await checkPocketBaseHealth()) {
 			try {
@@ -108,10 +127,12 @@
 	// Resume Upload Handler
 	async function handleResumeUpload(file: File) {
 		isUploadingResume = true;
-		uploadStatusText = `正在解析简历: ${file.name}...`;
+		uploadedFileName = file.name;
+		uploadStatusText = `正在提取并解析简历: ${file.name} (大模型提取中)...`;
 
 		const formData = new FormData();
 		formData.append('file', file);
+		formData.append('llmSettings', JSON.stringify(llmSettings));
 
 		try {
 			const res = await fetch('/api/candidate/resume', {
@@ -119,17 +140,25 @@
 				body: formData
 			});
 			const data = await res.json();
-			if (res.ok && data.success) {
-				profile = data.profile;
-				skillsInput = (profile.core_skills || []).join(', ');
-				positionsInput = (profile.target_positions || []).join(', ');
+			if (res.ok && data.success && data.profile) {
+				profile = {
+					name: data.profile.name || '求职者',
+					years_of_experience: Number(data.profile.years_of_experience) || 0,
+					education: data.profile.education || [],
+					core_skills: data.profile.core_skills || [],
+					project_highlights: data.profile.project_highlights || [],
+					target_positions: data.profile.target_positions || [],
+					raw_summary: data.profile.raw_summary || ''
+				};
+				skillsInput = (data.profile.core_skills || []).join(', ');
+				positionsInput = (data.profile.target_positions || []).join(', ');
 				await saveCandidateProfile(profile);
 				uploadStatusText = `✅ 简历解析成功！画像已更新并持久化`;
 				setTimeout(() => {
 					uploadStatusText = '';
-				}, 4000);
+				}, 5000);
 			} else {
-				uploadStatusText = `❌ 解析失败: ${data.message}`;
+				uploadStatusText = `❌ 解析失败: ${data.message || '未知错误'}`;
 			}
 		} catch (err: any) {
 			uploadStatusText = `❌ 上传错误: ${err?.message || err}`;
@@ -140,11 +169,11 @@
 
 	async function onSaveProfile() {
 		profile.core_skills = skillsInput
-			.split(',')
+			.split(/[,，]/)
 			.map((s) => s.trim())
 			.filter(Boolean);
 		profile.target_positions = positionsInput
-			.split(',')
+			.split(/[,，]/)
 			.map((s) => s.trim())
 			.filter(Boolean);
 
@@ -155,11 +184,25 @@
 		}, 3000);
 	}
 
-	function onSaveLLMSettings() {
-		llmSavedSuccess = true;
-		setTimeout(() => {
-			llmSavedSuccess = false;
-		}, 3000);
+	async function onSaveLLMSettings() {
+		try {
+			const res = await fetch('/api/llm/settings', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(llmSettings)
+			});
+			if (res.ok) {
+				llmSavedSuccess = true;
+				setTimeout(() => {
+					llmSavedSuccess = false;
+				}, 3000);
+			} else {
+				const err = await res.json();
+				alert('保存配置失败: ' + err.message);
+			}
+		} catch (e) {
+			alert('保存配置异常: ' + e);
+		}
 	}
 
 	// Match Evaluation Sandbox Handler
@@ -173,11 +216,16 @@
 					job_title: matchJobTitle,
 					company_name: matchCompany,
 					salary_range: matchSalary,
-					job_description: matchJd
+					job_description: matchJd,
+					candidate_profile: profile,
+					llmSettings: llmSettings
 				})
 			});
 			if (res.ok) {
 				matchResult = await res.json();
+			} else {
+				const err = await res.json();
+				alert('评估失败: ' + (err.error || err.message));
 			}
 		} catch (e) {
 			alert('评估请求失败: ' + e);
@@ -298,11 +346,24 @@
 						上传最新简历 (PDF / Docx / TXT / MD)
 					</label>
 					<div
-						class="border-2 border-dashed border-slate-700 hover:border-cyan-500 bg-slate-950/70 rounded-xl p-5 text-center cursor-pointer transition relative group"
+						class="border-2 border-dashed rounded-xl p-5 text-center cursor-pointer transition relative group {isDraggingOver ? 'border-cyan-400 bg-cyan-950/40 shadow-lg shadow-cyan-900/30' : 'border-slate-700 hover:border-cyan-500 bg-slate-950/70'}"
+						ondragover={(e) => {
+							e.preventDefault();
+							isDraggingOver = true;
+						}}
+						ondragleave={() => {
+							isDraggingOver = false;
+						}}
+						ondrop={(e) => {
+							e.preventDefault();
+							isDraggingOver = false;
+							const file = e.dataTransfer?.files?.[0];
+							if (file) handleResumeUpload(file);
+						}}
 					>
 						<input
 							type="file"
-							accept=".pdf,.docx,.doc,.txt,.md"
+							accept=".pdf,.docx,.doc,.txt,.md,.json"
 							class="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
 							onchange={(e) => {
 								const file = e.currentTarget.files?.[0];
@@ -310,9 +371,13 @@
 							}}
 						/>
 						<div class="space-y-1.5 pointer-events-none">
-							<div class="text-3xl group-hover:scale-110 transition-transform">📄</div>
-							<p class="text-xs text-slate-300 font-medium">点击或拖拽简历文件至此</p>
-							<p class="text-[11px] text-slate-500">大模型将自动提取并更新求职者画像</p>
+							<div class="text-3xl group-hover:scale-110 transition-transform">
+								{isUploadingResume ? '🌀' : '📄'}
+							</div>
+							<p class="text-xs text-slate-300 font-medium">
+								{isUploadingResume ? `正在解析 ${uploadedFileName}...` : isDraggingOver ? '松开鼠标立即上传解析' : '点击或拖拽简历文件至此'}
+							</p>
+							<p class="text-[11px] text-slate-500">支持 PDF / Docx / TXT / MD，大模型将自动提取并更新求职者画像</p>
 						</div>
 					</div>
 					{#if isUploadingResume || uploadStatusText}

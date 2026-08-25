@@ -229,8 +229,11 @@ def wait_until(
     """Poll a callable condition until it returns a truthy value or timeout expires."""
     start_time = time.time()
     last_exception: Exception | None = None
+    max_retries = max(int(timeout_sec / max(poll_interval, 0.001)), 1)
+    retries = 0
 
-    while time.time() - start_time < timeout_sec:
+    while (time.time() - start_time < timeout_sec) and (retries < max_retries):
+        retries += 1
         try:
             res = condition()
             if res:

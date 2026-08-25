@@ -141,3 +141,24 @@ memory_path: "{memory_file}"
     assert profile.name == "孙七"
     assert profile.years_of_experience == 5
     assert memory_file.is_file()
+
+
+def test_structured_candidate_profile_normalizes_dict_skills():
+    data = {
+        "name": "周黄金",
+        "years_of_experience": 19,
+        "education": [{"school": "沙迦美国大学", "degree": "硕士", "major": "计算机工程"}],
+        "core_skills": {
+            "AI与智能体": ["Claude", "Codex", "Langchain"],
+            "编程语言": ["Python", "Golang"],
+        },
+        "project_highlights": [{"name": "项目1", "description": "描述1"}],
+        "target_positions": ["架构师"],
+        "raw_summary": "19年经验",
+    }
+    profile = StructuredCandidateProfile.from_dict(data)
+    assert profile.name == "周黄金"
+    assert len(profile.core_skills) == 2
+    assert "AI与智能体: Claude, Codex, Langchain" in profile.core_skills
+    assert "编程语言: Python, Golang" in profile.core_skills
+

@@ -22,6 +22,7 @@ cd "${ROOT_DIR}"
 mkdir -p ".boss_agent"
 
 PB_DATA_DIR="${PB_DATA_DIR:-.boss_agent/pb_data}"
+PB_PUBLIC_DIR="${PB_PUBLIC_DIR:-${ROOT_DIR}/pb_public}"
 PB_HTTP="${PB_HTTP:-0.0.0.0:8090}"
 PID_FILE=".boss_agent/pocketbase.pid"
 LOG_FILE=".boss_agent/pocketbase.log"
@@ -183,7 +184,7 @@ cmd_start() {
 
     if [[ ${DAEMON} -eq 1 ]]; then
         echo "🚀 Starting PocketBase in background on http://${PB_HTTP}..."
-        "${PB_BIN}" serve --http "${PB_HTTP}" --dir "${PB_DATA_DIR}" >> "${LOG_FILE}" 2>&1 &
+        "${PB_BIN}" serve --http "${PB_HTTP}" --dir "${PB_DATA_DIR}" --publicDir "${PB_PUBLIC_DIR}" >> "${LOG_FILE}" 2>&1 &
         local PID=$!
         echo "${PID}" > "${PID_FILE}"
 
@@ -193,6 +194,7 @@ cmd_start() {
                 run_provisioner
                 echo "✅ PocketBase successfully started in background (PID: ${PID})"
                 echo "   Dashboard : http://${PB_HTTP}/_/"
+                echo "   Portal    : http://${PB_HTTP}/ (Auto-redirects to Admin Dashboard)"
                 echo "   REST API  : http://${PB_HTTP}/api/"
                 echo "   Log File  : ${LOG_FILE}"
                 exit 0
@@ -204,13 +206,15 @@ cmd_start() {
     else
         echo "🚀 Starting PocketBase on http://${PB_HTTP}..."
         echo "   Data directory : ${PB_DATA_DIR}"
+        echo "   Public portal  : ${PB_PUBLIC_DIR}"
         echo "   Dashboard      : http://${PB_HTTP}/_/"
+        echo "   Portal         : http://${PB_HTTP}/ (Auto-redirects to Admin Dashboard)"
         echo "   REST API       : http://${PB_HTTP}/api/"
         echo "   Log File       : ${LOG_FILE}"
         echo "   Press Ctrl+C to stop."
         echo ""
 
-        "${PB_BIN}" serve --http "${PB_HTTP}" --dir "${PB_DATA_DIR}" >> "${LOG_FILE}" 2>&1 &
+        "${PB_BIN}" serve --http "${PB_HTTP}" --dir "${PB_DATA_DIR}" --publicDir "${PB_PUBLIC_DIR}" >> "${LOG_FILE}" 2>&1 &
         local PID=$!
         echo "${PID}" > "${PID_FILE}"
 
