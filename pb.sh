@@ -22,7 +22,7 @@ cd "${ROOT_DIR}"
 mkdir -p ".boss_agent"
 
 PB_DATA_DIR="${PB_DATA_DIR:-.boss_agent/pb_data}"
-PB_HTTP="${PB_HTTP:-127.0.0.1:8090}"
+PB_HTTP="${PB_HTTP:-0.0.0.0:8090}"
 PID_FILE=".boss_agent/pocketbase.pid"
 LOG_FILE=".boss_agent/pocketbase.log"
 

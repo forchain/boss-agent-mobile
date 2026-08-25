@@ -5,7 +5,13 @@ import { defineConfig } from 'vite';
 export default defineConfig({
 	plugins: [tailwindcss(), sveltekit()],
 	server: {
-		host: '127.0.0.1',
-		port: 5173
+		host: '0.0.0.0',
+		port: 5173,
+		allowedHosts: true
+	},
+	preview: {
+		host: '0.0.0.0',
+		port: 4173,
+		allowedHosts: true
 	}
 });

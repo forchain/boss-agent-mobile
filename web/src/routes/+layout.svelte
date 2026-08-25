@@ -1,13 +1,22 @@
 <script lang="ts">
 	import '../app.css';
 	import { onMount, onDestroy } from 'svelte';
-	import { checkPocketBaseHealth } from '$lib/pocketbase';
+	import { checkPocketBaseHealth, setPocketBaseUrl, getPocketBaseUrl } from '$lib/pocketbase';
 
-	let { children } = $props();
+	let { data, children }: { data: any; children: any } = $props();
 	let isPocketBaseOnline = $state(false);
+	let currentPbUrl = $state(getPocketBaseUrl());
 	let healthTimer: any = null;
 
+	$effect(() => {
+		if (data?.pocketbaseUrl) {
+			setPocketBaseUrl(data.pocketbaseUrl);
+			currentPbUrl = data.pocketbaseUrl;
+		}
+	});
+
 	async function updateHealth() {
+		currentPbUrl = getPocketBaseUrl();
 		isPocketBaseOnline = await checkPocketBaseHealth();
 	}
 
@@ -44,11 +53,11 @@
 				<div class="flex items-center space-x-2 bg-slate-800/80 border border-slate-700/60 px-3 py-1.5 rounded-full transition-colors">
 					{#if isPocketBaseOnline}
 						<span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-						<span class="text-slate-300 font-medium font-mono">PocketBase: Connected (8090)</span>
+						<span class="text-slate-300 font-medium font-mono">PocketBase: Connected ({currentPbUrl.replace(/^https?:\/\//, '')})</span>
 					{:else}
 						<span class="w-2 h-2 rounded-full bg-rose-500"></span>
-						<span class="text-rose-300 font-medium font-mono text-[11px]" title="请运行 pocketbase serve --http 127.0.0.1:8090 启动数据流">
-							PocketBase: Offline (Local Fallback)
+						<span class="text-rose-300 font-medium font-mono text-[11px]" title={`未能连接到 ${currentPbUrl}`}>
+							PocketBase: Offline ({currentPbUrl.replace(/^https?:\/\//, '')})
 						</span>
 					{/if}
 				</div>

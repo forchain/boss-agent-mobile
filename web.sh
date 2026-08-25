@@ -21,7 +21,9 @@ mkdir -p ".boss_agent"
 
 PID_FILE=".boss_agent/web.pid"
 LOG_FILE=".boss_agent/web.log"
-WEB_URL="http://127.0.0.1:5173"
+WEB_HOST="${WEB_HOST:-0.0.0.0}"
+WEB_PORT="${WEB_PORT:-5173}"
+WEB_URL="http://${WEB_HOST}:${WEB_PORT}"
 
 get_running_web_pid() {
     if [[ -f "${PID_FILE}" ]]; then
@@ -33,9 +35,9 @@ get_running_web_pid() {
         fi
     fi
 
-    # Fallback to lsof on port 5173
+    # Fallback to lsof on port
     local PORT_PID
-    PORT_PID="$(lsof -ti :5173 2>/dev/null | head -n 1 || true)"
+    PORT_PID="$(lsof -ti ":${WEB_PORT}" 2>/dev/null | head -n 1 || true)"
     if [[ -n "${PORT_PID}" ]]; then
         echo "${PORT_PID}" > "${PID_FILE}"
         echo "${PORT_PID}"
@@ -64,7 +66,7 @@ cmd_status() {
     local PID
     PID="$(get_running_web_pid)"
 
-    if curl -s -f "${WEB_URL}" >/dev/null 2>&1; then
+    if curl -s -f "http://127.0.0.1:${WEB_PORT}" >/dev/null 2>&1 || curl -s -f "${WEB_URL}" >/dev/null 2>&1; then
         echo "🟢 SvelteKit Web Dashboard is RUNNING at ${WEB_URL}"
         if [[ -n "${PID}" ]]; then
             echo "   Process PID : ${PID}"
@@ -95,7 +97,7 @@ cmd_stop() {
     rm -f "${PID_FILE}"
 
     # Cleanup vite process
-    pkill -f "vite dev.*5173" 2>/dev/null || true
+    pkill -f "vite dev.*${WEB_PORT}" 2>/dev/null || true
 
     if [[ ${STOPPED} -eq 1 ]]; then
         echo "✅ SvelteKit Web Dashboard stopped."
@@ -108,7 +110,7 @@ cmd_start() {
     # Check if already running locally
     local RUNNING_PID
     RUNNING_PID="$(get_running_web_pid)"
-    if curl -s -f "${WEB_URL}" >/dev/null 2>&1; then
+    if curl -s -f "http://127.0.0.1:${WEB_PORT}" >/dev/null 2>&1 || curl -s -f "${WEB_URL}" >/dev/null 2>&1; then
         attach_logs "${RUNNING_PID:-unknown}"
     fi
 
@@ -119,7 +121,9 @@ cmd_start() {
     fi
 
     # Check dependency: PocketBase health
-    POCKETBASE_URL="${POCKETBASE_URL:-http://127.0.0.1:8090}"
+    export POCKETBASE_URL="${POCKETBASE_URL:-http://127.0.0.1:8090}"
+    export VITE_POCKETBASE_URL="${POCKETBASE_URL}"
+    export PUBLIC_POCKETBASE_URL="${POCKETBASE_URL}"
     HEALTH_URL="${POCKETBASE_URL%/}/api/health"
 
     echo "🔍 Checking PocketBase State Stream dependency at ${HEALTH_URL}..."
@@ -135,12 +139,13 @@ cmd_start() {
 
     echo "✅ PocketBase State Stream dependency is healthy (${POCKETBASE_URL})"
     echo "🌐 Starting Boss Agent Mobile SvelteKit Web Dashboard on ${WEB_URL}..."
-    echo "   Log File : ${LOG_FILE}"
+    echo "   PocketBase URL : ${POCKETBASE_URL}"
+    echo "   Log File       : ${LOG_FILE}"
     echo "   Press Ctrl+C to stop."
     echo ""
 
     # Start in background, capture PID, pipe to log and tail
-    npm --prefix web run dev "$@" >> "${LOG_FILE}" 2>&1 &
+    HOST="${WEB_HOST}" PORT="${WEB_PORT}" VITE_POCKETBASE_URL="${POCKETBASE_URL}" PUBLIC_POCKETBASE_URL="${POCKETBASE_URL}" npm --prefix web run dev -- --host "${WEB_HOST}" --port "${WEB_PORT}" "$@" >> "${LOG_FILE}" 2>&1 &
     local PID=$!
     echo "${PID}" > "${PID_FILE}"
 
