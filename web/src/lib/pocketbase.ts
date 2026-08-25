@@ -1,24 +1,49 @@
 import PocketBase from 'pocketbase';
 import type { AutomationTask, CandidateProfile, LLMSettings } from './types';
 
-export function getPocketBaseUrl(): string {
+let currentPbUrl = '';
+
+export function setPocketBaseUrl(url: string) {
+	if (!url) return;
+	currentPbUrl = url.replace(/\/+$/, '');
 	if (typeof window !== 'undefined') {
-		const custom = (window as any).__POCKETBASE_URL__ || (import.meta as any).env?.VITE_POCKETBASE_URL;
-		if (custom) return custom;
+		(window as any).__POCKETBASE_URL__ = currentPbUrl;
+	}
+	pb.baseUrl = currentPbUrl;
+}
+
+export function getPocketBaseUrl(): string {
+	if (currentPbUrl) return currentPbUrl;
+	if (typeof window !== 'undefined') {
+		const custom =
+			(window as any).__POCKETBASE_URL__ ||
+			(import.meta as any).env?.VITE_POCKETBASE_URL ||
+			(import.meta as any).env?.PUBLIC_POCKETBASE_URL;
+		if (custom) {
+			currentPbUrl = custom.replace(/\/+$/, '');
+			return currentPbUrl;
+		}
 		const hostname = window.location.hostname || '127.0.0.1';
-		return `http://${hostname}:8090`;
+		const protocol = window.location.protocol || 'http:';
+		return `${protocol}//${hostname}:8090`;
 	}
 	const globalEnv = (globalThis as any).process?.env;
-	return globalEnv?.POCKETBASE_URL || globalEnv?.PUBLIC_POCKETBASE_URL || 'http://127.0.0.1:8090';
+	const resolved =
+		globalEnv?.POCKETBASE_URL ||
+		globalEnv?.PUBLIC_POCKETBASE_URL ||
+		globalEnv?.VITE_POCKETBASE_URL ||
+		'http://127.0.0.1:8090';
+	return resolved.replace(/\/+$/, '');
 }
 
 export const PB_URL = getPocketBaseUrl();
 
 export const pb = new PocketBase(PB_URL);
 
-export async function checkPocketBaseHealth(url = PB_URL): Promise<boolean> {
+export async function checkPocketBaseHealth(url?: string): Promise<boolean> {
+	const targetUrl = (url || getPocketBaseUrl()).replace(/\/+$/, '');
 	try {
-		const res = await fetch(`${url}/api/health`, { method: 'GET', signal: AbortSignal.timeout(1500) });
+		const res = await fetch(`${targetUrl}/api/health`, { method: 'GET', signal: AbortSignal.timeout(3000) });
 		if (res.ok) {
 			const data = await res.json().catch(() => ({}));
 			return data.code === 200 || res.status === 200;

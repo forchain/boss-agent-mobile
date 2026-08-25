@@ -121,7 +121,9 @@ cmd_start() {
     fi
 
     # Check dependency: PocketBase health
-    POCKETBASE_URL="${POCKETBASE_URL:-http://127.0.0.1:8090}"
+    export POCKETBASE_URL="${POCKETBASE_URL:-http://127.0.0.1:8090}"
+    export VITE_POCKETBASE_URL="${POCKETBASE_URL}"
+    export PUBLIC_POCKETBASE_URL="${POCKETBASE_URL}"
     HEALTH_URL="${POCKETBASE_URL%/}/api/health"
 
     echo "🔍 Checking PocketBase State Stream dependency at ${HEALTH_URL}..."
@@ -137,12 +139,13 @@ cmd_start() {
 
     echo "✅ PocketBase State Stream dependency is healthy (${POCKETBASE_URL})"
     echo "🌐 Starting Boss Agent Mobile SvelteKit Web Dashboard on ${WEB_URL}..."
-    echo "   Log File : ${LOG_FILE}"
+    echo "   PocketBase URL : ${POCKETBASE_URL}"
+    echo "   Log File       : ${LOG_FILE}"
     echo "   Press Ctrl+C to stop."
     echo ""
 
     # Start in background, capture PID, pipe to log and tail
-    HOST="${WEB_HOST}" PORT="${WEB_PORT}" npm --prefix web run dev -- --host "${WEB_HOST}" --port "${WEB_PORT}" "$@" >> "${LOG_FILE}" 2>&1 &
+    HOST="${WEB_HOST}" PORT="${WEB_PORT}" VITE_POCKETBASE_URL="${POCKETBASE_URL}" PUBLIC_POCKETBASE_URL="${POCKETBASE_URL}" npm --prefix web run dev -- --host "${WEB_HOST}" --port "${WEB_PORT}" "$@" >> "${LOG_FILE}" 2>&1 &
     local PID=$!
     echo "${PID}" > "${PID_FILE}"
 
