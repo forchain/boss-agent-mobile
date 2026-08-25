@@ -34,11 +34,30 @@ class StructuredCandidateProfile:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "StructuredCandidateProfile":
+        raw_skills = data.get("core_skills") or []
+        normalized_skills: list[str] = []
+        if isinstance(raw_skills, dict):
+            for k, v in raw_skills.items():
+                if isinstance(v, list):
+                    normalized_skills.append(f"{k}: {', '.join(str(x) for x in v)}")
+                else:
+                    normalized_skills.append(f"{k}: {v}")
+        elif isinstance(raw_skills, list):
+            for item in raw_skills:
+                if isinstance(item, dict):
+                    for k, v in item.items():
+                        if isinstance(v, list):
+                            normalized_skills.append(f"{k}: {', '.join(str(x) for x in v)}")
+                        else:
+                            normalized_skills.append(f"{k}: {v}")
+                else:
+                    normalized_skills.append(str(item))
+
         return cls(
             name=data.get("name") or "求职者",
             years_of_experience=int(data.get("years_of_experience") or 0),
             education=data.get("education") or [],
-            core_skills=data.get("core_skills") or [],
+            core_skills=normalized_skills,
             project_highlights=data.get("project_highlights") or [],
             target_positions=data.get("target_positions") or [],
             raw_summary=data.get("raw_summary") or "",
@@ -209,23 +228,24 @@ class ResumeMemoryManager:
 
         console.print("🧠 [bold cyan]Structuring candidate profile via LLM...[/bold cyan]")
         prompt = (
-            "请解析以下求职者原始简历文本，并提取出便于 Agent 理解的结构化个人信息：\n\n"
+            "请全面、完整地解析以下求职者原始简历文本，并提取出便于 Agent 理解的完整结构化个人信息：\n\n"
             f"[简历文本内容]\n{raw_text}\n\n"
-            "请严格以 JSON 格式输出以下结构：\n"
+            "请严格以 JSON 格式输出以下结构，完整提取并保留所有核心技能分类、所有项目经历与个人总结：\n"
             "{\n"
             '  "name": "姓名",\n'
             '  "years_of_experience": 经验年限(整数),\n'
             '  "education": [{"school": "学校", "degree": "学历", "major": "专业"}],\n'
-            '  "core_skills": ["技能1", "技能2", "技能3"],\n'
-            '  "project_highlights": [{"name": "项目名称", "description": "项目成果与亮点描述"}],\n'
+            '  "core_skills": ["分类1: 技能列表", "分类2: 技能列表"],\n'
+            '  "project_highlights": [{"name": "项目名称", "description": "项目成果与亮点描述（完整提取所有项目经历）"}],\n'
             '  "target_positions": ["期望职位1", "期望职位2"],\n'
-            '  "raw_summary": "150字以内的核心个人背景亮点总结"\n'
-            "}"
+            '  "raw_summary": "全面总结的核心个人背景亮点与技术优势概述"\n'
+            "}\n\n"
+            "注意：必须输出标准严格合法的 JSON。core_skills 数组中的每个元素必须为字符串（如 \"AI与智能体: Claude, Langchain\"），严禁在数组内部直接书写 \"key\": value 键值对；字符串内严禁未转义的双引号（若需引用请用中文书名号《》或单引号）。"
         )
         messages = [
             {
                 "role": "system",
-                "content": "You are a professional HR assistant specializing in parsing candidate resumes into structured JSON.",
+                "content": "You are a professional HR assistant specializing in parsing candidate resumes into structured JSON. Always output valid, complete JSON.",
             },
             {"role": "user", "content": prompt},
         ]

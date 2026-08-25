@@ -173,3 +173,37 @@ def test_openai_client_timeout_error():
         pytest.raises(LLMTimeoutError),
     ):
         client.chat_completion([{"role": "user", "content": "Hi"}])
+
+
+def test_robust_json_parsing_edge_cases():
+    # 1. Unescaped inner quotes on single line
+    raw1 = '{"name": "周黄金", "raw_summary": "19年经验，参与"某"核心项目主导"架构"设计。"}'
+    parsed1 = OpenAIChatClient._robust_parse_json(raw1)
+    assert parsed1["name"] == "周黄金"
+    assert "架构" in parsed1["raw_summary"]
+
+    # 2. Control characters & newlines inside string literals
+    raw2 = '{\n  "name": "周黄金",\n  "raw_summary": "第一行内容\n第二行内容"\n}'
+    parsed2 = OpenAIChatClient._robust_parse_json(raw2)
+    assert parsed2["name"] == "周黄金"
+
+    # 3. Truncated JSON auto-repair
+    raw3 = '{"name": "周黄金", "years_of_experience": 19, "project_highlights": [{"name": "项目1", "description": "描述1'
+    parsed3 = OpenAIChatClient._robust_parse_json(raw3)
+    assert parsed3["name"] == "周黄金"
+    assert parsed3["years_of_experience"] == 19
+    assert len(parsed3["project_highlights"]) == 1
+
+    # 4. Trailing commas
+    raw4 = '{"name": "周黄金", "skills": ["Python", "FastAPI",],}'
+    parsed4 = OpenAIChatClient._robust_parse_json(raw4)
+    assert parsed4["name"] == "周黄金"
+    assert len(parsed4["skills"]) == 2
+
+    # 5. Invalid array containing key-value pairs (e.g. core_skills: [ "AI": [...] ])
+    raw5 = '{\n  "name": "周黄金",\n  "core_skills": [\n    "AI与智能体": ["Claude", "Codex"],\n    "编程语言": ["Python", "Golang"]\n  ]\n}'
+    parsed5 = OpenAIChatClient._robust_parse_json(raw5)
+    assert parsed5["name"] == "周黄金"
+    assert "AI与智能体" in parsed5["core_skills"]
+
+

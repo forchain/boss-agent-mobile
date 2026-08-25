@@ -1,11 +1,47 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
+import { runPythonScript } from '$lib/server/pythonRunner';
 
 export const POST: RequestHandler = async ({ request }) => {
 	try {
 		const body = await request.json();
-		const { job_title = '', company_name = '贵司', salary_range = '面议', job_description = '' } = body;
+		const {
+			job_title = '',
+			company_name = '贵司',
+			salary_range = '面议',
+			job_description = '',
+			candidate_profile = null,
+			llmSettings = null
+		} = body;
 
+		const jobPayload = {
+			job_title,
+			company_name,
+			salary_range,
+			job_description
+		};
+
+		const args = ['--job', JSON.stringify(jobPayload)];
+		if (candidate_profile) {
+			args.push('--profile', JSON.stringify(candidate_profile));
+		}
+		if (llmSettings) {
+			args.push('--llm-config', JSON.stringify(llmSettings));
+		}
+
+		const { stdout, stderr, code } = await runPythonScript('scripts/evaluate_match.py', args);
+
+		if (stdout) {
+			const jsonMatch = stdout.match(/\{[\s\S]*\}/);
+			if (jsonMatch) {
+				try {
+					const parsed = JSON.parse(jsonMatch[0]);
+					return json(parsed);
+				} catch (e) {}
+			}
+		}
+
+		// Fallback heuristic if evaluation script output was not parseable
 		const jdText = job_description.toLowerCase();
 		const reqs: string[] = [];
 		let score = 85;
