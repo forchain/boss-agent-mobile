@@ -180,8 +180,7 @@ export async function createAutomationTask(taskType: string, payload: Record<str
 export async function resumeTask(taskId: string): Promise<boolean> {
 	try {
 		await pb.collection('automation_tasks').update(taskId, {
-			status: 'resuming',
-			logs: pb.collection('automation_tasks') ? undefined : undefined
+			status: 'resuming'
 		});
 		return true;
 	} catch (e) {

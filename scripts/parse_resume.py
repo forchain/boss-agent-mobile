@@ -180,7 +180,7 @@ def main() -> None:
                     break
 
             exp_years = 0
-            m_exp = re.search(r'(\d+)\s*(?:年|years|yrs)', raw_text, re.IGNORECASE)
+            m_exp = re.search(r'(?<!\d)([1-9]|[1-4]\d)\s*(?:年|years|yrs)(?:研发经验|工作经验|经验)?', raw_text, re.IGNORECASE)
             if m_exp:
                 exp_years = int(m_exp.group(1))
 
@@ -195,15 +195,13 @@ def main() -> None:
             for pos in known_positions:
                 if pos in raw_text:
                     positions.append(pos)
-            if not positions:
-                positions = ["技术专家"]
 
             profile = StructuredCandidateProfile(
                 name=extracted_name,
                 years_of_experience=exp_years,
                 education=[],
-                core_skills=skills if skills else ["软件研发"],
-                project_highlights=[{"name": "核心项目经历", "description": raw_text[:300]}],
+                core_skills=skills,
+                project_highlights=[],
                 target_positions=positions,
                 raw_summary=raw_text.strip()[:300],
             )

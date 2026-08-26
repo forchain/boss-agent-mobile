@@ -65,22 +65,36 @@
 	// Polling fallback / interval
 	let pollTimer: any = null;
 
+	function applyLoadedProfile(p: Partial<CandidateProfile>) {
+		profile = {
+			name: p.name || '',
+			years_of_experience:
+				p.years_of_experience !== undefined && p.years_of_experience !== null
+					? Number(p.years_of_experience)
+					: null,
+			education: p.education || [],
+			core_skills: p.core_skills || [],
+			project_highlights: p.project_highlights || [],
+			target_positions: p.target_positions || [],
+			raw_summary: p.raw_summary || ''
+		};
+		skillsInput = (p.core_skills || []).join(', ');
+		positionsInput = (p.target_positions || []).join(', ');
+	}
+
 	onMount(async () => {
 		// Load candidate profile from PocketBase / local cache
 		try {
 			const loaded = await getCandidateProfile();
-			if (loaded && (loaded.name || loaded.years_of_experience !== null || loaded.core_skills?.length || loaded.raw_summary)) {
-				profile = {
-					name: loaded.name || '',
-					years_of_experience: loaded.years_of_experience ?? null,
-					education: loaded.education || [],
-					core_skills: loaded.core_skills || [],
-					project_highlights: loaded.project_highlights || [],
-					target_positions: loaded.target_positions || [],
-					raw_summary: loaded.raw_summary || ''
-				};
-				skillsInput = (loaded.core_skills || []).join(', ');
-				positionsInput = (loaded.target_positions || []).join(', ');
+			if (
+				loaded &&
+				(loaded.name ||
+					loaded.years_of_experience !== null ||
+					loaded.core_skills?.length ||
+					loaded.target_positions?.length ||
+					loaded.raw_summary)
+			) {
+				applyLoadedProfile(loaded);
 			}
 		} catch (e) {
 			console.error('Failed to load profile', e);
@@ -148,17 +162,7 @@
 			});
 			const data = await res.json();
 			if (res.ok && data.success && data.profile) {
-				profile = {
-					name: data.profile.name || '',
-					years_of_experience: data.profile.years_of_experience !== undefined && data.profile.years_of_experience !== null ? Number(data.profile.years_of_experience) : null,
-					education: data.profile.education || [],
-					core_skills: data.profile.core_skills || [],
-					project_highlights: data.profile.project_highlights || [],
-					target_positions: data.profile.target_positions || [],
-					raw_summary: data.profile.raw_summary || ''
-				};
-				skillsInput = (data.profile.core_skills || []).join(', ');
-				positionsInput = (data.profile.target_positions || []).join(', ');
+				applyLoadedProfile(data.profile);
 				await saveCandidateProfile(profile);
 				uploadStatusText = `✅ 简历解析成功！画像已更新并持久化`;
 				setTimeout(() => {
