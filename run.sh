@@ -135,9 +135,16 @@ fi
 # ------------------------------------------------------------------------------
 
 # 1. Resolve and check PocketBase health
+if [[ -z "${POCKETBASE_URL:-}" && -f "config/settings.local.yaml" ]]; then
+    POCKETBASE_URL="$(grep -E "^[[:space:]]*(pocketbase_url|pb_url):" config/settings.local.yaml 2>/dev/null | awk '{print $2}' | tr -d '"' | tr -d "'" || true)"
+fi
+if [[ -z "${POCKETBASE_URL:-}" && -f "config/settings.yaml" ]]; then
+    POCKETBASE_URL="$(grep -E "^[[:space:]]*(pocketbase_url|pb_url):" config/settings.yaml 2>/dev/null | awk '{print $2}' | tr -d '"' | tr -d "'" || true)"
+fi
 POCKETBASE_URL="${POCKETBASE_URL:-http://127.0.0.1:8090}"
 check_pocketbase_health() {
     local HEALTH_URL="${POCKETBASE_URL%/}/api/health"
+
     if ! curl -s -f "${HEALTH_URL}" >/dev/null 2>&1; then
         echo "❌ Error: PocketBase State Stream is not reachable at ${HEALTH_URL}" >&2
         echo "" >&2

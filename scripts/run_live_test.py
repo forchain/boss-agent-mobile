@@ -10,18 +10,17 @@ Usage:
 """
 
 import argparse
-import json
 import sys
 import time
 from pathlib import Path
 from typing import Any
 
-import yaml
 from rich.console import Console
 from rich.table import Table
 
 from boss_agent.models import FilterConfig, SearchConfig
 from boss_agent.searches import get_global_search_registry
+from boss_agent.settings import load_settings
 from boss_agent.workflows import SmokeHarness, TakeoverHandler
 from droid_agent_core.driver import AppiumSession, DriverConfig
 
@@ -196,51 +195,9 @@ def run_live_test(
 
 def load_runner_settings(config_path: str | Path | None = None) -> dict[str, Any]:
     """Load settings from configuration files with priority: local overrides -> configs -> defaults."""
-    search_paths: list[Path] = []
-    if config_path:
-        search_paths.append(Path(config_path))
-    else:
-        search_paths.extend(
-            [
-                Path("config/settings.local.yaml"),
-                Path("config/settings.local.json"),
-                Path("config/candidate.local.yaml"),
-                Path("config/settings.yaml"),
-                Path("config/settings.example.yaml"),
-            ]
-        )
+    return load_settings(config_path=config_path)
 
-    merged: dict[str, Any] = {
-        "device": "emulator-5554",
-        "server_url": "http://127.0.0.1:4723",
-        "search_id": "default_agent_search",
-        "keyword": None,
-        "enable_search": True,
-        "enable_filter": True,
-        "resume_path": None,
-        "force_refresh_memory": False,
-        "preview_timeout_sec": 3.0,
-        "enable_greeting": True,
-    }
 
-    # Load from lowest to highest priority so higher priority files overwrite
-    for p in reversed(search_paths):
-        if p.is_file():
-            try:
-                content = p.read_text(encoding="utf-8")
-                loaded = (
-                    yaml.safe_load(content)
-                    if p.suffix in [".yaml", ".yml"]
-                    else json.loads(content)
-                )
-                if isinstance(loaded, dict):
-                    for k, v in loaded.items():
-                        if v is not None:
-                            merged[k] = v
-            except Exception:
-                pass
-
-    return merged
 
 
 def main():

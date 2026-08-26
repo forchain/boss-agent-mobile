@@ -59,8 +59,15 @@ echo -e "${BOLD}${CYAN}═══════════════════
 # 1. PocketBase State Stream Broker Check
 # ------------------------------------------------------------------------------
 echo -e "${BOLD}${BLUE}[1/5] PocketBase State Stream 数据库与状态流${NC}"
+if [[ -z "${POCKETBASE_URL:-}" && -f "config/settings.local.yaml" ]]; then
+    POCKETBASE_URL="$(grep -E "^[[:space:]]*(pocketbase_url|pb_url):" config/settings.local.yaml 2>/dev/null | awk '{print $2}' | tr -d '"' | tr -d "'" || true)"
+fi
+if [[ -z "${POCKETBASE_URL:-}" && -f "config/settings.yaml" ]]; then
+    POCKETBASE_URL="$(grep -E "^[[:space:]]*(pocketbase_url|pb_url):" config/settings.yaml 2>/dev/null | awk '{print $2}' | tr -d '"' | tr -d "'" || true)"
+fi
 POCKETBASE_URL="${POCKETBASE_URL:-http://127.0.0.1:8090}"
 HEALTH_URL="${POCKETBASE_URL%/}/api/health"
+
 
 if curl -s -f "${HEALTH_URL}" >/dev/null 2>&1; then
     PB_PID="$(cat .boss_agent/pocketbase.pid 2>/dev/null || lsof -ti :8090 2>/dev/null | head -n 1 || echo '')"

@@ -30,6 +30,7 @@ from .pages import (
     StartupDialogPage,
 )
 from .searches import SavedSearchRegistry, get_global_search_registry
+from .settings import load_settings, resolve_pocketbase_url
 from .workflows import SmokeHarness, TakeoverHandler
 
 __all__ = [
@@ -57,4 +58,7 @@ __all__ = [
     "StructuredCandidateProfile",
     "TakeoverHandler",
     "get_global_search_registry",
+    "load_settings",
+    "resolve_pocketbase_url",
 ]
+

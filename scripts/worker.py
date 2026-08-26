@@ -8,10 +8,10 @@ CLI entrypoint for running the out-of-process Automation Worker daemon.
 import argparse
 import asyncio
 import logging
-import os
 import sys
 
 from boss_agent.broker.pocketbase_adapter import PocketBaseTaskBroker
+from boss_agent.settings import resolve_pocketbase_url
 from boss_agent.worker.config import WorkerConfig
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.daemon import AutomationWorker
@@ -32,9 +32,10 @@ def main() -> None:
     )
     parser.add_argument(
         "--pb-url",
+        "--pocketbase-url",
         type=str,
-        default=os.getenv("POCKETBASE_URL", "http://127.0.0.1:8090"),
-        help="PocketBase server URL (default: env POCKETBASE_URL or http://127.0.0.1:8090)",
+        default=None,
+        help="PocketBase server URL (overrides config/env setting, default: resolved from config)",
     )
     parser.add_argument(
         "--poll-interval", type=float, default=2.0, help="Polling interval in seconds"
@@ -46,14 +47,18 @@ def main() -> None:
     )
     logger = logging.getLogger("worker_main")
 
+    resolved_pb_url = resolve_pocketbase_url(explicit_url=args.pb_url)
+
     config = WorkerConfig(
         worker_id=args.worker_id or f"worker-{args.device_id}",
         device_id=args.device_id,
         appium_url=args.appium_url,
+        pocketbase_url=resolved_pb_url,
         poll_interval_sec=args.poll_interval,
     )
 
-    broker = PocketBaseTaskBroker(base_url=args.pb_url)
+    broker = PocketBaseTaskBroker(base_url=resolved_pb_url)
+
 
     def driver_factory():
         logger.info("Initializing Appium driver session for device %s", config.device_id)
@@ -81,8 +86,12 @@ def main() -> None:
     )
 
     logger.info(
-        "Starting Automation Worker %s bound to device %s", config.worker_id, config.device_id
+        "Starting Automation Worker %s bound to device %s (PocketBase: %s)",
+        config.worker_id,
+        config.device_id,
+        config.pocketbase_url,
     )
+
     try:
         asyncio.run(worker.start())
     except KeyboardInterrupt:
