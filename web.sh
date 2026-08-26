@@ -120,11 +120,24 @@ cmd_start() {
         exit 1
     fi
 
+    # Ensure dependencies are installed
+    if [[ ! -d "web/node_modules" ]]; then
+        echo "📦 Installing web frontend dependencies (web/node_modules missing)..."
+        npm --prefix web install
+    fi
+
     # Check dependency: PocketBase health
+    if [[ -z "${POCKETBASE_URL:-}" && -f "config/settings.local.yaml" ]]; then
+        POCKETBASE_URL="$(grep -E "^[[:space:]]*(pocketbase_url|pb_url):" config/settings.local.yaml 2>/dev/null | awk '{print $2}' | tr -d '"' | tr -d "'" || true)"
+    fi
+    if [[ -z "${POCKETBASE_URL:-}" && -f "config/settings.yaml" ]]; then
+        POCKETBASE_URL="$(grep -E "^[[:space:]]*(pocketbase_url|pb_url):" config/settings.yaml 2>/dev/null | awk '{print $2}' | tr -d '"' | tr -d "'" || true)"
+    fi
     export POCKETBASE_URL="${POCKETBASE_URL:-http://127.0.0.1:8090}"
     export VITE_POCKETBASE_URL="${POCKETBASE_URL}"
     export PUBLIC_POCKETBASE_URL="${POCKETBASE_URL}"
     HEALTH_URL="${POCKETBASE_URL%/}/api/health"
+
 
     echo "🔍 Checking PocketBase State Stream dependency at ${HEALTH_URL}..."
     if ! curl -s -f "${HEALTH_URL}" >/dev/null 2>&1; then

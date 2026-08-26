@@ -12,7 +12,8 @@
 device: "emulator-5554"
 avd_name: "boss_avd_arm64"          # Dedicated Android Virtual Device name (env: ANDROID_AVD)
 server_url: "http://127.0.0.1:4723"
-pocketbase_url: "http://127.0.0.1:8090" # PocketBase State Stream URL (env: POCKETBASE_URL)
+pocketbase_url: "http://127.0.0.1:8090" # PocketBase State Stream Broker URL (env: POCKETBASE_URL, cli: --pb-url)
+
 
 # Search & Filter Settings
 search_id: "default_agent_search"   # Preset ID from config/searches.yaml

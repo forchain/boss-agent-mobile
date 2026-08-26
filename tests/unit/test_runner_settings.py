@@ -11,6 +11,7 @@ def test_load_runner_settings_defaults():
     settings = load_runner_settings(config_path="/non/existent/path.yaml")
     assert settings["device"] == "emulator-5554"
     assert settings["server_url"] == "http://127.0.0.1:4723"
+    assert settings["pocketbase_url"] == "http://127.0.0.1:8090"
     assert settings["enable_search"] is True
     assert settings["enable_filter"] is True
     assert settings["preview_timeout_sec"] == 3.0
@@ -23,6 +24,7 @@ def test_load_runner_settings_custom_file(tmp_path):
         """
 device: "physical-device-123"
 server_url: "http://192.168.1.100:4723"
+pocketbase_url: "http://192.168.1.100:8090"
 search_id: "ai_engineer_search"
 keyword: "深度学习"
 enable_search: false
@@ -38,6 +40,7 @@ enable_greeting: false
     settings = load_runner_settings(config_path=custom_yaml)
     assert settings["device"] == "physical-device-123"
     assert settings["server_url"] == "http://192.168.1.100:4723"
+    assert settings["pocketbase_url"] == "http://192.168.1.100:8090"
     assert settings["search_id"] == "ai_engineer_search"
     assert settings["keyword"] == "深度学习"
     assert settings["enable_search"] is False
@@ -46,3 +49,4 @@ enable_greeting: false
     assert settings["force_refresh_memory"] is True
     assert settings["preview_timeout_sec"] == 10.0
     assert settings["enable_greeting"] is False
+

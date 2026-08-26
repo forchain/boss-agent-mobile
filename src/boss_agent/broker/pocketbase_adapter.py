@@ -17,8 +17,10 @@ from typing import Any
 import requests
 
 from boss_agent.broker.models import AutomationTask, TaskStatus, TaskType
+from boss_agent.settings import resolve_pocketbase_url
 
 logger = logging.getLogger("boss_agent.broker")
+
 
 
 class BaseTaskBroker(ABC):
@@ -305,12 +307,12 @@ class PocketBaseTaskBroker(BaseTaskBroker):
         auth_token: str | None = None,
         session: requests.Session | None = None,
     ) -> None:
-        raw_url = base_url or os.getenv("POCKETBASE_URL") or "http://127.0.0.1:8090"
-        self.base_url = raw_url.rstrip("/")
+        self.base_url = resolve_pocketbase_url(explicit_url=base_url)
         self.collection_name = collection_name
         self.auth_token = auth_token or os.getenv("POCKETBASE_AUTH_TOKEN")
         self.session = session or requests.Session()
         self._subscribers: list[Callable[[str, AutomationTask], Any]] = []
+
 
     def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
