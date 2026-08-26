@@ -54,37 +54,31 @@ export async function checkPocketBaseHealth(url?: string): Promise<boolean> {
 	}
 }
 
-// Fallback in-memory/local storage cache if PocketBase is not yet launched
-let localCandidateMemory: CandidateProfile = {
-	name: '求职者',
-	years_of_experience: 5,
-	education: [{ school: '重点大学', degree: '硕士', major: '计算机科学与技术' }],
-	core_skills: ['Python', 'FastAPI', 'LLM Agent', 'Android', 'TypeScript'],
-	project_highlights: [{ name: '移动端智能 Agent 系统', description: '基于大模型与 Android 自动化的求职助手' }],
-	target_positions: ['AI Agent 架构师', '大模型应用专家'],
-	raw_summary: '具备多年大模型 Agent 架构与移动端自动化研发经验'
-};
+// Fallback in-memory/local storage cache per user if PocketBase is offline or not yet launched
+const localCandidateMemoryMap: Record<string, CandidateProfile> = {};
 
-export async function getCandidateProfile(userId = 'default'): Promise<CandidateProfile> {
+export async function getCandidateProfile(userId = 'default'): Promise<CandidateProfile | null> {
 	try {
 		const record = await pb.collection('candidate_profiles').getFirstListItem(`user_id='${userId}'`);
 		if (record) {
-			return {
+			const loadedProfile: CandidateProfile = {
 				id: record.id,
 				user_id: record.user_id,
-				name: record.name,
-				years_of_experience: record.years_of_experience,
+				name: record.name || '',
+				years_of_experience: record.years_of_experience ?? null,
 				education: record.education || [],
 				core_skills: record.core_skills || [],
 				project_highlights: record.project_highlights || [],
 				target_positions: record.target_positions || [],
 				raw_summary: record.raw_summary || ''
 			};
+			localCandidateMemoryMap[userId] = loadedProfile;
+			return loadedProfile;
 		}
 	} catch (err) {
-		// Fallback to local memory
+		// Fallback to local memory if present
 	}
-	return { ...localCandidateMemory };
+	return localCandidateMemoryMap[userId] ? { ...localCandidateMemoryMap[userId] } : null;
 }
 
 function generatePbId(): string {
@@ -97,18 +91,41 @@ function generatePbId(): string {
 }
 
 export async function saveCandidateProfile(profile: Partial<CandidateProfile>, userId = 'default'): Promise<CandidateProfile> {
-	localCandidateMemory = { ...localCandidateMemory, ...profile };
+	const existingMem = localCandidateMemoryMap[userId] || {
+		name: '',
+		years_of_experience: null,
+		education: [],
+		core_skills: [],
+		project_highlights: [],
+		target_positions: [],
+		raw_summary: ''
+	};
+
+	const merged: CandidateProfile = {
+		...existingMem,
+		...profile,
+		name: profile.name !== undefined ? profile.name : existingMem.name,
+		years_of_experience: profile.years_of_experience !== undefined ? profile.years_of_experience : existingMem.years_of_experience,
+		education: profile.education ?? existingMem.education ?? [],
+		core_skills: profile.core_skills ?? existingMem.core_skills ?? [],
+		project_highlights: profile.project_highlights ?? existingMem.project_highlights ?? [],
+		target_positions: profile.target_positions ?? existingMem.target_positions ?? [],
+		raw_summary: profile.raw_summary !== undefined ? profile.raw_summary : existingMem.raw_summary
+	};
+
+	localCandidateMemoryMap[userId] = merged;
+
 	try {
 		const existing = await pb.collection('candidate_profiles').getFirstListItem(`user_id='${userId}'`).catch(() => null);
 		const data = {
 			user_id: userId,
-			name: profile.name ?? localCandidateMemory.name,
-			years_of_experience: profile.years_of_experience ?? localCandidateMemory.years_of_experience,
-			education: profile.education ?? localCandidateMemory.education,
-			core_skills: profile.core_skills ?? localCandidateMemory.core_skills,
-			project_highlights: profile.project_highlights ?? localCandidateMemory.project_highlights,
-			target_positions: profile.target_positions ?? localCandidateMemory.target_positions,
-			raw_summary: profile.raw_summary ?? localCandidateMemory.raw_summary
+			name: merged.name,
+			years_of_experience: merged.years_of_experience,
+			education: merged.education,
+			core_skills: merged.core_skills,
+			project_highlights: merged.project_highlights,
+			target_positions: merged.target_positions,
+			raw_summary: merged.raw_summary
 		};
 
 		if (existing) {
@@ -120,7 +137,7 @@ export async function saveCandidateProfile(profile: Partial<CandidateProfile>, u
 		}
 	} catch (err) {
 		console.warn('PocketBase save failed, stored in memory cache:', err);
-		return { ...localCandidateMemory };
+		return { ...merged };
 	}
 }
 

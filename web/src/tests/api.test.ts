@@ -4,20 +4,30 @@ import { POST as handleMatchPost } from '../routes/api/match/evaluate/+server';
 import { getCandidateProfile, saveCandidateProfile, createAutomationTask } from '../lib/pocketbase';
 
 describe('PocketBase Client Helpers', () => {
-	it('fetches and saves candidate profile with fallback memory cache', async () => {
-		const profile = await getCandidateProfile('test_user');
-		expect(profile).toBeDefined();
-		expect(profile.core_skills.length).toBeGreaterThan(0);
+	it('returns null when no candidate profile has been uploaded or saved', async () => {
+		const profile = await getCandidateProfile('non_existent_user_999');
+		expect(profile).toBeNull();
+	});
 
-		const updated = await saveCandidateProfile({
-			name: '测试者',
-			years_of_experience: 10,
-			core_skills: ['Python', 'SvelteKit', 'Agent']
-		}, 'test_user');
+	it('saves and retrieves candidate profile accurately', async () => {
+		const saved = await saveCandidateProfile({
+			name: '测试求职者',
+			years_of_experience: 7,
+			core_skills: ['Python', 'FastAPI', 'Android'],
+			target_positions: ['移动端架构师'],
+			raw_summary: '7年移动端与自动化研发经验'
+		}, 'test_user_unique');
 
-		expect(updated.name).toBe('测试者');
-		expect(updated.years_of_experience).toBe(10);
-		expect(updated.core_skills).toContain('SvelteKit');
+		expect(saved.name).toBe('测试求职者');
+		expect(saved.years_of_experience).toBe(7);
+		expect(saved.core_skills).toEqual(['Python', 'FastAPI', 'Android']);
+
+		const loaded = await getCandidateProfile('test_user_unique');
+		expect(loaded).not.toBeNull();
+		expect(loaded?.name).toBe('测试求职者');
+		expect(loaded?.years_of_experience).toBe(7);
+		expect(loaded?.core_skills).toEqual(['Python', 'FastAPI', 'Android']);
+		expect(loaded?.target_positions).toEqual(['移动端架构师']);
 	});
 
 	it('creates automation tasks in pending status', async () => {

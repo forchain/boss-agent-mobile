@@ -13,7 +13,7 @@ export interface CandidateProfile {
 	id?: string;
 	user_id?: string;
 	name: string;
-	years_of_experience: number;
+	years_of_experience?: number | null;
 	education: EducationItem[];
 	core_skills: string[];
 	project_highlights: ProjectHighlight[];

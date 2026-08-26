@@ -13,24 +13,23 @@
 
 	// Candidate Profile State
 	let profile = $state<CandidateProfile>({
-		name: '周黄金',
-		years_of_experience: 19,
-		education: [{ school: '重点大学', degree: '硕士', major: '计算机应用技术' }],
-		core_skills: ['Python', 'FastAPI', 'LLM Agent', 'Android', 'TypeScript', 'Unity'],
-		project_highlights: [
-			{ name: '移动端智能 Agent 系统', description: '基于大模型与 Android 自动化的求职助手' }
-		],
-		target_positions: ['AI Agent 架构师', '全栈技术专家'],
-		raw_summary: '19年全栈与 AI Agent 架构研发经验，精通移动端自动化与多端通信。'
+		name: '',
+		years_of_experience: null,
+		education: [],
+		core_skills: [],
+		project_highlights: [],
+		target_positions: [],
+		raw_summary: ''
 	});
 
-	let skillsInput = $state('Python, FastAPI, LLM Agent, Android, TypeScript, Unity');
-	let positionsInput = $state('AI Agent 架构师, 全栈技术专家');
+	let skillsInput = $state('');
+	let positionsInput = $state('');
 	let isUploadingResume = $state(false);
 	let uploadStatusText = $state('');
 	let uploadedFileName = $state('');
 	let isDraggingOver = $state(false);
 	let profileSavedSuccess = $state(false);
+	let fileInputRef: HTMLInputElement | null = $state(null);
 
 	// LLM Settings State
 	let llmSettings = $state<LLMSettings>({
@@ -70,8 +69,16 @@
 		// Load candidate profile from PocketBase / local cache
 		try {
 			const loaded = await getCandidateProfile();
-			if (loaded) {
-				profile = loaded;
+			if (loaded && (loaded.name || loaded.years_of_experience !== null || loaded.core_skills?.length || loaded.raw_summary)) {
+				profile = {
+					name: loaded.name || '',
+					years_of_experience: loaded.years_of_experience ?? null,
+					education: loaded.education || [],
+					core_skills: loaded.core_skills || [],
+					project_highlights: loaded.project_highlights || [],
+					target_positions: loaded.target_positions || [],
+					raw_summary: loaded.raw_summary || ''
+				};
 				skillsInput = (loaded.core_skills || []).join(', ');
 				positionsInput = (loaded.target_positions || []).join(', ');
 			}
@@ -142,8 +149,8 @@
 			const data = await res.json();
 			if (res.ok && data.success && data.profile) {
 				profile = {
-					name: data.profile.name || '求职者',
-					years_of_experience: Number(data.profile.years_of_experience) || 0,
+					name: data.profile.name || '',
+					years_of_experience: data.profile.years_of_experience !== undefined && data.profile.years_of_experience !== null ? Number(data.profile.years_of_experience) : null,
 					education: data.profile.education || [],
 					core_skills: data.profile.core_skills || [],
 					project_highlights: data.profile.project_highlights || [],
@@ -346,7 +353,16 @@
 						上传最新简历 (PDF / Docx / TXT / MD)
 					</label>
 					<div
-						class="border-2 border-dashed rounded-xl p-5 text-center cursor-pointer transition relative group {isDraggingOver ? 'border-cyan-400 bg-cyan-950/40 shadow-lg shadow-cyan-900/30' : 'border-slate-700 hover:border-cyan-500 bg-slate-950/70'}"
+						class="border-2 border-dashed rounded-xl p-5 text-center cursor-pointer transition relative overflow-hidden group {isDraggingOver ? 'border-cyan-400 bg-cyan-950/40 shadow-lg shadow-cyan-900/30' : 'border-slate-700 hover:border-cyan-500 bg-slate-950/70'}"
+						role="button"
+						tabindex="0"
+						onclick={() => fileInputRef?.click()}
+						onkeydown={(e) => {
+							if (e.key === 'Enter' || e.key === ' ') {
+								e.preventDefault();
+								fileInputRef?.click();
+							}
+						}}
 						ondragover={(e) => {
 							e.preventDefault();
 							isDraggingOver = true;
@@ -362,9 +378,10 @@
 						}}
 					>
 						<input
+							bind:this={fileInputRef}
 							type="file"
 							accept=".pdf,.docx,.doc,.txt,.md,.json"
-							class="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+							class="hidden"
 							onchange={(e) => {
 								const file = e.currentTarget.files?.[0];
 								if (file) handleResumeUpload(file);
@@ -404,7 +421,8 @@
 							<input
 								type="text"
 								bind:value={profile.name}
-								class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-cyan-500"
+								placeholder="如：求职者 / 张三"
+								class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-cyan-500 transition-colors"
 							/>
 						</div>
 						<div>
@@ -412,7 +430,8 @@
 							<input
 								type="number"
 								bind:value={profile.years_of_experience}
-								class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-cyan-500"
+								placeholder="如：5"
+								class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-cyan-500 transition-colors"
 							/>
 						</div>
 					</div>
@@ -422,8 +441,8 @@
 						<input
 							type="text"
 							bind:value={skillsInput}
-							placeholder="Python, FastAPI, Android, LLM Agent"
-							class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-cyan-500"
+							placeholder="如：Python, FastAPI, LLM Agent, Android, TypeScript"
+							class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-cyan-500 transition-colors"
 						/>
 					</div>
 
@@ -432,8 +451,8 @@
 						<input
 							type="text"
 							bind:value={positionsInput}
-							placeholder="AI Agent 架构师, 大模型专家"
-							class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-cyan-500"
+							placeholder="如：AI Agent 架构师, 大模型应用专家"
+							class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-cyan-500 transition-colors"
 						/>
 					</div>
 
@@ -442,7 +461,8 @@
 						<textarea
 							rows="3"
 							bind:value={profile.raw_summary}
-							class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-cyan-500 custom-scrollbar leading-relaxed"
+							placeholder="如：具备多年大模型 Agent 架构与移动端自动化研发经验，主导核心业务闭环..."
+							class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-cyan-500 custom-scrollbar leading-relaxed transition-colors"
 						></textarea>
 					</div>
 
