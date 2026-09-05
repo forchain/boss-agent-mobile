@@ -19,7 +19,14 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${ROOT_DIR}"
 
-mkdir -p ".boss_agent"
+GIT_COMMON_DIR="$(git rev-parse --git-common-dir 2>/dev/null || true)"
+if [[ -n "${GIT_COMMON_DIR}" ]]; then
+    COMMON_ROOT="$(cd "${GIT_COMMON_DIR}/.." && pwd)"
+else
+    COMMON_ROOT="${ROOT_DIR}"
+fi
+
+mkdir -p "${COMMON_ROOT}/.boss_agent"
 
 if [[ -z "${PB_DATA_DIR:-}" && -f "config/settings.local.yaml" ]]; then
     PB_DATA_DIR="$(grep -E "^[[:space:]]*(pocketbase_data_dir|pb_data_dir):" config/settings.local.yaml 2>/dev/null | awk '{print $2}' | tr -d '"' | tr -d "'" || true)"
@@ -27,11 +34,14 @@ fi
 if [[ -z "${PB_DATA_DIR:-}" && -f "config/settings.yaml" ]]; then
     PB_DATA_DIR="$(grep -E "^[[:space:]]*(pocketbase_data_dir|pb_data_dir):" config/settings.yaml 2>/dev/null | awk '{print $2}' | tr -d '"' | tr -d "'" || true)"
 fi
-PB_DATA_DIR="${PB_DATA_DIR:-.boss_agent/pb_data}"
+PB_DATA_DIR="${PB_DATA_DIR:-${COMMON_ROOT}/.boss_agent/pb_data}"
+if [[ "${PB_DATA_DIR}" != /* ]]; then
+    PB_DATA_DIR="${COMMON_ROOT}/${PB_DATA_DIR}"
+fi
 PB_PUBLIC_DIR="${PB_PUBLIC_DIR:-${ROOT_DIR}/pb_public}"
 PB_HTTP="${PB_HTTP:-0.0.0.0:8090}"
-PID_FILE=".boss_agent/pocketbase.pid"
-LOG_FILE=".boss_agent/pocketbase.log"
+PID_FILE="${COMMON_ROOT}/.boss_agent/pocketbase.pid"
+LOG_FILE="${COMMON_ROOT}/.boss_agent/pocketbase.log"
 
 find_pb_binary() {
     if command -v pocketbase >/dev/null 2>&1; then
@@ -48,10 +58,11 @@ find_pb_binary() {
 PB_BIN="$(find_pb_binary)"
 
 run_provisioner() {
+    local TARGET_DB="${1:-${PB_DATA_DIR}/data.db}"
     if command -v uv >/dev/null 2>&1; then
-        uv run python3 src/boss_agent/broker/provisioner.py >/dev/null 2>&1 || true
+        uv run python3 src/boss_agent/broker/provisioner.py "${TARGET_DB}"
     elif command -v python3 >/dev/null 2>&1; then
-        python3 src/boss_agent/broker/provisioner.py >/dev/null 2>&1 || true
+        python3 src/boss_agent/broker/provisioner.py "${TARGET_DB}"
     fi
 }
 
@@ -125,14 +136,29 @@ cmd_stop() {
 
     if [[ -n "${PID}" ]]; then
         kill "${PID}" 2>/dev/null || true
-        sleep 0.5
-        kill -9 "${PID}" 2>/dev/null || true
+        local WAITED=0
+        while ps -p "${PID}" >/dev/null 2>&1 && [[ ${WAITED} -lt 50 ]]; do
+            sleep 0.1
+            WAITED=$((WAITED + 1))
+        done
+        if ps -p "${PID}" >/dev/null 2>&1; then
+            echo "⚠️ PocketBase did not shut down gracefully within 5s, sending SIGKILL..."
+            kill -9 "${PID}" 2>/dev/null || true
+            sleep 0.2
+        fi
         STOPPED=1
     fi
     rm -f "${PID_FILE}"
 
-    # Cleanup any lingering process matching pocketbase serve
-    pkill -f "pocketbase serve --http ${PB_HTTP}" 2>/dev/null || true
+    # Cleanup any lingering process matching pocketbase serve on PB_HTTP
+    local LINGER_PIDS
+    LINGER_PIDS="$(pgrep -f "pocketbase serve --http ${PB_HTTP}" 2>/dev/null || true)"
+    if [[ -n "${LINGER_PIDS}" ]]; then
+        kill ${LINGER_PIDS} 2>/dev/null || true
+        sleep 0.5
+        kill -9 ${LINGER_PIDS} 2>/dev/null || true
+        STOPPED=1
+    fi
 
     if [[ ${STOPPED} -eq 1 ]]; then
         echo "✅ PocketBase stopped successfully."
@@ -171,8 +197,17 @@ cmd_start() {
 
     mkdir -p "${PB_DATA_DIR}"
 
-    # Pre-provision SQLite DB if data.db already exists
-    run_provisioner
+    # Initialize PocketBase SQLite database structure offline if not yet existing
+    local DB_FILE="${PB_DATA_DIR}/data.db"
+    if [[ ! -f "${DB_FILE}" ]]; then
+        echo "📦 Initializing fresh PocketBase SQLite database structure..."
+        "${PB_BIN}" migrate up --dir "${PB_DATA_DIR}" >/dev/null 2>&1 || true
+    fi
+
+    # Pre-provision SQLite schema and default seeds BEFORE starting server
+    # so that PocketBase loads all collections and seeds into memory at boot
+    echo "🔧 Pre-provisioning PocketBase SQLite schema and collections..."
+    run_provisioner "${DB_FILE}"
 
     local HEALTH_URL="http://${PB_HTTP}/api/health"
 
@@ -197,7 +232,6 @@ cmd_start() {
         # Wait for health check
         for _ in {1..30}; do
             if curl -s -f "${HEALTH_URL}" >/dev/null 2>&1; then
-                run_provisioner
                 echo "✅ PocketBase successfully started in background (PID: ${PID})"
                 echo "   Dashboard : http://${PB_HTTP}/_/"
                 echo "   Portal    : http://${PB_HTTP}/ (Auto-redirects to Admin Dashboard)"
@@ -224,10 +258,8 @@ cmd_start() {
         local PID=$!
         echo "${PID}" > "${PID_FILE}"
 
-        (sleep 1 && run_provisioner) &
-
-        # Handle shutdown on Ctrl+C for foreground mode
-        trap 'echo -e "\n🛑 Stopping PocketBase (PID: '"${PID}"')..."; kill '"${PID}"' 2>/dev/null || true; rm -f '"${PID_FILE}"'; exit 0' INT TERM
+        # Handle shutdown on Ctrl+C for foreground mode: graceful SIGTERM then wait for process to checkpoint WAL
+        trap 'echo -e "\n🛑 Stopping PocketBase (PID: '"${PID}"')..."; kill '"${PID}"' 2>/dev/null || true; wait '"${PID}"' 2>/dev/null || true; rm -f '"${PID_FILE}"'; exit 0' INT TERM
 
         tail -n 0 -f "${LOG_FILE}"
     fi
