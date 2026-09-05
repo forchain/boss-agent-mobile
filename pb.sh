@@ -21,6 +21,12 @@ cd "${ROOT_DIR}"
 
 mkdir -p ".boss_agent"
 
+if [[ -z "${PB_DATA_DIR:-}" && -f "config/settings.local.yaml" ]]; then
+    PB_DATA_DIR="$(grep -E "^[[:space:]]*(pocketbase_data_dir|pb_data_dir):" config/settings.local.yaml 2>/dev/null | awk '{print $2}' | tr -d '"' | tr -d "'" || true)"
+fi
+if [[ -z "${PB_DATA_DIR:-}" && -f "config/settings.yaml" ]]; then
+    PB_DATA_DIR="$(grep -E "^[[:space:]]*(pocketbase_data_dir|pb_data_dir):" config/settings.yaml 2>/dev/null | awk '{print $2}' | tr -d '"' | tr -d "'" || true)"
+fi
 PB_DATA_DIR="${PB_DATA_DIR:-.boss_agent/pb_data}"
 PB_PUBLIC_DIR="${PB_PUBLIC_DIR:-${ROOT_DIR}/pb_public}"
 PB_HTTP="${PB_HTTP:-0.0.0.0:8090}"
@@ -43,9 +49,9 @@ PB_BIN="$(find_pb_binary)"
 
 run_provisioner() {
     if command -v uv >/dev/null 2>&1; then
-        uv run python3 src/boss_agent/broker/provisioner.py "${PB_DATA_DIR}/data.db" >/dev/null 2>&1 || true
+        uv run python3 src/boss_agent/broker/provisioner.py >/dev/null 2>&1 || true
     elif command -v python3 >/dev/null 2>&1; then
-        python3 src/boss_agent/broker/provisioner.py "${PB_DATA_DIR}/data.db" >/dev/null 2>&1 || true
+        python3 src/boss_agent/broker/provisioner.py >/dev/null 2>&1 || true
     fi
 }
 

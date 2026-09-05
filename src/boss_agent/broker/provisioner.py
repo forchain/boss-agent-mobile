@@ -15,6 +15,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
+# Ensure src/ is in sys.path when executed directly
+_src_root = str(Path(__file__).resolve().parent.parent.parent)
+if _src_root not in sys.path:
+    sys.path.insert(0, _src_root)
+
 # requests and urllib3 are lazily imported in provision_remote_pocketbase
 
 logger = logging.getLogger("boss_agent.broker.provisioner")
@@ -116,12 +121,21 @@ DEFAULT_INITIAL_SEARCHES: dict[str, dict[str, Any]] = {
 }
 
 
+from boss_agent.settings import resolve_pocketbase_db_path
+
+
 def provision_sqlite_database(
-    db_path: str | Path = ".boss_agent/pb_data/data.db",
+    db_path: str | Path | None = None,
     initial_searches: dict[str, dict[str, Any]] | None = None,
 ) -> bool:
-    """Initialize or update PocketBase SQLite schema for required collections."""
-    db_file = Path(db_path)
+    """Initialize or update PocketBase SQLite schema for required collections.
+
+    If db_path is not specified, it will be automatically resolved from configuration
+    (config/settings.local.yaml, config/settings.yaml), env vars (PB_DB_PATH, PB_DATA_DIR),
+    or the default fallback path.
+    """
+    resolved_path = resolve_pocketbase_db_path(db_path)
+    db_file = Path(resolved_path)
     db_file.parent.mkdir(parents=True, exist_ok=True)
 
     if not db_file.exists():
@@ -466,7 +480,12 @@ def provision_remote_pocketbase(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="PocketBase Collection and SQLite Provisioner")
-    parser.add_argument("db_path", nargs="?", default=".boss_agent/pb_data/data.db", help="Path to local data.db SQLite file")
+    parser.add_argument(
+        "db_path",
+        nargs="?",
+        default=None,
+        help="Path to local data.db SQLite file (defaults to configured pocketbase_db_path)",
+    )
     parser.add_argument("--url", help="Remote PocketBase URL, e.g. https://pocketbase.chainer.tech:4433")
     parser.add_argument("--email", help="Superuser / Admin email")
     parser.add_argument("--password", help="Superuser / Admin password")
@@ -479,7 +498,8 @@ if __name__ == "__main__":
         print(f"Provisioning result: {res}")
         sys.exit(0 if res else 1)
     else:
-        print(f"🚀 Provisioning local SQLite database at {args.db_path} ...")
-        res = provision_sqlite_database(args.db_path)
+        target_db = resolve_pocketbase_db_path(args.db_path)
+        print(f"🚀 Provisioning local SQLite database at {target_db} ...")
+        res = provision_sqlite_database(target_db)
         print(f"Provisioning status: {res}")
         sys.exit(0 if res else 1)

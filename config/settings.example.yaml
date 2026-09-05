@@ -13,6 +13,8 @@ device: "emulator-5554"
 avd_name: "boss_avd_arm64"          # Dedicated Android Virtual Device name (env: ANDROID_AVD)
 server_url: "http://127.0.0.1:4723"
 pocketbase_url: "http://127.0.0.1:8090" # PocketBase State Stream Broker URL (env: POCKETBASE_URL, cli: --pb-url)
+pocketbase_data_dir: ".boss_agent/pb_data" # PocketBase data directory (env: PB_DATA_DIR)
+pocketbase_db_path: ".boss_agent/pb_data/data.db" # PocketBase SQLite data.db path (env: PB_DB_PATH)
 
 
 # Search & Filter Settings
