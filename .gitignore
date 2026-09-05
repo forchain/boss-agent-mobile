@@ -13,6 +13,7 @@ dist/
 .ruff_cache/
 
 # Android / Cache
+.boss_agent
 .boss_agent/
 *.apk
 *.log

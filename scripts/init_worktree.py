@@ -203,13 +203,20 @@ class GitWorktreeManager:
                 target_branch = branch_name or current_br
 
                 if rebase and not dry_run and target_branch != base_ref and target_branch != "main":
-                    rebase_res = self._run_git(["rebase", base_ref], cwd=target_path)
-                    if rebase_res.returncode != 0:
-                        self._run_git(["rebase", "--abort"], cwd=target_path)
-                        raise RuntimeError(
-                            f"Rebase on '{base_ref}' failed with conflicts: {rebase_res.stderr or rebase_res.stdout}"
-                        )
-                    rebased = True
+                    ancestor_check = self._run_git(
+                        ["merge-base", "--is-ancestor", base_ref, target_branch],
+                        cwd=target_path,
+                    )
+                    if ancestor_check.returncode != 0:
+                        rebase_res = self._run_git(["rebase", base_ref], cwd=target_path)
+                        if rebase_res.returncode != 0:
+                            self._run_git(["rebase", "--abort"], cwd=target_path)
+                            raise RuntimeError(
+                                f"Rebase on '{base_ref}' failed with conflicts: {rebase_res.stderr or rebase_res.stdout}"
+                            )
+                        rebased = True
+                    else:
+                        rebased = False
                 return {
                     "created": False,
                     "updated": True,
@@ -239,13 +246,20 @@ class GitWorktreeManager:
                 raise RuntimeError(f"Failed to add worktree: {add_res.stderr or add_res.stdout}")
             rebased = False
             if rebase and branch_name != base_ref and branch_name != "main":
-                rebase_res = self._run_git(["rebase", base_ref], cwd=target_path)
-                if rebase_res.returncode != 0:
-                    self._run_git(["rebase", "--abort"], cwd=target_path)
-                    raise RuntimeError(
-                        f"Rebase on '{base_ref}' failed with conflicts: {rebase_res.stderr or rebase_res.stdout}"
-                    )
-                rebased = True
+                ancestor_check = self._run_git(
+                    ["merge-base", "--is-ancestor", base_ref, branch_name],
+                    cwd=target_path,
+                )
+                if ancestor_check.returncode != 0:
+                    rebase_res = self._run_git(["rebase", base_ref], cwd=target_path)
+                    if rebase_res.returncode != 0:
+                        self._run_git(["rebase", "--abort"], cwd=target_path)
+                        raise RuntimeError(
+                            f"Rebase on '{base_ref}' failed with conflicts: {rebase_res.stderr or rebase_res.stdout}"
+                        )
+                    rebased = True
+                else:
+                    rebased = False
             return {
                 "created": True,
                 "updated": False,
@@ -319,14 +333,101 @@ class ConfigSymlinkManager:
 
         return sorted(shared_files, key=lambda p: str(p))
 
+    def link_boss_agent(
+        self, target_worktree: Path, dry_run: bool = False
+    ) -> SymlinkEntry | None:
+        """Symlink .boss_agent directory so worktree shares the main branch's database and runtime storage."""
+        target_worktree = target_worktree.resolve()
+        if target_worktree == self.main_repo_root:
+            return None
+
+        main_boss_agent = self.main_repo_root / ".boss_agent"
+        if not dry_run:
+            main_boss_agent.mkdir(parents=True, exist_ok=True)
+            (main_boss_agent / "pb_data").mkdir(parents=True, exist_ok=True)
+
+        target_boss_agent = target_worktree / ".boss_agent"
+        try:
+            rel_boss_agent_src = os.path.relpath(main_boss_agent, target_boss_agent.parent)
+        except Exception:
+            rel_boss_agent_src = str(main_boss_agent)
+
+        if dry_run:
+            return SymlinkEntry(
+                source=str(main_boss_agent),
+                target=str(target_boss_agent),
+                status="created (dry-run)",
+                details="Would symlink .boss_agent to main repo .boss_agent",
+            )
+
+        if target_boss_agent.is_symlink():
+            current_target = target_boss_agent.resolve()
+            if current_target == main_boss_agent.resolve():
+                return SymlinkEntry(
+                    source=str(main_boss_agent),
+                    target=str(target_boss_agent),
+                    status="already_linked",
+                    details="Symlink already intact",
+                )
+            else:
+                target_boss_agent.unlink()
+                target_boss_agent.symlink_to(rel_boss_agent_src)
+                return SymlinkEntry(
+                    source=str(main_boss_agent),
+                    target=str(target_boss_agent),
+                    status="relinked",
+                    details="Re-pointed existing symlink to main repo .boss_agent",
+                )
+
+        if target_boss_agent.exists():
+            if target_boss_agent.is_dir() and not any(target_boss_agent.iterdir()):
+                target_boss_agent.rmdir()
+                target_boss_agent.symlink_to(rel_boss_agent_src)
+                return SymlinkEntry(
+                    source=str(main_boss_agent),
+                    target=str(target_boss_agent),
+                    status="created",
+                    details="Replaced empty directory with symlink to main repo .boss_agent",
+                )
+            else:
+                return SymlinkEntry(
+                    source=str(main_boss_agent),
+                    target=str(target_boss_agent),
+                    status="skipped",
+                    details="Regular non-empty directory or file already exists",
+                )
+
+        try:
+            target_boss_agent.symlink_to(rel_boss_agent_src)
+            return SymlinkEntry(
+                source=str(main_boss_agent),
+                target=str(target_boss_agent),
+                status="created",
+                details="Symlink to main repo .boss_agent established successfully",
+            )
+        except Exception as e:
+            return SymlinkEntry(
+                source=str(main_boss_agent),
+                target=str(target_boss_agent),
+                status="error",
+                details=str(e),
+            )
+
     def link_shared_configs(
         self, target_worktree: Path, dry_run: bool = False
     ) -> list[SymlinkEntry]:
-        """Create relative symlinks for all shared config files in the target worktree."""
+        """Create relative symlinks for all shared config files and .boss_agent in the target worktree."""
         target_worktree = target_worktree.resolve()
-        configs = self.discover_shared_configs()
         results: list[SymlinkEntry] = []
 
+        if target_worktree == self.main_repo_root:
+            return results
+
+        boss_agent_entry = self.link_boss_agent(target_worktree=target_worktree, dry_run=dry_run)
+        if boss_agent_entry:
+            results.append(boss_agent_entry)
+
+        configs = self.discover_shared_configs()
         for src_file in configs:
             # Determine target relative location
             try:

@@ -128,3 +128,18 @@ def test_worktree_common_root_consistency():
     common_root = resolve_git_common_root()
     assert common_root.exists()
     assert (common_root / ".boss_agent").exists() or (common_root / ".git").exists()
+
+
+def test_pocketbase_script_and_pb_symlink():
+    """Verify that pocketbase.sh is a regular executable script and pb.sh is a symlink pointing to it."""
+    repo_root = Path(__file__).resolve().parent.parent.parent
+    pocketbase_sh = repo_root / "pocketbase.sh"
+    pb_sh = repo_root / "pb.sh"
+
+    assert pocketbase_sh.exists(), "pocketbase.sh must exist"
+    assert pocketbase_sh.is_file(), "pocketbase.sh must be a regular file"
+    assert not pocketbase_sh.is_symlink(), "pocketbase.sh must not be a symlink"
+
+    assert pb_sh.exists(), "pb.sh must exist"
+    assert pb_sh.is_symlink(), "pb.sh must be a symlink"
+    assert pb_sh.resolve() == pocketbase_sh.resolve(), "pb.sh must point to pocketbase.sh"

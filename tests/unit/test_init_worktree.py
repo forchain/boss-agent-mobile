@@ -139,6 +139,8 @@ def test_worktree_manager_create_worktree_existing_branch(tmp_path):
                 return MagicMock(returncode=0, stdout="feat/existing-branch\n", stderr="")
             if "worktree" in args and "add" in args:
                 return MagicMock(returncode=0, stdout="", stderr="")
+            if "merge-base" in args and "--is-ancestor" in args:
+                return MagicMock(returncode=1, stdout="", stderr="")
             if "rebase" in args:
                 return MagicMock(returncode=0, stdout="Rebased", stderr="")
             return MagicMock(returncode=0, stdout="", stderr="")
@@ -167,6 +169,8 @@ def test_worktree_manager_update_existing_worktree(tmp_path):
         def mock_git_side_effect(args, **kwargs):
             if "branch" in args and "--show-current" in args:
                 return MagicMock(returncode=0, stdout="feat/existing\n", stderr="")
+            if "merge-base" in args and "--is-ancestor" in args:
+                return MagicMock(returncode=1, stdout="", stderr="")
             if "rebase" in args:
                 return MagicMock(returncode=0, stdout="Rebased", stderr="")
             return MagicMock(returncode=0, stdout="", stderr="")
@@ -184,6 +188,36 @@ def test_worktree_manager_update_existing_worktree(tmp_path):
         assert res["rebased"] is True
 
 
+def test_worktree_manager_update_existing_worktree_already_ancestor(tmp_path):
+    """Test updating an already existing worktree skips rebase when main is ancestor."""
+    target = tmp_path / "existing_wt"
+    target.mkdir()
+    (target / ".git").write_text("gitdir: ...")
+
+    manager = GitWorktreeManager(cwd=str(tmp_path))
+    with patch.object(manager, "_run_git") as mock_git:
+        def mock_git_side_effect(args, **kwargs):
+            if "branch" in args and "--show-current" in args:
+                return MagicMock(returncode=0, stdout="feat/existing\n", stderr="")
+            if "merge-base" in args and "--is-ancestor" in args:
+                return MagicMock(returncode=0, stdout="", stderr="")
+            if "rebase" in args:
+                return MagicMock(returncode=0, stdout="Rebased", stderr="")
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        mock_git.side_effect = mock_git_side_effect
+        res = manager.create_or_update_worktree(
+            target_path=target,
+            branch_name="feat/existing",
+            base_ref="main",
+            rebase=True,
+            dry_run=False,
+        )
+        assert res["created"] is False
+        assert res["updated"] is True
+        assert res["rebased"] is False
+
+
 def test_worktree_manager_rebase_conflict_abort(tmp_path):
     """Test rebase conflict triggers abort and raises RuntimeError."""
     target = tmp_path / "existing_wt"
@@ -195,6 +229,8 @@ def test_worktree_manager_rebase_conflict_abort(tmp_path):
         def mock_git_side_effect(args, **kwargs):
             if "branch" in args and "--show-current" in args:
                 return MagicMock(returncode=0, stdout="feat/conflict\n", stderr="")
+            if "merge-base" in args and "--is-ancestor" in args:
+                return MagicMock(returncode=1, stdout="", stderr="")
             if "rebase" in args and "--abort" not in args:
                 return MagicMock(returncode=1, stdout="", stderr="CONFLICT (content): Merge conflict")
             return MagicMock(returncode=0, stdout="", stderr="")
@@ -279,31 +315,66 @@ def test_config_symlink_manager_linking_and_idempotency(tmp_path):
 
         # 1. First run: created
         links1 = manager.link_shared_configs(target_worktree=target_wt)
-        assert len(links1) == 1
-        assert links1[0].status == "created"
+        assert len(links1) == 2
+        statuses1 = {link.target: link.status for link in links1}
+        assert statuses1[str(target_config / "candidate.local.yaml")] == "created"
+        assert statuses1[str(target_wt / ".boss_agent")] == "created"
+        assert (target_wt / ".boss_agent").is_symlink()
         link_target = target_config / "candidate.local.yaml"
         assert link_target.is_symlink()
         assert link_target.read_text() == "name: Tony"
 
         # 2. Second run: already_linked
         links2 = manager.link_shared_configs(target_worktree=target_wt)
-        assert len(links2) == 1
-        assert links2[0].status == "already_linked"
+        assert len(links2) == 2
+        statuses2 = {link.target: link.status for link in links2}
+        assert statuses2[str(target_config / "candidate.local.yaml")] == "already_linked"
+        assert statuses2[str(target_wt / ".boss_agent")] == "already_linked"
 
         # 3. Third run: broken link re-linked
         link_target.unlink()
         link_target.symlink_to(tmp_path / "non_existent_file.yaml")
         links3 = manager.link_shared_configs(target_worktree=target_wt)
-        assert len(links3) == 1
-        assert links3[0].status == "relinked"
+        assert len(links3) == 2
+        statuses3 = {link.target: link.status for link in links3}
+        assert statuses3[str(target_config / "candidate.local.yaml")] == "relinked"
+        assert statuses3[str(target_wt / ".boss_agent")] == "already_linked"
         assert link_target.read_text() == "name: Tony"
 
         # 4. Fourth run: regular file skipped
         link_target.unlink()
         link_target.write_text("custom user copy")
         links4 = manager.link_shared_configs(target_worktree=target_wt)
-        assert len(links4) == 1
-        assert links4[0].status == "skipped"
+        assert len(links4) == 2
+        statuses4 = {link.target: link.status for link in links4}
+        assert statuses4[str(target_config / "candidate.local.yaml")] == "skipped"
+        assert statuses4[str(target_wt / ".boss_agent")] == "already_linked"
+
+
+def test_config_symlink_manager_boss_agent_empty_dir_replacement(tmp_path):
+    """Test that an empty .boss_agent directory in worktree is replaced with a symlink to main."""
+    main_repo = tmp_path / "main_repo"
+    main_repo.mkdir()
+    target_wt = tmp_path / "worktree_b"
+    empty_boss_agent = target_wt / ".boss_agent"
+    empty_boss_agent.mkdir(parents=True)
+
+    manager = ConfigSymlinkManager(main_repo_root=main_repo)
+    with patch.object(manager, "discover_shared_configs", return_value=[]):
+        links = manager.link_shared_configs(target_worktree=target_wt)
+        assert len(links) == 1
+        assert links[0].status == "created"
+        assert empty_boss_agent.is_symlink()
+        assert empty_boss_agent.resolve() == (main_repo / ".boss_agent").resolve()
+
+
+def test_config_symlink_manager_main_repo_skips_self_symlink(tmp_path):
+    """Test that link_shared_configs returns empty list when target is main_repo itself."""
+    main_repo = tmp_path / "main_repo"
+    main_repo.mkdir()
+    manager = ConfigSymlinkManager(main_repo_root=main_repo)
+    links = manager.link_shared_configs(target_worktree=main_repo)
+    assert links == []
 
 
 def test_init_worktree_default_current_worktree(tmp_path):
@@ -325,7 +396,14 @@ def test_init_worktree_default_current_worktree(tmp_path):
         patch("scripts.init_worktree.GitWorktreeManager.sync_main_branch", return_value="main_commit_123"),
         patch("scripts.init_worktree.GitWorktreeManager._run_git") as mock_git,
     ):
-        mock_git.return_value = MagicMock(returncode=0, stdout="Rebased\n", stderr="")
+        def mock_git_side_effect(args, **kwargs):
+            if "merge-base" in args and "--is-ancestor" in args:
+                return MagicMock(returncode=1, stdout="", stderr="")
+            if "rebase" in args:
+                return MagicMock(returncode=0, stdout="Rebased\n", stderr="")
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        mock_git.side_effect = mock_git_side_effect
 
         result = init_worktree(
             name=None,
@@ -338,7 +416,8 @@ def test_init_worktree_default_current_worktree(tmp_path):
         assert result.worktree_path == str(current_wt.resolve())
         assert result.branch == "feat/current"
         assert result.rebased is True
-        assert len(result.symlinks) == 1
+        assert len(result.symlinks) == 2
+        assert (current_wt / ".boss_agent").is_symlink()
         assert (current_wt / "config" / "settings.local.yaml").is_symlink()
 
 
