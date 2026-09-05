@@ -536,7 +536,7 @@
 							<!-- Greeting Draft Textarea with Live Editing -->
 							<div class="space-y-2">
 								<div class="flex items-center justify-between">
-									<label class="block text-xs font-semibold text-slate-400">
+									<label for="custom-greeting-textarea" class="block text-xs font-semibold text-slate-400">
 										💬 定制破冰打招呼语 (已结合痛点，支持在线微调)
 									</label>
 									{#if saveGreetingNotice}
@@ -544,6 +544,7 @@
 									{/if}
 								</div>
 								<textarea
+									id="custom-greeting-textarea"
 									rows="4"
 									bind:value={customGreeting}
 									placeholder="AI 定制破冰打招呼文案..."

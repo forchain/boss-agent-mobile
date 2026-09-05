@@ -1,7 +1,7 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { getPocketBaseUrl } from '$lib/pocketbase';
-import { writeFallbackJob } from '../+server';
+import { writeFallbackJob } from '$lib/server/jobsFallback';
 
 export const PATCH: RequestHandler = async ({ params, request }) => {
 	const recordId = params.id;
