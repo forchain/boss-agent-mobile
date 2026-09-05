@@ -191,6 +191,8 @@ class AutomationScheduler:
             payload: dict[str, Any] = {
                 "saved_search_id": search.id,
                 "keyword": search_dict.get("keyword") or "",
+                "enable_search": search.enable_search,
+                "enable_filter": search.enable_filter,
                 "filter": search_dict.get("filter") or {},
                 "min_score": 70,
                 "preview_only": False,

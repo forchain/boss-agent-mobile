@@ -80,6 +80,8 @@ export interface SavedSearch {
 	name: string;
 	description?: string;
 	keyword?: string;
+	enable_search?: boolean;
+	enable_filter?: boolean;
 	filter?: SavedSearchFilter;
 	cron_expression?: string;
 	is_enabled?: boolean;

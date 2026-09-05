@@ -17,7 +17,7 @@ def test_saved_search_model_serialization():
         id="test_ai_agent",
         name="AI Agent Test",
         description="Test description",
-        search=SearchConfig(keyword="AI 算法"),
+        search=SearchConfig(keyword="AI 算法", enable_search=True),
         filter=FilterConfig(
             education="硕士",
             salary="5万元以上",
@@ -25,18 +25,51 @@ def test_saved_search_model_serialization():
             activity="今日活跃",
             company_scales=["1000-9999人"],
             industries=["在线教育", "游戏", "人工智能"],
+            enable_filter=True,
         ),
+        enable_search=True,
+        enable_filter=True,
     )
     d = s.to_dict()
     assert d["id"] == "test_ai_agent"
     assert d["search"]["keyword"] == "AI 算法"
+    assert d["enable_search"] is True
+    assert d["enable_filter"] is True
     assert d["filter"]["industries"] == ["在线教育", "游戏", "人工智能"]
 
     restored = SavedSearch.from_dict("test_ai_agent", d)
     assert restored.id == "test_ai_agent"
     assert restored.search.keyword == "AI 算法"
+    assert restored.enable_search is True
+    assert restored.enable_filter is True
+    assert restored.search.should_search is True
+    assert restored.filter.has_filters is True
     assert restored.filter.industries == ["在线教育", "游戏", "人工智能"]
     assert restored.filter.education == "硕士"
+
+
+def test_saved_search_disabled_search_and_filter():
+    s = SavedSearch(
+        id="test_recommendations_only",
+        name="Recommendations Only",
+        search=SearchConfig(keyword="AI", enable_search=False),
+        filter=FilterConfig(education="硕士", enable_filter=False),
+        enable_search=False,
+        enable_filter=False,
+    )
+    assert s.search.should_search is False
+    assert s.filter.has_filters is False
+    assert s.filter.has_industry_filters is False
+
+    d = s.to_dict()
+    assert d["enable_search"] is False
+    assert d["enable_filter"] is False
+
+    restored = SavedSearch.from_dict("test_recommendations_only", d)
+    assert restored.enable_search is False
+    assert restored.enable_filter is False
+    assert restored.search.should_search is False
+    assert restored.filter.has_filters is False
 
 
 def test_saved_search_registry_default_initialization():

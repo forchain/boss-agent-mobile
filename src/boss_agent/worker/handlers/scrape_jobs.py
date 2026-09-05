@@ -54,15 +54,19 @@ class ScrapeJobsHandler(BaseTaskHandler):
         list_page = JobListPage(driver)
         list_page.navigate_to_home()
 
-        if keyword:
+        enable_search = bool(payload.get("enable_search", True))
+        if enable_search and keyword:
             search_page = SearchPage(driver)
             if not search_page.is_search_page():
                 list_page.open_search(timeout_sec=5.0)
             search_page.search(keyword)
             await broker.append_log(task.id, f"Executed search for keyword '{keyword}'")
+        elif not enable_search:
+            await broker.append_log(task.id, "enable_search is False; browsing home recommendations without search keyword")
 
+        enable_filter = bool(payload.get("enable_filter", True))
         filter_raw = payload.get("filter")
-        if isinstance(filter_raw, dict):
+        if enable_filter and isinstance(filter_raw, dict):
             filter_cfg = FilterConfig(
                 education=filter_raw.get("education"),
                 salary=filter_raw.get("salary"),
@@ -70,6 +74,7 @@ class ScrapeJobsHandler(BaseTaskHandler):
                 activity=filter_raw.get("activity"),
                 company_scales=filter_raw.get("company_scales", []),
                 industries=filter_raw.get("industries", []),
+                enable_filter=True,
             )
             if filter_cfg.has_industry_filters:
                 industry_page = IndustryFilterDialogPage(driver)
@@ -89,6 +94,8 @@ class ScrapeJobsHandler(BaseTaskHandler):
                     filter_page.apply_filters(filter_cfg, timeout_sec=5.0)
                 except Exception as ex:
                     await broker.append_log(task.id, f"Notice applying general filters: {ex}")
+        elif not enable_filter:
+            await broker.append_log(task.id, "enable_filter is False; skipped job filtering")
 
 
         scraped_jobs: list[dict[str, Any]] = []

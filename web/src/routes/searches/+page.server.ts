@@ -17,6 +17,8 @@ export const load: PageServerLoad = async ({ parent, fetch }) => {
 					name: r.name || r.id,
 					description: r.description || '',
 					keyword: r.keyword || '',
+					enable_search: r.enable_search !== false,
+					enable_filter: r.enable_filter !== false,
 					filter: r.filter || {},
 					cron_expression: r.cron_expression || '',
 					is_enabled: !!r.is_enabled,

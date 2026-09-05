@@ -92,6 +92,8 @@ def test_provision_sqlite_database_seeds_saved_searches(tmp_path: Path):
             "name": "Test Search One",
             "description": "First test search",
             "keyword": "python",
+            "enable_search": True,
+            "enable_filter": False,
             "filter": {
                 "education": "本科",
                 "industries": ["人工智能"],
@@ -109,7 +111,7 @@ def test_provision_sqlite_database_seeds_saved_searches(tmp_path: Path):
     # Verify seeded row in saved_searches
     conn = sqlite3.connect(str(db_file))
     cursor = conn.cursor()
-    cursor.execute("SELECT id, name, keyword, filter FROM saved_searches WHERE id = 'test_search_1'")
+    cursor.execute("SELECT id, name, keyword, enable_search, enable_filter, filter FROM saved_searches WHERE id = 'test_search_1'")
     row = cursor.fetchone()
     conn.close()
 
@@ -117,10 +119,61 @@ def test_provision_sqlite_database_seeds_saved_searches(tmp_path: Path):
     assert row[0] == "test_search_1"
     assert row[1] == "Test Search One"
     assert row[2] == "python"
+    assert row[3] == 1
+    assert row[4] == 0
     import json
-    filter_data = json.loads(row[3])
+    filter_data = json.loads(row[5])
     assert filter_data["education"] == "本科"
     assert filter_data["industries"] == ["人工智能"]
+
+
+def test_provision_sqlite_database_migrates_existing_table(tmp_path: Path):
+    """If saved_searches table exists without enable_search/enable_filter, they are added."""
+    db_file = tmp_path / "legacy.db"
+    conn = sqlite3.connect(str(db_file))
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE _collections (
+            id TEXT PRIMARY KEY,
+            system BOOLEAN DEFAULT FALSE,
+            type TEXT DEFAULT "base",
+            name TEXT UNIQUE NOT NULL,
+            fields JSON DEFAULT "[]" NOT NULL,
+            indexes JSON DEFAULT "[]" NOT NULL,
+            listRule TEXT DEFAULT NULL,
+            viewRule TEXT DEFAULT NULL,
+            createRule TEXT DEFAULT NULL,
+            updateRule TEXT DEFAULT NULL,
+            deleteRule TEXT DEFAULT NULL,
+            options JSON DEFAULT "{}" NOT NULL
+        )
+    """)
+    # Pre-create older saved_searches schema missing enable_search & enable_filter
+    cursor.execute("""
+        CREATE TABLE saved_searches (
+            id TEXT PRIMARY KEY,
+            name TEXT,
+            description TEXT,
+            keyword TEXT,
+            filter JSON
+        )
+    """)
+    cursor.execute("INSERT INTO _collections (id, name, fields) VALUES ('pbc_saved_searches', 'saved_searches', '[]')")
+    conn.commit()
+    conn.close()
+
+    # Run provisioner on legacy DB
+    assert provision_sqlite_database(db_file) is True
+
+    # Check migrated columns
+    conn = sqlite3.connect(str(db_file))
+    cursor = conn.cursor()
+    cursor.execute("PRAGMA table_info(saved_searches)")
+    col_names = [col[1] for col in cursor.fetchall()]
+    conn.close()
+
+    assert "enable_search" in col_names
+    assert "enable_filter" in col_names
 
 
 def test_provision_remote_pocketbase_mock():

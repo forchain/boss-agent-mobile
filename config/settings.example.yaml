@@ -17,11 +17,6 @@ pocketbase_data_dir: ".boss_agent/pb_data" # PocketBase data directory (env: PB_
 pocketbase_db_path: ".boss_agent/pb_data/data.db" # PocketBase SQLite data.db path (env: PB_DB_PATH)
 
 
-# Search & Filter Settings
-search_id: "default_agent_search"   # Preset ID from database (saved_searches collection)
-keyword: null                       # Override search keyword (e.g. "agent", "python", "Android")
-enable_search: true                 # Set to false to browse default home recommendations without search
-enable_filter: true                 # Set to false to disable all job filters
 
 # Candidate Resume & AI Greeting Settings
 resume_path: "resumes/my_resume.txt" # Path to candidate's local resume file (.pdf, .docx, .txt, .md)

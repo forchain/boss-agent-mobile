@@ -43,11 +43,12 @@ class SearchConfig:
     """Configuration for automated job search on Boss 直聘."""
 
     keyword: str | None = "agent"
+    enable_search: bool = True
 
     @property
     def should_search(self) -> bool:
-        """Returns True if a non-empty search keyword is specified."""
-        return bool(self.keyword and self.keyword.strip())
+        """Returns True if search is enabled and a non-empty keyword is specified."""
+        return bool(self.enable_search and self.keyword and self.keyword.strip())
 
 
 @dataclass
@@ -67,10 +68,13 @@ class FilterConfig:
         ]
     )
     industries: list[str] = field(default_factory=list)
+    enable_filter: bool = True
 
     @property
     def has_filters(self) -> bool:
-        """Returns True if any filter criteria is active."""
+        """Returns True if filtering is enabled and any filter criteria is active."""
+        if not self.enable_filter:
+            return False
         return any(
             [
                 bool(self.education and self.education.strip()),
@@ -84,7 +88,9 @@ class FilterConfig:
 
     @property
     def has_industry_filters(self) -> bool:
-        """Returns True if any industry filter criteria is active."""
+        """Returns True if filtering is enabled and any industry filter criteria is active."""
+        if not self.enable_filter:
+            return False
         return bool(self.industries)
 
 
@@ -101,10 +107,19 @@ class SavedSearch:
     is_enabled: bool = False
     last_run_at: str | None = None
     target_task_type: str = "AUTO_APPLY"
+    enable_search: bool = True
+    enable_filter: bool = True
+
+    def __post_init__(self) -> None:
+        # Keep nested configs in sync with top-level flags
+        if hasattr(self, "search") and self.search is not None:
+            self.search.enable_search = self.enable_search
+        if hasattr(self, "filter") and self.filter is not None:
+            self.filter.enable_filter = self.enable_filter
 
     @property
     def keyword(self) -> str:
-        return self.search.keyword
+        return self.search.keyword or ""
 
     @keyword.setter
     def keyword(self, val: str) -> None:
@@ -116,8 +131,11 @@ class SavedSearch:
             "name": self.name,
             "description": self.description,
             "keyword": self.search.keyword,
+            "enable_search": self.enable_search,
+            "enable_filter": self.enable_filter,
             "search": {
                 "keyword": self.search.keyword,
+                "enable_search": self.enable_search,
             },
             "filter": {
                 "education": self.filter.education,
@@ -126,6 +144,7 @@ class SavedSearch:
                 "activity": self.filter.activity,
                 "company_scales": self.filter.company_scales,
                 "industries": self.filter.industries,
+                "enable_filter": self.enable_filter,
             },
             "cron_expression": self.cron_expression,
             "is_enabled": self.is_enabled,
@@ -149,8 +168,19 @@ class SavedSearch:
             except Exception:
                 filter_data = {}
 
+        enable_search = data.get("enable_search")
+        if enable_search is None:
+            enable_search = search_data.get("enable_search", True)
+        enable_search = bool(enable_search)
+
+        enable_filter = data.get("enable_filter")
+        if enable_filter is None:
+            enable_filter = filter_data.get("enable_filter", True)
+        enable_filter = bool(enable_filter)
+
         search_cfg = SearchConfig(
             keyword=keyword,
+            enable_search=enable_search,
         )
         filter_cfg = FilterConfig(
             education=filter_data.get("education"),
@@ -169,6 +199,7 @@ class SavedSearch:
                 if "industries" not in filter_data
                 else filter_data.get("industries", []),
             ),
+            enable_filter=enable_filter,
         )
         return cls(
             id=search_id,
@@ -180,5 +211,7 @@ class SavedSearch:
             is_enabled=bool(data.get("is_enabled", False)),
             last_run_at=data.get("last_run_at"),
             target_task_type=data.get("target_task_type", "AUTO_APPLY"),
+            enable_search=enable_search,
+            enable_filter=enable_filter,
         )
 

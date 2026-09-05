@@ -114,6 +114,8 @@ async def test_scheduler_run_once():
     assert task.task_type == TaskType.AUTO_APPLY
     assert task.payload["keyword"] == "AI Agent"
     assert task.payload["saved_search_id"] == "search_active_1"
+    assert task.payload["enable_search"] is True
+    assert task.payload["enable_filter"] is True
     assert task.payload["scheduled"] is True
     assert task.payload["filter"]["education"] == "硕士"
 

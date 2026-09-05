@@ -743,6 +743,8 @@ class PocketBaseTaskBroker(BaseTaskBroker):
             "name": saved_search.name,
             "description": saved_search.description,
             "keyword": saved_search.search.keyword,
+            "enable_search": saved_search.enable_search,
+            "enable_filter": saved_search.enable_filter,
             "filter": {
                 "education": saved_search.filter.education,
                 "salary": saved_search.filter.salary,
@@ -750,6 +752,7 @@ class PocketBaseTaskBroker(BaseTaskBroker):
                 "activity": saved_search.filter.activity,
                 "company_scales": saved_search.filter.company_scales,
                 "industries": saved_search.filter.industries,
+                "enable_filter": saved_search.enable_filter,
             },
             "cron_expression": saved_search.cron_expression,
             "is_enabled": saved_search.is_enabled,

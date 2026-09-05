@@ -59,6 +59,8 @@ SAVED_SEARCHES_FIELDS = [
     {"name": "name", "type": "text", "required": True},
     {"name": "description", "type": "text", "required": False},
     {"name": "keyword", "type": "text", "required": False},
+    {"name": "enable_search", "type": "bool", "required": False},
+    {"name": "enable_filter", "type": "bool", "required": False},
     {"name": "filter", "type": "json", "required": False},
     {"name": "cron_expression", "type": "text", "required": False},
     {"name": "is_enabled", "type": "bool", "required": False},
@@ -73,6 +75,8 @@ DEFAULT_INITIAL_SEARCHES: dict[str, dict[str, Any]] = {
         "name": "AI Agent Default Startup Search",
         "description": "Default search query targeting Agent roles across Online Education, Gaming, and AI industries",
         "keyword": "agent",
+        "enable_search": True,
+        "enable_filter": True,
         "filter": {
             "education": "硕士",
             "salary": "5万元以上",
@@ -98,6 +102,8 @@ DEFAULT_INITIAL_SEARCHES: dict[str, dict[str, Any]] = {
         "name": "AI & LLM Engineer Search",
         "description": "Search targeting Large Language Model and AI algorithm engineering positions",
         "keyword": "大模型算法",
+        "enable_search": True,
+        "enable_filter": True,
         "filter": {
             "education": "硕士",
             "salary": "5万元以上",
@@ -243,6 +249,8 @@ def provision_sqlite_database(
                     name TEXT,
                     description TEXT,
                     keyword TEXT,
+                    enable_search BOOLEAN DEFAULT 1,
+                    enable_filter BOOLEAN DEFAULT 1,
                     filter JSON,
                     cron_expression TEXT,
                     is_enabled BOOLEAN DEFAULT 0,
@@ -263,6 +271,21 @@ def provision_sqlite_database(
                 (saved_searches_json,),
             )
 
+        # Migrate existing saved_searches table if columns missing
+        cursor.execute("PRAGMA table_info(saved_searches)")
+        existing_cols = {row[1] for row in cursor.fetchall()}
+        migration_columns = [
+            ("enable_search", "BOOLEAN DEFAULT 1"),
+            ("enable_filter", "BOOLEAN DEFAULT 1"),
+            ("cron_expression", "TEXT"),
+            ("is_enabled", "BOOLEAN DEFAULT 0"),
+            ("last_run_at", "TEXT"),
+            ("target_task_type", "TEXT DEFAULT 'AUTO_APPLY'"),
+        ]
+        for col_name, col_type in migration_columns:
+            if col_name not in existing_cols:
+                cursor.execute(f"ALTER TABLE saved_searches ADD COLUMN {col_name} {col_type}")
+
         # Seed initial saved searches if table is empty
         cursor.execute("SELECT COUNT(*) FROM saved_searches")
         count = cursor.fetchone()[0]
@@ -272,6 +295,8 @@ def provision_sqlite_database(
                 s_name = item_data.get("name", search_id)
                 s_desc = item_data.get("description", "")
                 s_kw = item_data.get("keyword", "")
+                s_en_search = 1 if item_data.get("enable_search", True) else 0
+                s_en_filter = 1 if item_data.get("enable_filter", True) else 0
                 s_filter = item_data.get("filter", {})
                 s_cron = item_data.get("cron_expression", "")
                 s_enabled = 1 if item_data.get("is_enabled", False) else 0
@@ -279,10 +304,22 @@ def provision_sqlite_database(
                 cursor.execute(
                     """
                     INSERT OR IGNORE INTO saved_searches (
-                        id, name, description, keyword, filter, cron_expression, is_enabled, target_task_type
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        id, name, description, keyword, enable_search, enable_filter,
+                        filter, cron_expression, is_enabled, target_task_type
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (search_id, s_name, s_desc, s_kw, json.dumps(s_filter), s_cron, s_enabled, s_type),
+                    (
+                        search_id,
+                        s_name,
+                        s_desc,
+                        s_kw,
+                        s_en_search,
+                        s_en_filter,
+                        json.dumps(s_filter),
+                        s_cron,
+                        s_enabled,
+                        s_type,
+                    ),
                 )
             logger.info("Successfully seeded %d saved_searches into SQLite", len(seeds))
 
@@ -414,6 +451,8 @@ def provision_remote_pocketbase(
                 {"name": "name", "type": "text", "required": True},
                 {"name": "description", "type": "text", "required": False},
                 {"name": "keyword", "type": "text", "required": False},
+                {"name": "enable_search", "type": "bool", "required": False},
+                {"name": "enable_filter", "type": "bool", "required": False},
                 {"name": "filter", "type": "json", "required": False},
                 {"name": "cron_expression", "type": "text", "required": False},
                 {"name": "is_enabled", "type": "bool", "required": False},
@@ -454,6 +493,8 @@ def provision_remote_pocketbase(
                         "name": s_data.get("name", s_id),
                         "description": s_data.get("description", ""),
                         "keyword": s_data.get("keyword", ""),
+                        "enable_search": s_data.get("enable_search", True),
+                        "enable_filter": s_data.get("enable_filter", True),
                         "filter": s_data.get("filter", {}),
                         "cron_expression": s_data.get("cron_expression", ""),
                         "is_enabled": s_data.get("is_enabled", False),

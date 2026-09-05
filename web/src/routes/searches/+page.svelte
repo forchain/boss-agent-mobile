@@ -41,6 +41,8 @@
 		name: string;
 		description: string;
 		keyword: string;
+		enable_search: boolean;
+		enable_filter: boolean;
 		target_task_type: 'AUTO_APPLY' | 'SCRAPE_JOBS';
 		cron_expression: string;
 		is_enabled: boolean;
@@ -57,6 +59,8 @@
 		name: '',
 		description: '',
 		keyword: '',
+		enable_search: true,
+		enable_filter: true,
 		target_task_type: 'AUTO_APPLY',
 		cron_expression: '0 9 * * *',
 		is_enabled: false,
@@ -151,6 +155,8 @@
 					description:
 						'Default search query targeting Agent roles across Online Education, Gaming, and AI industries',
 					keyword: 'agent',
+					enable_search: true,
+					enable_filter: true,
 					filter: {
 						education: '硕士',
 						salary: '5万元以上',
@@ -169,6 +175,8 @@
 					description:
 						'Search targeting Large Language Model and AI algorithm engineering positions',
 					keyword: '大模型算法',
+					enable_search: true,
+					enable_filter: true,
 					filter: {
 						education: '硕士',
 						salary: '5万元以上',
@@ -202,6 +210,8 @@
 			name: '',
 			description: '',
 			keyword: '',
+			enable_search: true,
+			enable_filter: true,
 			target_task_type: 'AUTO_APPLY',
 			cron_expression: '0 9 * * *',
 			is_enabled: false,
@@ -226,6 +236,8 @@
 			name: search.name,
 			description: search.description || '',
 			keyword: search.keyword || '',
+			enable_search: search.enable_search !== false,
+			enable_filter: search.enable_filter !== false,
 			target_task_type: (search.target_task_type === 'SCRAPE_JOBS' ? 'SCRAPE_JOBS' : 'AUTO_APPLY'),
 			cron_expression: search.cron_expression || '',
 			is_enabled: !!search.is_enabled,
@@ -290,6 +302,8 @@
 				name: modalForm.name.trim(),
 				description: modalForm.description.trim(),
 				keyword: modalForm.keyword.trim(),
+				enable_search: modalForm.enable_search,
+				enable_filter: modalForm.enable_filter,
 				target_task_type: modalForm.target_task_type,
 				cron_expression: modalForm.cron_expression.trim(),
 				is_enabled: modalForm.is_enabled,
@@ -351,6 +365,8 @@
 		const payload = {
 			saved_search_id: search.id,
 			keyword: search.keyword || '',
+			enable_search: search.enable_search !== false,
+			enable_filter: search.enable_filter !== false,
 			filter: search.filter || {},
 			min_score: 70,
 			preview_only: true,
@@ -484,12 +500,34 @@
 							</span>
 						</div>
 
-						<!-- Keyword Badge -->
-						<div class="flex items-center space-x-2 bg-slate-950/80 border border-slate-800/80 px-3 py-2 rounded-xl text-xs">
-							<span class="text-slate-400 font-medium">目标关键词:</span>
-							<span class="font-mono font-bold text-cyan-300">
-								{search.keyword || '(全量推荐，无关键词)'}
-							</span>
+						<!-- Keyword Badge & Mode Indicators -->
+						<div class="flex flex-wrap items-center justify-between gap-2 bg-slate-950/80 border border-slate-800/80 px-3 py-2 rounded-xl text-xs">
+							<div class="flex items-center space-x-2">
+								<span class="text-slate-400 font-medium">目标关键词:</span>
+								<span class="font-mono font-bold {search.enable_search === false ? 'text-amber-400' : 'text-cyan-300'}">
+									{search.enable_search === false ? '(直接浏览推荐)' : search.keyword || '(全量推荐)'}
+								</span>
+							</div>
+							<div class="flex items-center gap-1.5">
+								{#if search.enable_search === false}
+									<span class="text-[10px] px-2 py-0.5 rounded bg-amber-950/60 text-amber-300 border border-amber-800/60 font-medium">
+										🏠 推荐流
+									</span>
+								{:else}
+									<span class="text-[10px] px-2 py-0.5 rounded bg-cyan-950/60 text-cyan-300 border border-cyan-800/60 font-medium">
+										🔍 关键词搜索
+									</span>
+								{/if}
+								{#if search.enable_filter === false}
+									<span class="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700 font-medium">
+										🚫 筛选已关闭
+									</span>
+								{:else}
+									<span class="text-[10px] px-2 py-0.5 rounded bg-emerald-950/60 text-emerald-300 border border-emerald-800/60 font-medium">
+										🎯 筛选已开启
+									</span>
+								{/if}
+							</div>
 						</div>
 
 						<!-- Filters Tags Grid -->
@@ -673,16 +711,47 @@
 					</div>
 					<div>
 						<label for="form-search-keyword" class="block font-medium text-slate-400 mb-1">
-							搜索关键词 (留空为全量推荐)
+							搜索关键词 {modalForm.enable_search ? '(留空为全量推荐)' : '(已关闭搜索，将直接浏览推荐)'}
 						</label>
 						<input
 							id="form-search-keyword"
 							type="text"
 							bind:value={modalForm.keyword}
-							placeholder="例如：Agent / Python / 大模型"
-							class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-cyan-500 font-mono"
+							disabled={!modalForm.enable_search}
+							placeholder={modalForm.enable_search ? "例如：Agent / Python / 大模型" : "直接浏览首页推荐职位（无需关键词）"}
+							class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-cyan-500 font-mono disabled:opacity-50 disabled:cursor-not-allowed"
 						/>
 					</div>
+				</div>
+
+				<!-- Search & Filter Controls -->
+				<div class="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-slate-950/70 border border-slate-800/80 p-3 rounded-xl">
+					<label class="flex items-start space-x-2.5 cursor-pointer select-none">
+						<input
+							type="checkbox"
+							bind:checked={modalForm.enable_search}
+							class="mt-0.5 w-4 h-4 rounded border-slate-700 bg-slate-900 text-cyan-600 focus:ring-cyan-500"
+						/>
+						<div>
+							<span class="text-xs font-semibold text-slate-200 block">启用关键词搜索</span>
+							<span class="text-[11px] text-slate-400 block mt-0.5">
+								{modalForm.enable_search ? '在 App 搜索框中检索上方关键词' : '关闭后直接在首页推荐流中浏览岗位'}
+							</span>
+						</div>
+					</label>
+					<label class="flex items-start space-x-2.5 cursor-pointer select-none">
+						<input
+							type="checkbox"
+							bind:checked={modalForm.enable_filter}
+							class="mt-0.5 w-4 h-4 rounded border-slate-700 bg-slate-900 text-cyan-600 focus:ring-cyan-500"
+						/>
+						<div>
+							<span class="text-xs font-semibold text-slate-200 block">启用条件筛选</span>
+							<span class="text-[11px] text-slate-400 block mt-0.5">
+								{modalForm.enable_filter ? '应用下方学历、薪资、经验、行业等筛选条件' : '关闭后跳过所有筛选条件'}
+							</span>
+						</div>
+					</label>
 				</div>
 
 				<div>
