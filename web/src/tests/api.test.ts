@@ -39,7 +39,35 @@ describe('PocketBase Client Helpers', () => {
 		expect(task.task_type).toBe('AUTO_APPLY');
 		expect(task.status).toBe('pending');
 	});
+
+	it('supports SavedSearch CRUD and local caching', async () => {
+		const { listSavedSearches, getSavedSearch, saveSavedSearch, deleteSavedSearch } = await import('../lib/pocketbase');
+		const saved = await saveSavedSearch({
+			id: 'test_devops_search',
+			name: 'DevOps Search Test',
+			keyword: 'devops',
+			filter: { education: '本科', salary: '25-35K', industries: ['云计算'] },
+			is_enabled: true,
+			cron_expression: '0 10 * * *'
+		});
+
+		expect(saved.id).toBe('test_devops_search');
+		expect(saved.name).toBe('DevOps Search Test');
+		expect(saved.keyword).toBe('devops');
+		expect(saved.filter?.education).toBe('本科');
+
+		const fetched = await getSavedSearch('test_devops_search');
+		expect(fetched).not.toBeNull();
+		expect(fetched?.name).toBe('DevOps Search Test');
+
+		const list = await listSavedSearches();
+		expect(list.some(s => s.id === 'test_devops_search')).toBe(true);
+
+		const deleted = await deleteSavedSearch('test_devops_search');
+		expect(deleted).toBe(true);
+	});
 });
+
 
 describe('SvelteKit Server Endpoints', () => {
 	it('POST /api/candidate/resume parses text and extracts structured profile', async () => {

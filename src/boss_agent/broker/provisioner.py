@@ -43,8 +43,36 @@ CANDIDATE_PROFILES_FIELDS = [
     {"name": "updated", "type": "autodate", "onCreate": True, "onUpdate": True},
 ]
 
+SAVED_SEARCHES_FIELDS = [
+    {"name": "id", "type": "text", "primaryKey": True, "required": False},
+    {"name": "name", "type": "text", "required": True},
+    {"name": "description", "type": "text", "required": False},
+    {"name": "keyword", "type": "text", "required": False},
+    {"name": "filter", "type": "json", "required": False},
+    {"name": "cron_expression", "type": "text", "required": False},
+    {"name": "is_enabled", "type": "bool", "required": False},
+    {"name": "last_run_at", "type": "date", "required": False},
+    {"name": "target_task_type", "type": "text", "required": False},
+    {"name": "created", "type": "autodate", "onCreate": True},
+    {"name": "updated", "type": "autodate", "onCreate": True, "onUpdate": True},
+]
 
-def provision_sqlite_database(db_path: str | Path = ".boss_agent/pb_data/data.db") -> bool:
+
+def _find_default_searches_yaml() -> Path | None:
+    possible = [
+        Path(__file__).resolve().parent.parent.parent.parent / "config" / "searches.yaml",
+        Path("config/searches.yaml"),
+    ]
+    for p in possible:
+        if p.exists():
+            return p
+    return None
+
+
+def provision_sqlite_database(
+    db_path: str | Path = ".boss_agent/pb_data/data.db",
+    searches_yaml_path: str | Path | None = None,
+) -> bool:
     """Initialize or update PocketBase SQLite schema for required collections."""
     db_file = Path(db_path)
     db_file.parent.mkdir(parents=True, exist_ok=True)
@@ -65,6 +93,7 @@ def provision_sqlite_database(db_path: str | Path = ".boss_agent/pb_data/data.db
 
         auto_tasks_json = json.dumps(AUTOMATION_TASKS_FIELDS)
         cand_prof_json = json.dumps(CANDIDATE_PROFILES_FIELDS)
+        saved_searches_json = json.dumps(SAVED_SEARCHES_FIELDS)
 
         if "automation_tasks" not in existing:
             cursor.execute(
@@ -138,10 +167,76 @@ def provision_sqlite_database(db_path: str | Path = ".boss_agent/pb_data/data.db
                 (cand_prof_json,),
             )
 
+        if "saved_searches" not in existing:
+            cursor.execute(
+                """
+                INSERT INTO _collections (id, system, type, name, fields, listRule, viewRule, createRule, updateRule, deleteRule)
+                VALUES ('pbc_saved_searches', 0, 'base', 'saved_searches', ?, '', '', '', '', '')
+                """,
+                (saved_searches_json,),
+            )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS saved_searches (
+                    id TEXT PRIMARY KEY,
+                    name TEXT,
+                    description TEXT,
+                    keyword TEXT,
+                    filter JSON,
+                    cron_expression TEXT,
+                    is_enabled BOOLEAN DEFAULT 0,
+                    last_run_at TEXT,
+                    target_task_type TEXT DEFAULT 'AUTO_APPLY',
+                    created TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%fZ')),
+                    updated TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%fZ'))
+                )
+                """
+            )
+        else:
+            cursor.execute(
+                """
+                UPDATE _collections
+                SET fields = ?, listRule = '', viewRule = '', createRule = '', updateRule = '', deleteRule = ''
+                WHERE name = 'saved_searches'
+                """,
+                (saved_searches_json,),
+            )
+
+        # Auto-seed from YAML if table is empty
+        cursor.execute("SELECT COUNT(*) FROM saved_searches")
+        count = cursor.fetchone()[0]
+        if count == 0:
+            yaml_target = Path(searches_yaml_path) if searches_yaml_path else _find_default_searches_yaml()
+            if yaml_target and yaml_target.exists():
+                try:
+                    import yaml
+
+                    content = yaml_target.read_text(encoding="utf-8")
+                    parsed = yaml.safe_load(content) or {}
+                    searches_dict = parsed.get("searches", parsed)
+                    for search_id, item_data in searches_dict.items():
+                        if isinstance(item_data, dict):
+                            s_name = item_data.get("name", search_id)
+                            s_desc = item_data.get("description", "")
+                            s_kw = item_data.get("search", {}).get("keyword", "")
+                            s_filter = item_data.get("filter", {})
+                            cursor.execute(
+                                """
+                                INSERT OR IGNORE INTO saved_searches (
+                                    id, name, description, keyword, filter, cron_expression, is_enabled, target_task_type
+                                ) VALUES (?, ?, ?, ?, ?, '', 0, 'AUTO_APPLY')
+                                """,
+                                (search_id, s_name, s_desc, s_kw, json.dumps(s_filter)),
+                            )
+                    logger.info("Successfully seeded %d saved_searches from %s", len(searches_dict), yaml_target)
+                except Exception as ex:
+                    logger.warning("Failed to auto-seed saved_searches from YAML: %s", ex)
+
         conn.commit()
         return True
     finally:
         conn.close()
+
 
 
 if __name__ == "__main__":

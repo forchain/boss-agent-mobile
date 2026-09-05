@@ -58,9 +58,40 @@ def test_saved_search_registry_load_yaml():
 
 
 def test_saved_search_registry_unknown_id():
-    registry = SavedSearchRegistry()
+    registry = SavedSearchRegistry(prefer_database=False)
     with pytest.raises(KeyError, match="Saved search 'unknown_id' not found"):
         registry.get("unknown_id")
+
+
+def test_saved_search_registry_load_pocketbase():
+    from unittest.mock import patch
+
+    registry = SavedSearchRegistry(prefer_database=False)
+    mock_resp = MagicMock()
+    mock_resp.ok = True
+    mock_resp.json.return_value = {
+        "items": [
+            {
+                "id": "db_agent_search",
+                "name": "DB Agent Search",
+                "keyword": "agent",
+                "filter": {"education": "硕士", "industries": ["人工智能"]},
+                "is_enabled": True,
+                "cron_expression": "0 9 * * *",
+                "target_task_type": "AUTO_APPLY",
+            }
+        ]
+    }
+    with patch("requests.get", return_value=mock_resp):
+        loaded = registry.load_from_pocketbase("http://127.0.0.1:8090")
+        assert loaded is True
+        s = registry.get("db_agent_search")
+        assert s.name == "DB Agent Search"
+        assert s.search.keyword == "agent"
+        assert s.filter.education == "硕士"
+        assert s.is_enabled is True
+        assert s.cron_expression == "0 9 * * *"
+
 
 
 def test_smoke_harness_with_saved_search_id():

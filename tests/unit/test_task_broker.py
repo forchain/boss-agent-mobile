@@ -266,3 +266,39 @@ async def test_pocketbase_broker_claim_task_conflict():
 
     assert claimed is None
     mock_session.patch.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_saved_search_broker_crud():
+    """Verify broker supports CRUD for SavedSearch presets."""
+    from boss_agent.models import FilterConfig, SavedSearch, SearchConfig
+
+    broker = InMemoryTaskBroker()
+    search = SavedSearch(
+        id="search-1",
+        name="Python Engineer",
+        description="Search for python engineers",
+        search=SearchConfig(keyword="python"),
+        filter=FilterConfig(education="本科", salary="20-30k"),
+        cron_expression="0 9 * * *",
+        is_enabled=True,
+    )
+    saved = await broker.save_saved_search(search)
+    assert saved.id == "search-1"
+
+    fetched = await broker.get_saved_search("search-1")
+    assert fetched is not None
+    assert fetched.name == "Python Engineer"
+    assert fetched.search.keyword == "python"
+    assert fetched.filter.education == "本科"
+    assert fetched.cron_expression == "0 9 * * *"
+    assert fetched.is_enabled is True
+
+    searches = await broker.list_saved_searches()
+    assert len(searches) == 1
+    assert searches[0].id == "search-1"
+
+    deleted = await broker.delete_saved_search("search-1")
+    assert deleted is True
+    assert await broker.get_saved_search("search-1") is None
+

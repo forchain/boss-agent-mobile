@@ -9,17 +9,55 @@ from typing import Any
 
 import yaml
 
+import requests
+
 from .models import SavedSearch
+from .settings import resolve_pocketbase_url
 
 
 class SavedSearchRegistry:
     """Registry managing preconfigured, persistent search & filter query presets."""
 
-    def __init__(self, config_path: str | Path | None = None):
+    def __init__(
+        self,
+        config_path: str | Path | None = None,
+        pocketbase_url: str | None = None,
+        prefer_database: bool = True,
+    ):
         self._searches: dict[str, SavedSearch] = {}
         self.config_path = Path(config_path) if config_path else self._find_default_config()
-        if self.config_path and self.config_path.exists():
+        self.pocketbase_url = pocketbase_url
+        loaded_from_db = False
+        if prefer_database:
+            resolved_url = pocketbase_url or resolve_pocketbase_url()
+            loaded_from_db = self.load_from_pocketbase(resolved_url)
+        if not loaded_from_db and self.config_path and self.config_path.exists():
             self.load_from_yaml(self.config_path)
+
+    def load_from_pocketbase(self, pb_url: str | None = None) -> bool:
+        """Fetch saved searches from PocketBase saved_searches collection."""
+        target_url = (pb_url or resolve_pocketbase_url() or "").rstrip("/")
+        if not target_url:
+            return False
+        endpoint = f"{target_url}/api/collections/saved_searches/records"
+        try:
+            resp = requests.get(
+                endpoint,
+                params={"perPage": 200, "sort": "-created"},
+                timeout=1.5,
+            )
+            if resp.ok:
+                items = resp.json().get("items", [])
+                if items:
+                    for item in items:
+                        search_id = item.get("id")
+                        if search_id:
+                            self._searches[search_id] = SavedSearch.from_dict(search_id, item)
+                    return True
+        except Exception:
+            pass
+        return False
+
 
     def _find_default_config(self) -> Path | None:
         """Locate default config/searches.yaml relative to project root."""
