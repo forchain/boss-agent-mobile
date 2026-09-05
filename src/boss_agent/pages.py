@@ -1,5 +1,6 @@
 import contextlib
 import time
+from dataclasses import dataclass
 from typing import Any
 
 from droid_agent_core.gestures import BézierTouchSynthesizer, HumanizedGestureExecutor, Point
@@ -10,7 +11,26 @@ from droid_agent_core.locators import (
     wait_until,
 )
 
-from .models import AuthStatus, FilterConfig, JobPosting
+from .models import AuthStatus, FilterConfig, JobPosting, compute_job_fingerprint
+
+
+@dataclass
+class JobCardBrief:
+    """Lightweight extraction from a job card in search/list view for deduplication."""
+
+    title: str
+    company_name: str
+    recruiter_name: str
+    element: Any = None
+    fingerprint: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.fingerprint:
+            self.fingerprint = compute_job_fingerprint(
+                company_name=self.company_name,
+                title=self.title,
+                recruiter_name=self.recruiter_name,
+            )
 
 
 class BaseBossPage:
@@ -259,6 +279,66 @@ class JobListPage(BaseBossPage):
             self.gestures.human_click(elem)
             return True
         return False
+
+    def extract_visible_job_cards(self, max_cards: int = 10) -> list[JobCardBrief]:
+        """Extract visible job card briefs (title, company, recruiter) without clicking."""
+        if not self.driver:
+            return []
+        card_selectors = self.locators.get_selectors("job_list.job_card")
+        cards: list[Any] = []
+        for sel in card_selectors:
+            try:
+                elems = self.driver.find_elements(by=sel.by.value, value=sel.value)
+                if elems:
+                    cards = elems
+                    break
+            except Exception:
+                continue
+
+        briefs: list[JobCardBrief] = []
+        for card_elem in cards[:max_cards]:
+            title = ""
+            company = ""
+            recruiter = ""
+            try:
+                # Find visible text sub-elements inside the card
+                sub_texts = [
+                    e.text.strip()
+                    for e in card_elem.find_elements(by="xpath", value=".//*[@text]")
+                    if getattr(e, "text", None) and e.text.strip()
+                ]
+                if sub_texts:
+                    title = sub_texts[0]
+                    if len(sub_texts) > 1:
+                        company = sub_texts[1]
+                    for t in sub_texts[2:]:
+                        if "·" in t or "招聘" in t or "HR" in t:
+                            recruiter = t
+                            break
+                    if not recruiter and len(sub_texts) > 2:
+                        recruiter = sub_texts[-1]
+            except Exception:
+                pass
+
+            if not title:
+                raw_text = getattr(card_elem, "text", "") or ""
+                lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
+                if lines:
+                    title = lines[0]
+                    company = lines[1] if len(lines) > 1 else ""
+                    recruiter = lines[-1] if len(lines) > 2 else ""
+
+            if title:
+                briefs.append(
+                    JobCardBrief(
+                        title=title,
+                        company_name=company or "未知公司",
+                        recruiter_name=recruiter or "招聘者",
+                        element=card_elem,
+                    )
+                )
+        return briefs
+
 
 
 class SearchPage(BaseBossPage):

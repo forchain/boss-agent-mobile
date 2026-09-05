@@ -54,26 +54,110 @@ class ScrapeJobsHandler(BaseTaskHandler):
             await broker.append_log(task.id, f"Executed search for keyword '{keyword}'")
 
         scraped_jobs: list[dict[str, Any]] = []
+        skipped_count = 0
         detail_page = JobDetailPage(driver)
 
-        try:
-            job_posting = detail_page.extract_job_posting(timeout_sec=5.0)
-            job_data = {
-                "title": job_posting.title,
-                "company_name": job_posting.company_name,
-                "salary_range": job_posting.salary_range,
-                "job_description": job_posting.job_description,
-            }
-            scraped_jobs.append(job_data)
-            await broker.append_log(
-                task.id,
-                f"Extracted job: {job_posting.title} @ {job_posting.company_name} ({job_posting.salary_range})",
-            )
-        except Exception as e:
-            await broker.append_log(task.id, f"Notice on job extraction: {e}")
+        visible_cards = list_page.extract_visible_job_cards(max_cards=max_jobs * 2)
+        total_scanned = len(visible_cards)
 
-        await broker.append_log(task.id, f"Finished scraping {len(scraped_jobs)} job postings")
+        if visible_cards:
+            for card in visible_cards:
+                if len(scraped_jobs) >= max_jobs:
+                    break
+
+                # 1. Card-level deduplication check
+                is_duplicate = await broker.has_job_fingerprint(card.fingerprint)
+                if is_duplicate:
+                    skipped_count += 1
+                    await broker.append_log(
+                        task.id,
+                        f"⏭️ [Dedup] Skipping duplicate job: '{card.title}' @ '{card.company_name}' ({card.recruiter_name})",
+                    )
+                    continue
+
+                # 2. New job: enter detail page
+                await broker.append_log(
+                    task.id,
+                    f"🔍 [New Job] Inspecting: '{card.title}' @ '{card.company_name}' ({card.recruiter_name})",
+                )
+                clicked = False
+                if card.element and hasattr(card.element, "click"):
+                    try:
+                        card.element.click()
+                        clicked = True
+                    except Exception:
+                        pass
+                if not clicked:
+                    clicked = list_page.select_first_job(timeout_sec=3.0)
+
+                try:
+                    job_posting = detail_page.extract_job_posting(timeout_sec=5.0)
+                    record_data = {
+                        "fingerprint": card.fingerprint,
+                        "title": job_posting.title or card.title,
+                        "company_name": job_posting.company_name or card.company_name,
+                        "recruiter_name": card.recruiter_name or job_posting.recruiter_name or "招聘者",
+                        "salary_range": job_posting.salary_range,
+                        "location": job_posting.location,
+                        "job_description": job_posting.job_description,
+                        "status": "unmatched",
+                        "search_keywords": [keyword] if keyword else [],
+                        "source_task_id": task.id,
+                    }
+                    persisted = await broker.upsert_job_record(record_data)
+                    scraped_jobs.append(persisted)
+                    await broker.append_log(
+                        task.id,
+                        f"✅ Extracted & ingested job: {persisted['title']} @ {persisted['company_name']} ({persisted.get('salary_range', '')})",
+                    )
+                except Exception as e:
+                    await broker.append_log(task.id, f"Notice on job extraction: {e}")
+                finally:
+                    detail_page.navigate_back()
+        else:
+            # Fallback for mock environments or direct detail view
+            total_scanned = 1
+            try:
+                job_posting = detail_page.extract_job_posting(timeout_sec=5.0)
+                from boss_agent.models import compute_job_fingerprint
+
+                fp = compute_job_fingerprint(
+                    job_posting.company_name, job_posting.title, job_posting.recruiter_name or "招聘者"
+                )
+                if await broker.has_job_fingerprint(fp):
+                    skipped_count += 1
+                else:
+                    persisted = await broker.upsert_job_record(
+                        {
+                            "fingerprint": fp,
+                            "title": job_posting.title,
+                            "company_name": job_posting.company_name,
+                            "recruiter_name": job_posting.recruiter_name or "招聘者",
+                            "salary_range": job_posting.salary_range,
+                            "location": job_posting.location,
+                            "job_description": job_posting.job_description,
+                            "status": "unmatched",
+                            "search_keywords": [keyword] if keyword else [],
+                            "source_task_id": task.id,
+                        }
+                    )
+                    scraped_jobs.append(persisted)
+                    await broker.append_log(
+                        task.id,
+                        f"✅ Extracted job: {job_posting.title} @ {job_posting.company_name} ({job_posting.salary_range})",
+                    )
+            except Exception as e:
+                await broker.append_log(task.id, f"Notice on job extraction: {e}")
+
+        summary = f"Finished scraping: scanned {total_scanned}, scraped {len(scraped_jobs)} job postings, skipped {skipped_count}"
+        await broker.append_log(task.id, summary)
         return HandlerResult(
             success=True,
-            output={"scraped_count": len(scraped_jobs), "jobs": scraped_jobs},
+            output={
+                "total_scanned": total_scanned,
+                "scraped_count": len(scraped_jobs),
+                "skipped_count": skipped_count,
+                "jobs": scraped_jobs,
+            },
         )
+
