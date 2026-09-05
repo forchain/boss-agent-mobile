@@ -11,10 +11,18 @@
 		createAutomationTask
 	} from '$lib/pocketbase';
 
+	let { data }: { data: any } = $props();
 	let searches = $state<SavedSearch[]>([]);
 	let isLoading = $state(true);
 	let isPocketBaseOnline = $state(false);
 	let triggerStatus = $state<{ [key: string]: string }>({});
+
+	$effect(() => {
+		if (data?.searches && data.searches.length > 0 && searches.length === 0) {
+			searches = data.searches;
+			isLoading = false;
+		}
+	});
 
 	// Modal States for Create / Edit
 	let isModalOpen = $state(false);
@@ -116,10 +124,15 @@
 	}
 
 	async function loadSearches() {
-		isLoading = true;
+		if (searches.length === 0) {
+			isLoading = true;
+		}
 		isPocketBaseOnline = await checkPocketBaseHealth();
 		try {
-			searches = await listSavedSearches();
+			const items = await listSavedSearches();
+			if (items && items.length > 0) {
+				searches = items;
+			}
 		} catch (err) {
 			console.error('Failed to load saved searches:', err);
 		} finally {
