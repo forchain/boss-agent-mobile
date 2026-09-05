@@ -31,6 +31,8 @@ job_list:
     - "//*[@content-desc='搜索' or contains(@resource-id, 'search')]"
   job_card:
     - "//*[contains(@resource-id, 'job_name') or contains(@resource-id, 'tv_position_name') or contains(@resource-id, 'cl_card_container') or contains(@resource-id, 'view_job_card')]"
+    - "//*[contains(@resource-id, 'item_job') or contains(@resource-id, 'job_item') or contains(@resource-id, 'card_view') or contains(@resource-id, 'layout_job')]"
+    - "//androidx.recyclerview.widget.RecyclerView/*[.//android.widget.TextView[contains(@text, '元') or contains(@text, '薪') or contains(@text, 'K') or contains(@text, 'k')]]"
 
 search:
   search_input:

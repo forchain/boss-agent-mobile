@@ -53,9 +53,11 @@ def test_provision_sqlite_database(tmp_path: Path):
 
     assert "automation_tasks" in collections
     assert "candidate_profiles" in collections
+    assert "job_records" in collections
     assert "saved_searches" in collections
     assert collections["automation_tasks"] == ""
     assert collections["candidate_profiles"] == ""
+    assert collections["job_records"] == ""
     assert collections["saved_searches"] == ""
 
     # 5. Running provisioning again should idempotently update without error
@@ -228,3 +230,11 @@ def test_provision_remote_pocketbase_mock():
         )
         assert success is True
         assert mock_session.post.call_count >= 1
+        # Verify job_records collection was in posted collections
+        posted_collections = [
+            call.kwargs.get("json", {}).get("name")
+            for call in mock_session.post.call_args_list
+            if "api/collections" in str(call.args) and call.kwargs.get("json", {}).get("name")
+        ]
+        assert "job_records" in posted_collections
+        assert "resume_revisions" in posted_collections

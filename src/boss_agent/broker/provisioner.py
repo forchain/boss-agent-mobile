@@ -70,7 +70,26 @@ RESUME_REVISIONS_FIELDS = [
     {"name": "updated", "type": "autodate", "onCreate": True, "onUpdate": True},
 ]
 
-
+JOB_RECORDS_FIELDS = [
+    {"name": "id", "type": "text", "primaryKey": True, "required": False},
+    {"name": "fingerprint", "type": "text", "required": True},
+    {"name": "title", "type": "text", "required": True},
+    {"name": "company_name", "type": "text", "required": True},
+    {"name": "recruiter_name", "type": "text", "required": True},
+    {"name": "salary_range", "type": "text", "required": False},
+    {"name": "location", "type": "text", "required": False},
+    {"name": "job_description", "type": "text", "required": False},
+    {"name": "status", "type": "text", "required": True},
+    {"name": "match_score", "type": "number", "required": False},
+    {"name": "jd_key_requirements", "type": "json", "required": False},
+    {"name": "greeting_message", "type": "text", "required": False},
+    {"name": "search_keywords", "type": "json", "required": False},
+    {"name": "first_seen_at", "type": "date", "required": False},
+    {"name": "last_seen_at", "type": "date", "required": False},
+    {"name": "source_task_id", "type": "text", "required": False},
+    {"name": "created", "type": "autodate", "onCreate": True},
+    {"name": "updated", "type": "autodate", "onCreate": True, "onUpdate": True},
+]
 SAVED_SEARCHES_FIELDS = [
     {"name": "id", "type": "text", "primaryKey": True, "required": False},
     {"name": "name", "type": "text", "required": True},
@@ -173,6 +192,7 @@ def provision_sqlite_database(
         auto_tasks_json = json.dumps(AUTOMATION_TASKS_FIELDS)
         cand_prof_json = json.dumps(CANDIDATE_PROFILES_FIELDS)
         res_rev_json = json.dumps(RESUME_REVISIONS_FIELDS)
+        job_records_json = json.dumps(JOB_RECORDS_FIELDS)
         saved_searches_json = json.dumps(SAVED_SEARCHES_FIELDS)
 
         if "automation_tasks" not in existing:
@@ -296,6 +316,48 @@ def provision_sqlite_database(
                 WHERE name = 'resume_revisions'
                 """,
                 (res_rev_json,),
+            )
+
+        if "job_records" not in existing:
+            cursor.execute(
+                """
+                INSERT INTO _collections (id, system, type, name, fields, listRule, viewRule, createRule, updateRule, deleteRule)
+                VALUES ('pbc_job_records', 0, 'base', 'job_records', ?, '', '', '', '', '')
+                """,
+                (job_records_json,),
+            )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS job_records (
+                    id TEXT PRIMARY KEY,
+                    fingerprint TEXT UNIQUE,
+                    title TEXT,
+                    company_name TEXT,
+                    recruiter_name TEXT,
+                    salary_range TEXT,
+                    location TEXT,
+                    job_description TEXT,
+                    status TEXT DEFAULT 'unmatched',
+                    match_score INTEGER,
+                    jd_key_requirements JSON,
+                    greeting_message TEXT,
+                    search_keywords JSON,
+                    first_seen_at TEXT,
+                    last_seen_at TEXT,
+                    source_task_id TEXT,
+                    created TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%fZ')),
+                    updated TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%fZ'))
+                )
+                """
+            )
+        else:
+            cursor.execute(
+                """
+                UPDATE _collections
+                SET fields = ?, listRule = '', viewRule = '', createRule = '', updateRule = '', deleteRule = ''
+                WHERE name = 'job_records'
+                """,
+                (job_records_json,),
             )
 
         if "saved_searches" not in existing:
@@ -547,6 +609,33 @@ def provision_remote_pocketbase(
                 {"name": "is_enabled", "type": "bool", "required": False},
                 {"name": "last_run_at", "type": "date", "required": False},
                 {"name": "target_task_type", "type": "text", "required": False},
+            ],
+        },
+        {
+            "id": "pbc_job_records",
+            "name": "job_records",
+            "type": "base",
+            "listRule": "",
+            "viewRule": "",
+            "createRule": "",
+            "updateRule": "",
+            "deleteRule": "",
+            "fields": [
+                {"name": "fingerprint", "type": "text", "required": True},
+                {"name": "title", "type": "text", "required": True},
+                {"name": "company_name", "type": "text", "required": True},
+                {"name": "recruiter_name", "type": "text", "required": True},
+                {"name": "salary_range", "type": "text", "required": False},
+                {"name": "location", "type": "text", "required": False},
+                {"name": "job_description", "type": "text", "required": False},
+                {"name": "status", "type": "text", "required": True},
+                {"name": "match_score", "type": "number", "required": False},
+                {"name": "jd_key_requirements", "type": "json", "required": False},
+                {"name": "greeting_message", "type": "text", "required": False},
+                {"name": "search_keywords", "type": "json", "required": False},
+                {"name": "first_seen_at", "type": "date", "required": False},
+                {"name": "last_seen_at", "type": "date", "required": False},
+                {"name": "source_task_id", "type": "text", "required": False},
             ],
         },
     ]
