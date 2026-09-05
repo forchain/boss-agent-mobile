@@ -382,10 +382,26 @@ class ResumeMemoryManager:
             {"role": "user", "content": prompt},
         ]
 
-        result_dict = self.llm_client.chat_completion_json(messages)
+        extra_payload = None
+        if (
+            "minimax" in getattr(self.llm_client.config, "base_url", "").lower()
+            or "minimax" in getattr(self.llm_client.config, "model", "").lower()
+        ):
+            extra_payload = {"thinking": {"type": "disabled"}}
+
+        result_dict = self.llm_client.chat_completion_json(
+            messages,
+            max_tokens=16384,
+            extra_payload=extra_payload,
+        )
         result_dict["raw_resume_text"] = raw_text
         profile = StructuredCandidateProfile.from_dict(result_dict)
 
+        self.save_memory_profile(profile)
+        return profile
+
+    def save_memory_profile(self, profile: StructuredCandidateProfile) -> None:
+        """Save candidate profile to PocketBase database with local file fallback."""
         # 1. Primary: Save to PocketBase database (HTTP or SQLite fallback)
         try:
             import asyncio
@@ -418,8 +434,6 @@ class ResumeMemoryManager:
             )
         except Exception:
             pass
-
-        return profile
 
     def load_memory(
         self,

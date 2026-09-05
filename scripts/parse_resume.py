@@ -80,8 +80,8 @@ def build_llm_client(llm_config_arg: str | None) -> OpenAIChatClient:
                     api_key=api_key,
                     model=model,
                     temperature=temp,
-                    timeout_sec=float(config_data.get("timeout_sec") or 120.0),
-                    max_tokens=int(config_data.get("max_tokens") or 262144),
+                    timeout_sec=float(config_data.get("timeout_sec") or 300.0),
+                    max_tokens=int(config_data.get("max_tokens") or 16384),
                 )
                 return OpenAIChatClient(llm_cfg)
             else:

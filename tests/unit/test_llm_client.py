@@ -87,6 +87,36 @@ def test_openai_client_chat_completion_success():
         assert kwargs["headers"]["Authorization"] == "Bearer sk-test-key"
         assert kwargs["json"]["model"] == "MiniMax-M3"
         assert kwargs["json"]["messages"] == [{"role": "user", "content": "Hi"}]
+        assert kwargs["json"]["thinking"] == {"type": "disabled"}
+
+
+def test_openai_client_minimax_thinking_disabled():
+    config = LLMConfig(
+        api_key="sk-test-key",
+        base_url="https://api.minimaxi.com/v1",
+        model="MiniMax-M3",
+    )
+    client = OpenAIChatClient(config)
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "choices": [{"message": {"role": "assistant", "content": "ok"}}]
+    }
+
+    with patch("requests.post", return_value=mock_response) as mock_post:
+        # MiniMax automatically injects thinking: {"type": "disabled"}
+        client.chat_completion([{"role": "user", "content": "test"}])
+        _, kwargs = mock_post.call_args
+        assert kwargs["json"]["thinking"] == {"type": "disabled"}
+
+        # Custom extra_payload can override or add options
+        client.chat_completion(
+            [{"role": "user", "content": "test"}],
+            extra_payload={"thinking": {"type": "enabled"}},
+        )
+        _, kwargs2 = mock_post.call_args
+        assert kwargs2["json"]["thinking"] == {"type": "enabled"}
 
 
 def test_openai_client_chat_completion_json():

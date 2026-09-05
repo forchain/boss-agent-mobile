@@ -143,6 +143,23 @@ memory_path: "{memory_file}"
     assert memory_file.is_file()
 
 
+def test_resume_memory_manager_save_memory_profile(tmp_path):
+    memory_file = tmp_path / "manual_saved_memory.json"
+    manager = ResumeMemoryManager(llm_client=MagicMock(), memory_file_path=memory_file)
+
+    profile = StructuredCandidateProfile(
+        name="测试候选人",
+        years_of_experience=3,
+        core_skills=["Go", "Python"],
+    )
+    manager.save_memory_profile(profile)
+
+    assert memory_file.is_file()
+    saved = json.loads(memory_file.read_text(encoding="utf-8"))
+    assert saved["name"] == "测试候选人"
+    assert saved["years_of_experience"] == 3
+
+
 def test_structured_candidate_profile_normalizes_dict_skills():
     data = {
         "name": "周黄金",
