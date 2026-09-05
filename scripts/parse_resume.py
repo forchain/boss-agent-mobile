@@ -164,12 +164,68 @@ def main() -> None:
         }, ensure_ascii=False) + "\n")
     except Exception as e:
         logger.error("LLM resume parse error: %s\nTraceback:\n%s", e, traceback.format_exc())
-        sys.stderr.write(f"LLM parse error: {e}\n")
-        sys.stdout.write(json.dumps({
-            "success": False,
-            "message": f"大模型解析简历失败: {e}"
-        }, ensure_ascii=False) + "\n")
-        sys.exit(1)
+        sys.stderr.write(f"LLM parse warning: {e}, falling back to heuristic parsing.\n")
+        try:
+            import re
+            lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
+            extracted_name = "求职者"
+            for line in lines:
+                m_name = re.search(r'(?:姓名|Name)[:：\s]*([^\s,，;；]+)', line)
+                if m_name:
+                    extracted_name = m_name.group(1).strip()
+                    break
+                words = line.split()
+                if words and len(words[0]) in [2, 3, 4] and not any(k in words[0] for k in ["简历", "个人", "电话", "邮箱", "求职", "求职者"]):
+                    extracted_name = words[0]
+                    break
+
+            exp_years = 0
+            m_exp = re.search(r'(?<!\d)([1-9]|[1-4]\d)\s*(?:年|years|yrs)(?:研发经验|工作经验|经验)?', raw_text, re.IGNORECASE)
+            if m_exp:
+                exp_years = int(m_exp.group(1))
+
+            skills = []
+            known_skills = ["Python", "FastAPI", "TypeScript", "Android", "Unity", "Java", "Go", "Golang", "C++", "Rust", "Vue", "React", "Svelte", "Node.js", "Docker", "Kubernetes", "LLM", "Agent", "Appium", "PyTorch", "TensorFlow"]
+            for s in known_skills:
+                if re.search(rf'\b{re.escape(s)}\b', raw_text, re.IGNORECASE):
+                    skills.append(s)
+
+            positions = []
+            known_positions = ["AI Agent 架构师", "全栈技术专家", "架构师", "技术专家", "算法工程师", "Android 开发", "Python 开发", "前端开发", "后端开发"]
+            for pos in known_positions:
+                if pos in raw_text:
+                    positions.append(pos)
+
+            profile = StructuredCandidateProfile(
+                name=extracted_name,
+                years_of_experience=exp_years,
+                education=[],
+                core_skills=skills,
+                project_highlights=[],
+                target_positions=positions,
+                raw_summary=raw_text.strip()[:300],
+            )
+
+            memory_path = Path(args.memory_path)
+            memory_path.parent.mkdir(parents=True, exist_ok=True)
+            memory_path.write_text(
+                json.dumps(profile.to_dict(), ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+
+            logger.info("Resume parsed via heuristic fallback and saved to %s for candidate: %s", memory_path, profile.name)
+            sys.stdout.write(json.dumps({
+                "success": True,
+                "profile": profile.to_dict(),
+                "message": "简历已解析（本地规则提取模式）"
+            }, ensure_ascii=False) + "\n")
+        except Exception as fallback_err:
+            logger.error("Heuristic fallback failed: %s", fallback_err)
+            sys.stdout.write(json.dumps({
+                "success": False,
+                "message": f"简历解析失败: {e}"
+            }, ensure_ascii=False) + "\n")
+            sys.exit(1)
 
 
 if __name__ == "__main__":
