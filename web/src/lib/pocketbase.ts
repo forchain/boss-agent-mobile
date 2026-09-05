@@ -307,4 +307,23 @@ export async function deleteSavedSearch(id: string): Promise<boolean> {
 	}
 }
 
+export async function createSavedSearch(search: Omit<SavedSearch, 'id' | 'created' | 'updated'> & { id?: string }): Promise<SavedSearch> {
+	return saveSavedSearch(search);
+}
+
+export async function updateSavedSearch(id: string, search: Partial<SavedSearch>): Promise<SavedSearch> {
+	const current = await getSavedSearch(id);
+	const merged: Partial<SavedSearch> & { name: string } = {
+		id,
+		name: search.name ?? current?.name ?? id,
+		description: search.description ?? current?.description,
+		keyword: search.keyword ?? current?.keyword,
+		filter: search.filter ?? current?.filter,
+		cron_expression: search.cron_expression ?? current?.cron_expression,
+		is_enabled: search.is_enabled ?? current?.is_enabled,
+		last_run_at: search.last_run_at ?? current?.last_run_at,
+		target_task_type: search.target_task_type ?? current?.target_task_type
+	};
+	return saveSavedSearch(merged);
+}
 
