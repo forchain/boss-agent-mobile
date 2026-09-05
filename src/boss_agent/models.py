@@ -214,4 +214,3 @@ class SavedSearch:
             enable_search=enable_search,
             enable_filter=enable_filter,
         )
-

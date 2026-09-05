@@ -205,5 +205,3 @@ def test_robust_json_parsing_edge_cases():
     parsed5 = OpenAIChatClient._robust_parse_json(raw5)
     assert parsed5["name"] == "周黄金"
     assert "AI与智能体" in parsed5["core_skills"]
-
-

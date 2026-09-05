@@ -340,4 +340,3 @@ async def test_list_stale_running_tasks_handles_404_gracefully():
     broker = PocketBaseTaskBroker(session=mock_session)
     tasks = await broker.list_stale_running_tasks()
     assert tasks == []
-

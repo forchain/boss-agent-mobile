@@ -111,7 +111,9 @@ def test_provision_sqlite_database_seeds_saved_searches(tmp_path: Path):
     # Verify seeded row in saved_searches
     conn = sqlite3.connect(str(db_file))
     cursor = conn.cursor()
-    cursor.execute("SELECT id, name, keyword, enable_search, enable_filter, filter FROM saved_searches WHERE id = 'test_search_1'")
+    cursor.execute(
+        "SELECT id, name, keyword, enable_search, enable_filter, filter FROM saved_searches WHERE id = 'test_search_1'"
+    )
     row = cursor.fetchone()
     conn.close()
 
@@ -122,6 +124,7 @@ def test_provision_sqlite_database_seeds_saved_searches(tmp_path: Path):
     assert row[3] == 1
     assert row[4] == 0
     import json
+
     filter_data = json.loads(row[5])
     assert filter_data["education"] == "本科"
     assert filter_data["industries"] == ["人工智能"]
@@ -158,7 +161,9 @@ def test_provision_sqlite_database_migrates_existing_table(tmp_path: Path):
             filter JSON
         )
     """)
-    cursor.execute("INSERT INTO _collections (id, name, fields) VALUES ('pbc_saved_searches', 'saved_searches', '[]')")
+    cursor.execute(
+        "INSERT INTO _collections (id, name, fields) VALUES ('pbc_saved_searches', 'saved_searches', '[]')"
+    )
     conn.commit()
     conn.close()
 
@@ -178,6 +183,7 @@ def test_provision_sqlite_database_migrates_existing_table(tmp_path: Path):
 
 def test_provision_remote_pocketbase_mock():
     from unittest.mock import MagicMock, patch
+
     from boss_agent.broker.provisioner import provision_remote_pocketbase
 
     mock_session = MagicMock()
@@ -222,4 +228,3 @@ def test_provision_remote_pocketbase_mock():
         )
         assert success is True
         assert mock_session.post.call_count >= 1
-

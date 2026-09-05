@@ -64,6 +64,12 @@
 					>
 						🔍 搜索策略库
 					</a>
+					<a
+						href="/profile"
+						class="px-3 py-1.5 rounded-lg text-xs font-medium transition {page.url.pathname.startsWith('/profile') ? 'bg-slate-800 text-cyan-400 border border-slate-700 shadow-sm' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'}"
+					>
+						👤 候选人画像
+					</a>
 				</nav>
 			</div>
 

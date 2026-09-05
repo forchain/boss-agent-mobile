@@ -227,9 +227,9 @@ class OpenAIChatClient(LLMDecisionClient):
         """Auto-close unclosed strings, arrays, and objects caused by token truncation."""
         s = raw.strip()
         # Strip trailing incomplete key or colon
-        s = re.sub(r',\s*"[^"]*"\s*:\s*$', '', s)
-        s = re.sub(r',\s*"[^"]*$', '', s)
-        s = re.sub(r',\s*$', '', s)
+        s = re.sub(r',\s*"[^"]*"\s*:\s*$', "", s)
+        s = re.sub(r',\s*"[^"]*$', "", s)
+        s = re.sub(r",\s*$", "", s)
 
         in_string = False
         escape = False
@@ -239,30 +239,29 @@ class OpenAIChatClient(LLMDecisionClient):
             if escape:
                 escape = False
                 continue
-            if c == '\\':
+            if c == "\\":
                 escape = True
                 continue
             if c == '"':
                 in_string = not in_string
                 continue
             if not in_string:
-                if c in '{[':
+                if c in "{[":
                     stack.append(c)
-                elif c in '}]':
-                    if stack:
-                        top = stack[-1]
-                        if (c == '}' and top == '{') or (c == ']' and top == '['):
-                            stack.pop()
+                elif c in "}]" and stack:
+                    top = stack[-1]
+                    if (c == "}" and top == "{") or (c == "]" and top == "["):
+                        stack.pop()
 
         if in_string:
             s += '"'
 
         while stack:
             top = stack.pop()
-            if top == '{':
-                s += '}'
-            elif top == '[':
-                s += ']'
+            if top == "{":
+                s += "}"
+            elif top == "[":
+                s += "]"
 
         return s
 
@@ -299,7 +298,7 @@ class OpenAIChatClient(LLMDecisionClient):
                     escape = False
                     i += 1
                     continue
-                if c == '\\':
+                if c == "\\":
                     escape = True
                     i += 1
                     continue
@@ -308,25 +307,25 @@ class OpenAIChatClient(LLMDecisionClient):
                     i += 1
                     continue
                 if not in_str:
-                    if c in '{[':
-                        if c == '[':
+                    if c in "{[":
+                        if c == "[":
                             j = i + 1
-                            while j < n and chars[j] in ' \t\r\n':
+                            while j < n and chars[j] in " \t\r\n":
                                 j += 1
                             match = re.match(r'^"[^"]+"\s*:', text[j:])
                             if match:
-                                chars[i] = '{'
-                                stack.append(('converted', '{'))
+                                chars[i] = "{"
+                                stack.append(("converted", "{"))
                                 i += 1
                                 continue
-                        stack.append(('normal', c))
-                    elif c in '}]':
+                        stack.append(("normal", c))
+                    elif c in "}]":
                         if stack:
                             kind, open_c = stack.pop()
-                            if kind == 'converted' and c == ']':
-                                chars[i] = '}'
+                            if kind == "converted" and c == "]":
+                                chars[i] = "}"
                 i += 1
-            return ''.join(chars)
+            return "".join(chars)
 
         cleaned = fix_array_object_mixup(cleaned)
         try:
@@ -344,7 +343,7 @@ class OpenAIChatClient(LLMDecisionClient):
                     out.append(c)
                     escape = False
                     continue
-                if c == '\\':
+                if c == "\\":
                     out.append(c)
                     escape = True
                     continue
@@ -353,17 +352,17 @@ class OpenAIChatClient(LLMDecisionClient):
                     out.append(c)
                     continue
                 if in_str:
-                    if c == '\n':
-                        out.append('\\n')
-                    elif c == '\r':
-                        out.append('\\r')
-                    elif c == '\t':
-                        out.append('\\t')
+                    if c == "\n":
+                        out.append("\\n")
+                    elif c == "\r":
+                        out.append("\\r")
+                    elif c == "\t":
+                        out.append("\\t")
                     else:
                         out.append(c)
                 else:
                     out.append(c)
-            return ''.join(out)
+            return "".join(out)
 
         sanitized = sanitize_string_control_chars(cleaned)
         try:
@@ -380,7 +379,7 @@ class OpenAIChatClient(LLMDecisionClient):
             res: list[str] = []
             while i < n:
                 c = chars[i]
-                if c == '\\':
+                if c == "\\":
                     res.append(c)
                     if i + 1 < n:
                         res.append(chars[i + 1])
@@ -395,9 +394,9 @@ class OpenAIChatClient(LLMDecisionClient):
                     else:
                         # Look ahead past whitespace to see if next non-whitespace char is structural (',', ':', '}', ']')
                         j = i + 1
-                        while j < n and chars[j] in ' \t\r\n':
+                        while j < n and chars[j] in " \t\r\n":
                             j += 1
-                        if j < n and chars[j] in ',:}]':
+                        if j < n and chars[j] in ",:}]":
                             in_string = False
                             res.append(c)
                         else:
@@ -407,7 +406,7 @@ class OpenAIChatClient(LLMDecisionClient):
                     continue
                 res.append(c)
                 i += 1
-            return ''.join(res)
+            return "".join(res)
 
         fixed_quotes = fix_unescaped_quotes_tokenizer(sanitized)
         fixed_quotes = re.sub(r",\s*([\]}])", r"\1", fixed_quotes)
@@ -419,9 +418,10 @@ class OpenAIChatClient(LLMDecisionClient):
         # 5. Try Python AST literal eval (handles single quotes and Python boolean/None literals)
         try:
             import ast
-            py_str = re.sub(r'\btrue\b', 'True', fixed_quotes)
-            py_str = re.sub(r'\bfalse\b', 'False', py_str)
-            py_str = re.sub(r'\bnull\b', 'None', py_str)
+
+            py_str = re.sub(r"\btrue\b", "True", fixed_quotes)
+            py_str = re.sub(r"\bfalse\b", "False", py_str)
+            py_str = re.sub(r"\bnull\b", "None", py_str)
             eval_result = ast.literal_eval(py_str)
             if isinstance(eval_result, dict):
                 return eval_result

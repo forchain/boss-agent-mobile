@@ -4,7 +4,7 @@ tests/e2e/test_smoke_job_extraction.py
 Integration smoke test verifying end-to-end job detail extraction (Criterion 4).
 """
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from boss_agent.models import JobPosting
 from boss_agent.workflows import SmokeHarness, TakeoverHandler
@@ -38,10 +38,14 @@ def test_smoke_harness_end_to_end_job_detail_extraction():
         "2. 深度优化反爬风控拟真轨迹与验证码智能接管策略；\n"
         "3. 具备 5 年以上 Python / Android SDK / Appium 深度实战经验。"
     )
+    mock_search_icon = MagicMock()
+    mock_search_icon.rect = {"x": 950, "y": 100, "width": 80, "height": 80}
 
     def mock_find_elements(by, value):
         if "同意" in value or "好的" in value:
             return [mock_startup_elem]
+        if "ly_menu" in value or "search" in value:
+            return [mock_search_icon]
         if "tv_job_name" in value or "job_title" in value:
             return [mock_title_elem]
         if "tv_company_name" in value or "company_name" in value:
@@ -66,9 +70,11 @@ def test_smoke_harness_end_to_end_job_detail_extraction():
         filter_config=FilterConfig(
             education=None, salary=None, experience=None, activity=None, company_scales=[]
         ),
+        enable_greeting_draft=False,
     )
 
-    job_posting = harness.run_smoke_test()
+    with patch("time.sleep", return_value=None):
+        job_posting = harness.run_smoke_test()
 
     # Assert Criterion 4 specifications
     assert isinstance(job_posting, JobPosting)
@@ -125,9 +131,11 @@ def test_smoke_harness_with_search_enabled():
         takeover_handler=takeover,
         search_config=None,  # default is SearchConfig(keyword="agent")
         filter_config=None,
+        enable_greeting_draft=False,
     )
 
-    job = harness.run_smoke_test()
+    with patch("time.sleep", return_value=None):
+        job = harness.run_smoke_test()
     assert isinstance(job, JobPosting)
     mock_input_elem.send_keys.assert_called()
 
@@ -143,9 +151,12 @@ def test_smoke_harness_with_search_disabled():
     mock_job_card = MagicMock()
     mock_job_card.rect = {"x": 50, "y": 300, "width": 980, "height": 220}
     mock_title_elem = MagicMock()
-    mock_title_elem.text = "推荐职位工程师"
+    mock_search_icon = MagicMock()
+    mock_search_icon.rect = {"x": 950, "y": 100, "width": 80, "height": 80}
 
     def mock_find_elements(by, value):
+        if "ly_menu" in value or "search" in value:
+            return [mock_search_icon]
         if "et_search" in value:
             return [mock_input_elem]
         if "job_name" in value or "tv_position_name" in value or "cl_card_container" in value:
@@ -164,8 +175,10 @@ def test_smoke_harness_with_search_disabled():
         filter_config=FilterConfig(
             education=None, salary=None, experience=None, activity=None, company_scales=[]
         ),
+        enable_greeting_draft=False,
     )
 
-    job = harness.run_smoke_test()
+    with patch("time.sleep", return_value=None):
+        job = harness.run_smoke_test()
     assert isinstance(job, JobPosting)
     mock_input_elem.send_keys.assert_not_called()
