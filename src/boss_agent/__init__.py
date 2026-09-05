@@ -4,6 +4,7 @@ boss_agent
 Boss 直聘 Android application automation domain layer.
 """
 
+# ruff: noqa: SIM105
 try:
     from .matching import JobMatchGreetingService, MatchGreetingResult
 except ImportError:
@@ -48,6 +49,7 @@ except ImportError:
     pass
 from .settings import (
     load_settings,
+    resolve_git_common_root,
     resolve_pocketbase_data_dir,
     resolve_pocketbase_db_path,
     resolve_pocketbase_url,
@@ -84,6 +86,9 @@ __all__ = [
     "TakeoverHandler",
     "get_global_search_registry",
     "load_settings",
+    "resolve_git_common_root",
+    "resolve_pocketbase_data_dir",
+    "resolve_pocketbase_db_path",
     "resolve_pocketbase_url",
 ]
 
