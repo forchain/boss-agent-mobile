@@ -147,4 +147,37 @@ describe('SvelteKit Server Endpoints', () => {
 		expect(data.greeting_message).toBeDefined();
 		expect(data.greeting_message.length).toBeGreaterThan(10);
 	});
+
+	it('POST and GET /api/jobs handles deduplication and status listing', async () => {
+		const { POST: handleJobsPost, GET: handleJobsGet } = await import('../routes/api/jobs/+server');
+		const jobData = {
+			title: 'Agent应用开发工程师',
+			company_name: '字节跳动(上海)',
+			recruiter_name: '买先生·产品研发',
+			salary_range: '3-5万元·14月',
+			job_description: '负责agent产品观测与评测'
+		};
+
+		const postEvent: any = {
+			request: {
+				json: async () => jobData
+			}
+		};
+
+		const postRes = await handleJobsPost(postEvent);
+		const postJson = await postRes.json();
+		expect(postRes.status).toBe(200);
+		expect(postJson.success).toBe(true);
+		expect(postJson.record.fingerprint).toBeDefined();
+
+		const getEvent: any = {
+			url: new URL('http://localhost/api/jobs?status=unmatched')
+		};
+		const getRes = await handleJobsGet(getEvent);
+		const getJson = await getRes.json();
+		expect(getRes.status).toBe(200);
+		expect(getJson.success).toBe(true);
+		expect(getJson.records.some((r: any) => r.fingerprint === postJson.record.fingerprint)).toBe(true);
+	});
 });
+

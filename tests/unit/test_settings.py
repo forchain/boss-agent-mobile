@@ -329,6 +329,3 @@ def test_resolve_pocketbase_data_dir_with_common_root(tmp_path: Path):
         expected = resolve_git_common_root() / ".boss_agent/pb_data"
         assert data_dir == expected
 
-
-
-
