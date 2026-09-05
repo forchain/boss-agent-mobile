@@ -15,6 +15,54 @@ class AuthStatus(StrEnum):
     CHALLENGE_REQUIRED = "CHALLENGE_REQUIRED"  # Captcha or SMS challenge
 
 
+def compute_job_fingerprint(company_name: str, title: str, recruiter_name: str) -> str:
+    """Compute normalized SHA-256 fingerprint for a job card using the canonical 3 fields."""
+    import hashlib
+
+    norm_comp = (company_name or "").strip()
+    norm_title = (title or "").strip()
+    norm_recruiter = (recruiter_name or "").strip()
+    raw = f"{norm_comp}::{norm_title}::{norm_recruiter}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+class JobRecordStatus(StrEnum):
+    UNMATCHED = "unmatched"
+    MATCHED = "matched"
+    APPLIED = "applied"
+    IGNORED = "ignored"
+
+
+@dataclass
+class JobRecord:
+    title: str
+    company_name: str
+    recruiter_name: str
+    fingerprint: str = ""
+    id: str | None = None
+    salary_range: str = ""
+    location: str | None = None
+    job_description: str = ""
+    status: str = "unmatched"
+    match_score: int | None = None
+    jd_key_requirements: list[str] = field(default_factory=list)
+    greeting_message: str = ""
+    search_keywords: list[str] = field(default_factory=list)
+    first_seen_at: str | None = None
+    last_seen_at: str | None = None
+    source_task_id: str | None = None
+    created: str | None = None
+    updated: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.fingerprint:
+            self.fingerprint = compute_job_fingerprint(
+                company_name=self.company_name,
+                title=self.title,
+                recruiter_name=self.recruiter_name,
+            )
+
+
 @dataclass
 class JobPosting:
     title: str

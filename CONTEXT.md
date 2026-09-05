@@ -60,3 +60,15 @@ _Avoid_: In-process background task, Celery pool, worker thread
 The polymorphic workflow dispatch within the Automation Worker that executes concrete automation jobs (`CHECK_LOGIN`, `SCRAPE_JOBS`, `AUTO_APPLY`, `CHECK_CHAT`) without inter-process device contention.
 _Avoid_: Multi-worker router, sub-worker cluster
 
+**Job Record**:
+The persisted entity representing a job posting discovered from mobile search results or scraping workflows in the Boss app.
+_Avoid_: Scraped item, raw post, search card
+
+**Job Fingerprint**:
+The canonical deduplication identifier computed strictly from the three visible elements on the search result card: job title, company name, and recruiter name.
+_Avoid_: Hash key, job uid, composite id
+
+**Unmatched Job Stream**:
+The dedicated triage view displaying newly discovered, deduplicated job records that have not yet undergone match evaluation.
+_Avoid_: Job list, raw queue, inbox view
+

@@ -52,6 +52,8 @@ def test_smoke_harness_end_to_end_job_detail_extraction():
             return [mock_desc_elem]
         if "job_name" in value or "tv_position_name" in value:
             return [mock_job_card]
+        if "ly_menu" in value or "search" in value or "搜索" in value:
+            return [mock_job_card]
         return []
 
     mock_driver.find_elements.side_effect = mock_find_elements
@@ -152,6 +154,8 @@ def test_smoke_harness_with_search_disabled():
             return [mock_job_card]
         if "tv_job_name" in value:
             return [mock_title_elem]
+        if "ly_menu" in value or "search" in value or "搜索" in value:
+            return [mock_job_card]
         return []
 
     mock_driver.find_elements.side_effect = mock_find_elements

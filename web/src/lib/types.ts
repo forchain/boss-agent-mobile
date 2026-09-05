@@ -65,3 +65,27 @@ export interface AutomationTask {
 	created?: string;
 	updated?: string;
 }
+
+export type JobRecordStatus = 'unmatched' | 'matched' | 'applied' | 'ignored';
+
+export interface JobRecord {
+	id: string;
+	fingerprint: string;
+	title: string;
+	company_name: string;
+	recruiter_name: string;
+	salary_range?: string;
+	location?: string;
+	job_description?: string;
+	status: JobRecordStatus;
+	match_score?: number | null;
+	jd_key_requirements?: string[];
+	greeting_message?: string;
+	search_keywords?: string[];
+	source_task_id?: string;
+	first_seen_at?: string;
+	last_seen_at?: string;
+	created?: string;
+	updated?: string;
+}
+

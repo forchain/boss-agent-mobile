@@ -17,6 +17,7 @@ from typing import Any
 import requests
 
 from boss_agent.broker.models import AutomationTask, TaskStatus, TaskType
+from boss_agent.models import compute_job_fingerprint
 from boss_agent.settings import resolve_pocketbase_url
 
 logger = logging.getLogger("boss_agent.broker")
@@ -99,6 +100,38 @@ class BaseTaskBroker(ABC):
         """Save or update candidate structured memory profile for a user."""
         pass
 
+    @abstractmethod
+    async def has_job_fingerprint(self, fingerprint: str) -> bool:
+        """Check if a job record with the given fingerprint already exists."""
+        pass
+
+    @abstractmethod
+    async def upsert_job_record(self, record_data: dict[str, Any]) -> dict[str, Any]:
+        """Insert a new job record or update last_seen_at/keywords if already present."""
+        pass
+
+    @abstractmethod
+    async def get_job_record(self, record_id: str) -> dict[str, Any] | None:
+        """Get a job record by ID."""
+        pass
+
+    @abstractmethod
+    async def list_job_records(
+        self, status: str | None = None, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        """List job records, optionally filtered by status."""
+        pass
+
+    @abstractmethod
+    async def update_job_record_status(
+        self,
+        record_id: str,
+        status: str,
+        match_data: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Update the status and optional match results of a job record."""
+        pass
+
 
 class InMemoryTaskBroker(BaseTaskBroker):
     """Thread-safe & asyncio-safe in-memory broker for tests and local development."""
@@ -106,6 +139,8 @@ class InMemoryTaskBroker(BaseTaskBroker):
     def __init__(self) -> None:
         self._tasks: dict[str, AutomationTask] = {}
         self._candidate_profiles: dict[str, dict[str, Any]] = {}
+        self._job_records: dict[str, dict[str, Any]] = {}
+        self._job_fingerprints: dict[str, str] = {}
         self._lock = asyncio.Lock()
         self._subscribers: list[Callable[[str, AutomationTask], Any]] = []
         self._load_local_profile()
@@ -142,6 +177,84 @@ class InMemoryTaskBroker(BaseTaskBroker):
             except Exception as e:
                 logger.warning("Failed to dual-sync candidate profile to local JSON: %s", e)
             return dict(profile_data)
+
+    async def has_job_fingerprint(self, fingerprint: str) -> bool:
+        async with self._lock:
+            return fingerprint in self._job_fingerprints
+
+    async def upsert_job_record(self, record_data: dict[str, Any]) -> dict[str, Any]:
+        async with self._lock:
+            fingerprint = record_data.get("fingerprint") or compute_job_fingerprint(
+                company_name=record_data.get("company_name", ""),
+                title=record_data.get("title", ""),
+                recruiter_name=record_data.get("recruiter_name", ""),
+            )
+            now = datetime.now(UTC).isoformat()
+            existing_id = self._job_fingerprints.get(fingerprint)
+            if existing_id:
+                rec = self._job_records[existing_id]
+                rec["last_seen_at"] = now
+                new_kw = record_data.get("search_keywords", [])
+                merged_kw = list(dict.fromkeys((rec.get("search_keywords") or []) + new_kw))
+                rec["search_keywords"] = merged_kw
+                return dict(rec)
+
+            rec_id = str(record_data.get("id") or uuid.uuid4().hex[:15])
+            new_rec: dict[str, Any] = {
+                "id": rec_id,
+                "fingerprint": fingerprint,
+                "title": record_data.get("title", ""),
+                "company_name": record_data.get("company_name", ""),
+                "recruiter_name": record_data.get("recruiter_name", ""),
+                "salary_range": record_data.get("salary_range", ""),
+                "location": record_data.get("location", ""),
+                "job_description": record_data.get("job_description", ""),
+                "status": record_data.get("status", "unmatched"),
+                "match_score": record_data.get("match_score"),
+                "jd_key_requirements": record_data.get("jd_key_requirements", []),
+                "greeting_message": record_data.get("greeting_message", ""),
+                "search_keywords": record_data.get("search_keywords", []),
+                "source_task_id": record_data.get("source_task_id"),
+                "first_seen_at": now,
+                "last_seen_at": now,
+                "created": now,
+                "updated": now,
+            }
+            self._job_records[rec_id] = new_rec
+            self._job_fingerprints[fingerprint] = rec_id
+            return dict(new_rec)
+
+    async def get_job_record(self, record_id: str) -> dict[str, Any] | None:
+        async with self._lock:
+            rec = self._job_records.get(record_id)
+            return dict(rec) if rec else None
+
+    async def list_job_records(
+        self, status: str | None = None, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        async with self._lock:
+            records = list(self._job_records.values())
+            if status:
+                records = [r for r in records if r.get("status") == status]
+            records.sort(key=lambda x: str(x.get("created", "")), reverse=True)
+            return [dict(r) for r in records[:limit]]
+
+    async def update_job_record_status(
+        self,
+        record_id: str,
+        status: str,
+        match_data: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        async with self._lock:
+            rec = self._job_records.get(record_id)
+            if not rec:
+                raise KeyError(f"Job record {record_id} not found")
+            rec["status"] = status
+            if match_data:
+                for k, v in match_data.items():
+                    rec[k] = v
+            rec["updated"] = datetime.now(UTC).isoformat()
+            return dict(rec)
 
     async def create_task(
         self, task_type: TaskType | str, payload: dict[str, Any] | None = None
@@ -631,3 +744,167 @@ class PocketBaseTaskBroker(BaseTaskBroker):
             logger.warning("PocketBase save_candidate_profile failed: %s", e)
 
         return profile_data
+
+    def _jobs_collection_url(self) -> str:
+        return f"{self.base_url}/api/collections/job_records/records"
+
+    async def has_job_fingerprint(self, fingerprint: str) -> bool:
+        url = self._jobs_collection_url()
+        loop = asyncio.get_running_loop()
+        try:
+            resp = await loop.run_in_executor(
+                None,
+                lambda: self.session.get(
+                    url,
+                    params={"filter": f"fingerprint='{fingerprint}'", "perPage": "1"},
+                    headers=self._headers(),
+                ),
+            )
+            if resp.status_code == 200:
+                items = resp.json().get("items", [])
+                return len(items) > 0
+            return False
+        except Exception as e:
+            logger.warning("PocketBase has_job_fingerprint failed: %s", e)
+            return False
+
+    async def upsert_job_record(self, record_data: dict[str, Any]) -> dict[str, Any]:
+        url = self._jobs_collection_url()
+        fingerprint = record_data.get("fingerprint") or compute_job_fingerprint(
+            company_name=record_data.get("company_name", ""),
+            title=record_data.get("title", ""),
+            recruiter_name=record_data.get("recruiter_name", ""),
+        )
+        now = datetime.now(UTC).isoformat()
+        loop = asyncio.get_running_loop()
+
+        # Check existing by fingerprint
+        try:
+            check_resp = await loop.run_in_executor(
+                None,
+                lambda: self.session.get(
+                    url,
+                    params={"filter": f"fingerprint='{fingerprint}'", "perPage": "1"},
+                    headers=self._headers(),
+                ),
+            )
+            if check_resp.status_code == 200:
+                items = check_resp.json().get("items", [])
+                if items:
+                    existing = items[0]
+                    rec_id = existing["id"]
+                    new_kw = record_data.get("search_keywords", [])
+                    merged_kw = list(dict.fromkeys((existing.get("search_keywords") or []) + new_kw))
+                    patch_body = {
+                        "last_seen_at": now,
+                        "search_keywords": merged_kw,
+                    }
+                    resp = await loop.run_in_executor(
+                        None,
+                        lambda: self.session.patch(
+                            f"{url}/{rec_id}",
+                            json=patch_body,
+                            headers=self._headers(),
+                        ),
+                    )
+                    if resp.status_code == 200:
+                        return resp.json()
+                    return existing
+        except Exception as e:
+            logger.warning("PocketBase check existing job failed: %s", e)
+
+        # Create new job record
+        body = {
+            "fingerprint": fingerprint,
+            "title": record_data.get("title", ""),
+            "company_name": record_data.get("company_name", ""),
+            "recruiter_name": record_data.get("recruiter_name", ""),
+            "salary_range": record_data.get("salary_range", ""),
+            "location": record_data.get("location", ""),
+            "job_description": record_data.get("job_description", ""),
+            "status": record_data.get("status", "unmatched"),
+            "match_score": record_data.get("match_score"),
+            "jd_key_requirements": record_data.get("jd_key_requirements", []),
+            "greeting_message": record_data.get("greeting_message", ""),
+            "search_keywords": record_data.get("search_keywords", []),
+            "source_task_id": record_data.get("source_task_id"),
+            "first_seen_at": now,
+            "last_seen_at": now,
+        }
+        if record_data.get("id"):
+            body["id"] = record_data["id"]
+
+        try:
+            resp = await loop.run_in_executor(
+                None,
+                lambda: self.session.post(
+                    url,
+                    json=body,
+                    headers=self._headers(),
+                ),
+            )
+            if resp.status_code in (200, 201):
+                return resp.json()
+            logger.error("Failed to insert job record: %s", resp.text)
+        except Exception as e:
+            logger.exception("PocketBase insert job record exception: %s", e)
+
+        return {**body, "id": body.get("id") or uuid.uuid4().hex[:15]}
+
+    async def get_job_record(self, record_id: str) -> dict[str, Any] | None:
+        url = f"{self._jobs_collection_url()}/{record_id}"
+        loop = asyncio.get_running_loop()
+        try:
+            resp = await loop.run_in_executor(
+                None,
+                lambda: self.session.get(url, headers=self._headers()),
+            )
+            if resp.status_code == 200:
+                return resp.json()
+            return None
+        except Exception as e:
+            logger.warning("PocketBase get_job_record failed: %s", e)
+            return None
+
+    async def list_job_records(
+        self, status: str | None = None, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        url = self._jobs_collection_url()
+        params: dict[str, Any] = {"sort": "-created", "perPage": str(limit)}
+        if status:
+            params["filter"] = f"status='{status}'"
+        loop = asyncio.get_running_loop()
+        try:
+            resp = await loop.run_in_executor(
+                None,
+                lambda: self.session.get(url, params=params, headers=self._headers()),
+            )
+            if resp.status_code == 200:
+                return resp.json().get("items", [])
+            return []
+        except Exception as e:
+            logger.warning("PocketBase list_job_records failed: %s", e)
+            return []
+
+    async def update_job_record_status(
+        self,
+        record_id: str,
+        status: str,
+        match_data: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        url = f"{self._jobs_collection_url()}/{record_id}"
+        body: dict[str, Any] = {"status": status}
+        if match_data:
+            for k, v in match_data.items():
+                body[k] = v
+        loop = asyncio.get_running_loop()
+        try:
+            resp = await loop.run_in_executor(
+                None,
+                lambda: self.session.patch(url, json=body, headers=self._headers()),
+            )
+            if resp.status_code == 200:
+                return resp.json()
+        except Exception as e:
+            logger.exception("PocketBase update_job_record_status failed: %s", e)
+        return {"id": record_id, **body}

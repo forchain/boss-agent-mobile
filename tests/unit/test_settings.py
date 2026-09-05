@@ -119,7 +119,11 @@ def test_file_precedence_local_overrides_base(tmp_path: Path):
 
 def test_worker_config_contains_pocketbase_url():
     """WorkerConfig includes pocketbase_url field with default value."""
-    cfg = WorkerConfig(worker_id="worker-test")
-    assert hasattr(cfg, "pocketbase_url")
-    assert cfg.pocketbase_url == "http://127.0.0.1:8090"
+    with (
+        patch("boss_agent.settings.DEFAULT_CONFIG_SEARCH_PATHS", []),
+        patch.dict("os.environ", {}, clear=True),
+    ):
+        cfg = WorkerConfig(worker_id="worker-test")
+        assert hasattr(cfg, "pocketbase_url")
+        assert cfg.pocketbase_url == "http://127.0.0.1:8090"
 
