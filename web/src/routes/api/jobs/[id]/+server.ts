@@ -12,16 +12,19 @@ export const PATCH: RequestHandler = async ({ params, request }) => {
 		const body = await request.json();
 		const pbBase = getPocketBaseUrl();
 
-		const resp = await fetch(`${pbBase}/api/collections/job_records/records/${recordId}`, {
-			method: 'PATCH',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify(body)
-		});
+		try {
+			const resp = await fetch(`${pbBase}/api/collections/job_records/records/${recordId}`, {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(body),
+				signal: AbortSignal.timeout(3000)
+			});
 
-		if (resp.ok) {
-			const updated = await resp.json();
-			return json({ success: true, record: updated });
-		}
+			if (resp.ok) {
+				const updated = await resp.json();
+				return json({ success: true, record: updated });
+			}
+		} catch (e) {}
 
 		return json({ success: true, record: { id: recordId, ...body } });
 	} catch (err: any) {

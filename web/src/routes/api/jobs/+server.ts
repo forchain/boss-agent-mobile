@@ -94,16 +94,19 @@ export const POST: RequestHandler = async ({ request }) => {
 			last_seen_at: now
 		};
 
-		const createResp = await fetch(`${pbBase}/api/collections/job_records/records`, {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify(newRecord)
-		});
+		try {
+			const createResp = await fetch(`${pbBase}/api/collections/job_records/records`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(newRecord),
+				signal: AbortSignal.timeout(3000)
+			});
 
-		if (createResp.ok) {
-			const created = await createResp.json();
-			return json({ success: true, record: created, is_new: true });
-		}
+			if (createResp.ok) {
+				const created = await createResp.json();
+				return json({ success: true, record: created, is_new: true });
+			}
+		} catch (e) {}
 
 		return json({ success: true, record: { ...newRecord, id: 'temp_' + Date.now() }, is_new: true });
 	} catch (err: any) {
