@@ -76,9 +76,10 @@ get_running_pb_pid() {
         fi
     fi
 
-    # Fallback to lsof on port 8090
+    # Fallback to lsof on configured port
+    local PORT="${PB_HTTP##*:}"
     local PORT_PID
-    PORT_PID="$(lsof -ti :8090 2>/dev/null | head -n 1 || true)"
+    PORT_PID="$(lsof -ti ":${PORT}" 2>/dev/null | head -n 1 || true)"
     if [[ -n "${PORT_PID}" ]]; then
         echo "${PORT_PID}" > "${PID_FILE}"
         echo "${PORT_PID}"
@@ -102,7 +103,7 @@ attach_logs() {
         touch "${LOG_FILE}"
     fi
 
-    exec tail -n 30 -f "${LOG_FILE}"
+    tail -n 30 -f "${LOG_FILE}"
 }
 
 cmd_status() {
@@ -195,6 +196,21 @@ cmd_start() {
         exit 1
     fi
 
+    local HEALTH_URL="http://${PB_HTTP}/api/health"
+
+    # Check if already running
+    if curl -s -f "${HEALTH_URL}" >/dev/null 2>&1; then
+        local RUNNING_PID
+        RUNNING_PID="$(get_running_pb_pid)"
+        if [[ ${DAEMON} -eq 1 ]]; then
+            echo "ℹ️ PocketBase is already running in background (PID: ${RUNNING_PID:-unknown}) at ${HEALTH_URL}"
+            exit 0
+        else
+            attach_logs "${RUNNING_PID:-unknown}"
+            exit 0
+        fi
+    fi
+
     mkdir -p "${PB_DATA_DIR}"
 
     # Initialize PocketBase SQLite database structure offline if not yet existing
@@ -208,20 +224,6 @@ cmd_start() {
     # so that PocketBase loads all collections and seeds into memory at boot
     echo "🔧 Pre-provisioning PocketBase SQLite schema and collections..."
     run_provisioner "${DB_FILE}"
-
-    local HEALTH_URL="http://${PB_HTTP}/api/health"
-
-    # Check if already running
-    if curl -s -f "${HEALTH_URL}" >/dev/null 2>&1; then
-        local RUNNING_PID
-        RUNNING_PID="$(get_running_pb_pid)"
-        if [[ ${DAEMON} -eq 1 ]]; then
-            echo "ℹ️ PocketBase is already running in background (PID: ${RUNNING_PID:-unknown}) at ${HEALTH_URL}"
-            exit 0
-        else
-            attach_logs "${RUNNING_PID:-unknown}"
-        fi
-    fi
 
     if [[ ${DAEMON} -eq 1 ]]; then
         echo "🚀 Starting PocketBase in background on http://${PB_HTTP}..."
