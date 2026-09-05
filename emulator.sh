@@ -6,11 +6,13 @@
 # persistent logging, and live log auto-attach.
 #
 # Usage:
-#   ./emulator.sh                     # Start dedicated AVD in background or attach to logs
-#   ./emulator.sh start               # Start dedicated AVD in background or attach to logs
+#   ./emulator.sh                     # Start dedicated AVD in background and attach to logs
+#   ./emulator.sh start               # Start dedicated AVD in background and attach to logs
+#   ./emulator.sh start --daemon      # Start dedicated AVD in background (do not attach)
 #   ./emulator.sh start --foreground  # Start dedicated AVD in foreground
 #   ./emulator.sh status              # Check if dedicated AVD is online and booted
 #   ./emulator.sh list                # List all installed local AVDs
+#   ./emulator.sh logs                # Attach to live log stream of running AVD
 #   ./emulator.sh stop                # Stop the running dedicated AVD
 # ==============================================================================
 
@@ -148,10 +150,13 @@ get_running_device_serial() {
 
 attach_logs() {
     local SERIAL="$1"
+    local ALREADY_RUNNING="${2:-0}"
     local PID
     PID="$(cat "${PID_FILE}" 2>/dev/null || echo "active")"
 
-    echo "ℹ️ Dedicated AVD '${TARGET_AVD}' is already running (${SERIAL}, PID: ${PID})"
+    if [[ "${ALREADY_RUNNING}" == "1" ]]; then
+        echo "ℹ️ Dedicated AVD '${TARGET_AVD}' is already running (${SERIAL}, PID: ${PID})"
+    fi
     echo "👀 Attaching to live log stream (${LOG_FILE})... (Press Ctrl+C to detach)"
     echo "----------------------------------------------------------------------"
 
@@ -162,6 +167,20 @@ attach_logs() {
     fi
 
     exec tail -n 30 -f "${LOG_FILE}"
+}
+
+cmd_logs() {
+    local SERIAL
+    SERIAL="$(get_running_device_serial)"
+    if [[ -z "${SERIAL}" ]]; then
+        echo "🔴 Dedicated AVD '${TARGET_AVD}' is not running."
+        if [[ -f "${LOG_FILE}" ]]; then
+            echo "📄 Displaying recent logs from ${LOG_FILE}:"
+            tail -n 30 "${LOG_FILE}"
+        fi
+        return 1
+    fi
+    attach_logs "${SERIAL}" 1
 }
 
 cmd_list() {
@@ -225,10 +244,15 @@ cmd_stop() {
 
 cmd_start() {
     local FOREGROUND=0
+    local DAEMON=0
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --foreground|-f)
                 FOREGROUND=1
+                shift
+                ;;
+            -d|--daemon)
+                DAEMON=1
                 shift
                 ;;
             *)
@@ -250,7 +274,11 @@ cmd_start() {
         local BOOT_STATUS
         BOOT_STATUS="$("${ADB_BIN}" -s "${SERIAL}" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r\n' || true)"
         if [[ "${BOOT_STATUS}" == "1" ]]; then
-            attach_logs "${SERIAL}"
+            if [[ ${DAEMON} -eq 1 ]]; then
+                echo "ℹ️ Dedicated AVD '${TARGET_AVD}' is already running in background (${SERIAL}, PID: $(cat "${PID_FILE}" 2>/dev/null || echo "active"))."
+                exit 0
+            fi
+            attach_logs "${SERIAL}" 1
         fi
     fi
 
@@ -284,7 +312,11 @@ cmd_start() {
         if [[ ${BOOTED} -eq 1 ]]; then
             echo "✅ Dedicated AVD '${TARGET_AVD}' is fully booted and ready (${SERIAL}, PID: ${EMU_PID})!"
             echo "   Log File : ${LOG_FILE}"
-            exit 0
+            if [[ ${DAEMON} -eq 1 ]]; then
+                exit 0
+            fi
+            echo ""
+            attach_logs "${SERIAL}" 0
         else
             echo "⚠️ Timeout waiting for '${TARGET_AVD}' to boot. Check logs: ${LOG_FILE}" >&2
             exit 1
@@ -306,6 +338,9 @@ case "${ACTION}" in
         ;;
     list|ls)
         cmd_list
+        ;;
+    logs)
+        cmd_logs
         ;;
     *)
         cmd_start "$@"
