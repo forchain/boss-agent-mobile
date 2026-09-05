@@ -22,6 +22,8 @@ if _src_root not in sys.path:
 
 from boss_agent.settings import resolve_pocketbase_db_path  # noqa: E402
 
+# requests and urllib3 are lazily imported in provision_remote_pocketbase
+
 logger = logging.getLogger("boss_agent.broker.provisioner")
 
 
@@ -173,9 +175,10 @@ def provision_sqlite_database(
     (config/settings.local.yaml, config/settings.yaml), env vars (PB_DB_PATH, PB_DATA_DIR),
     or the default fallback path.
     """
-    resolved_path = resolve_pocketbase_db_path(db_path)
+    resolved_path = resolve_pocketbase_db_path(db_path, resolve_common_root=True)
     db_file = Path(resolved_path)
     if not db_file.exists():
+        logger.warning("Database file %s does not exist, cannot provision schema", db_file)
         return False
 
     conn = sqlite3.connect(str(db_file))
@@ -724,7 +727,7 @@ if __name__ == "__main__":
         print(f"Provisioning result: {res}")
         sys.exit(0 if res else 1)
     else:
-        target_db = resolve_pocketbase_db_path(args.db_path)
+        target_db = resolve_pocketbase_db_path(args.db_path, resolve_common_root=True)
         print(f"🚀 Provisioning local SQLite database at {target_db} ...")
         res = provision_sqlite_database(target_db)
         print(f"Provisioning status: {res}")

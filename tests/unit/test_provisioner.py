@@ -238,3 +238,36 @@ def test_provision_remote_pocketbase_mock():
         ]
         assert "job_records" in posted_collections
         assert "resume_revisions" in posted_collections
+
+
+def test_provision_sqlite_database_offline_structure(tmp_path: Path):
+    """Test provisioning on a clean database file initialized with core tables."""
+    import shutil
+    import subprocess
+
+    db_dir = tmp_path / "pb_data"
+    db_dir.mkdir(parents=True, exist_ok=True)
+    db_file = db_dir / "data.db"
+
+    pb_bin = shutil.which("pocketbase")
+    if pb_bin:
+        # Run pocketbase migrate up offline to create initial tables
+        res = subprocess.run([pb_bin, "migrate", "up", "--dir", str(db_dir)], capture_output=True, text=True)
+        assert res.returncode == 0
+        assert db_file.exists()
+
+        # Run provision_sqlite_database
+        assert provision_sqlite_database(db_file) is True
+
+        conn = sqlite3.connect(str(db_file))
+        c = conn.cursor()
+        c.execute("SELECT name FROM _collections")
+        col_names = {r[0] for r in c.fetchall()}
+        conn.close()
+
+        assert "automation_tasks" in col_names
+        assert "candidate_profiles" in col_names
+        assert "job_records" in col_names
+        assert "saved_searches" in col_names
+        assert "resume_revisions" in col_names
+

@@ -42,6 +42,7 @@ with contextlib.suppress(ImportError):
     from .searches import SavedSearchRegistry, get_global_search_registry
 from .settings import (
     load_settings,
+    resolve_git_common_root,
     resolve_pocketbase_data_dir,
     resolve_pocketbase_db_path,
     resolve_pocketbase_url,
@@ -76,6 +77,7 @@ __all__ = [
     "TakeoverHandler",
     "get_global_search_registry",
     "load_settings",
+    "resolve_git_common_root",
     "resolve_pocketbase_data_dir",
     "resolve_pocketbase_db_path",
     "resolve_pocketbase_url",

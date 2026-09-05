@@ -269,3 +269,62 @@ device: 'emulator-5558'
         assert settings["pocketbase_data_dir"] == "/data/fallback"
         assert settings["pocketbase_db_path"] == "/data/fallback/data.db"
         assert settings["device"] == "emulator-5558"
+
+
+def test_load_settings_fallback_strips_inline_comments(tmp_path: Path):
+    """load_settings strips trailing inline comments when yaml module is None."""
+    custom_yaml = tmp_path / "settings.local.yaml"
+    custom_yaml.write_text(
+        """
+pocketbase_db_path: ".boss_agent/pb_data/data.db" # PocketBase SQLite data.db path (env: PB_DB_PATH)
+pocketbase_data_dir: ".boss_agent/pb_data" \t# PocketBase data directory (env: PB_DATA_DIR)
+pocketbase_url: "http://127.0.0.1:8090" # URL
+""",
+        encoding="utf-8",
+    )
+
+    with (
+        patch("boss_agent.settings.yaml", None),
+        patch.dict("os.environ", {}, clear=True),
+    ):
+        settings = load_settings(config_path=custom_yaml)
+        assert settings["pocketbase_db_path"] == ".boss_agent/pb_data/data.db"
+        assert settings["pocketbase_data_dir"] == ".boss_agent/pb_data"
+        assert settings["pocketbase_url"] == "http://127.0.0.1:8090"
+
+
+def test_resolve_git_common_root():
+    """resolve_git_common_root correctly resolves repository root via git-common-dir."""
+    from boss_agent.settings import resolve_git_common_root
+
+    root = resolve_git_common_root()
+    assert isinstance(root, Path)
+    assert root.exists()
+    assert (root / ".git").exists() or (root / "pyproject.toml").exists()
+
+
+def test_resolve_pocketbase_db_path_with_common_root(tmp_path: Path):
+    """When resolve_common_root=True, relative paths are anchored to git common root."""
+    from boss_agent.settings import resolve_git_common_root
+
+    with patch.dict("os.environ", {}, clear=True):
+        db_path = resolve_pocketbase_db_path(
+            config_path="/non/existent/settings.yaml",
+            resolve_common_root=True,
+        )
+        expected = resolve_git_common_root() / ".boss_agent/pb_data/data.db"
+        assert db_path == expected
+
+
+def test_resolve_pocketbase_data_dir_with_common_root(tmp_path: Path):
+    """When resolve_common_root=True, relative data dir is anchored to git common root."""
+    from boss_agent.settings import resolve_git_common_root
+
+    with patch.dict("os.environ", {}, clear=True):
+        data_dir = resolve_pocketbase_data_dir(
+            config_path="/non/existent/settings.yaml",
+            resolve_common_root=True,
+        )
+        expected = resolve_git_common_root() / ".boss_agent/pb_data"
+        assert data_dir == expected
+
