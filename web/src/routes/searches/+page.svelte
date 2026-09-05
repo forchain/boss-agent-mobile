@@ -1,11 +1,18 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import type { SavedSearch } from '$lib/types';
-	import { pb, checkPocketBaseHealth, listSavedSearches, deleteSavedSearch } from '$lib/pocketbase';
+	import {
+		pb,
+		checkPocketBaseHealth,
+		listSavedSearches,
+		deleteSavedSearch,
+		createAutomationTask
+	} from '$lib/pocketbase';
 
 	let searches = $state<SavedSearch[]>([]);
 	let isLoading = $state(true);
 	let isPocketBaseOnline = $state(false);
+	let triggerStatus = $state<{ [key: string]: string }>({});
 
 	async function loadSearches() {
 		isLoading = true;
@@ -18,6 +25,29 @@
 			isLoading = false;
 		}
 	}
+
+	async function onTriggerSearch(search: SavedSearch, taskType: 'AUTO_APPLY' | 'SCRAPE_JOBS') {
+		triggerStatus[search.id] = `正在下发 ${taskType} 任务...`;
+		const payload = {
+			saved_search_id: search.id,
+			keyword: search.keyword || '',
+			filter: search.filter || {},
+			min_score: 70,
+			preview_only: true,
+			auto_send: false,
+			preview_timeout_sec: 3.0
+		};
+		try {
+			const task = await createAutomationTask(taskType, payload);
+			triggerStatus[search.id] = `✅ 已派发: ${task.id}`;
+			setTimeout(() => {
+				delete triggerStatus[search.id];
+			}, 5000);
+		} catch (err: any) {
+			triggerStatus[search.id] = `❌ 派发失败: ${err?.message || err}`;
+		}
+	}
+
 
 	onMount(() => {
 		loadSearches();
@@ -190,24 +220,35 @@
 					</div>
 
 					<!-- Card Actions Bar -->
-					<div class="border-t border-slate-800 pt-3 flex items-center justify-between gap-2">
-						<div class="flex items-center space-x-2">
-							<button
-								type="button"
-								class="bg-cyan-600 hover:bg-cyan-500 text-white font-medium px-3 py-1.5 rounded-lg text-xs transition shadow flex items-center space-x-1"
-								title="立即将此搜索策略下发至自动化任务流"
-							>
-								<span>🚀</span>
-								<span>立即执行</span>
-							</button>
-							<button
-								type="button"
-								class="bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium px-3 py-1.5 rounded-lg text-xs transition border border-slate-700"
-							>
-								<span>🔍</span>
-								<span>仅抓取</span>
-							</button>
-						</div>
+					<div class="border-t border-slate-800 pt-3 flex flex-col gap-2">
+						{#if triggerStatus[search.id]}
+							<div class="text-[11px] text-cyan-400 font-mono bg-cyan-950/40 border border-cyan-900/60 px-2.5 py-1 rounded-lg animate-pulse flex items-center justify-between">
+								<span>{triggerStatus[search.id]}</span>
+								<a href="/#task-console" class="underline hover:text-cyan-200 ml-2">查看实时日志 →</a>
+							</div>
+						{/if}
+						<div class="flex items-center justify-between gap-2">
+							<div class="flex items-center space-x-2">
+								<button
+									type="button"
+									onclick={() => onTriggerSearch(search, 'AUTO_APPLY')}
+									class="bg-cyan-600 hover:bg-cyan-500 text-white font-medium px-3 py-1.5 rounded-lg text-xs transition shadow flex items-center space-x-1"
+									title="立即将此搜索策略下发为 AUTO_APPLY 智能投递任务"
+								>
+									<span>🚀</span>
+									<span>立即投递</span>
+								</button>
+								<button
+									type="button"
+									onclick={() => onTriggerSearch(search, 'SCRAPE_JOBS')}
+									class="bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium px-3 py-1.5 rounded-lg text-xs transition border border-slate-700 flex items-center space-x-1"
+									title="立即将此搜索策略下发为 SCRAPE_JOBS 仅抓取职位任务"
+								>
+									<span>🔍</span>
+									<span>仅抓取</span>
+								</button>
+							</div>
+
 
 						<div class="flex items-center space-x-2 text-xs">
 							<button
@@ -223,6 +264,7 @@
 								删除
 							</button>
 						</div>
+					</div>
 					</div>
 				</div>
 			{/each}

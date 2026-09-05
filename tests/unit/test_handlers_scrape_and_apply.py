@@ -209,3 +209,57 @@ async def test_auto_apply_handler_auto_send_mode(broker, mock_driver):
     assert any(
         "auto_send" in log.lower() or "dispatched" in log.lower() for log in finished_task.logs
     )
+
+
+@pytest.mark.asyncio
+async def test_scrape_jobs_handler_applies_filters(broker, mock_driver):
+    """Verify ScrapeJobsHandler parses and applies filter config from payload."""
+    mock_elem = MagicMock()
+    mock_title = MagicMock(text="AI 工程师")
+    mock_company = MagicMock(text="科技公司")
+    mock_salary = MagicMock(text="30-50K")
+    mock_desc = MagicMock(text="研发岗位")
+
+    def mock_find(by, value):
+        if "job_name" in value or "tv_job_name" in value:
+            return [mock_title]
+        if "company_name" in value or "tv_company_name" in value:
+            return [mock_company]
+        if "salary" in value or "tv_job_salary" in value:
+            return [mock_salary]
+        if "desc" in value or "tv_job_desc" in value:
+            return [mock_desc]
+        return [mock_elem]
+
+    mock_driver.find_elements.side_effect = mock_find
+
+    config = WorkerConfig(worker_id="test-worker-filter", poll_interval_sec=0.01)
+    context = WorkerContext(config=config, driver=mock_driver)
+
+    worker = AutomationWorker(
+        config=config,
+        broker=broker,
+        context=context,
+        handlers=[ScrapeJobsHandler()],
+    )
+
+    task = await broker.create_task(
+        task_type=TaskType.SCRAPE_JOBS,
+        payload={
+            "keyword": "agent",
+            "filter": {
+                "education": "硕士",
+                "salary": "5万元以上",
+                "industries": ["人工智能", "游戏"],
+            },
+        },
+    )
+
+    executed = await worker.run_once()
+    assert executed is True
+
+    finished_task = await broker.get_task(task.id)
+    assert finished_task is not None
+    assert finished_task.status == TaskStatus.SUCCESS
+    assert any("filter" in log.lower() for log in finished_task.logs)
+
