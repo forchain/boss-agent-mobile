@@ -4,12 +4,20 @@ boss_agent
 Boss 直聘 Android application automation domain layer.
 """
 
-from .matching import JobMatchGreetingService, MatchGreetingResult
-from .memory import (
-    ResumeMemoryManager,
-    ResumeTextExtractor,
-    StructuredCandidateProfile,
-)
+try:
+    from .matching import JobMatchGreetingService, MatchGreetingResult
+except ImportError:
+    pass
+
+try:
+    from .memory import (
+        ResumeMemoryManager,
+        ResumeTextExtractor,
+        StructuredCandidateProfile,
+    )
+except ImportError:
+    pass
+
 from .models import (
     AuthStatus,
     CandidateProfile,
@@ -18,20 +26,37 @@ from .models import (
     SavedSearch,
     SearchConfig,
 )
-from .pages import (
-    BaseBossPage,
-    ChatPage,
-    FilterDialogPage,
-    IndustryFilterDialogPage,
-    JobDetailPage,
-    JobListPage,
-    LoginPage,
-    SearchPage,
-    StartupDialogPage,
+
+try:
+    from .pages import (
+        BaseBossPage,
+        ChatPage,
+        FilterDialogPage,
+        IndustryFilterDialogPage,
+        JobDetailPage,
+        JobListPage,
+        LoginPage,
+        SearchPage,
+        StartupDialogPage,
+    )
+except ImportError:
+    pass
+
+try:
+    from .searches import SavedSearchRegistry, get_global_search_registry
+except ImportError:
+    pass
+from .settings import (
+    load_settings,
+    resolve_pocketbase_data_dir,
+    resolve_pocketbase_db_path,
+    resolve_pocketbase_url,
 )
-from .searches import SavedSearchRegistry, get_global_search_registry
-from .settings import load_settings, resolve_pocketbase_url
-from .workflows import SmokeHarness, TakeoverHandler
+
+try:
+    from .workflows import SmokeHarness, TakeoverHandler
+except ImportError:
+    pass
 
 __all__ = [
     "AuthStatus",

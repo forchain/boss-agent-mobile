@@ -1,5 +1,5 @@
 import PocketBase from 'pocketbase';
-import type { AutomationTask, CandidateProfile, JobRecord, LLMSettings } from './types';
+import type { AutomationTask, CandidateProfile, JobRecord, LLMSettings, SavedSearch } from './types';
 
 let currentPbUrl = '';
 
@@ -275,3 +275,137 @@ export async function updateJobRecord(
 	}
 }
 
+const localSavedSearchesMap: Record<string, SavedSearch> = {};
+
+export async function listSavedSearches(): Promise<SavedSearch[]> {
+	try {
+		const records = await pb.collection('saved_searches').getFullList({
+			sort: '-created'
+		});
+		if (records && records.length) {
+			const list: SavedSearch[] = records.map((r: any) => ({
+				id: r.id,
+				name: r.name || r.id,
+				description: r.description || '',
+				keyword: r.keyword || '',
+				enable_search: r.enable_search !== false,
+				enable_filter: r.enable_filter !== false,
+				filter: r.filter || {},
+				cron_expression: r.cron_expression || '',
+				is_enabled: !!r.is_enabled,
+				last_run_at: r.last_run_at,
+				target_task_type: r.target_task_type || 'AUTO_APPLY',
+				created: r.created,
+				updated: r.updated
+			}));
+			for (const s of list) {
+				localSavedSearchesMap[s.id] = s;
+			}
+			return list;
+		}
+	} catch (e) {
+		console.warn('PocketBase listSavedSearches failed, fallback to local cache:', e);
+	}
+	return Object.values(localSavedSearchesMap);
+}
+
+export async function getSavedSearch(id: string): Promise<SavedSearch | null> {
+	try {
+		const r = await pb.collection('saved_searches').getOne(id);
+		if (r) {
+			const item: SavedSearch = {
+				id: r.id,
+				name: r.name || r.id,
+				description: r.description || '',
+				keyword: r.keyword || '',
+				enable_search: r.enable_search !== false,
+				enable_filter: r.enable_filter !== false,
+				filter: r.filter || {},
+				cron_expression: r.cron_expression || '',
+				is_enabled: !!r.is_enabled,
+				last_run_at: r.last_run_at,
+				target_task_type: r.target_task_type || 'AUTO_APPLY',
+				created: r.created,
+				updated: r.updated
+			};
+			localSavedSearchesMap[r.id] = item;
+			return item;
+		}
+	} catch (e) {
+		// fallback
+	}
+	return localSavedSearchesMap[id] || null;
+}
+
+export async function saveSavedSearch(search: Partial<SavedSearch> & { name: string }): Promise<SavedSearch> {
+	const searchId = search.id || generatePbId();
+	const data = {
+		id: searchId,
+		name: search.name,
+		description: search.description || '',
+		keyword: search.keyword || '',
+		enable_search: search.enable_search !== false,
+		enable_filter: search.enable_filter !== false,
+		filter: search.filter || {},
+		cron_expression: search.cron_expression || '',
+		is_enabled: !!search.is_enabled,
+		last_run_at: search.last_run_at || null,
+		target_task_type: search.target_task_type || 'AUTO_APPLY'
+	};
+
+	try {
+		const existing = search.id
+			? await pb.collection('saved_searches').getOne(search.id).catch(() => null)
+			: null;
+		if (existing) {
+			const updated = await pb.collection('saved_searches').update(existing.id, data);
+			const res: SavedSearch = { ...data, id: updated.id, created: updated.created, updated: updated.updated };
+			localSavedSearchesMap[res.id] = res;
+			return res;
+		} else {
+			const created = await pb.collection('saved_searches').create(data);
+			const res: SavedSearch = { ...data, id: created.id, created: created.created, updated: created.updated };
+			localSavedSearchesMap[res.id] = res;
+			return res;
+		}
+	} catch (e) {
+		console.warn('PocketBase saveSavedSearch failed, saved to local cache:', e);
+		const res: SavedSearch = { ...data, id: searchId, created: new Date().toISOString(), updated: new Date().toISOString() };
+		localSavedSearchesMap[res.id] = res;
+		return res;
+	}
+}
+
+export async function deleteSavedSearch(id: string): Promise<boolean> {
+	const existedLocally = id in localSavedSearchesMap;
+	delete localSavedSearchesMap[id];
+	try {
+		await pb.collection('saved_searches').delete(id);
+		return true;
+	} catch (e) {
+		console.warn('PocketBase deleteSavedSearch failed, deleted from local cache:', e);
+		return existedLocally;
+	}
+}
+
+export async function createSavedSearch(search: Omit<SavedSearch, 'id' | 'created' | 'updated'> & { id?: string }): Promise<SavedSearch> {
+	return saveSavedSearch(search);
+}
+
+export async function updateSavedSearch(id: string, search: Partial<SavedSearch>): Promise<SavedSearch> {
+	const current = await getSavedSearch(id);
+	const merged: Partial<SavedSearch> & { name: string } = {
+		id,
+		name: search.name ?? current?.name ?? id,
+		description: search.description ?? current?.description,
+		keyword: search.keyword ?? current?.keyword,
+		enable_search: search.enable_search ?? current?.enable_search ?? true,
+		enable_filter: search.enable_filter ?? current?.enable_filter ?? true,
+		filter: search.filter ?? current?.filter,
+		cron_expression: search.cron_expression ?? current?.cron_expression,
+		is_enabled: search.is_enabled ?? current?.is_enabled,
+		last_run_at: search.last_run_at ?? current?.last_run_at,
+		target_task_type: search.target_task_type ?? current?.target_task_type
+	};
+	return saveSavedSearch(merged);
+}

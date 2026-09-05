@@ -118,12 +118,18 @@ class AutomationWorker:
         self._running = True
         runs = 0
         while self._running:
-            did_work = await self.run_once()
-            if did_work:
-                runs += 1
-                if max_runs is not None and runs >= max_runs:
-                    break
-            else:
+            try:
+                did_work = await self.run_once()
+                if did_work:
+                    runs += 1
+                    if max_runs is not None and runs >= max_runs:
+                        break
+                else:
+                    await asyncio.sleep(self.config.poll_interval_sec)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error("Error in worker execution loop: %s", e)
                 await asyncio.sleep(self.config.poll_interval_sec)
 
     def stop(self) -> None:

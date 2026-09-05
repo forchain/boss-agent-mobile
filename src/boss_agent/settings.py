@@ -1,7 +1,7 @@
 """
 src/boss_agent/settings.py
 ==========================
-Centralized configuration loading and PocketBase State Stream URL resolution.
+Centralized configuration loading and PocketBase URL/database path resolution.
 """
 
 import json
@@ -9,7 +9,10 @@ import os
 from pathlib import Path
 from typing import Any
 
-import yaml
+try:
+    import yaml
+except ImportError:
+    yaml = None
 
 DEFAULT_CONFIG_SEARCH_PATHS: list[Path] = [
     Path("config/settings.local.yaml"),
@@ -20,6 +23,8 @@ DEFAULT_CONFIG_SEARCH_PATHS: list[Path] = [
 ]
 
 DEFAULT_POCKETBASE_URL: str = "http://127.0.0.1:8090"
+DEFAULT_POCKETBASE_DATA_DIR: str = ".boss_agent/pb_data"
+DEFAULT_POCKETBASE_DB_PATH: str = ".boss_agent/pb_data/data.db"
 
 
 def normalize_url(url: str) -> str:
@@ -49,6 +54,74 @@ def resolve_pocketbase_url(
     return settings.get("pocketbase_url", DEFAULT_POCKETBASE_URL)
 
 
+def resolve_pocketbase_db_path(
+    explicit_path: str | Path | None = None,
+    config_path: str | Path | None = None,
+) -> Path:
+    """Resolve PocketBase SQLite database (data.db) path according to precedence hierarchy:
+
+    1. Explicit programmatic/CLI argument (`explicit_path`)
+    2. `PB_DB_PATH` or `POCKETBASE_DB_PATH` environment variable
+    3. `PB_DATA_DIR` or `POCKETBASE_DATA_DIR` environment variable (+ /data.db)
+    4. Configuration files (`pocketbase_db_path` or `pb_db_path`)
+    5. Configuration files (`pocketbase_data_dir` or `pb_data_dir` + /data.db)
+    6. Fallback default (`.boss_agent/pb_data/data.db`)
+    """
+    if explicit_path:
+        p = Path(explicit_path)
+        if p.is_dir() or (not p.suffix and p.name != "data.db"):
+            return p / "data.db"
+        return p
+
+    env_db = os.getenv("PB_DB_PATH") or os.getenv("POCKETBASE_DB_PATH")
+    if env_db and env_db.strip():
+        p = Path(env_db.strip())
+        return p / "data.db" if (p.is_dir() or not p.suffix) else p
+
+    env_data_dir = os.getenv("PB_DATA_DIR") or os.getenv("POCKETBASE_DATA_DIR")
+    if env_data_dir and env_data_dir.strip():
+        return Path(env_data_dir.strip()) / "data.db"
+
+    settings = load_settings(config_path=config_path)
+    if settings.get("pocketbase_db_path"):
+        p = Path(settings["pocketbase_db_path"])
+        return p / "data.db" if (p.is_dir() or not p.suffix) else p
+
+    if settings.get("pocketbase_data_dir"):
+        return Path(settings["pocketbase_data_dir"]) / "data.db"
+
+    return Path(DEFAULT_POCKETBASE_DB_PATH)
+
+
+def resolve_pocketbase_data_dir(
+    explicit_dir: str | Path | None = None,
+    config_path: str | Path | None = None,
+) -> Path:
+    """Resolve PocketBase data directory according to precedence hierarchy:
+
+    1. Explicit programmatic/CLI argument (`explicit_dir`)
+    2. `PB_DATA_DIR` or `POCKETBASE_DATA_DIR` environment variable
+    3. Configuration files (`pocketbase_data_dir` or `pb_data_dir`)
+    4. Configuration files (`pocketbase_db_path` or `pb_db_path` parent directory)
+    5. Fallback default (`.boss_agent/pb_data`)
+    """
+    if explicit_dir:
+        return Path(explicit_dir)
+
+    env_data_dir = os.getenv("PB_DATA_DIR") or os.getenv("POCKETBASE_DATA_DIR")
+    if env_data_dir and env_data_dir.strip():
+        return Path(env_data_dir.strip())
+
+    settings = load_settings(config_path=config_path)
+    if settings.get("pocketbase_data_dir"):
+        return Path(settings["pocketbase_data_dir"])
+
+    if settings.get("pocketbase_db_path"):
+        return Path(settings["pocketbase_db_path"]).parent
+
+    return Path(DEFAULT_POCKETBASE_DATA_DIR)
+
+
 def load_settings(config_path: str | Path | None = None) -> dict[str, Any]:
     """Load merged settings from configuration files with lowest to highest priority."""
     search_paths: list[Path] = []
@@ -62,10 +135,8 @@ def load_settings(config_path: str | Path | None = None) -> dict[str, Any]:
         "avd_name": "boss_avd_arm64",
         "server_url": "http://127.0.0.1:4723",
         "pocketbase_url": DEFAULT_POCKETBASE_URL,
-        "search_id": "default_agent_search",
-        "keyword": None,
-        "enable_search": True,
-        "enable_filter": True,
+        "pocketbase_data_dir": None,
+        "pocketbase_db_path": None,
         "resume_path": None,
         "force_refresh_memory": False,
         "preview_timeout_sec": 3.0,
@@ -77,17 +148,28 @@ def load_settings(config_path: str | Path | None = None) -> dict[str, Any]:
         if p.is_file():
             try:
                 content = p.read_text(encoding="utf-8")
-                loaded = (
-                    yaml.safe_load(content)
-                    if p.suffix in [".yaml", ".yml"]
-                    else json.loads(content)
-                )
+                if p.suffix in [".yaml", ".yml"]:
+                    if yaml is not None:
+                        loaded = yaml.safe_load(content)
+                    else:
+                        loaded = {}
+                        for line in content.splitlines():
+                            s = line.strip()
+                            if s and not s.startswith("#") and ":" in s:
+                                k, v = s.split(":", 1)
+                                loaded[k.strip()] = v.strip().strip('"').strip("'")
+                else:
+                    loaded = json.loads(content)
                 if isinstance(loaded, dict):
                     for k, v in loaded.items():
                         if v is not None:
                             merged[k] = v
                     if "pb_url" in loaded and loaded["pb_url"] is not None:
                         merged["pocketbase_url"] = loaded["pb_url"]
+                    if "pb_data_dir" in loaded and loaded["pb_data_dir"] is not None:
+                        merged["pocketbase_data_dir"] = loaded["pb_data_dir"]
+                    if "pb_db_path" in loaded and loaded["pb_db_path"] is not None:
+                        merged["pocketbase_db_path"] = loaded["pb_db_path"]
             except Exception:
                 pass
 
@@ -95,8 +177,24 @@ def load_settings(config_path: str | Path | None = None) -> dict[str, Any]:
     if env_pb_url and env_pb_url.strip():
         merged["pocketbase_url"] = env_pb_url
 
+    env_pb_data_dir = os.getenv("PB_DATA_DIR") or os.getenv("POCKETBASE_DATA_DIR")
+    if env_pb_data_dir and env_pb_data_dir.strip():
+        merged["pocketbase_data_dir"] = env_pb_data_dir.strip()
+
+    env_pb_db_path = os.getenv("PB_DB_PATH") or os.getenv("POCKETBASE_DB_PATH")
+    if env_pb_db_path and env_pb_db_path.strip():
+        merged["pocketbase_db_path"] = env_pb_db_path.strip()
+
+    # Reciprocally derive db_path / data_dir if only one was specified
+    if merged["pocketbase_data_dir"] and not merged["pocketbase_db_path"]:
+        merged["pocketbase_db_path"] = str(Path(merged["pocketbase_data_dir"]) / "data.db")
+    elif merged["pocketbase_db_path"] and not merged["pocketbase_data_dir"]:
+        merged["pocketbase_data_dir"] = str(Path(merged["pocketbase_db_path"]).parent)
+    elif not merged["pocketbase_data_dir"] and not merged["pocketbase_db_path"]:
+        merged["pocketbase_data_dir"] = DEFAULT_POCKETBASE_DATA_DIR
+        merged["pocketbase_db_path"] = DEFAULT_POCKETBASE_DB_PATH
+
     if "pocketbase_url" in merged and isinstance(merged["pocketbase_url"], str):
         merged["pocketbase_url"] = normalize_url(merged["pocketbase_url"])
 
     return merged
-

@@ -283,16 +283,19 @@ def main():
 
     cfg = load_runner_settings(args.config)
 
-    # Resolve settings: CLI flags take precedence over configuration file values
-    search_id = (
-        args.search_id
-        if args.search_id is not None
-        else cfg.get("search_id", "default_agent_search")
-    )
-    keyword = args.keyword if args.keyword is not None else cfg.get("keyword")
+    # Resolve settings: CLI flags take precedence over database SavedSearch
+    search_id = args.search_id or "default_agent_search"
+    saved_search = None
+    if search_id:
+        try:
+            reg = get_global_search_registry()
+            saved_search = reg.get(search_id)
+        except Exception:
+            saved_search = None
 
-    enable_search = False if args.no_search else cfg.get("enable_search", True)
-    enable_filter = False if args.no_filter else cfg.get("enable_filter", True)
+    enable_search = False if args.no_search else (saved_search.enable_search if saved_search else True)
+    enable_filter = False if args.no_filter else (saved_search.enable_filter if saved_search else True)
+    keyword = args.keyword if args.keyword is not None else (saved_search.keyword if saved_search else None)
 
     device_udid = args.device or cfg.get("device", "emulator-5554")
     server_url = args.server_url or cfg.get("server_url", "http://127.0.0.1:4723")
@@ -318,6 +321,7 @@ def main():
             activity=None,
             company_scales=[],
             industries=[],
+            enable_filter=False,
         )
         if not enable_filter
         else None

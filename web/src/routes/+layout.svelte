@@ -106,13 +106,19 @@
 				<nav class="flex items-center space-x-2 py-2 overflow-x-auto no-scrollbar text-xs">
 					<a
 						href="/"
-						class="px-3 py-1.5 rounded-lg transition font-medium flex items-center space-x-1.5 whitespace-nowrap {page.url.pathname === '/' ? 'bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 font-semibold shadow-sm' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 border border-transparent'}"
+						class="px-3.5 py-1.5 rounded-lg transition font-medium flex items-center space-x-1.5 whitespace-nowrap {page.url.pathname === '/' ? 'bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 font-semibold shadow-sm' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 border border-transparent'}"
 					>
-						<span>⚙️ 控制台与配置</span>
+						<span>⚙️ 控制看板</span>
+					</a>
+					<a
+						href="/searches"
+						class="px-3.5 py-1.5 rounded-lg transition font-medium flex items-center space-x-1.5 whitespace-nowrap {page.url.pathname.startsWith('/searches') ? 'bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 font-semibold shadow-sm' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 border border-transparent'}"
+					>
+						<span>🔍 搜索策略库</span>
 					</a>
 					<a
 						href="/jobs"
-						class="px-3 py-1.5 rounded-lg transition font-medium flex items-center space-x-2 whitespace-nowrap {page.url.pathname.startsWith('/jobs') ? 'bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 font-semibold shadow-sm' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 border border-transparent'}"
+						class="px-3.5 py-1.5 rounded-lg transition font-medium flex items-center space-x-2 whitespace-nowrap {page.url.pathname.startsWith('/jobs') ? 'bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 font-semibold shadow-sm' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 border border-transparent'}"
 					>
 						<span>💼 职位与匹配工作台</span>
 						{#if unmatchedCount > 0}

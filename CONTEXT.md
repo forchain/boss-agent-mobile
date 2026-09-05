@@ -72,3 +72,11 @@ _Avoid_: Hash key, job uid, composite id
 The dedicated triage view displaying newly discovered, deduplicated job records that have not yet undergone match evaluation.
 _Avoid_: Job list, raw queue, inbox view
 
+**SavedSearch**:
+The database-persisted search strategy entity stored in PocketBase encapsulating search keyword, multi-dimensional filter conditions, task type, and Cron scheduling metadata.
+_Avoid_: Search rule, search YAML, query profile
+
+**Automation Scheduler**:
+The background Cron evaluation engine that monitors active SavedSearches, detects scheduling matches, and dispatches automation tasks into the State Stream Broker.
+_Avoid_: Crontab daemon, task timer, periodic runner
+

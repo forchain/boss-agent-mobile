@@ -13,13 +13,10 @@ device: "emulator-5554"
 avd_name: "boss_avd_arm64"          # Dedicated Android Virtual Device name (env: ANDROID_AVD)
 server_url: "http://127.0.0.1:4723"
 pocketbase_url: "http://127.0.0.1:8090" # PocketBase State Stream Broker URL (env: POCKETBASE_URL, cli: --pb-url)
+pocketbase_data_dir: ".boss_agent/pb_data" # PocketBase data directory (env: PB_DATA_DIR)
+pocketbase_db_path: ".boss_agent/pb_data/data.db" # PocketBase SQLite data.db path (env: PB_DB_PATH)
 
 
-# Search & Filter Settings
-search_id: "default_agent_search"   # Preset ID from config/searches.yaml
-keyword: null                       # Override search keyword (e.g. "agent", "python", "Android")
-enable_search: true                 # Set to false to browse default home recommendations without search
-enable_filter: true                 # Set to false to disable all job filters
 
 # Candidate Resume & AI Greeting Settings
 resume_path: "resumes/my_resume.txt" # Path to candidate's local resume file (.pdf, .docx, .txt, .md)
