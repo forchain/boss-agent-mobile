@@ -270,6 +270,3 @@ device: 'emulator-5558'
         assert settings["pocketbase_data_dir"] == "/data/fallback"
         assert settings["pocketbase_db_path"] == "/data/fallback/data.db"
         assert settings["device"] == "emulator-5558"
-
-
-

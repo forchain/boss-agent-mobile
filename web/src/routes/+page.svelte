@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import type { CandidateProfile, LLMSettings, MatchEvaluateResponse, AutomationTask, TaskStatus } from '$lib/types';
+	import type { CandidateProfile, LLMSettings, AutomationTask, TaskStatus } from '$lib/types';
 	import {
 		pb,
 		checkPocketBaseHealth,
@@ -40,16 +40,6 @@
 		temperature: 0.2
 	});
 	let llmSavedSuccess = $state(false);
-
-	// Match Sandbox State
-	let matchJobTitle = $state('AI Agent 架构师');
-	let matchCompany = $state('某前沿大模型科技公司');
-	let matchSalary = $state('40-60K·16薪');
-	let matchJd = $state(
-		'负责移动端 Agent 系统与大模型工程化架构，精通 Python 和跨端通信，主导过从底层驱动到模型推理编排的完整业务闭环。'
-	);
-	let isEvaluatingMatch = $state(false);
-	let matchResult = $state<MatchEvaluateResponse | null>(null);
 
 	// Task Control Center State
 	let taskKeyword = $state('agent');
@@ -216,34 +206,6 @@
 		}
 	}
 
-	// Match Evaluation Sandbox Handler
-	async function onEvaluateMatch() {
-		isEvaluatingMatch = true;
-		try {
-			const res = await fetch('/api/match/evaluate', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					job_title: matchJobTitle,
-					company_name: matchCompany,
-					salary_range: matchSalary,
-					job_description: matchJd,
-					candidate_profile: profile,
-					llmSettings: llmSettings
-				})
-			});
-			if (res.ok) {
-				matchResult = await res.json();
-			} else {
-				const err = await res.json();
-				alert('评估失败: ' + (err.error || err.message));
-			}
-		} catch (e) {
-			alert('评估请求失败: ' + e);
-		} finally {
-			isEvaluatingMatch = false;
-		}
-	}
 
 	// Task Launch Handler
 	async function onLaunchTask(taskType: 'AUTO_APPLY' | 'SCRAPE_JOBS' | 'CHECK_LOGIN') {
@@ -558,104 +520,39 @@
 			</div>
 		</div>
 
-		<!-- Right Column: Live Match Sandbox & Task Console (7 Cols) -->
+		<!-- Right Column: Job Workbench & Task Console (7 Cols) -->
 		<div class="lg:col-span-7 space-y-8">
-			<!-- Live Job Match & Greeting Sandbox -->
-			<div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-5">
-				<div class="flex items-center justify-between border-b border-slate-800/80 pb-4">
-					<div class="flex items-center space-x-2">
-						<span class="text-xl">🎯</span>
-						<h2 class="font-semibold text-sm text-slate-100">岗位匹配与 AI 破冰招呼语沙盒</h2>
-					</div>
-					<button
-						onclick={onEvaluateMatch}
-						disabled={isEvaluatingMatch}
-						class="bg-cyan-600 hover:bg-cyan-500 text-white font-medium px-3.5 py-1.5 rounded-lg text-xs shadow transition flex items-center space-x-1.5 disabled:opacity-50"
+			<!-- Job Workbench Quick Entry Banner -->
+			<div
+				class="bg-gradient-to-r from-cyan-950/40 via-blue-950/20 to-slate-900 border border-cyan-800/40 rounded-2xl p-5 shadow-xl flex items-center justify-between"
+			>
+				<div class="flex items-center space-x-3.5">
+					<div
+						class="w-10 h-10 rounded-xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-xl shrink-0"
 					>
-						{#if isEvaluatingMatch}
-							<span class="animate-spin">⚡</span>
-							<span>评估中...</span>
-						{:else}
-							<span>⚡ 立即评估匹配度</span>
-						{/if}
-					</button>
-				</div>
-
-				<div class="grid grid-cols-3 gap-3">
-					<div>
-						<label class="block text-xs font-medium text-slate-400 mb-1">测试职位</label>
-						<input
-							type="text"
-							bind:value={matchJobTitle}
-							class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-cyan-500"
-						/>
+						💼
 					</div>
 					<div>
-						<label class="block text-xs font-medium text-slate-400 mb-1">目标公司</label>
-						<input
-							type="text"
-							bind:value={matchCompany}
-							class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-cyan-500"
-						/>
-					</div>
-					<div>
-						<label class="block text-xs font-medium text-slate-400 mb-1">薪资范围</label>
-						<input
-							type="text"
-							bind:value={matchSalary}
-							class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-cyan-500"
-						/>
-					</div>
-				</div>
-
-				<div>
-					<label class="block text-xs font-medium text-slate-400 mb-1">岗位描述 (JD 文本)</label>
-					<textarea
-						rows="3"
-						bind:value={matchJd}
-						placeholder="粘贴目标岗位 JD 要求..."
-						class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-cyan-500 custom-scrollbar leading-relaxed"
-					></textarea>
-				</div>
-
-				<!-- Sandbox Result Card -->
-				<div class="bg-slate-950/90 border border-slate-800 rounded-xl p-4 space-y-3">
-					<div class="flex items-center justify-between">
-						<span class="text-xs text-slate-400 font-medium">评估结果预览</span>
 						<div class="flex items-center space-x-2">
-							<span class="text-xs text-slate-400">匹配评分:</span>
-							<span class="font-bold text-sm text-cyan-400 font-mono">
-								{matchResult ? `${matchResult.match_score} / 100` : '-- / 100'}
+							<h2 class="font-semibold text-sm text-slate-100">职位与匹配工作台</h2>
+							<span
+								class="px-2 py-0.5 rounded-full text-[10px] font-medium bg-cyan-500/10 text-cyan-400 border border-cyan-500/20"
+							>
+								已独立升级
 							</span>
 						</div>
-					</div>
-
-					<div>
-						<span class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-							🔍 JD 核心诉求提炼
-						</span>
-						<ul class="text-xs text-slate-300 space-y-1 mt-1 list-disc list-inside">
-							{#if matchResult?.jd_key_requirements?.length}
-								{#each matchResult.jd_key_requirements as req}
-									<li>{req}</li>
-								{/each}
-							{:else}
-								<li class="text-slate-500">点击右上角按钮开始即时评估</li>
-							{/if}
-						</ul>
-					</div>
-
-					<div>
-						<span class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-							💬 定制破冰打招呼语 (结合 JD 痛点)
-						</span>
-						<p
-							class="text-xs text-cyan-200/90 bg-cyan-950/30 border border-cyan-900/40 p-3 rounded-lg mt-1 font-mono leading-relaxed"
-						>
-							{matchResult?.greeting_message || '暂无生成文案'}
+						<p class="text-xs text-slate-400 mt-1">
+							搜索采集的职位已自动完成指纹查重并汇入独立工作台。点击进入按状态分类管理、查看未匹配职位、触发 AI 深度评测与个性化破冰招呼语。
 						</p>
 					</div>
 				</div>
+				<a
+					href="/jobs"
+					class="bg-cyan-600 hover:bg-cyan-500 text-white font-medium px-4 py-2 rounded-xl text-xs shadow-lg shadow-cyan-950/50 transition flex items-center space-x-1.5 shrink-0 ml-4"
+				>
+					<span>打开工作台</span>
+					<span class="text-sm">→</span>
+				</a>
 			</div>
 
 			<!-- Automation Task Control Center -->

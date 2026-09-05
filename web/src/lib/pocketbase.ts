@@ -1,6 +1,5 @@
 import PocketBase from 'pocketbase';
-import type { AutomationTask, CandidateProfile, LLMSettings, SavedSearch } from './types';
-
+import type { AutomationTask, CandidateProfile, JobRecord, LLMSettings, SavedSearch } from './types';
 
 let currentPbUrl = '';
 
@@ -200,6 +199,82 @@ export async function cancelTask(taskId: string): Promise<boolean> {
 	}
 }
 
+// Fallback in-memory job records when PocketBase is offline
+let localJobRecords: JobRecord[] = [];
+
+export async function getJobRecords(status?: string, limit = 50): Promise<JobRecord[]> {
+	try {
+		const filter = status ? `status='${status}'` : '';
+		const result = await pb.collection('job_records').getList(1, limit, {
+			filter,
+			sort: '-created'
+		});
+		const list = result.items.map((item: any) => ({
+			id: item.id,
+			fingerprint: item.fingerprint,
+			title: item.title,
+			company_name: item.company_name,
+			recruiter_name: item.recruiter_name,
+			salary_range: item.salary_range,
+			location: item.location,
+			job_description: item.job_description,
+			status: item.status,
+			match_score: item.match_score,
+			jd_key_requirements: item.jd_key_requirements || [],
+			greeting_message: item.greeting_message,
+			search_keywords: item.search_keywords || [],
+			source_task_id: item.source_task_id,
+			first_seen_at: item.first_seen_at,
+			last_seen_at: item.last_seen_at,
+			created: item.created,
+			updated: item.updated
+		})) as JobRecord[];
+		localJobRecords = list;
+		return list;
+	} catch (err) {
+		// Fallback to local memory / API proxy
+		try {
+			const res = await fetch(`/api/jobs${status ? `?status=${status}` : ''}`);
+			if (res.ok) {
+				const data = await res.json();
+				return data.records || [];
+			}
+		} catch (e) {}
+		if (status) {
+			return localJobRecords.filter((r) => r.status === status);
+		}
+		return localJobRecords;
+	}
+}
+
+export async function updateJobRecord(
+	recordId: string,
+	data: Partial<JobRecord>
+): Promise<JobRecord | null> {
+	try {
+		const updated = await pb.collection('job_records').update(recordId, data);
+		return updated as unknown as JobRecord;
+	} catch (err) {
+		try {
+			const res = await fetch(`/api/jobs/${recordId}`, {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(data)
+			});
+			if (res.ok) {
+				const resData = await res.json();
+				return resData.record;
+			}
+		} catch (e) {}
+		const idx = localJobRecords.findIndex((r) => r.id === recordId);
+		if (idx !== -1) {
+			localJobRecords[idx] = { ...localJobRecords[idx], ...data };
+			return localJobRecords[idx];
+		}
+		return null;
+	}
+}
+
 const localSavedSearchesMap: Record<string, SavedSearch> = {};
 
 export async function listSavedSearches(): Promise<SavedSearch[]> {
@@ -334,4 +409,3 @@ export async function updateSavedSearch(id: string, search: Partial<SavedSearch>
 	};
 	return saveSavedSearch(merged);
 }
-
