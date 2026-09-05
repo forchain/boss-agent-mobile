@@ -524,6 +524,33 @@ def provision_remote_pocketbase(
                 {"name": "target_task_type", "type": "text", "required": False},
             ],
         },
+        {
+            "id": "pbc_job_records",
+            "name": "job_records",
+            "type": "base",
+            "listRule": "",
+            "viewRule": "",
+            "createRule": "",
+            "updateRule": "",
+            "deleteRule": "",
+            "fields": [
+                {"name": "fingerprint", "type": "text", "required": True},
+                {"name": "title", "type": "text", "required": True},
+                {"name": "company_name", "type": "text", "required": True},
+                {"name": "recruiter_name", "type": "text", "required": True},
+                {"name": "salary_range", "type": "text", "required": False},
+                {"name": "location", "type": "text", "required": False},
+                {"name": "job_description", "type": "text", "required": False},
+                {"name": "status", "type": "text", "required": True},
+                {"name": "match_score", "type": "number", "required": False},
+                {"name": "jd_key_requirements", "type": "json", "required": False},
+                {"name": "greeting_message", "type": "text", "required": False},
+                {"name": "search_keywords", "type": "json", "required": False},
+                {"name": "first_seen_at", "type": "date", "required": False},
+                {"name": "last_seen_at", "type": "date", "required": False},
+                {"name": "source_task_id", "type": "text", "required": False},
+            ],
+        },
     ]
 
     for col in collections_to_create:

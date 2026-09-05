@@ -177,6 +177,7 @@ describe('SvelteKit Server Endpoints', () => {
 		const getJson = await getRes.json();
 		expect(getRes.status).toBe(200);
 		expect(getJson.success).toBe(true);
+		expect(getJson.records.some((r: any) => r.fingerprint === postJson.record.fingerprint)).toBe(true);
 	});
 });
 

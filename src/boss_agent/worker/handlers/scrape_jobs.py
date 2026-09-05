@@ -120,10 +120,31 @@ class ScrapeJobsHandler(BaseTaskHandler):
                     )
                     continue
 
-                # 2. New job: enter detail page
+                # 2. Immediate card-level ingestion: persist visible job card right away
+                card_record = {
+                    "fingerprint": card.fingerprint,
+                    "title": card.title,
+                    "company_name": card.company_name,
+                    "recruiter_name": card.recruiter_name,
+                    "salary_range": getattr(card, "salary_range", "") or "",
+                    "location": getattr(card, "location", "") or "",
+                    "job_description": getattr(card, "snippet", "") or "",
+                    "jd_key_requirements": getattr(card, "tags", []) or [],
+                    "status": "unmatched",
+                    "search_keywords": [keyword] if keyword else [],
+                    "source_task_id": task.id,
+                }
+                persisted = await broker.upsert_job_record(card_record)
+                scraped_jobs.append(persisted)
                 await broker.append_log(
                     task.id,
-                    f"🔍 [New Job] Inspecting: '{card.title}' @ '{card.company_name}' ({card.recruiter_name})",
+                    f"✅ [Direct Ingestion] Recorded job from search list: '{card.title}' @ '{card.company_name}' ({card_record.get('salary_range', '')})",
+                )
+
+                # 3. Optional detail page inspection to enrich with full JD
+                await broker.append_log(
+                    task.id,
+                    f"🔍 [Detail Inspection] Inspecting '{card.title}' @ '{card.company_name}'",
                 )
                 clicked = False
                 if card.element and hasattr(card.element, "click"):
@@ -133,32 +154,33 @@ class ScrapeJobsHandler(BaseTaskHandler):
                     except Exception:
                         pass
                 if not clicked:
-                    clicked = list_page.select_first_job(timeout_sec=3.0)
+                    clicked = list_page.select_first_job(timeout_sec=2.0)
 
-                try:
-                    job_posting = detail_page.extract_job_posting(timeout_sec=5.0)
-                    record_data = {
-                        "fingerprint": card.fingerprint,
-                        "title": job_posting.title or card.title,
-                        "company_name": job_posting.company_name or card.company_name,
-                        "recruiter_name": card.recruiter_name or job_posting.recruiter_name or "招聘者",
-                        "salary_range": job_posting.salary_range,
-                        "location": job_posting.location,
-                        "job_description": job_posting.job_description,
-                        "status": "unmatched",
-                        "search_keywords": [keyword] if keyword else [],
-                        "source_task_id": task.id,
-                    }
-                    persisted = await broker.upsert_job_record(record_data)
-                    scraped_jobs.append(persisted)
-                    await broker.append_log(
-                        task.id,
-                        f"✅ Extracted & ingested job: {persisted['title']} @ {persisted['company_name']} ({persisted.get('salary_range', '')})",
-                    )
-                except Exception as e:
-                    await broker.append_log(task.id, f"Notice on job extraction: {e}")
-                finally:
-                    detail_page.navigate_back()
+                if clicked:
+                    try:
+                        job_posting = detail_page.extract_job_posting(timeout_sec=4.0)
+                        enriched_data = {
+                            "fingerprint": card.fingerprint,
+                            "title": job_posting.title or card.title,
+                            "company_name": job_posting.company_name or card.company_name,
+                            "recruiter_name": card.recruiter_name or job_posting.recruiter_name or "招聘者",
+                            "salary_range": job_posting.salary_range or card_record.get("salary_range", ""),
+                            "location": job_posting.location or card_record.get("location", ""),
+                            "job_description": job_posting.job_description or card_record.get("job_description", ""),
+                            "status": "unmatched",
+                            "search_keywords": [keyword] if keyword else [],
+                            "source_task_id": task.id,
+                        }
+                        persisted = await broker.upsert_job_record(enriched_data)
+                        scraped_jobs[-1] = persisted
+                        await broker.append_log(
+                            task.id,
+                            f"✨ [Enriched Detail] Extracted full JD for '{persisted['title']}'",
+                        )
+                    except Exception as e:
+                        await broker.append_log(task.id, f"Notice on detail extraction: {e}")
+                    finally:
+                        detail_page.navigate_back()
         else:
             # Fallback for mock environments or direct detail view
             total_scanned = 1

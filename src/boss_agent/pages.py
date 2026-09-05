@@ -1,6 +1,7 @@
 import contextlib
+import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from droid_agent_core.gestures import BézierTouchSynthesizer, HumanizedGestureExecutor, Point
@@ -23,6 +24,10 @@ class JobCardBrief:
     recruiter_name: str
     element: Any = None
     fingerprint: str = ""
+    salary_range: str = ""
+    location: str = ""
+    tags: list[str] = field(default_factory=list)
+    snippet: str = ""
 
     def __post_init__(self) -> None:
         if not self.fingerprint:
@@ -281,7 +286,7 @@ class JobListPage(BaseBossPage):
         return False
 
     def extract_visible_job_cards(self, max_cards: int = 10) -> list[JobCardBrief]:
-        """Extract visible job card briefs (title, company, recruiter) without clicking."""
+        """Extract visible job card briefs (title, company, recruiter, salary, location, tags, snippet)."""
         if not self.driver:
             return []
         card_selectors = self.locators.get_selectors("job_list.job_card")
@@ -300,33 +305,78 @@ class JobListPage(BaseBossPage):
             title = ""
             company = ""
             recruiter = ""
+            salary = ""
+            location = ""
+            tags: list[str] = []
+            snippet = ""
+
+            sub_texts: list[str] = []
             try:
-                # Find visible text sub-elements inside the card
                 sub_texts = [
                     e.text.strip()
                     for e in card_elem.find_elements(by="xpath", value=".//*[@text]")
                     if getattr(e, "text", None) and e.text.strip()
                 ]
-                if sub_texts:
-                    title = sub_texts[0]
-                    if len(sub_texts) > 1:
-                        company = sub_texts[1]
-                    for t in sub_texts[2:]:
-                        if "·" in t or "招聘" in t or "HR" in t:
-                            recruiter = t
-                            break
-                    if not recruiter and len(sub_texts) > 2:
-                        recruiter = sub_texts[-1]
             except Exception:
                 pass
 
-            if not title:
+            if not sub_texts:
                 raw_text = getattr(card_elem, "text", "") or ""
-                lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
-                if lines:
-                    title = lines[0]
-                    company = lines[1] if len(lines) > 1 else ""
-                    recruiter = lines[-1] if len(lines) > 2 else ""
+                sub_texts = [line.strip() for line in raw_text.splitlines() if line.strip()]
+
+            # Filter out non-informative single status badge characters
+            clean_texts = [t for t in sub_texts if t not in ("猎", "新", "急", "热", "置顶")]
+
+            for t in clean_texts:
+                # 1. Salary detection
+                if not salary and (
+                    re.search(r"\d+[-~至]\d+.*[万千Kk元薪]", t)
+                    or re.search(r"^\d+.*[万千Kk元薪]", t)
+                    or ("元" in t and any(c.isdigit() for c in t))
+                    or ("K" in t and any(c.isdigit() for c in t))
+                ):
+                    salary = t
+                    continue
+
+                # 2. Recruiter & attached location detection (e.g. "李先生·猎头顾问 上海")
+                if not recruiter and ("·" in t or "招聘" in t or "HR" in t or "猎头" in t or "主管" in t or "经理" in t or "总监" in t):
+                    parts = t.rsplit(" ", 1)
+                    if len(parts) == 2 and len(parts[1]) <= 6 and not any(c.isdigit() for c in parts[1]):
+                        recruiter = parts[0].strip()
+                        if not location:
+                            location = parts[1].strip()
+                    else:
+                        recruiter = t
+                    continue
+
+                # 3. Location detection if standalone
+                if not location and (
+                    t in ("上海", "北京", "深圳", "广州", "杭州", "成都", "武汉", "南京", "苏州", "西安", "海外")
+                    or t.endswith("市")
+                    or t.endswith("区")
+                ):
+                    location = t
+                    continue
+
+                # 4. Title detection (first substantive header)
+                if not title:
+                    title = t
+                    continue
+
+                # 5. Company name detection (second substantive text)
+                if not company:
+                    company = t
+                    continue
+
+                # 6. Tags (experience, education, skills) vs Snippet (longer sentence)
+                if any(kw in t for kw in ("年", "应届", "经验", "本科", "大专", "硕士", "博士", "学历")):
+                    tags.append(t)
+                elif len(t) > 10 and not snippet:
+                    snippet = t
+                elif len(t) <= 12:
+                    tags.append(t)
+                elif not snippet:
+                    snippet = t
 
             if title:
                 briefs.append(
@@ -334,6 +384,10 @@ class JobListPage(BaseBossPage):
                         title=title,
                         company_name=company or "未知公司",
                         recruiter_name=recruiter or "招聘者",
+                        salary_range=salary,
+                        location=location,
+                        tags=tags,
+                        snippet=snippet,
                         element=card_elem,
                     )
                 )

@@ -134,3 +134,54 @@ async def test_pocketbase_broker_job_records_mocked(monkeypatch):
     assert res["id"] == "rec-123"
     assert mock_session.patch.called
 
+
+@pytest.mark.asyncio
+async def test_pocketbase_broker_job_records_fallback_on_404(tmp_path, monkeypatch):
+    """When PocketBase returns 404 (missing collection), broker saves to and reads from local fallback."""
+    from unittest.mock import MagicMock
+    from boss_agent.broker.pocketbase_adapter import PocketBaseTaskBroker
+
+    # Patch working directory / fallback file to tmp_path
+    monkeypatch.chdir(tmp_path)
+
+    mock_session = MagicMock()
+    broker = PocketBaseTaskBroker(base_url="https://remote-pb:4433", session=mock_session)
+
+    # Mock 404 on GET (collection not found)
+    get_404 = MagicMock(status_code=404, text='{"message":"Missing or invalid collection context."}')
+    mock_session.get.return_value = get_404
+
+    # Mock 404 on POST
+    post_404 = MagicMock(status_code=404, text='{"message":"Missing or invalid collection context."}')
+    mock_session.post.return_value = post_404
+
+    # 1. Upsert a new job record
+    rec = await broker.upsert_job_record(
+        {
+            "title": "Agent研发架构师",
+            "company_name": "互联网大厂",
+            "recruiter_name": "李猎头",
+            "salary_range": "7-10万",
+            "location": "上海",
+            "fingerprint": "fp_fallback_test_123",
+            "status": "unmatched",
+        }
+    )
+    assert rec["title"] == "Agent研发架构师"
+    assert rec["id"] is not None
+
+    # 2. has_job_fingerprint returns True from fallback
+    has_fp = await broker.has_job_fingerprint("fp_fallback_test_123")
+    assert has_fp is True
+
+    # 3. list_job_records returns the record from fallback
+    items = await broker.list_job_records(status="unmatched")
+    assert len(items) == 1
+    assert items[0]["title"] == "Agent研发架构师"
+    assert items[0]["company_name"] == "互联网大厂"
+
+    # 4. get_job_record returns the record from fallback
+    fetched = await broker.get_job_record(rec["id"])
+    assert fetched is not None
+    assert fetched["title"] == "Agent研发架构师"
+
