@@ -102,6 +102,14 @@ class SavedSearch:
     last_run_at: str | None = None
     target_task_type: str = "AUTO_APPLY"
 
+    @property
+    def keyword(self) -> str:
+        return self.search.keyword
+
+    @keyword.setter
+    def keyword(self, val: str) -> None:
+        self.search.keyword = val
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,

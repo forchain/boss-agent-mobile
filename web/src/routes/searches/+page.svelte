@@ -93,6 +93,28 @@
 		{ label: '每 30 分钟', expr: '*/30 * * * *' }
 	];
 
+	function formatNextRunTime(cronExpr: string | undefined): string {
+		if (!cronExpr || !cronExpr.trim()) return '未配置';
+		const trimmed = cronExpr.trim();
+		const preset = CRON_PRESETS.find((p) => p.expr === trimmed);
+		if (preset) {
+			return preset.label;
+		}
+		const parts = trimmed.split(/\s+/);
+		if (parts.length !== 5) return trimmed;
+		const [min, hour, dom, , dow] = parts;
+		if (min.startsWith('*/')) {
+			return `每 ${min.replace('*/', '')} 分钟`;
+		}
+		if (dow === '1-5') {
+			return `工作日 ${hour.padStart(2, '0')}:${min.padStart(2, '0')}`;
+		}
+		if (dom === '*' && dow === '*') {
+			return `每天 ${hour.padStart(2, '0')}:${min.padStart(2, '0')}`;
+		}
+		return trimmed;
+	}
+
 	async function loadSearches() {
 		isLoading = true;
 		isPocketBaseOnline = await checkPocketBaseHealth();
@@ -466,8 +488,13 @@
 									{search.cron_expression ? `[${search.cron_expression}]` : '(未设 Cron)'}
 								</span>
 							</div>
-							<div class="text-[11px] text-slate-500">
-								上次执行: {search.last_run_at ? new Date(search.last_run_at).toLocaleString() : '从未执行'}
+							<div class="flex flex-col items-end text-[11px] text-slate-500">
+								<div>上次执行: {search.last_run_at ? new Date(search.last_run_at).toLocaleString() : '从未执行'}</div>
+								{#if search.is_enabled && search.cron_expression}
+									<div class="text-cyan-400 font-mono text-[10px] mt-0.5">
+										周期: {formatNextRunTime(search.cron_expression)}
+									</div>
+								{/if}
 							</div>
 						</div>
 					</div>

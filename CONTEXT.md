@@ -60,3 +60,12 @@ _Avoid_: In-process background task, Celery pool, worker thread
 The polymorphic workflow dispatch within the Automation Worker that executes concrete automation jobs (`CHECK_LOGIN`, `SCRAPE_JOBS`, `AUTO_APPLY`, `CHECK_CHAT`) without inter-process device contention.
 _Avoid_: Multi-worker router, sub-worker cluster
 
+**SavedSearch**:
+The database-persisted search strategy entity stored in PocketBase encapsulating search keyword, multi-dimensional filter conditions, task type, and Cron scheduling metadata.
+_Avoid_: Search rule, search YAML, query profile
+
+**Automation Scheduler**:
+The background Cron evaluation engine that monitors active SavedSearches, detects scheduling matches, and dispatches automation tasks into the State Stream Broker.
+_Avoid_: Crontab daemon, task timer, periodic runner
+
+
