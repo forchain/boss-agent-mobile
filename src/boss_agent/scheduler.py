@@ -7,13 +7,12 @@ Lightweight Cron scheduler engine for periodic triggering of SavedSearch strateg
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta, timezone
 import logging
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from boss_agent.broker.models import AutomationTask, TaskType
 from boss_agent.broker.pocketbase_adapter import BaseTaskBroker
-from boss_agent.models import SavedSearch
 
 logger = logging.getLogger("boss_agent.scheduler")
 
@@ -112,7 +111,7 @@ def get_next_cron_run(
 ) -> datetime | None:
     """Compute the next matching datetime for a cron expression."""
     if after is None:
-        after = datetime.now(timezone.utc)
+        after = datetime.now(UTC)
 
     # Start search at the beginning of the next minute
     cur = after.replace(second=0, microsecond=0) + timedelta(minutes=1)
@@ -141,7 +140,7 @@ class AutomationScheduler:
     async def run_once(self, now: datetime | None = None) -> list[AutomationTask]:
         """Evaluate all enabled saved searches and dispatch tasks for matching schedules."""
         if now is None:
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
 
         saved_searches = await self.broker.list_saved_searches()
         dispatched_tasks: list[AutomationTask] = []

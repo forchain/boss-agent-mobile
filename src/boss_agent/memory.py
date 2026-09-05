@@ -25,9 +25,12 @@ class StructuredCandidateProfile:
     years_of_experience: int = 0
     education: list[dict[str, str]] = field(default_factory=list)
     core_skills: list[str] = field(default_factory=list)
+    work_experiences: list[dict[str, Any]] = field(default_factory=list)
+    projects: list[dict[str, Any]] = field(default_factory=list)
     project_highlights: list[dict[str, str]] = field(default_factory=list)
     target_positions: list[str] = field(default_factory=list)
     raw_summary: str = ""
+    raw_resume_text: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -53,36 +56,112 @@ class StructuredCandidateProfile:
                 else:
                     normalized_skills.append(str(item))
 
+        raw_work = data.get("work_experiences") or []
+        raw_projects = data.get("projects") or []
+        raw_highlights = data.get("project_highlights") or []
+        if not raw_projects and raw_highlights:
+            raw_projects = [
+                {
+                    "name": p.get("name", ""),
+                    "description": p.get("description", ""),
+                    "role": p.get("role", ""),
+                    "tech_stack": p.get("tech_stack", []),
+                    "achievements": p.get("achievements", ""),
+                    "raw_details": p.get("raw_details", ""),
+                }
+                for p in raw_highlights
+            ]
+        if not raw_highlights and raw_projects:
+            raw_highlights = [
+                {
+                    "name": p.get("name", ""),
+                    "description": p.get("description", "") or p.get("achievements", ""),
+                }
+                for p in raw_projects
+            ]
+
         return cls(
             name=data.get("name") or "求职者",
             years_of_experience=int(data.get("years_of_experience") or 0),
             education=data.get("education") or [],
             core_skills=normalized_skills,
-            project_highlights=data.get("project_highlights") or [],
+            work_experiences=raw_work,
+            projects=raw_projects,
+            project_highlights=raw_highlights,
             target_positions=data.get("target_positions") or [],
             raw_summary=data.get("raw_summary") or "",
+            raw_resume_text=data.get("raw_resume_text") or "",
         )
 
     def format_for_prompt(self) -> str:
-        """Format the profile into a clean summary block for LLM prompts."""
+        """Format the profile into an unabbreviated, detail-rich block for LLM prompts."""
         edu_str = "; ".join(
             f"{e.get('school', '')} ({e.get('degree', '')} - {e.get('major', '')})"
             for e in self.education
         )
-        skills_str = ", ".join(self.core_skills)
+        skills_str = "\n".join(f"- {s}" for s in self.core_skills) if self.core_skills else "未注明"
         targets_str = ", ".join(self.target_positions)
-        projects_str = "\n".join(
-            f"- {p.get('name', '')}: {p.get('description', '')}" for p in self.project_highlights
+
+        work_items = []
+        for w in self.work_experiences:
+            comp = w.get("company", "")
+            role = w.get("role", "")
+            start = w.get("start_date", "")
+            end = w.get("end_date", "")
+            time_span = f" ({start} ~ {end})" if start or end else ""
+            dept = f" | 部门: {w.get('department')}" if w.get("department") else ""
+            header = f"- 【{comp}】{role}{time_span}{dept}"
+            details = []
+            if w.get("responsibilities"):
+                details.append(f"  工作职责: {w.get('responsibilities')}")
+            if w.get("achievements"):
+                details.append(f"  核心业绩与量化成果: {w.get('achievements')}")
+            if w.get("raw_details"):
+                details.append(f"  详细履历: {w.get('raw_details')}")
+            work_items.append(header + ("\n" + "\n".join(details) if details else ""))
+        work_str = "\n".join(work_items) if work_items else "未注明"
+
+        active_projects = self.projects if self.projects else self.project_highlights
+        proj_items = []
+        for p in active_projects:
+            p_name = p.get("name", "")
+            p_role = f" (角色: {p.get('role')})" if p.get("role") else ""
+            start = p.get("start_date", "")
+            end = p.get("end_date", "")
+            p_time = f" [{start} ~ {end}]" if start or end else ""
+            stack_val = p.get("tech_stack")
+            stack_str = (
+                f" | 技术栈: {', '.join(stack_val) if isinstance(stack_val, list) else stack_val}"
+                if stack_val
+                else ""
+            )
+            header = f"- 【{p_name}】{p_role}{p_time}{stack_str}"
+            p_details = []
+            if p.get("description"):
+                p_details.append(f"  项目背景与架构: {p.get('description')}")
+            if p.get("achievements"):
+                p_details.append(f"  核心贡献与指标成果: {p.get('achievements')}")
+            if p.get("raw_details"):
+                p_details.append(f"  技术攻坚细节: {p.get('raw_details')}")
+            proj_items.append(header + ("\n" + "\n".join(p_details) if p_details else ""))
+        projects_str = "\n".join(proj_items) if proj_items else "未注明"
+
+        ground_truth = (
+            f"\n\n[原始简历无损语料 (Ground Truth 参考)]\n{self.raw_resume_text.strip()}"
+            if self.raw_resume_text and self.raw_resume_text.strip()
+            else ""
         )
 
         return (
             f"姓名: {self.name}\n"
             f"工作经验: {self.years_of_experience}年\n"
             f"教育背景: {edu_str or '未注明'}\n"
-            f"核心技能: {skills_str or '未注明'}\n"
+            f"核心技能栈:\n{skills_str}\n"
             f"期望职位: {targets_str or '未注明'}\n"
-            f"项目经验:\n{projects_str or '未注明'}\n"
-            f"个人总结: {self.raw_summary or '未注明'}"
+            f"工作经历 (无损完整履历):\n{work_str}\n"
+            f"项目经历 (完整架构与指标):\n{projects_str}\n"
+            f"个人总结与背景优势: {self.raw_summary or '未注明'}"
+            f"{ground_truth}"
         )
 
 
@@ -206,63 +285,155 @@ class ResumeMemoryManager:
         return self.memory_path.is_file() and self.memory_path.stat().st_size > 0
 
     def load_cached_memory(self) -> StructuredCandidateProfile | None:
-        """Load memory profile from disk if available."""
-        if not self.has_memory_file():
-            return None
+        """Load memory profile from PocketBase database (single source of truth) with file fallback."""
+        # 1. Primary: load from PocketBase database (HTTP or SQLite fallback)
         try:
-            content = self.memory_path.read_text(encoding="utf-8")
-            data = json.loads(content)
-            return StructuredCandidateProfile.from_dict(data)
+            import asyncio
+
+            from boss_agent.broker import PocketBaseBroker
+
+            broker = PocketBaseBroker()
+            try:
+                asyncio.get_running_loop()
+                import concurrent.futures
+
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    data = pool.submit(asyncio.run, broker.get_candidate_profile()).result(
+                        timeout=3.0
+                    )
+            except RuntimeError:
+                data = asyncio.run(broker.get_candidate_profile())
+
+            if data and (
+                data.get("name")
+                or data.get("core_skills")
+                or data.get("work_experiences")
+                or data.get("projects")
+            ):
+                return StructuredCandidateProfile.from_dict(data)
         except Exception as e:
-            console.print(
-                f"[yellow]⚠️  Failed to read cached memory from {self.memory_path}: {e}[/yellow]"
-            )
-            return None
+            console.print(f"[dim]Note: Database candidate profile check: {e}[/dim]")
+
+        # 2. File fallback if memory_path exists
+        if self.has_memory_file():
+            try:
+                content = self.memory_path.read_text(encoding="utf-8")
+                data = json.loads(content)
+                return StructuredCandidateProfile.from_dict(data)
+            except Exception as e:
+                console.print(
+                    f"[yellow]⚠️  Failed to read cached memory from {self.memory_path}: {e}[/yellow]"
+                )
+        return None
 
     def generate_and_save_memory(self, resume_path: str | Path) -> StructuredCandidateProfile:
-        """Extract text from resume file, call LLM to parse into schema, and save to memory file."""
+        """Extract text from resume file, call LLM to parse into unabbreviated schema, and save to database."""
         console.print(f"📄 [bold cyan]Parsing resume file:[/bold cyan] {resume_path}...")
         raw_text = self.extractor.extract_text(resume_path)
         if not raw_text.strip():
             raise ValueError(f"Extracted resume text from {resume_path} was empty.")
 
-        console.print("🧠 [bold cyan]Structuring candidate profile via LLM...[/bold cyan]")
+        console.print(
+            "🧠 [bold cyan]Structuring candidate profile via LLM (unabbreviated)...[/bold cyan]"
+        )
         prompt = (
-            "请全面、完整地解析以下求职者原始简历文本，并提取出便于 Agent 理解的完整结构化个人信息：\n\n"
+            "请全面、无损、完整地解析以下求职者原始简历文本，并提取出结构化信息：\n\n"
             f"[简历文本内容]\n{raw_text}\n\n"
-            "请严格以 JSON 格式输出以下结构，完整提取并保留所有核心技能分类、所有项目经历与个人总结：\n"
+            "请严格以标准 JSON 格式输出以下结构。严禁进行摘要删减，必须全量保留所有工作经历与项目履历中的职责、业务场景、技术选型与量化成果：\n"
             "{\n"
             '  "name": "姓名",\n'
             '  "years_of_experience": 经验年限(整数),\n'
-            '  "education": [{"school": "学校", "degree": "学历", "major": "专业"}],\n'
+            '  "education": [{"school": "学校", "degree": "学历", "major": "专业", "start_date": "开始时间", "end_date": "结束时间"}],\n'
             '  "core_skills": ["分类1: 技能列表", "分类2: 技能列表"],\n'
-            '  "project_highlights": [{"name": "项目名称", "description": "项目成果与亮点描述（完整提取所有项目经历）"}],\n'
+            '  "work_experiences": [\n'
+            "    {\n"
+            '      "company": "公司名称",\n'
+            '      "role": "职位/角色",\n'
+            '      "start_date": "起止年或年月",\n'
+            '      "end_date": "结束年月或至今",\n'
+            '      "department": "所属部门/业务线",\n'
+            '      "responsibilities": "完整详细的工作职责描述与主导内容",\n'
+            '      "achievements": "核心量化业绩、技术攻坚指标与业务成果",\n'
+            '      "raw_details": "该段经历的完整原文及补充细节"\n'
+            "    }\n"
+            "  ],\n"
+            '  "projects": [\n'
+            "    {\n"
+            '      "name": "项目名称",\n'
+            '      "role": "担任角色",\n'
+            '      "start_date": "开始时间",\n'
+            '      "end_date": "结束时间",\n'
+            '      "tech_stack": ["技术1", "技术2"],\n'
+            '      "description": "完整项目背景、技术架构与负责模块",\n'
+            '      "achievements": "项目可量化成果、指标突破与关键产出",\n'
+            '      "raw_details": "技术攻坚与落地细节"\n'
+            "    }\n"
+            "  ],\n"
             '  "target_positions": ["期望职位1", "期望职位2"],\n'
             '  "raw_summary": "全面总结的核心个人背景亮点与技术优势概述"\n'
             "}\n\n"
-            "注意：必须输出标准严格合法的 JSON。core_skills 数组中的每个元素必须为字符串（如 \"AI与智能体: Claude, Langchain\"），严禁在数组内部直接书写 \"key\": value 键值对；字符串内严禁未转义的双引号（若需引用请用中文书名号《》或单引号）。"
+            "注意：必须输出标准严格合法的 JSON。所有经历必须完整提取，严禁做概括删减；字符串内严禁未转义的双引号（若需引用请用中文书名号《》或单引号）。"
         )
         messages = [
             {
                 "role": "system",
-                "content": "You are a professional HR assistant specializing in parsing candidate resumes into structured JSON. Always output valid, complete JSON.",
+                "content": "You are a professional HR assistant specializing in parsing candidate resumes into structured JSON with 100% fidelity. Always output valid, complete JSON.",
             },
             {"role": "user", "content": prompt},
         ]
 
-        result_dict = self.llm_client.chat_completion_json(messages)
+        extra_payload = None
+        if (
+            "minimax" in getattr(self.llm_client.config, "base_url", "").lower()
+            or "minimax" in getattr(self.llm_client.config, "model", "").lower()
+        ):
+            extra_payload = {"thinking": {"type": "disabled"}}
+
+        result_dict = self.llm_client.chat_completion_json(
+            messages,
+            max_tokens=16384,
+            extra_payload=extra_payload,
+        )
+        result_dict["raw_resume_text"] = raw_text
         profile = StructuredCandidateProfile.from_dict(result_dict)
 
-        # Save to local memory file
-        self.memory_path.parent.mkdir(parents=True, exist_ok=True)
-        self.memory_path.write_text(
-            json.dumps(profile.to_dict(), ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-        console.print(
-            f"✅ [bold green]Structured memory profile saved to:[/bold green] {self.memory_path}"
-        )
+        self.save_memory_profile(profile)
         return profile
+
+    def save_memory_profile(self, profile: StructuredCandidateProfile) -> None:
+        """Save candidate profile to PocketBase database with local file fallback."""
+        # 1. Primary: Save to PocketBase database (HTTP or SQLite fallback)
+        try:
+            import asyncio
+
+            from boss_agent.broker import PocketBaseBroker
+
+            broker = PocketBaseBroker()
+            try:
+                asyncio.get_running_loop()
+                import concurrent.futures
+
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    pool.submit(
+                        asyncio.run, broker.save_candidate_profile(profile.to_dict())
+                    ).result(timeout=5.0)
+            except RuntimeError:
+                asyncio.run(broker.save_candidate_profile(profile.to_dict()))
+            console.print(
+                "✅ [bold green]Structured candidate profile saved to PocketBase database.[/bold green]"
+            )
+        except Exception as e:
+            console.print(f"[yellow]⚠️  Failed to save profile to database: {e}[/yellow]")
+
+        # 2. Save to local file if path is specified
+        try:
+            self.memory_path.parent.mkdir(parents=True, exist_ok=True)
+            self.memory_path.write_text(
+                json.dumps(profile.to_dict(), ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
 
     def load_memory(
         self,

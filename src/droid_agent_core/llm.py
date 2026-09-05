@@ -8,7 +8,7 @@ import json
 import os
 import re
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -35,8 +35,9 @@ class LLMConfig:
     api_key: str | None = None
     model: str = "MiniMax-M3"
     temperature: float = 0.2
-    timeout_sec: float = 120.0
-    max_tokens: int = 262144
+    timeout_sec: float = 300.0
+    max_tokens: int = 16384
+    extra_params: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_env_or_file(cls, config_path: str | Path | None = None) -> "LLMConfig":
@@ -87,8 +88,9 @@ class LLMConfig:
         provider = os.getenv("LLM_PROVIDER") or data.get("provider") or "openai"
 
         temperature = float(os.getenv("LLM_TEMPERATURE") or data.get("temperature") or 0.2)
-        timeout_sec = float(os.getenv("LLM_TIMEOUT_SEC") or data.get("timeout_sec") or 120.0)
-        max_tokens = int(os.getenv("LLM_MAX_TOKENS") or data.get("max_tokens") or 262144)
+        timeout_sec = float(os.getenv("LLM_TIMEOUT_SEC") or data.get("timeout_sec") or 300.0)
+        max_tokens = int(os.getenv("LLM_MAX_TOKENS") or data.get("max_tokens") or 16384)
+        extra_params = data.get("extra_params") or {}
 
         return cls(
             provider=provider,
@@ -98,6 +100,7 @@ class LLMConfig:
             temperature=temperature,
             timeout_sec=timeout_sec,
             max_tokens=max_tokens,
+            extra_params=extra_params,
         )
 
 
@@ -114,6 +117,7 @@ class LLMDecisionClient(ABC):
         temperature: float | None = None,
         max_tokens: int | None = None,
         response_format: dict[str, Any] | None = None,
+        extra_payload: dict[str, Any] | None = None,
     ) -> str:
         """Send chat messages and return assistant text response."""
 
@@ -124,6 +128,7 @@ class LLMDecisionClient(ABC):
         temperature: float | None = None,
         max_tokens: int | None = None,
         response_format: dict[str, Any] | None = None,
+        extra_payload: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Send chat messages and return parsed JSON response."""
 
@@ -152,6 +157,7 @@ class OpenAIChatClient(LLMDecisionClient):
         temperature: float | None = None,
         max_tokens: int | None = None,
         response_format: dict[str, Any] | None = None,
+        extra_payload: dict[str, Any] | None = None,
     ) -> str:
         url = f"{self.config.base_url}/chat/completions"
         payload: dict[str, Any] = {
@@ -162,6 +168,19 @@ class OpenAIChatClient(LLMDecisionClient):
         }
         if response_format is not None:
             payload["response_format"] = response_format
+
+        # Default: disable thinking for MiniMax models to prevent long-running CoT timeouts on structured tasks
+        is_minimax = (
+            "minimax" in self.config.base_url.lower()
+            or "minimax" in self.config.model.lower()
+        )
+        if is_minimax and (not extra_payload or "thinking" not in extra_payload):
+            payload["thinking"] = {"type": "disabled"}
+
+        if self.config.extra_params:
+            payload.update(self.config.extra_params)
+        if extra_payload:
+            payload.update(extra_payload)
 
         try:
             response = requests.post(
@@ -175,10 +194,14 @@ class OpenAIChatClient(LLMDecisionClient):
         except requests.exceptions.RequestException as e:
             raise LLMError(f"LLM connection error: {e}") from e
 
-        # Handle fallback if response_format is not supported by a specific OpenAI-compatible provider
-        if response.status_code == 400 and response_format is not None:
+        # Handle fallback if response_format or thinking is not supported by a specific OpenAI-compatible provider
+        if response.status_code == 400:
             try:
-                fallback_payload = {k: v for k, v in payload.items() if k != "response_format"}
+                fallback_payload = {
+                    k: v
+                    for k, v in payload.items()
+                    if k not in ("response_format", "thinking")
+                }
                 response = requests.post(
                     url,
                     headers=self._get_headers(),
@@ -227,9 +250,9 @@ class OpenAIChatClient(LLMDecisionClient):
         """Auto-close unclosed strings, arrays, and objects caused by token truncation."""
         s = raw.strip()
         # Strip trailing incomplete key or colon
-        s = re.sub(r',\s*"[^"]*"\s*:\s*$', '', s)
-        s = re.sub(r',\s*"[^"]*$', '', s)
-        s = re.sub(r',\s*$', '', s)
+        s = re.sub(r',\s*"[^"]*"\s*:\s*$', "", s)
+        s = re.sub(r',\s*"[^"]*$', "", s)
+        s = re.sub(r",\s*$", "", s)
 
         in_string = False
         escape = False
@@ -239,30 +262,29 @@ class OpenAIChatClient(LLMDecisionClient):
             if escape:
                 escape = False
                 continue
-            if c == '\\':
+            if c == "\\":
                 escape = True
                 continue
             if c == '"':
                 in_string = not in_string
                 continue
             if not in_string:
-                if c in '{[':
+                if c in "{[":
                     stack.append(c)
-                elif c in '}]':
-                    if stack:
-                        top = stack[-1]
-                        if (c == '}' and top == '{') or (c == ']' and top == '['):
-                            stack.pop()
+                elif c in "}]" and stack:
+                    top = stack[-1]
+                    if (c == "}" and top == "{") or (c == "]" and top == "["):
+                        stack.pop()
 
         if in_string:
             s += '"'
 
         while stack:
             top = stack.pop()
-            if top == '{':
-                s += '}'
-            elif top == '[':
-                s += ']'
+            if top == "{":
+                s += "}"
+            elif top == "[":
+                s += "]"
 
         return s
 
@@ -299,7 +321,7 @@ class OpenAIChatClient(LLMDecisionClient):
                     escape = False
                     i += 1
                     continue
-                if c == '\\':
+                if c == "\\":
                     escape = True
                     i += 1
                     continue
@@ -308,25 +330,25 @@ class OpenAIChatClient(LLMDecisionClient):
                     i += 1
                     continue
                 if not in_str:
-                    if c in '{[':
-                        if c == '[':
+                    if c in "{[":
+                        if c == "[":
                             j = i + 1
-                            while j < n and chars[j] in ' \t\r\n':
+                            while j < n and chars[j] in " \t\r\n":
                                 j += 1
                             match = re.match(r'^"[^"]+"\s*:', text[j:])
                             if match:
-                                chars[i] = '{'
-                                stack.append(('converted', '{'))
+                                chars[i] = "{"
+                                stack.append(("converted", "{"))
                                 i += 1
                                 continue
-                        stack.append(('normal', c))
-                    elif c in '}]':
+                        stack.append(("normal", c))
+                    elif c in "}]":
                         if stack:
                             kind, open_c = stack.pop()
-                            if kind == 'converted' and c == ']':
-                                chars[i] = '}'
+                            if kind == "converted" and c == "]":
+                                chars[i] = "}"
                 i += 1
-            return ''.join(chars)
+            return "".join(chars)
 
         cleaned = fix_array_object_mixup(cleaned)
         try:
@@ -344,7 +366,7 @@ class OpenAIChatClient(LLMDecisionClient):
                     out.append(c)
                     escape = False
                     continue
-                if c == '\\':
+                if c == "\\":
                     out.append(c)
                     escape = True
                     continue
@@ -353,17 +375,17 @@ class OpenAIChatClient(LLMDecisionClient):
                     out.append(c)
                     continue
                 if in_str:
-                    if c == '\n':
-                        out.append('\\n')
-                    elif c == '\r':
-                        out.append('\\r')
-                    elif c == '\t':
-                        out.append('\\t')
+                    if c == "\n":
+                        out.append("\\n")
+                    elif c == "\r":
+                        out.append("\\r")
+                    elif c == "\t":
+                        out.append("\\t")
                     else:
                         out.append(c)
                 else:
                     out.append(c)
-            return ''.join(out)
+            return "".join(out)
 
         sanitized = sanitize_string_control_chars(cleaned)
         try:
@@ -380,7 +402,7 @@ class OpenAIChatClient(LLMDecisionClient):
             res: list[str] = []
             while i < n:
                 c = chars[i]
-                if c == '\\':
+                if c == "\\":
                     res.append(c)
                     if i + 1 < n:
                         res.append(chars[i + 1])
@@ -395,9 +417,9 @@ class OpenAIChatClient(LLMDecisionClient):
                     else:
                         # Look ahead past whitespace to see if next non-whitespace char is structural (',', ':', '}', ']')
                         j = i + 1
-                        while j < n and chars[j] in ' \t\r\n':
+                        while j < n and chars[j] in " \t\r\n":
                             j += 1
-                        if j < n and chars[j] in ',:}]':
+                        if j < n and chars[j] in ",:}]":
                             in_string = False
                             res.append(c)
                         else:
@@ -407,7 +429,7 @@ class OpenAIChatClient(LLMDecisionClient):
                     continue
                 res.append(c)
                 i += 1
-            return ''.join(res)
+            return "".join(res)
 
         fixed_quotes = fix_unescaped_quotes_tokenizer(sanitized)
         fixed_quotes = re.sub(r",\s*([\]}])", r"\1", fixed_quotes)
@@ -419,9 +441,10 @@ class OpenAIChatClient(LLMDecisionClient):
         # 5. Try Python AST literal eval (handles single quotes and Python boolean/None literals)
         try:
             import ast
-            py_str = re.sub(r'\btrue\b', 'True', fixed_quotes)
-            py_str = re.sub(r'\bfalse\b', 'False', py_str)
-            py_str = re.sub(r'\bnull\b', 'None', py_str)
+
+            py_str = re.sub(r"\btrue\b", "True", fixed_quotes)
+            py_str = re.sub(r"\bfalse\b", "False", py_str)
+            py_str = re.sub(r"\bnull\b", "None", py_str)
             eval_result = ast.literal_eval(py_str)
             if isinstance(eval_result, dict):
                 return eval_result
@@ -447,6 +470,7 @@ class OpenAIChatClient(LLMDecisionClient):
         temperature: float | None = None,
         max_tokens: int | None = None,
         response_format: dict[str, Any] | None = None,
+        extra_payload: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         # Default to OpenAI standard JSON mode format: {"type": "json_object"}
         target_format = response_format or {"type": "json_object"}
@@ -455,6 +479,7 @@ class OpenAIChatClient(LLMDecisionClient):
             temperature=temperature,
             max_tokens=max_tokens,
             response_format=target_format,
+            extra_payload=extra_payload,
         )
         json_str = self._extract_json_block(raw_text)
         return self._robust_parse_json(json_str)

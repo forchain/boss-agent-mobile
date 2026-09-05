@@ -106,7 +106,6 @@ def test_pocketbase_adapter_defaults_to_resolved_url(tmp_path: Path):
         assert broker.base_url == "http://adapter-host:8090"
 
 
-
 def test_file_precedence_local_overrides_base(tmp_path: Path):
     """Local settings file overrides base settings file."""
     base_yaml = tmp_path / "settings.example.yaml"

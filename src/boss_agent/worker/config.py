@@ -22,4 +22,3 @@ class WorkerConfig(BaseModel):
     poll_interval_sec: float = 2.0
     heartbeat_interval_sec: float = 15.0
     lease_timeout_sec: float = 60.0
-

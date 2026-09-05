@@ -62,7 +62,10 @@ class ScrapeJobsHandler(BaseTaskHandler):
             search_page.search(keyword)
             await broker.append_log(task.id, f"Executed search for keyword '{keyword}'")
         elif not enable_search:
-            await broker.append_log(task.id, "enable_search is False; browsing home recommendations without search keyword")
+            await broker.append_log(
+                task.id,
+                "enable_search is False; browsing home recommendations without search keyword",
+            )
 
         enable_filter = bool(payload.get("enable_filter", True))
         filter_raw = payload.get("filter")
@@ -78,7 +81,9 @@ class ScrapeJobsHandler(BaseTaskHandler):
             )
             if filter_cfg.has_industry_filters:
                 industry_page = IndustryFilterDialogPage(driver)
-                await broker.append_log(task.id, f"Applying industry filter: {filter_cfg.industries}")
+                await broker.append_log(
+                    task.id, f"Applying industry filter: {filter_cfg.industries}"
+                )
                 try:
                     industry_page.apply_industry_filters(filter_cfg.industries, timeout_sec=5.0)
                 except Exception as ex:
@@ -96,7 +101,6 @@ class ScrapeJobsHandler(BaseTaskHandler):
                     await broker.append_log(task.id, f"Notice applying general filters: {ex}")
         elif not enable_filter:
             await broker.append_log(task.id, "enable_filter is False; skipped job filtering")
-
 
         scraped_jobs: list[dict[str, Any]] = []
         skipped_count = 0

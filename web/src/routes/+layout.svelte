@@ -8,7 +8,6 @@
 	let isPocketBaseOnline = $state(false);
 	let currentPbUrl = $state(getPocketBaseUrl());
 	let unmatchedCount = $state(0);
-	let healthTimer: any = null;
 
 	$effect(() => {
 		if (data?.pocketbaseUrl) {
@@ -18,19 +17,30 @@
 	});
 
 	async function updateHealthAndCount() {
-		currentPbUrl = getPocketBaseUrl();
-		isPocketBaseOnline = await checkPocketBaseHealth();
+		const targetUrl = getPocketBaseUrl();
+		if (currentPbUrl !== targetUrl) {
+			currentPbUrl = targetUrl;
+		}
+		const online = await checkPocketBaseHealth();
+		if (isPocketBaseOnline !== online) {
+			isPocketBaseOnline = online;
+		}
 		try {
 			const res = await pb.collection('job_records').getList(1, 1, {
 				filter: "status='unmatched'"
 			});
-			unmatchedCount = res.totalItems;
+			if (unmatchedCount !== res.totalItems) {
+				unmatchedCount = res.totalItems;
+			}
 		} catch (e) {
 			try {
 				const fallback = await fetch('/api/jobs?status=unmatched');
 				if (fallback.ok) {
 					const fData = await fallback.json();
-					unmatchedCount = fData.records?.length || 0;
+					const cnt = fData.records?.length || 0;
+					if (unmatchedCount !== cnt) {
+						unmatchedCount = cnt;
+					}
 				}
 			} catch (err) {}
 		}
@@ -38,7 +48,6 @@
 
 	onMount(() => {
 		updateHealthAndCount();
-		healthTimer = setInterval(updateHealthAndCount, 4000);
 
 		try {
 			pb.collection('job_records').subscribe('*', () => {
@@ -48,7 +57,6 @@
 	});
 
 	onDestroy(() => {
-		if (healthTimer) clearInterval(healthTimer);
 		try {
 			pb.collection('job_records').unsubscribe('*');
 		} catch (e) {}
@@ -78,7 +86,7 @@
 			<div class="flex items-center space-x-2 sm:space-x-3 text-xs shrink-0">
 				<div class="flex items-center space-x-1.5 bg-slate-800/80 border border-slate-700/60 px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-full transition-colors">
 					{#if isPocketBaseOnline}
-						<span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0"></span>
+						<span class="w-2 h-2 rounded-full bg-emerald-400 shrink-0"></span>
 						<span class="text-slate-300 font-medium font-mono text-[11px] sm:text-xs">
 							PocketBase: <span class="text-emerald-400 font-semibold">Connected</span>
 							<span class="hidden md:inline text-slate-400">({currentPbUrl.replace(/^https?:\/\//, '')})</span>
@@ -126,6 +134,12 @@
 								{unmatchedCount}
 							</span>
 						{/if}
+					</a>
+					<a
+						href="/profile"
+						class="px-3.5 py-1.5 rounded-lg transition font-medium flex items-center space-x-1.5 whitespace-nowrap {page.url.pathname.startsWith('/profile') ? 'bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 font-semibold shadow-sm' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 border border-transparent'}"
+					>
+						<span>👤 候选人画像</span>
 					</a>
 				</nav>
 			</div>

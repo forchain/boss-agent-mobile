@@ -4,20 +4,17 @@ boss_agent
 Boss 直聘 Android application automation domain layer.
 """
 
-# ruff: noqa: SIM105
-try:
-    from .matching import JobMatchGreetingService, MatchGreetingResult
-except ImportError:
-    pass
+import contextlib
 
-try:
+with contextlib.suppress(ImportError):
+    from .matching import JobMatchGreetingService, MatchGreetingResult
+
+with contextlib.suppress(ImportError):
     from .memory import (
         ResumeMemoryManager,
         ResumeTextExtractor,
         StructuredCandidateProfile,
     )
-except ImportError:
-    pass
 
 from .models import (
     AuthStatus,
@@ -28,7 +25,7 @@ from .models import (
     SearchConfig,
 )
 
-try:
+with contextlib.suppress(ImportError):
     from .pages import (
         BaseBossPage,
         ChatPage,
@@ -40,13 +37,9 @@ try:
         SearchPage,
         StartupDialogPage,
     )
-except ImportError:
-    pass
 
-try:
+with contextlib.suppress(ImportError):
     from .searches import SavedSearchRegistry, get_global_search_registry
-except ImportError:
-    pass
 from .settings import (
     load_settings,
     resolve_git_common_root,
@@ -55,10 +48,8 @@ from .settings import (
     resolve_pocketbase_url,
 )
 
-try:
+with contextlib.suppress(ImportError):
     from .workflows import SmokeHarness, TakeoverHandler
-except ImportError:
-    pass
 
 __all__ = [
     "AuthStatus",
@@ -91,4 +82,3 @@ __all__ = [
     "resolve_pocketbase_db_path",
     "resolve_pocketbase_url",
 ]
-
