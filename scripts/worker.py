@@ -40,6 +40,11 @@ def main() -> None:
     parser.add_argument(
         "--poll-interval", type=float, default=2.0, help="Polling interval in seconds"
     )
+    parser.add_argument(
+        "--enable-scheduler",
+        action="store_true",
+        help="Enable integrated Cron scheduler daemon alongside the worker",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -92,8 +97,18 @@ def main() -> None:
         config.pocketbase_url,
     )
 
+    async def run_services():
+        coros = [worker.start()]
+        if args.enable_scheduler:
+            from boss_agent.scheduler import AutomationScheduler
+
+            scheduler = AutomationScheduler(broker=broker, poll_interval_sec=30.0)
+            logger.info("Integrated Cron scheduler enabled")
+            coros.append(scheduler.run_forever())
+        await asyncio.gather(*coros)
+
     try:
-        asyncio.run(worker.start())
+        asyncio.run(run_services())
     except KeyboardInterrupt:
         logger.info("Worker interrupted by user, exiting gracefully.")
         sys.exit(0)

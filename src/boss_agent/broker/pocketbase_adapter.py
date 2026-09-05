@@ -17,7 +17,9 @@ from typing import Any
 import requests
 
 from boss_agent.broker.models import AutomationTask, TaskStatus, TaskType
+from boss_agent.models import SavedSearch
 from boss_agent.settings import resolve_pocketbase_url
+
 
 logger = logging.getLogger("boss_agent.broker")
 
@@ -99,6 +101,26 @@ class BaseTaskBroker(ABC):
         """Save or update candidate structured memory profile for a user."""
         pass
 
+    @abstractmethod
+    async def list_saved_searches(self) -> list[SavedSearch]:
+        """List all saved search presets from PocketBase."""
+        pass
+
+    @abstractmethod
+    async def get_saved_search(self, search_id: str) -> SavedSearch | None:
+        """Fetch a saved search preset by ID."""
+        pass
+
+    @abstractmethod
+    async def save_saved_search(self, saved_search: SavedSearch) -> SavedSearch:
+        """Create or update a saved search preset."""
+        pass
+
+    @abstractmethod
+    async def delete_saved_search(self, search_id: str) -> bool:
+        """Delete a saved search preset by ID."""
+        pass
+
 
 class InMemoryTaskBroker(BaseTaskBroker):
     """Thread-safe & asyncio-safe in-memory broker for tests and local development."""
@@ -106,6 +128,7 @@ class InMemoryTaskBroker(BaseTaskBroker):
     def __init__(self) -> None:
         self._tasks: dict[str, AutomationTask] = {}
         self._candidate_profiles: dict[str, dict[str, Any]] = {}
+        self._saved_searches: dict[str, SavedSearch] = {}
         self._lock = asyncio.Lock()
         self._subscribers: list[Callable[[str, AutomationTask], Any]] = []
         self._load_local_profile()
@@ -121,10 +144,31 @@ class InMemoryTaskBroker(BaseTaskBroker):
             except Exception:
                 pass
 
+    async def list_saved_searches(self) -> list[SavedSearch]:
+        async with self._lock:
+            return list(self._saved_searches.values())
+
+    async def get_saved_search(self, search_id: str) -> SavedSearch | None:
+        async with self._lock:
+            return self._saved_searches.get(search_id)
+
+    async def save_saved_search(self, saved_search: SavedSearch) -> SavedSearch:
+        async with self._lock:
+            self._saved_searches[saved_search.id] = saved_search
+            return saved_search
+
+    async def delete_saved_search(self, search_id: str) -> bool:
+        async with self._lock:
+            if search_id in self._saved_searches:
+                del self._saved_searches[search_id]
+                return True
+            return False
+
     async def get_candidate_profile(self, user_id: str = "default") -> dict[str, Any] | None:
         async with self._lock:
             prof = self._candidate_profiles.get(user_id)
             return dict(prof) if prof else None
+
 
     async def save_candidate_profile(
         self, profile_data: dict[str, Any], user_id: str = "default"
@@ -453,33 +497,50 @@ class PocketBaseTaskBroker(BaseTaskBroker):
     async def list_pending_tasks(self, limit: int = 10) -> list[AutomationTask]:
         url = f"{self._collection_url()}?filter=(status='pending')&sort=created&perPage={limit}"
         loop = asyncio.get_running_loop()
-        resp = await loop.run_in_executor(
-            None, lambda: self.session.get(url, headers=self._headers())
-        )
-        resp.raise_for_status()
-        items = resp.json().get("items", [])
-        return [self._record_to_task(item) for item in items]
+        try:
+            resp = await loop.run_in_executor(
+                None, lambda: self.session.get(url, headers=self._headers())
+            )
+            if resp.status_code == 404:
+                logger.warning(
+                    "PocketBase query for pending tasks returned 404: collection '%s' may not be provisioned or cached yet: %s",
+                    self.collection_name,
+                    url,
+                )
+                return []
+            resp.raise_for_status()
+            items = resp.json().get("items", [])
+            return [self._record_to_task(item) for item in items]
+        except requests.exceptions.RequestException as e:
+            logger.warning("Network or HTTP error fetching pending tasks: %s", e)
+            return []
 
     async def list_stale_running_tasks(
         self, lease_timeout_sec: float = 60.0
     ) -> list[AutomationTask]:
         url = f"{self._collection_url()}?filter=(status='running')&perPage=50"
         loop = asyncio.get_running_loop()
-        resp = await loop.run_in_executor(
-            None, lambda: self.session.get(url, headers=self._headers())
-        )
-        resp.raise_for_status()
-        items = resp.json().get("items", [])
-        tasks = [self._record_to_task(item) for item in items]
-        now = datetime.now(UTC)
-        stale: list[AutomationTask] = []
-        for t in tasks:
-            hb = t.last_heartbeat_at or t.locked_at or t.created
-            if hb.tzinfo is None:
-                hb = hb.replace(tzinfo=UTC)
-            if (now - hb).total_seconds() > lease_timeout_sec:
-                stale.append(t)
-        return stale
+        try:
+            resp = await loop.run_in_executor(
+                None, lambda: self.session.get(url, headers=self._headers())
+            )
+            if resp.status_code == 404:
+                return []
+            resp.raise_for_status()
+            items = resp.json().get("items", [])
+            tasks = [self._record_to_task(item) for item in items]
+            now = datetime.now(UTC)
+            stale: list[AutomationTask] = []
+            for t in tasks:
+                hb = t.last_heartbeat_at or t.locked_at or t.created
+                if hb.tzinfo is None:
+                    hb = hb.replace(tzinfo=UTC)
+                if (now - hb).total_seconds() > lease_timeout_sec:
+                    stale.append(t)
+            return stale
+        except requests.exceptions.RequestException as e:
+            logger.warning("Error fetching stale running tasks: %s", e)
+            return []
 
     async def requeue_task(self, task_id: str, retry_count: int) -> AutomationTask:
         url = f"{self._collection_url()}/{task_id}"
@@ -631,3 +692,113 @@ class PocketBaseTaskBroker(BaseTaskBroker):
             logger.warning("PocketBase save_candidate_profile failed: %s", e)
 
         return profile_data
+
+    def _saved_searches_collection_url(self) -> str:
+        return f"{self.base_url}/api/collections/saved_searches/records"
+
+    async def list_saved_searches(self) -> list[SavedSearch]:
+        url = self._saved_searches_collection_url()
+        loop = asyncio.get_running_loop()
+        try:
+            resp = await loop.run_in_executor(
+                None,
+                lambda: self.session.get(
+                    url,
+                    params={"perPage": "200", "sort": "-created"},
+                    headers=self._headers(),
+                ),
+            )
+            resp.raise_for_status()
+            items = resp.json().get("items", [])
+            return [SavedSearch.from_dict(item["id"], item) for item in items]
+        except Exception as e:
+            logger.warning("PocketBase list_saved_searches failed: %s", e)
+            return []
+
+    async def get_saved_search(self, search_id: str) -> SavedSearch | None:
+        url = f"{self._saved_searches_collection_url()}/{search_id}"
+        loop = asyncio.get_running_loop()
+        try:
+            resp = await loop.run_in_executor(
+                None,
+                lambda: self.session.get(
+                    url,
+                    headers=self._headers(),
+                ),
+            )
+            if resp.status_code == 404:
+                return None
+            resp.raise_for_status()
+            data = resp.json()
+            return SavedSearch.from_dict(data["id"], data)
+        except Exception as e:
+            logger.warning("PocketBase get_saved_search for %s failed: %s", search_id, e)
+            return None
+
+    async def save_saved_search(self, saved_search: SavedSearch) -> SavedSearch:
+        url = self._saved_searches_collection_url()
+        loop = asyncio.get_running_loop()
+        body = {
+            "id": saved_search.id,
+            "name": saved_search.name,
+            "description": saved_search.description,
+            "keyword": saved_search.search.keyword,
+            "enable_search": saved_search.enable_search,
+            "enable_filter": saved_search.enable_filter,
+            "filter": {
+                "education": saved_search.filter.education,
+                "salary": saved_search.filter.salary,
+                "experience": saved_search.filter.experience,
+                "activity": saved_search.filter.activity,
+                "company_scales": saved_search.filter.company_scales,
+                "industries": saved_search.filter.industries,
+                "enable_filter": saved_search.enable_filter,
+            },
+            "cron_expression": saved_search.cron_expression,
+            "is_enabled": saved_search.is_enabled,
+            "last_run_at": saved_search.last_run_at,
+            "target_task_type": saved_search.target_task_type,
+        }
+        try:
+            existing = await self.get_saved_search(saved_search.id)
+            if existing:
+                resp = await loop.run_in_executor(
+                    None,
+                    lambda: self.session.patch(
+                        f"{url}/{saved_search.id}",
+                        json=body,
+                        headers=self._headers(),
+                    ),
+                )
+            else:
+                resp = await loop.run_in_executor(
+                    None,
+                    lambda: self.session.post(
+                        url,
+                        json=body,
+                        headers=self._headers(),
+                    ),
+                )
+            if resp.ok:
+                data = resp.json()
+                return SavedSearch.from_dict(data["id"], data)
+        except Exception as e:
+            logger.warning("PocketBase save_saved_search failed: %s", e)
+        return saved_search
+
+    async def delete_saved_search(self, search_id: str) -> bool:
+        url = f"{self._saved_searches_collection_url()}/{search_id}"
+        loop = asyncio.get_running_loop()
+        try:
+            resp = await loop.run_in_executor(
+                None,
+                lambda: self.session.delete(
+                    url,
+                    headers=self._headers(),
+                ),
+            )
+            return resp.status_code in (200, 204)
+        except Exception as e:
+            logger.warning("PocketBase delete_saved_search failed: %s", e)
+            return False
+

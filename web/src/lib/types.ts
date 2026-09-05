@@ -65,3 +65,30 @@ export interface AutomationTask {
 	created?: string;
 	updated?: string;
 }
+
+export interface SavedSearchFilter {
+	education?: string;
+	salary?: string;
+	experience?: string;
+	activity?: string;
+	company_scales?: string[];
+	industries?: string[];
+}
+
+export interface SavedSearch {
+	id: string;
+	name: string;
+	description?: string;
+	keyword?: string;
+	enable_search?: boolean;
+	enable_filter?: boolean;
+	filter?: SavedSearchFilter;
+	cron_expression?: string;
+	is_enabled?: boolean;
+	last_run_at?: string | null;
+	target_task_type?: 'AUTO_APPLY' | 'SCRAPE_JOBS' | string;
+	created?: string;
+	updated?: string;
+}
+
+

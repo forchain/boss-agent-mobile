@@ -39,7 +39,70 @@ describe('PocketBase Client Helpers', () => {
 		expect(task.task_type).toBe('AUTO_APPLY');
 		expect(task.status).toBe('pending');
 	});
+
+	it('supports SavedSearch CRUD and local caching', async () => {
+		const { listSavedSearches, getSavedSearch, saveSavedSearch, deleteSavedSearch } = await import('../lib/pocketbase');
+		const saved = await saveSavedSearch({
+			id: 'test_devops_search',
+			name: 'DevOps Search Test',
+			keyword: 'devops',
+			filter: { education: '本科', salary: '25-35K', industries: ['云计算'] },
+			is_enabled: true,
+			cron_expression: '0 10 * * *'
+		});
+
+		expect(saved.id).toBe('test_devops_search');
+		expect(saved.name).toBe('DevOps Search Test');
+		expect(saved.keyword).toBe('devops');
+		expect(saved.filter?.education).toBe('本科');
+
+		const fetched = await getSavedSearch('test_devops_search');
+		expect(fetched).not.toBeNull();
+		expect(fetched?.name).toBe('DevOps Search Test');
+
+		const list = await listSavedSearches();
+		expect(list.some(s => s.id === 'test_devops_search')).toBe(true);
+
+		const deleted = await deleteSavedSearch('test_devops_search');
+		expect(deleted).toBe(true);
+
+		// Test explicit createSavedSearch and updateSavedSearch helpers
+		const { createSavedSearch, updateSavedSearch } = await import('../lib/pocketbase');
+		const created = await createSavedSearch({
+			id: 'test_ai_agent_strategy',
+			name: 'AI Agent Strategy',
+			keyword: 'Agent',
+			description: '大模型与智能体检索策略',
+			target_task_type: 'AUTO_APPLY',
+			is_enabled: false,
+			cron_expression: '0 9 * * *',
+			filter: {
+				education: '硕士',
+				salary: '30-50K',
+				experience: '5-10年',
+				activity: '今日活跃',
+				company_scales: ['100-499人', '500-999人'],
+				industries: ['人工智能', '互联网']
+			}
+		});
+
+		expect(created.id).toBe('test_ai_agent_strategy');
+		expect(created.name).toBe('AI Agent Strategy');
+		expect(created.filter?.company_scales).toEqual(['100-499人', '500-999人']);
+		expect(created.filter?.industries).toEqual(['人工智能', '互联网']);
+
+		const updated = await updateSavedSearch('test_ai_agent_strategy', {
+			name: 'AI Agent Strategy Updated',
+			is_enabled: true
+		});
+		expect(updated.name).toBe('AI Agent Strategy Updated');
+		expect(updated.is_enabled).toBe(true);
+		expect(updated.filter?.education).toBe('硕士');
+
+		await deleteSavedSearch('test_ai_agent_strategy');
+	});
 });
+
 
 describe('SvelteKit Server Endpoints', () => {
 	it('POST /api/candidate/resume parses text and extracts structured profile', async () => {
