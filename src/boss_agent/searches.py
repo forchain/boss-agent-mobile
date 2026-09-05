@@ -2,15 +2,15 @@
 boss_agent.searches
 ===================
 Registry and manager for saved searches and query presets.
+Loads and synchronizes searches directly from PocketBase database,
+falling back to system defaults in memory if database is unreachable.
 """
 
-from pathlib import Path
 from typing import Any
-
-import yaml
 
 import requests
 
+from .broker.provisioner import DEFAULT_INITIAL_SEARCHES
 from .models import SavedSearch
 from .settings import resolve_pocketbase_url
 
@@ -20,19 +20,21 @@ class SavedSearchRegistry:
 
     def __init__(
         self,
-        config_path: str | Path | None = None,
         pocketbase_url: str | None = None,
         prefer_database: bool = True,
+        initial_searches: dict[str, Any] | None = None,
     ):
         self._searches: dict[str, SavedSearch] = {}
-        self.config_path = Path(config_path) if config_path else self._find_default_config()
         self.pocketbase_url = pocketbase_url
         loaded_from_db = False
         if prefer_database:
             resolved_url = pocketbase_url or resolve_pocketbase_url()
             loaded_from_db = self.load_from_pocketbase(resolved_url)
-        if not loaded_from_db and self.config_path and self.config_path.exists():
-            self.load_from_yaml(self.config_path)
+
+        if not loaded_from_db:
+            # Populate with defaults in memory
+            defaults = initial_searches if initial_searches is not None else DEFAULT_INITIAL_SEARCHES
+            self.load_from_dict(defaults)
 
     def load_from_pocketbase(self, pb_url: str | None = None) -> bool:
         """Fetch saved searches from PocketBase saved_searches collection."""
@@ -57,28 +59,6 @@ class SavedSearchRegistry:
         except Exception:
             pass
         return False
-
-
-    def _find_default_config(self) -> Path | None:
-        """Locate default config/searches.yaml relative to project root."""
-        possible_paths = [
-            Path(__file__).resolve().parent.parent.parent / "config" / "searches.yaml",
-            Path("config/searches.yaml"),
-        ]
-        for p in possible_paths:
-            if p.exists():
-                return p
-        return None
-
-    def load_from_yaml(self, filepath: str | Path) -> None:
-        """Load and parse saved searches from a YAML file."""
-        path = Path(filepath)
-        if not path.exists():
-            raise FileNotFoundError(f"Saved searches config file not found: {path}")
-
-        content = path.read_text(encoding="utf-8")
-        parsed = yaml.safe_load(content) or {}
-        self.load_from_dict(parsed)
 
     def load_from_dict(self, data: dict[str, Any]) -> None:
         """Populate registry from dictionary data."""

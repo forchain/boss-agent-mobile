@@ -497,33 +497,50 @@ class PocketBaseTaskBroker(BaseTaskBroker):
     async def list_pending_tasks(self, limit: int = 10) -> list[AutomationTask]:
         url = f"{self._collection_url()}?filter=(status='pending')&sort=created&perPage={limit}"
         loop = asyncio.get_running_loop()
-        resp = await loop.run_in_executor(
-            None, lambda: self.session.get(url, headers=self._headers())
-        )
-        resp.raise_for_status()
-        items = resp.json().get("items", [])
-        return [self._record_to_task(item) for item in items]
+        try:
+            resp = await loop.run_in_executor(
+                None, lambda: self.session.get(url, headers=self._headers())
+            )
+            if resp.status_code == 404:
+                logger.warning(
+                    "PocketBase query for pending tasks returned 404: collection '%s' may not be provisioned or cached yet: %s",
+                    self.collection_name,
+                    url,
+                )
+                return []
+            resp.raise_for_status()
+            items = resp.json().get("items", [])
+            return [self._record_to_task(item) for item in items]
+        except requests.exceptions.RequestException as e:
+            logger.warning("Network or HTTP error fetching pending tasks: %s", e)
+            return []
 
     async def list_stale_running_tasks(
         self, lease_timeout_sec: float = 60.0
     ) -> list[AutomationTask]:
         url = f"{self._collection_url()}?filter=(status='running')&perPage=50"
         loop = asyncio.get_running_loop()
-        resp = await loop.run_in_executor(
-            None, lambda: self.session.get(url, headers=self._headers())
-        )
-        resp.raise_for_status()
-        items = resp.json().get("items", [])
-        tasks = [self._record_to_task(item) for item in items]
-        now = datetime.now(UTC)
-        stale: list[AutomationTask] = []
-        for t in tasks:
-            hb = t.last_heartbeat_at or t.locked_at or t.created
-            if hb.tzinfo is None:
-                hb = hb.replace(tzinfo=UTC)
-            if (now - hb).total_seconds() > lease_timeout_sec:
-                stale.append(t)
-        return stale
+        try:
+            resp = await loop.run_in_executor(
+                None, lambda: self.session.get(url, headers=self._headers())
+            )
+            if resp.status_code == 404:
+                return []
+            resp.raise_for_status()
+            items = resp.json().get("items", [])
+            tasks = [self._record_to_task(item) for item in items]
+            now = datetime.now(UTC)
+            stale: list[AutomationTask] = []
+            for t in tasks:
+                hb = t.last_heartbeat_at or t.locked_at or t.created
+                if hb.tzinfo is None:
+                    hb = hb.replace(tzinfo=UTC)
+                if (now - hb).total_seconds() > lease_timeout_sec:
+                    stale.append(t)
+            return stale
+        except requests.exceptions.RequestException as e:
+            logger.warning("Error fetching stale running tasks: %s", e)
+            return []
 
     async def requeue_task(self, task_id: str, retry_count: int) -> AutomationTask:
         url = f"{self._collection_url()}/{task_id}"

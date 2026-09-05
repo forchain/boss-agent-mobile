@@ -64,28 +64,6 @@ def test_provision_sqlite_database(tmp_path: Path):
 
 def test_provision_sqlite_database_seeds_saved_searches(tmp_path: Path):
     db_file = tmp_path / "data.db"
-    yaml_file = tmp_path / "searches.yaml"
-    yaml_file.write_text(
-        """
-searches:
-  test_search_1:
-    name: "Test Search One"
-    description: "First test search"
-    search:
-      keyword: "python"
-    filter:
-      education: "本科"
-      salary: "3-5万"
-      experience: "3-5年"
-      activity: "今日活跃"
-      company_scales:
-        - "100-499人"
-      industries:
-        - "人工智能"
-""",
-        encoding="utf-8",
-    )
-
     conn = sqlite3.connect(str(db_file))
     cursor = conn.cursor()
     cursor.execute("""
@@ -109,8 +87,23 @@ searches:
     conn.commit()
     conn.close()
 
-    # Provision with custom YAML path
-    res = provision_sqlite_database(db_file, searches_yaml_path=yaml_file)
+    custom_initial_searches = {
+        "test_search_1": {
+            "name": "Test Search One",
+            "description": "First test search",
+            "keyword": "python",
+            "filter": {
+                "education": "本科",
+                "industries": ["人工智能"],
+            },
+            "cron_expression": "",
+            "is_enabled": False,
+            "target_task_type": "AUTO_APPLY",
+        }
+    }
+
+    # Provision with custom initial searches
+    res = provision_sqlite_database(db_file, initial_searches=custom_initial_searches)
     assert res is True
 
     # Verify seeded row in saved_searches
@@ -128,4 +121,52 @@ searches:
     filter_data = json.loads(row[3])
     assert filter_data["education"] == "本科"
     assert filter_data["industries"] == ["人工智能"]
+
+
+def test_provision_remote_pocketbase_mock():
+    from unittest.mock import MagicMock, patch
+    from boss_agent.broker.provisioner import provision_remote_pocketbase
+
+    mock_session = MagicMock()
+    # Mock Auth
+    auth_resp = MagicMock(ok=True)
+    auth_resp.json.return_value = {"token": "test_token"}
+
+    # Mock Collections list
+    list_col_resp = MagicMock(ok=True)
+    list_col_resp.json.return_value = {"items": [{"name": "users"}]}
+
+    # Mock Create Collection
+    create_col_resp = MagicMock(ok=True)
+
+    # Mock Records check
+    records_resp = MagicMock(ok=True)
+    records_resp.json.return_value = {"totalItems": 0}
+
+    # Mock Seed record
+    seed_resp = MagicMock(ok=True)
+
+    def mock_post(url, **kwargs):
+        if "auth-with-password" in url:
+            return auth_resp
+        if "collections/saved_searches/records" in url:
+            return seed_resp
+        return create_col_resp
+
+    def mock_get(url, **kwargs):
+        if url.endswith("/api/collections"):
+            return list_col_resp
+        return records_resp
+
+    mock_session.post.side_effect = mock_post
+    mock_session.get.side_effect = mock_get
+
+    with patch("requests.Session", return_value=mock_session):
+        success = provision_remote_pocketbase(
+            "http://127.0.0.1:8090",
+            email="admin@example.com",
+            password="password123",
+        )
+        assert success is True
+        assert mock_session.post.call_count >= 1
 

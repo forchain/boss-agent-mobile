@@ -16,7 +16,7 @@ pocketbase_url: "http://127.0.0.1:8090" # PocketBase State Stream Broker URL (en
 
 
 # Search & Filter Settings
-search_id: "default_agent_search"   # Preset ID from config/searches.yaml
+search_id: "default_agent_search"   # Preset ID from database (saved_searches collection)
 keyword: null                       # Override search keyword (e.g. "agent", "python", "Android")
 enable_search: true                 # Set to false to browse default home recommendations without search
 enable_filter: true                 # Set to false to disable all job filters

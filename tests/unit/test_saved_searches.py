@@ -39,14 +39,10 @@ def test_saved_search_model_serialization():
     assert restored.filter.education == "硕士"
 
 
-def test_saved_search_registry_load_yaml():
-    registry = SavedSearchRegistry()
-    yaml_path = Path(__file__).resolve().parent.parent.parent / "config" / "searches.yaml"
-    assert yaml_path.exists(), f"Configuration file missing: {yaml_path}"
-
-    registry.load_from_yaml(str(yaml_path))
+def test_saved_search_registry_default_initialization():
+    registry = SavedSearchRegistry(prefer_database=False)
     searches = registry.list_all()
-    assert len(searches) >= 1
+    assert len(searches) >= 2
 
     # Verify default startup query
     default_search = registry.get("default_agent_search")
@@ -57,8 +53,26 @@ def test_saved_search_registry_load_yaml():
     assert "人工智能" in default_search.filter.industries
 
 
+def test_saved_search_registry_load_from_dict():
+    registry = SavedSearchRegistry(prefer_database=False, initial_searches={})
+    custom_data = {
+        "searches": {
+            "custom_search": {
+                "name": "Custom Search",
+                "search": {"keyword": "rust"},
+                "filter": {"education": "本科"},
+            }
+        }
+    }
+    registry.load_from_dict(custom_data)
+    assert len(registry.list_all()) == 1
+    s = registry.get("custom_search")
+    assert s.search.keyword == "rust"
+    assert s.filter.education == "本科"
+
+
 def test_saved_search_registry_unknown_id():
-    registry = SavedSearchRegistry(prefer_database=False)
+    registry = SavedSearchRegistry(prefer_database=False, initial_searches={})
     with pytest.raises(KeyError, match="Saved search 'unknown_id' not found"):
         registry.get("unknown_id")
 

@@ -140,6 +140,59 @@
 		}
 	}
 
+	async function importDefaultPresets() {
+		if (isSaving) return;
+		isSaving = true;
+		try {
+			const defaults = [
+				{
+					id: 'default_agent_search',
+					name: 'AI Agent Default Startup Search',
+					description:
+						'Default search query targeting Agent roles across Online Education, Gaming, and AI industries',
+					keyword: 'agent',
+					filter: {
+						education: '硕士',
+						salary: '5万元以上',
+						experience: '10年以上',
+						activity: '今日活跃',
+						company_scales: ['100-499人', '500-999人', '1000-9999人', '10000人以上'],
+						industries: ['在线教育', '游戏', '人工智能']
+					},
+					cron_expression: '',
+					is_enabled: false,
+					target_task_type: 'AUTO_APPLY' as const
+				},
+				{
+					id: 'ai_llm_engineer',
+					name: 'AI & LLM Engineer Search',
+					description:
+						'Search targeting Large Language Model and AI algorithm engineering positions',
+					keyword: '大模型算法',
+					filter: {
+						education: '硕士',
+						salary: '5万元以上',
+						experience: '5-10年',
+						activity: '今日活跃',
+						company_scales: ['500-999人', '1000-9999人', '10000人以上'],
+						industries: ['人工智能', '游戏', '在线教育']
+					},
+					cron_expression: '',
+					is_enabled: false,
+					target_task_type: 'AUTO_APPLY' as const
+				}
+			];
+			for (const def of defaults) {
+				await createSavedSearch(def);
+			}
+			await loadSearches();
+		} catch (e: any) {
+			alert('导入默认预设失败: ' + (e?.message || e));
+		} finally {
+			isSaving = false;
+		}
+	}
+
 	function openCreateModal() {
 		isEditing = false;
 		formError = '';
@@ -384,16 +437,25 @@
 			<div class="text-4xl">📂</div>
 			<h3 class="text-sm font-semibold text-slate-200">暂无已保存的搜索策略</h3>
 			<p class="text-xs text-slate-400 max-w-md mx-auto">
-				当前数据库中尚未录入任何搜索预设。系统启动时会自动将 searches.yaml 中的预设导入，或者点击上方“新建搜索策略”进行创建。
+				当前数据库中尚未录入任何搜索策略。您可以点击上方“新建搜索策略”手动配置，或点击下方按钮直接导入系统预设。
 			</p>
-			<div>
+			<div class="flex flex-wrap items-center justify-center gap-3 pt-2">
 				<button
 					type="button"
 					onclick={openCreateModal}
-					class="bg-cyan-600 hover:bg-cyan-500 text-white font-medium px-4 py-2 rounded-xl text-xs transition inline-flex items-center space-x-1"
+					class="bg-slate-800 hover:bg-slate-700 text-slate-200 font-medium px-4 py-2 rounded-xl text-xs transition inline-flex items-center space-x-1"
 				>
 					<span>➕</span>
-					<span>立即创建第一个搜索策略</span>
+					<span>新建自定义策略</span>
+				</button>
+				<button
+					type="button"
+					onclick={importDefaultPresets}
+					disabled={isSaving}
+					class="bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white font-medium px-4 py-2 rounded-xl text-xs transition inline-flex items-center space-x-1 shadow-lg shadow-cyan-900/30"
+				>
+					<span>🌱</span>
+					<span>{isSaving ? '正在导入...' : '一键导入系统预设策略'}</span>
 				</button>
 			</div>
 		</div>

@@ -302,3 +302,42 @@ async def test_saved_search_broker_crud():
     assert deleted is True
     assert await broker.get_saved_search("search-1") is None
 
+
+@pytest.mark.asyncio
+async def test_list_pending_tasks_handles_404_gracefully():
+    """Verify PocketBaseTaskBroker handles 404 without crashing."""
+    mock_session = MagicMock()
+    mock_resp = MagicMock()
+    mock_resp.status_code = 404
+    mock_session.get.return_value = mock_resp
+
+    broker = PocketBaseTaskBroker(session=mock_session)
+    tasks = await broker.list_pending_tasks()
+    assert tasks == []
+
+
+@pytest.mark.asyncio
+async def test_list_pending_tasks_handles_request_exception():
+    """Verify PocketBaseTaskBroker handles network/connection error gracefully."""
+    import requests
+
+    mock_session = MagicMock()
+    mock_session.get.side_effect = requests.exceptions.ConnectionError("Connection refused")
+
+    broker = PocketBaseTaskBroker(session=mock_session)
+    tasks = await broker.list_pending_tasks()
+    assert tasks == []
+
+
+@pytest.mark.asyncio
+async def test_list_stale_running_tasks_handles_404_gracefully():
+    """Verify list_stale_running_tasks handles 404 without crashing."""
+    mock_session = MagicMock()
+    mock_resp = MagicMock()
+    mock_resp.status_code = 404
+    mock_session.get.return_value = mock_resp
+
+    broker = PocketBaseTaskBroker(session=mock_session)
+    tasks = await broker.list_stale_running_tasks()
+    assert tasks == []
+
