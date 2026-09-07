@@ -99,11 +99,17 @@ def test_keyword_screener_whitelist_hit_and_pass():
         recruiter_name="赵六",
         tags=["LangChain", "Multi-Agent"],
     )
-    state = run_job_application_graph(card, policy=policy)
+    mock_llm = MagicMock()
+    mock_llm.chat_completion_json.return_value = {
+        "match_score": 85,
+        "greeting_message": "您好，关注到贵司在招聘AI Agent岗位...",
+    }
+    state = run_job_application_graph(card, policy=policy, llm_client=mock_llm)
     assert state["keyword_pass"] is True
     assert state["deep_screen_pass"] is True
-    assert state["status"] == "deep_screen_passed"
+    assert state["status"] == "greeting_drafted"
     assert state["keyword_reason"] == "通过卡片初筛"
+    assert state["greeting_message"] != ""
 
 
 def test_keyword_screener_disabled_policy():
@@ -116,9 +122,14 @@ def test_keyword_screener_disabled_policy():
         company_name="某金融科技",
         recruiter_name="钱七",
     )
-    state = run_job_application_graph(card, policy=policy)
+    mock_llm = MagicMock()
+    mock_llm.chat_completion_json.return_value = {
+        "match_score": 75,
+        "greeting_message": "您好！",
+    }
+    state = run_job_application_graph(card, policy=policy, llm_client=mock_llm)
     assert state["keyword_pass"] is True
-    assert state["status"] == "deep_screen_passed"
+    assert state["status"] == "greeting_drafted"
 
 
 def test_jd_semantic_screener_rejects_hidden_blacklist_in_jd():
@@ -155,10 +166,12 @@ def test_jd_semantic_screener_rejects_hidden_blacklist_in_jd():
     assert state["deep_screen_pass"] is False
     assert state["status"] == "filtered_by_deep_screener"
     assert "Java" in state["deep_screen_reason"]
+    # Verify greeting_drafter was NOT called
+    assert "greeting_message" not in state or not state["greeting_message"]
     mock_llm.chat_completion_json.assert_called_once()
 
 
-def test_jd_semantic_screener_passes_compliant_jd():
+def test_jd_semantic_screener_passes_compliant_jd_and_drafts_greeting():
     policy = ScreeningPolicy(
         title_whitelist=["Agent", "AI"],
         title_blacklist=["销售"],
@@ -176,10 +189,19 @@ def test_jd_semantic_screener_passes_compliant_jd():
     )
 
     mock_llm = MagicMock()
-    mock_llm.chat_completion_json.return_value = {
-        "pass": True,
-        "reason": "岗位完全契合Agent方向，未触犯任何黑名单",
-    }
+    # First call: JDSemanticScreener; Second call: GreetingDrafter
+    mock_llm.chat_completion_json.side_effect = [
+        {
+            "pass": True,
+            "reason": "岗位完全契合Agent方向，未触犯任何黑名单",
+        },
+        {
+            "match_score": 92,
+            "jd_key_requirements": ["LangGraph", "Multi-Agent"],
+            "match_reasons": ["丰富实战经验"],
+            "greeting_message": "您好！看到贵司正在招聘AI Agent专家，我在LangGraph多智能体系统上有成熟落地经验...",
+        },
+    ]
 
     state = run_job_application_graph(
         card=card,
@@ -190,8 +212,11 @@ def test_jd_semantic_screener_passes_compliant_jd():
 
     assert state["keyword_pass"] is True
     assert state["deep_screen_pass"] is True
-    assert state["status"] == "deep_screen_passed"
+    assert state["status"] == "greeting_drafted"
     assert "契合Agent方向" in state["deep_screen_reason"]
+    assert "LangGraph" in state["greeting_message"]
+    assert state["match_score"] == 92
+    assert mock_llm.chat_completion_json.call_count == 2
 
 
 def test_jd_semantic_screener_empty_jd_fallback():
@@ -199,6 +224,10 @@ def test_jd_semantic_screener_empty_jd_fallback():
     card = JobCardBrief(title="AI Agent研发", company_name="测试公司", recruiter_name="HR")
 
     mock_llm = MagicMock()
+    mock_llm.chat_completion_json.return_value = {
+        "match_score": 80,
+        "greeting_message": "您好！看到贵司职位...",
+    }
     state = run_job_application_graph(
         card=card,
         policy=policy,
@@ -209,7 +238,7 @@ def test_jd_semantic_screener_empty_jd_fallback():
     assert state["keyword_pass"] is True
     assert state["deep_screen_pass"] is True
     assert "跳过语义精筛" in state["deep_screen_reason"]
-    mock_llm.chat_completion_json.assert_not_called()
+    assert state["status"] == "greeting_drafted"
 
 
 def test_jd_semantic_screener_llm_exception_graceful_fallback():
@@ -230,4 +259,57 @@ def test_jd_semantic_screener_llm_exception_graceful_fallback():
 
     assert passed is True
     assert "降级放行" in reason
+
+
+def test_full_lifecycle_job_application_graph_with_profile():
+    from boss_agent.memory import StructuredCandidateProfile
+
+    profile = StructuredCandidateProfile(
+        name="李华",
+        years_of_experience=7,
+        core_skills=["Python", "LangGraph", "Android"],
+        target_positions=["AI Agent架构师"],
+    )
+    policy = ScreeningPolicy(
+        title_whitelist=["Agent", "架构"],
+        title_blacklist=["销售", "外包"],
+        jd_blacklist=["Java", "C++"],
+    )
+    card = JobCardBrief(
+        title="AI Agent 移动端高级架构师",
+        company_name="前沿智能",
+        recruiter_name="张总监",
+        salary_range="40-60K",
+    )
+    jd_text = (
+        "岗位职责：\n"
+        "负责基于手机端与大模型的 Agent 自动化系统构建，要求精通 Python 与 LangGraph。"
+    )
+
+    mock_llm = MagicMock()
+    mock_llm.chat_completion_json.side_effect = [
+        {"pass": True, "reason": "完全符合Agent研发要求"},
+        {
+            "match_score": 95,
+            "jd_key_requirements": ["LangGraph端侧落地", "移动端结合"],
+            "match_reasons": ["具备7年经验与LangGraph架构经验"],
+            "greeting_message": "张总监您好！看到贵司招聘移动端Agent架构师，我具备7年经验且在LangGraph落地有深厚积累...",
+        },
+    ]
+
+    state = run_job_application_graph(
+        card=card,
+        policy=policy,
+        jd_text=jd_text,
+        candidate_profile=profile,
+        llm_client=mock_llm,
+    )
+
+    assert state["keyword_pass"] is True
+    assert state["deep_screen_pass"] is True
+    assert state["status"] == "greeting_drafted"
+    assert state["match_score"] == 95
+    assert "张总监" in state["greeting_message"]
+    assert mock_llm.chat_completion_json.call_count == 2
+
 

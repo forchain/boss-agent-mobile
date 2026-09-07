@@ -172,9 +172,70 @@ def should_continue_after_deep_screen(state: JobApplicationState) -> str:
     return "end"
 
 
+class GreetingDrafterAgent:
+    """Agent generating personalized, anti-template greeting messages fusing full JD and candidate profile."""
+
+    def __init__(self, llm_client: Any | None = None) -> None:
+        from .matching import JobMatchGreetingService
+
+        self.matching_service = JobMatchGreetingService(llm_client=llm_client)
+
+    def draft(
+        self,
+        card: dict[str, Any],
+        jd_text: str,
+        candidate_profile: Any | None = None,
+    ) -> Any:
+        from .memory import StructuredCandidateProfile
+        from .models import JobPosting
+
+        posting = JobPosting(
+            title=card.get("title", ""),
+            company_name=card.get("company_name", ""),
+            salary_range=card.get("salary_range", ""),
+            job_description=jd_text,
+            location=card.get("location"),
+            tags=card.get("tags") or [],
+            recruiter_name=card.get("recruiter_name"),
+        )
+
+        profile_obj: StructuredCandidateProfile | None = None
+        if isinstance(candidate_profile, StructuredCandidateProfile):
+            profile_obj = candidate_profile
+        elif isinstance(candidate_profile, dict) and candidate_profile:
+            profile_obj = StructuredCandidateProfile.from_dict(candidate_profile)
+
+        return self.matching_service.evaluate_and_draft_greeting(job=posting, profile=profile_obj)
+
+
+def make_greeting_drafter_node(agent: GreetingDrafterAgent):
+    """Factory creating the greeting drafter node bound to an agent instance."""
+
+    def greeting_drafter_node(state: JobApplicationState) -> dict[str, Any]:
+        card = state.get("card") or {}
+        jd_text = state.get("jd_text") or ""
+        profile_dict = state.get("candidate_profile") or {}
+
+        match_res = agent.draft(
+            card=card,
+            jd_text=jd_text,
+            candidate_profile=profile_dict,
+        )
+
+        return {
+            "greeting_message": match_res.greeting_message,
+            "match_score": match_res.match_score,
+            "match_reasons": match_res.match_reasons,
+            "status": "greeting_drafted",
+        }
+
+    return greeting_drafter_node
+
+
 def build_job_application_graph(llm_client: Any | None = None) -> Any:
     """Construct and compile the stateful job screening and application graph."""
     screener_agent = JDSemanticScreenerAgent(llm_client=llm_client)
+    drafter_agent = GreetingDrafterAgent(llm_client=llm_client)
 
     builder = StateGraph(JobApplicationState)
 
@@ -183,6 +244,10 @@ def build_job_application_graph(llm_client: Any | None = None) -> Any:
     builder.add_node(
         "jd_semantic_screener",
         make_jd_semantic_screener_node(screener_agent),
+    )
+    builder.add_node(
+        "greeting_drafter",
+        make_greeting_drafter_node(drafter_agent),
     )
 
     # 2. Edges
@@ -198,16 +263,18 @@ def build_job_application_graph(llm_client: Any | None = None) -> Any:
         },
     )
 
-    # In Ticket 2, 'continue' terminates at END with status 'deep_screen_passed'.
-    # In Ticket 3, 'continue' will route to 'greeting_drafter'.
+    # If semantic screener passes, advance to greeting_drafter; otherwise terminate at END
     builder.add_conditional_edges(
         "jd_semantic_screener",
         should_continue_after_deep_screen,
         {
-            "continue": END,
+            "continue": "greeting_drafter",
             "end": END,
         },
     )
+
+    # From greeting_drafter to END (ready for future Human Gate Checkpoint)
+    builder.add_edge("greeting_drafter", END)
 
     return builder.compile()
 

@@ -28,6 +28,7 @@ from .models import (
 
 with contextlib.suppress(ImportError):
     from .graph import (
+        GreetingDrafterAgent,
         JDSemanticScreenerAgent,
         JobApplicationState,
         build_job_application_graph,
