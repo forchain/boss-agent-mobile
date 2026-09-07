@@ -143,6 +143,76 @@ class FilterConfig:
 
 
 @dataclass
+class ScreeningPolicy:
+    """Policy rules for multi-stage job screening."""
+
+    title_whitelist: list[str] = field(default_factory=list)
+    title_blacklist: list[str] = field(default_factory=list)
+    company_blacklist: list[str] = field(default_factory=list)
+    jd_blacklist: list[str] = field(default_factory=list)
+    enable_screening: bool = True
+
+    def matches_card_keywords(
+        self,
+        title: str,
+        company_name: str = "",
+        tags: list[str] | None = None,
+    ) -> tuple[bool, str]:
+        """Deterministic keyword evaluation for job card.
+
+        Returns (passed: bool, reason: str).
+        """
+        if not self.enable_screening:
+            return True, "筛选策略未启用，默认通过"
+
+        norm_title = (title or "").lower()
+        norm_company = (company_name or "").lower()
+        norm_tags = [t.lower() for t in (tags or [])]
+
+        # 1. Check title blacklist (一票否决)
+        for black in self.title_blacklist:
+            b = black.strip().lower()
+            if b and (b in norm_title or any(b == t for t in norm_tags)):
+                return False, f"命中职位黑名单关键词: '{black}'"
+
+        # 2. Check company blacklist (一票否决)
+        for black in self.company_blacklist:
+            b = black.strip().lower()
+            if b and b in norm_company:
+                return False, f"命中公司黑名单关键词: '{black}'"
+
+        # 3. Check title whitelist (若配置了白名单，必须命中至少一个)
+        active_whitelist = [w.strip().lower() for w in self.title_whitelist if w.strip()]
+        if active_whitelist:
+            hit = any(w in norm_title or any(w in t for t in norm_tags) for w in active_whitelist)
+            if not hit:
+                return False, f"未命中任何职位白名单关键词 (要求: {self.title_whitelist})"
+
+        return True, "通过卡片初筛"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "title_whitelist": self.title_whitelist,
+            "title_blacklist": self.title_blacklist,
+            "company_blacklist": self.company_blacklist,
+            "jd_blacklist": self.jd_blacklist,
+            "enable_screening": self.enable_screening,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> "ScreeningPolicy":
+        if not data or not isinstance(data, dict):
+            return cls()
+        return cls(
+            title_whitelist=list(data.get("title_whitelist") or []),
+            title_blacklist=list(data.get("title_blacklist") or []),
+            company_blacklist=list(data.get("company_blacklist") or []),
+            jd_blacklist=list(data.get("jd_blacklist") or []),
+            enable_screening=bool(data.get("enable_screening", True)),
+        )
+
+
+@dataclass
 class SavedSearch:
     """Represents a named and persistent search & filter query configuration."""
 
@@ -151,6 +221,7 @@ class SavedSearch:
     description: str = ""
     search: SearchConfig = field(default_factory=SearchConfig)
     filter: FilterConfig = field(default_factory=FilterConfig)
+    screening_policy: ScreeningPolicy = field(default_factory=ScreeningPolicy)
     cron_expression: str = ""
     is_enabled: bool = False
     last_run_at: str | None = None
@@ -194,6 +265,7 @@ class SavedSearch:
                 "industries": self.filter.industries,
                 "enable_filter": self.enable_filter,
             },
+            "screening_policy": self.screening_policy.to_dict(),
             "cron_expression": self.cron_expression,
             "is_enabled": self.is_enabled,
             "last_run_at": self.last_run_at,
@@ -249,12 +321,37 @@ class SavedSearch:
             ),
             enable_filter=enable_filter,
         )
+
+        policy_data = data.get("screening_policy", {}) or {}
+        if isinstance(policy_data, str):
+            import json
+
+            try:
+                policy_data = json.loads(policy_data)
+            except Exception:
+                policy_data = {}
+
+        # Allow fallback from top-level keys if screening_policy not nested
+        if not policy_data and any(
+            k in data
+            for k in ("title_whitelist", "title_blacklist", "company_blacklist", "jd_blacklist")
+        ):
+            policy_data = {
+                "title_whitelist": data.get("title_whitelist"),
+                "title_blacklist": data.get("title_blacklist"),
+                "company_blacklist": data.get("company_blacklist"),
+                "jd_blacklist": data.get("jd_blacklist"),
+            }
+
+        screening_policy = ScreeningPolicy.from_dict(policy_data)
+
         return cls(
             id=search_id,
             name=data.get("name", search_id),
             description=data.get("description", ""),
             search=search_cfg,
             filter=filter_cfg,
+            screening_policy=screening_policy,
             cron_expression=data.get("cron_expression", "") or "",
             is_enabled=bool(data.get("is_enabled", False)),
             last_run_at=data.get("last_run_at"),
