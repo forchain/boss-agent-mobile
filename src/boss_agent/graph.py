@@ -39,6 +39,75 @@ class JobApplicationState(TypedDict, total=False):
     error_message: str
 
 
+class JDSemanticScreenerAgent:
+    """Token-optimized LLM agent evaluating JD against blacklist/whitelist constraints without resume."""
+
+    def __init__(self, llm_client: Any | None = None) -> None:
+        self.llm_client = llm_client
+
+    def evaluate(
+        self,
+        jd_text: str,
+        card_title: str = "",
+        company_name: str = "",
+        policy: ScreeningPolicy | None = None,
+    ) -> tuple[bool, str]:
+        """Evaluate JD text against screening policy without loading candidate resume.
+
+        Returns: (passed: bool, reason: str).
+        """
+        if not policy or not policy.enable_screening:
+            return True, "筛选策略未启用"
+
+        if not jd_text or not jd_text.strip():
+            return True, "无详细JD文本，跳过语义精筛"
+
+        blacklist = list(set(policy.jd_blacklist + policy.title_blacklist))
+        whitelist = list(set(policy.title_whitelist))
+
+        if not blacklist and not whitelist:
+            return True, "未配置黑白名单，默认精筛通过"
+
+        system_prompt = (
+            "你是一名严谨的岗位精筛助手。你的唯一任务是依据【筛选准则】，深度阅读招聘岗位详情(JD)，"
+            "判断该岗位是否应当被淘汰。\n"
+            "【筛选准则】：\n"
+            f"- 黑名单关键词(一票否决): {blacklist if blacklist else '无'}\n"
+            f"- 白名单目标关键词: {whitelist if whitelist else '无'}\n\n"
+            "【判决规则】：\n"
+            "1. 若JD正文中明确要求黑名单中的技术栈、工作内容或岗位性质(如明确要求Java开发、微服务架构、销售外包或驻场等)，"
+            "无论岗位标题如何，必须判决 pass: false。\n"
+            "2. 若配置了白名单且JD正文与目标方向完全无关(挂羊头卖狗肉)，判决 pass: false。\n"
+            "3. 岗位未触犯黑名单且核心工作内容符合方向时，判决 pass: true。\n"
+            "4. 严格输出标准 JSON 格式：{\"pass\": true或false, \"reason\": \"50字以内的判定简述\"}。"
+        )
+
+        user_prompt = (
+            f"职位名称: {card_title}\n"
+            f"招聘公司: {company_name}\n"
+            f"岗位描述(JD):\n{jd_text}\n\n"
+            '请严格输出 JSON: {"pass": true/false, "reason": "判定原因"}'
+        )
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+
+        if not self.llm_client:
+            from droid_agent_core.llm import OpenAIChatClient
+
+            self.llm_client = OpenAIChatClient()
+
+        try:
+            res = self.llm_client.chat_completion_json(messages)
+            passed = bool(res.get("pass", True))
+            reason = str(res.get("reason", "精筛完成"))
+            return passed, reason
+        except Exception as e:
+            return True, f"LLM精筛调用异常，降级放行: {e}"
+
+
 def keyword_screener_node(state: JobApplicationState) -> dict[str, Any]:
     """Purely deterministic keyword screener node evaluating job card against policy."""
     card_dict = state.get("card") or {}
@@ -62,6 +131,33 @@ def keyword_screener_node(state: JobApplicationState) -> dict[str, Any]:
     }
 
 
+def make_jd_semantic_screener_node(agent: JDSemanticScreenerAgent):
+    """Factory creating the JD semantic screening node bound to an agent instance."""
+
+    def jd_semantic_screener_node(state: JobApplicationState) -> dict[str, Any]:
+        card = state.get("card") or {}
+        policy_dict = state.get("screening_policy") or {}
+        policy = ScreeningPolicy.from_dict(policy_dict)
+        jd_text = state.get("jd_text") or ""
+        title = card.get("title", "")
+        company = card.get("company_name", "")
+
+        passed, reason = agent.evaluate(
+            jd_text=jd_text,
+            card_title=title,
+            company_name=company,
+            policy=policy,
+        )
+
+        return {
+            "deep_screen_pass": passed,
+            "deep_screen_reason": reason,
+            "status": "deep_screen_passed" if passed else "filtered_by_deep_screener",
+        }
+
+    return jd_semantic_screener_node
+
+
 def should_continue_after_keyword(state: JobApplicationState) -> str:
     """Conditional edge router after keyword screener."""
     if state.get("keyword_pass", False):
@@ -69,21 +165,44 @@ def should_continue_after_keyword(state: JobApplicationState) -> str:
     return "end"
 
 
+def should_continue_after_deep_screen(state: JobApplicationState) -> str:
+    """Conditional edge router after JD semantic screener."""
+    if state.get("deep_screen_pass", False):
+        return "continue"
+    return "end"
+
+
 def build_job_application_graph(llm_client: Any | None = None) -> Any:
     """Construct and compile the stateful job screening and application graph."""
+    screener_agent = JDSemanticScreenerAgent(llm_client=llm_client)
+
     builder = StateGraph(JobApplicationState)
 
     # 1. Register nodes
     builder.add_node("keyword_screener", keyword_screener_node)
+    builder.add_node(
+        "jd_semantic_screener",
+        make_jd_semantic_screener_node(screener_agent),
+    )
 
     # 2. Edges
     builder.add_edge(START, "keyword_screener")
 
-    # In Ticket 1, 'continue' terminates at END with status 'keyword_passed'.
-    # In Ticket 2, 'continue' will route to 'jd_semantic_screener'.
+    # If keyword screener passes, advance to jd_semantic_screener; otherwise terminate at END
     builder.add_conditional_edges(
         "keyword_screener",
         should_continue_after_keyword,
+        {
+            "continue": "jd_semantic_screener",
+            "end": END,
+        },
+    )
+
+    # In Ticket 2, 'continue' terminates at END with status 'deep_screen_passed'.
+    # In Ticket 3, 'continue' will route to 'greeting_drafter'.
+    builder.add_conditional_edges(
+        "jd_semantic_screener",
+        should_continue_after_deep_screen,
         {
             "continue": END,
             "end": END,
