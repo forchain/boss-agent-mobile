@@ -91,3 +91,23 @@ _Avoid_: resume upload temp, upload record, candidate file
 **Incremental Profile Merge**:
 The LLM-driven structural diffing and human-in-the-loop review workflow that compares a newly uploaded Resume Revision against the existing Candidate Profile, surfacing detected deltas for confirmation before committing to the database.
 _Avoid_: resume overwrite, profile replacement, auto-parse override
+
+**Screening Policy (`ScreeningPolicy`)**:
+The structured configuration encapsulating candidate negative constraints, title whitelists, title blacklists, company blacklists, and JD-level blacklists applied across screening stages.
+_Avoid_: Filter keywords, blacklist config, keyword rules
+
+**Candidate Screener Graph (`JobApplicationState`)**:
+The stateful LangGraph orchestrator governing the complete multi-tier lifecycle from card-level keyword filtering, JD extraction, semantic screening, to targeted greeting generation.
+_Avoid_: Screening pipeline, match chain, agent workflow
+
+**Keyword Screener**:
+The zero-token deterministic gatekeeper node evaluating visible job card metadata (title, tags, company) against the active Screening Policy before triggering expensive mobile navigation.
+_Avoid_: Title filter, card checker, fast screener
+
+**JD Semantic Screener Agent**:
+The token-optimized LLM agent evaluating extracted job descriptions against negative constraints and blacklist criteria without candidate resume overhead.
+_Avoid_: Deep filter, JD checker, prompt screener
+
+**Greeting Drafter Agent**:
+The high-context LLM agent generating anti-template, tailored ice-breaking messages combining full candidate profile highlights with extracted JD pain points.
+_Avoid_: Greeting generator, ice breaker, message writer
