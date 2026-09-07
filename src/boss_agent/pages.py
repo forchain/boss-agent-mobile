@@ -311,14 +311,12 @@ class JobListPage(BaseBossPage):
             snippet = ""
 
             sub_texts: list[str] = []
-            try:
+            with contextlib.suppress(Exception):
                 sub_texts = [
                     e.text.strip()
                     for e in card_elem.find_elements(by="xpath", value=".//*[@text]")
                     if getattr(e, "text", None) and e.text.strip()
                 ]
-            except Exception:
-                pass
 
             if not sub_texts:
                 raw_text = getattr(card_elem, "text", "") or ""

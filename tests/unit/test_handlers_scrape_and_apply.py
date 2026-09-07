@@ -262,4 +262,3 @@ async def test_scrape_jobs_handler_applies_filters(broker, mock_driver):
     assert finished_task is not None
     assert finished_task.status == TaskStatus.SUCCESS
     assert any("filter" in log.lower() for log in finished_task.logs)
-

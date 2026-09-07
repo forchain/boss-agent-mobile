@@ -25,7 +25,9 @@ def test_worktree_manager_resolve_paths(tmp_path):
 
     manager = GitWorktreeManager(cwd=str(main_repo))
     with patch.object(manager, "_run_git") as mock_git:
-        mock_git.return_value = MagicMock(returncode=0, stdout=str(main_repo / ".git") + "\n", stderr="")
+        mock_git.return_value = MagicMock(
+            returncode=0, stdout=str(main_repo / ".git") + "\n", stderr=""
+        )
         root = manager.get_main_repo_root()
         assert root == main_repo.resolve()
 
@@ -37,6 +39,7 @@ def test_worktree_manager_resolve_paths_fallback_show_toplevel(tmp_path):
 
     manager = GitWorktreeManager(cwd=str(main_repo))
     with patch.object(manager, "_run_git") as mock_git:
+
         def mock_side_effect(args, **kwargs):
             if "--git-common-dir" in args:
                 return MagicMock(returncode=1, stdout="", stderr="error")
@@ -76,6 +79,7 @@ def test_worktree_manager_sync_main_fast_forward(tmp_path):
     """Test fetch and update main branch with fast forward."""
     manager = GitWorktreeManager(cwd=str(tmp_path))
     with patch.object(manager, "_run_git") as mock_git:
+
         def mock_git_side_effect(args, **kwargs):
             if "remote" in args:
                 return MagicMock(returncode=0, stdout="origin\n", stderr="")
@@ -111,6 +115,7 @@ def test_worktree_manager_create_worktree_new_branch(tmp_path):
     target = tmp_path / "target_wt"
 
     with patch.object(manager, "_run_git") as mock_git:
+
         def mock_git_side_effect(args, **kwargs):
             if "branch" in args and "--list" in args:
                 return MagicMock(returncode=0, stdout="", stderr="")  # branch does not exist
@@ -134,6 +139,7 @@ def test_worktree_manager_create_worktree_existing_branch(tmp_path):
     target = tmp_path / "target_wt"
 
     with patch.object(manager, "_run_git") as mock_git:
+
         def mock_git_side_effect(args, **kwargs):
             if "branch" in args and "--list" in args:
                 return MagicMock(returncode=0, stdout="feat/existing-branch\n", stderr="")
@@ -166,6 +172,7 @@ def test_worktree_manager_update_existing_worktree(tmp_path):
 
     manager = GitWorktreeManager(cwd=str(tmp_path))
     with patch.object(manager, "_run_git") as mock_git:
+
         def mock_git_side_effect(args, **kwargs):
             if "branch" in args and "--show-current" in args:
                 return MagicMock(returncode=0, stdout="feat/existing\n", stderr="")
@@ -226,13 +233,16 @@ def test_worktree_manager_rebase_conflict_abort(tmp_path):
 
     manager = GitWorktreeManager(cwd=str(tmp_path))
     with patch.object(manager, "_run_git") as mock_git:
+
         def mock_git_side_effect(args, **kwargs):
             if "branch" in args and "--show-current" in args:
                 return MagicMock(returncode=0, stdout="feat/conflict\n", stderr="")
             if "merge-base" in args and "--is-ancestor" in args:
                 return MagicMock(returncode=1, stdout="", stderr="")
             if "rebase" in args and "--abort" not in args:
-                return MagicMock(returncode=1, stdout="", stderr="CONFLICT (content): Merge conflict")
+                return MagicMock(
+                    returncode=1, stdout="", stderr="CONFLICT (content): Merge conflict"
+                )
             return MagicMock(returncode=0, stdout="", stderr="")
 
         mock_git.side_effect = mock_git_side_effect
@@ -391,9 +401,17 @@ def test_init_worktree_default_current_worktree(tmp_path):
     (main_repo / "config" / "settings.local.yaml").write_text("k: v")
 
     with (
-        patch("scripts.init_worktree.GitWorktreeManager.get_main_repo_root", return_value=main_repo),
-        patch("scripts.init_worktree.GitWorktreeManager.get_current_branch", return_value="feat/current"),
-        patch("scripts.init_worktree.GitWorktreeManager.sync_main_branch", return_value="main_commit_123"),
+        patch(
+            "scripts.init_worktree.GitWorktreeManager.get_main_repo_root", return_value=main_repo
+        ),
+        patch(
+            "scripts.init_worktree.GitWorktreeManager.get_current_branch",
+            return_value="feat/current",
+        ),
+        patch(
+            "scripts.init_worktree.GitWorktreeManager.sync_main_branch",
+            return_value="main_commit_123",
+        ),
         patch("scripts.init_worktree.GitWorktreeManager._run_git") as mock_git,
     ):
         def mock_git_side_effect(args, **kwargs):

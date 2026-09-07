@@ -80,3 +80,14 @@ _Avoid_: Search rule, search YAML, query profile
 The background Cron evaluation engine that monitors active SavedSearches, detects scheduling matches, and dispatches automation tasks into the State Stream Broker.
 _Avoid_: Crontab daemon, task timer, periodic runner
 
+**Candidate Profile (`candidate_profiles`)**:
+The single source of truth structured candidate persona stored in PocketBase, encapsulating full unabbreviated work experiences, detailed project accomplishments, deep skill taxonomies, target preferences, and ground truth raw resume context.
+_Avoid_: candidate_memory.json, candidate config, memory cache
+
+**Resume Revision (`resume_revisions`)**:
+The append-only versioned history entity in PocketBase tracking each uploaded resume file, timestamp, file metadata, extracted raw text, and incremental diff changelog against the active Candidate Profile.
+_Avoid_: resume upload temp, upload record, candidate file
+
+**Incremental Profile Merge**:
+The LLM-driven structural diffing and human-in-the-loop review workflow that compares a newly uploaded Resume Revision against the existing Candidate Profile, surfacing detected deltas for confirmation before committing to the database.
+_Avoid_: resume overwrite, profile replacement, auto-parse override

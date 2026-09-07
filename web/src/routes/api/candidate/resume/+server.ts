@@ -9,7 +9,7 @@ export const POST: RequestHandler = async ({ request }) => {
 	let tempFilePath: string | null = null;
 	try {
 		const formData = await request.formData();
-		const file = formData.get('file') as File | null;
+		const file = (formData.get('file') || formData.get('resume')) as File | null;
 		const llmSettingsStr = (formData.get('llmSettings') as string) || '';
 
 		if (!file) {

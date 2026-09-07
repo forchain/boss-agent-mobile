@@ -13,6 +13,7 @@ from boss_agent.broker.models import (
 from boss_agent.broker.pocketbase_adapter import (
     BaseTaskBroker,
     InMemoryTaskBroker,
+    PocketBaseBroker,
     PocketBaseTaskBroker,
 )
 from boss_agent.broker.sweeper import TaskLeaseSweeper
@@ -22,6 +23,7 @@ __all__ = [
     "BaseTaskBroker",
     "InMemoryTaskBroker",
     "POCKETBASE_AUTOMATION_TASKS_SCHEMA",
+    "PocketBaseBroker",
     "PocketBaseTaskBroker",
     "TaskLeaseSweeper",
     "TaskStatus",

@@ -5,6 +5,7 @@ Unit tests for JobRecord model, fingerprint computation, deduplication, and brok
 """
 
 import pytest
+
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
 from boss_agent.models import compute_job_fingerprint
 
@@ -108,6 +109,7 @@ async def test_in_memory_broker_list_unmatched():
 async def test_pocketbase_broker_job_records_mocked(monkeypatch):
     """Test PocketBaseTaskBroker job records methods with mocked HTTP session."""
     from unittest.mock import MagicMock
+
     from boss_agent.broker.pocketbase_adapter import PocketBaseTaskBroker
 
     mock_session = MagicMock()
@@ -139,6 +141,7 @@ async def test_pocketbase_broker_job_records_mocked(monkeypatch):
 async def test_pocketbase_broker_job_records_fallback_on_404(tmp_path, monkeypatch):
     """When PocketBase returns 404 (missing collection), broker saves to and reads from local fallback."""
     from unittest.mock import MagicMock
+
     from boss_agent.broker.pocketbase_adapter import PocketBaseTaskBroker
 
     # Patch working directory / fallback file to tmp_path

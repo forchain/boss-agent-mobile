@@ -7,7 +7,6 @@ CLI entrypoint to evaluate job-candidate fit and generate customized greeting me
 
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -16,10 +15,10 @@ root_dir = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(root_dir))
 sys.path.insert(0, str(root_dir / "src"))
 
-from boss_agent.matching import JobMatchGreetingService
-from boss_agent.memory import StructuredCandidateProfile
-from boss_agent.models import JobPosting
-from droid_agent_core.llm import LLMConfig, OpenAIChatClient
+from boss_agent.matching import JobMatchGreetingService  # noqa: E402
+from boss_agent.memory import StructuredCandidateProfile  # noqa: E402
+from boss_agent.models import JobPosting  # noqa: E402
+from droid_agent_core.llm import LLMConfig, OpenAIChatClient  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -43,10 +42,9 @@ def build_llm_client(llm_config_arg: str | None) -> OpenAIChatClient:
                 default_cfg = LLMConfig.from_env_or_file()
                 if not api_key:
                     api_key = default_cfg.api_key
-                if not base_url or base_url == "https://api.openai.com/v1":
-                    if not config_data.get("api_key"):
-                        base_url = default_cfg.base_url
-                        model = default_cfg.model
+                if (not base_url or base_url == "https://api.openai.com/v1") and not config_data.get("api_key"):
+                    base_url = default_cfg.base_url
+                    model = default_cfg.model
 
                 llm_cfg = LLMConfig(
                     provider=config_data.get("provider", default_cfg.provider),

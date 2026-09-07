@@ -43,4 +43,3 @@ enable_greeting: false
     assert settings["force_refresh_memory"] is True
     assert settings["preview_timeout_sec"] == 10.0
     assert settings["enable_greeting"] is False
-

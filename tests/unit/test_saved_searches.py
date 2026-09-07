@@ -1,6 +1,5 @@
 """Unit tests for SavedSearch, SavedSearchRegistry, and SmokeHarness integration."""
 
-from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -138,7 +137,6 @@ def test_saved_search_registry_load_pocketbase():
         assert s.filter.education == "硕士"
         assert s.is_enabled is True
         assert s.cron_expression == "0 9 * * *"
-
 
 
 def test_smoke_harness_with_saved_search_id():

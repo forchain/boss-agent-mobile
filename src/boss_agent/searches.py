@@ -33,7 +33,9 @@ class SavedSearchRegistry:
 
         if not loaded_from_db:
             # Populate with defaults in memory
-            defaults = initial_searches if initial_searches is not None else DEFAULT_INITIAL_SEARCHES
+            defaults = (
+                initial_searches if initial_searches is not None else DEFAULT_INITIAL_SEARCHES
+            )
             self.load_from_dict(defaults)
 
     def load_from_pocketbase(self, pb_url: str | None = None) -> bool:

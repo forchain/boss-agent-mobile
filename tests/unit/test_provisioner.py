@@ -113,7 +113,9 @@ def test_provision_sqlite_database_seeds_saved_searches(tmp_path: Path):
     # Verify seeded row in saved_searches
     conn = sqlite3.connect(str(db_file))
     cursor = conn.cursor()
-    cursor.execute("SELECT id, name, keyword, enable_search, enable_filter, filter FROM saved_searches WHERE id = 'test_search_1'")
+    cursor.execute(
+        "SELECT id, name, keyword, enable_search, enable_filter, filter FROM saved_searches WHERE id = 'test_search_1'"
+    )
     row = cursor.fetchone()
     conn.close()
 
@@ -124,6 +126,7 @@ def test_provision_sqlite_database_seeds_saved_searches(tmp_path: Path):
     assert row[3] == 1
     assert row[4] == 0
     import json
+
     filter_data = json.loads(row[5])
     assert filter_data["education"] == "本科"
     assert filter_data["industries"] == ["人工智能"]
@@ -160,7 +163,9 @@ def test_provision_sqlite_database_migrates_existing_table(tmp_path: Path):
             filter JSON
         )
     """)
-    cursor.execute("INSERT INTO _collections (id, name, fields) VALUES ('pbc_saved_searches', 'saved_searches', '[]')")
+    cursor.execute(
+        "INSERT INTO _collections (id, name, fields) VALUES ('pbc_saved_searches', 'saved_searches', '[]')"
+    )
     conn.commit()
     conn.close()
 
@@ -232,6 +237,7 @@ def test_provision_remote_pocketbase_mock():
             if "api/collections" in str(call.args) and call.kwargs.get("json", {}).get("name")
         ]
         assert "job_records" in posted_collections
+        assert "resume_revisions" in posted_collections
 
 
 def test_provision_sqlite_database_offline_structure(tmp_path: Path):
@@ -263,5 +269,5 @@ def test_provision_sqlite_database_offline_structure(tmp_path: Path):
         assert "candidate_profiles" in col_names
         assert "job_records" in col_names
         assert "saved_searches" in col_names
-
+        assert "resume_revisions" in col_names
 

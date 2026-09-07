@@ -19,7 +19,6 @@ from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.handlers.base import BaseTaskHandler, HandlerResult
 
 
-
 class AutoApplyHandler(BaseTaskHandler):
     """Executes end-to-end matching and automated greeting application."""
 
@@ -85,7 +84,10 @@ class AutoApplyHandler(BaseTaskHandler):
             search_page.search(keyword)
             await broker.append_log(task.id, f"Navigated to search results for '{keyword}'")
         elif not enable_search:
-            await broker.append_log(task.id, "enable_search is False; browsing home recommendations without search keyword")
+            await broker.append_log(
+                task.id,
+                "enable_search is False; browsing home recommendations without search keyword",
+            )
 
         enable_filter = bool(payload.get("enable_filter", True))
         filter_raw = payload.get("filter")
@@ -101,7 +103,9 @@ class AutoApplyHandler(BaseTaskHandler):
             )
             if filter_cfg.has_industry_filters:
                 industry_page = IndustryFilterDialogPage(driver)
-                await broker.append_log(task.id, f"Applying industry filter: {filter_cfg.industries}")
+                await broker.append_log(
+                    task.id, f"Applying industry filter: {filter_cfg.industries}"
+                )
                 try:
                     industry_page.apply_industry_filters(filter_cfg.industries, timeout_sec=5.0)
                 except Exception as ex:

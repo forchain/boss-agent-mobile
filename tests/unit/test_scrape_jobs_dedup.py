@@ -4,11 +4,13 @@ tests/unit/test_scrape_jobs_dedup.py
 Unit tests for card-level fingerprint extraction and deduplication skip in ScrapeJobsHandler.
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
+
 import pytest
+
 from boss_agent.broker.models import AutomationTask, TaskType
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
-from boss_agent.models import compute_job_fingerprint, JobPosting
+from boss_agent.models import JobPosting, compute_job_fingerprint
 from boss_agent.pages import JobCardBrief
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.handlers.scrape_jobs import ScrapeJobsHandler

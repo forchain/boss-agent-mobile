@@ -162,12 +162,27 @@ POCKETBASE_CANDIDATE_PROFILES_SCHEMA = {
             "required": False,
         },
         {
+            "name": "work_experiences",
+            "type": "json",
+            "required": False,
+        },
+        {
+            "name": "projects",
+            "type": "json",
+            "required": False,
+        },
+        {
             "name": "target_positions",
             "type": "json",
             "required": False,
         },
         {
             "name": "raw_summary",
+            "type": "text",
+            "required": False,
+        },
+        {
+            "name": "raw_resume_text",
             "type": "text",
             "required": False,
         },
@@ -184,5 +199,62 @@ POCKETBASE_CANDIDATE_PROFILES_SCHEMA = {
     ],
     "indexes": [
         "CREATE UNIQUE INDEX idx_candidate_user_id ON candidate_profiles (user_id)",
+    ],
+}
+
+
+POCKETBASE_RESUME_REVISIONS_SCHEMA = {
+    "name": "resume_revisions",
+    "type": "base",
+    "fields": [
+        {
+            "name": "id",
+            "type": "text",
+            "primaryKey": True,
+            "required": True,
+        },
+        {
+            "name": "user_id",
+            "type": "text",
+            "required": True,
+        },
+        {
+            "name": "file_name",
+            "type": "text",
+            "required": True,
+        },
+        {
+            "name": "file_type",
+            "type": "text",
+            "required": False,
+        },
+        {
+            "name": "file_size",
+            "type": "number",
+            "required": False,
+        },
+        {
+            "name": "extracted_text",
+            "type": "text",
+            "required": False,
+        },
+        {
+            "name": "diff_summary",
+            "type": "text",
+            "required": False,
+        },
+        {
+            "name": "created",
+            "type": "date",
+            "required": False,
+        },
+        {
+            "name": "updated",
+            "type": "date",
+            "required": False,
+        },
+    ],
+    "indexes": [
+        "CREATE INDEX idx_revisions_user_created ON resume_revisions (user_id, created)",
     ],
 }

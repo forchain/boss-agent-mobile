@@ -1,5 +1,5 @@
 import PocketBase from 'pocketbase';
-import type { AutomationTask, CandidateProfile, JobRecord, LLMSettings, SavedSearch } from './types';
+import type { AutomationTask, CandidateProfile, JobRecord, LLMSettings, ResumeRevision, SavedSearch } from './types';
 
 let currentPbUrl = '';
 
@@ -68,15 +68,18 @@ export async function getCandidateProfile(userId = 'default'): Promise<Candidate
 				years_of_experience: record.years_of_experience ?? null,
 				education: record.education || [],
 				core_skills: record.core_skills || [],
+				work_experiences: record.work_experiences || [],
+				projects: record.projects || [],
 				project_highlights: record.project_highlights || [],
 				target_positions: record.target_positions || [],
-				raw_summary: record.raw_summary || ''
+				raw_summary: record.raw_summary || '',
+				raw_resume_text: record.raw_resume_text || ''
 			};
 			localCandidateMemoryMap[userId] = loadedProfile;
 			return loadedProfile;
 		}
 	} catch (err) {
-		// Fallback to local memory if present
+		// Fallback to in-memory cache if offline
 	}
 	return localCandidateMemoryMap[userId] ? { ...localCandidateMemoryMap[userId] } : null;
 }
@@ -96,9 +99,12 @@ export async function saveCandidateProfile(profile: Partial<CandidateProfile>, u
 		years_of_experience: null,
 		education: [],
 		core_skills: [],
+		work_experiences: [],
+		projects: [],
 		project_highlights: [],
 		target_positions: [],
-		raw_summary: ''
+		raw_summary: '',
+		raw_resume_text: ''
 	};
 
 	const merged: CandidateProfile = {
@@ -108,9 +114,12 @@ export async function saveCandidateProfile(profile: Partial<CandidateProfile>, u
 		years_of_experience: profile.years_of_experience !== undefined ? profile.years_of_experience : existingMem.years_of_experience,
 		education: profile.education ?? existingMem.education ?? [],
 		core_skills: profile.core_skills ?? existingMem.core_skills ?? [],
+		work_experiences: profile.work_experiences ?? existingMem.work_experiences ?? [],
+		projects: profile.projects ?? existingMem.projects ?? [],
 		project_highlights: profile.project_highlights ?? existingMem.project_highlights ?? [],
 		target_positions: profile.target_positions ?? existingMem.target_positions ?? [],
-		raw_summary: profile.raw_summary !== undefined ? profile.raw_summary : existingMem.raw_summary
+		raw_summary: profile.raw_summary !== undefined ? profile.raw_summary : existingMem.raw_summary,
+		raw_resume_text: profile.raw_resume_text !== undefined ? profile.raw_resume_text : existingMem.raw_resume_text
 	};
 
 	localCandidateMemoryMap[userId] = merged;
@@ -123,9 +132,12 @@ export async function saveCandidateProfile(profile: Partial<CandidateProfile>, u
 			years_of_experience: merged.years_of_experience,
 			education: merged.education,
 			core_skills: merged.core_skills,
+			work_experiences: merged.work_experiences,
+			projects: merged.projects,
 			project_highlights: merged.project_highlights,
 			target_positions: merged.target_positions,
-			raw_summary: merged.raw_summary
+			raw_summary: merged.raw_summary,
+			raw_resume_text: merged.raw_resume_text
 		};
 
 		if (existing) {
@@ -136,8 +148,68 @@ export async function saveCandidateProfile(profile: Partial<CandidateProfile>, u
 			return { id: created.id, ...data };
 		}
 	} catch (err) {
-		console.warn('PocketBase save failed, stored in memory cache:', err);
-		return { ...merged };
+		console.warn('PocketBase save failed, stored in local memory fallback:', err);
+		return merged;
+	}
+}
+
+export async function listResumeRevisions(userId = 'default'): Promise<ResumeRevision[]> {
+	try {
+		const records = await pb.collection('resume_revisions').getFullList({
+			filter: `user_id='${userId}'`,
+			sort: '-created'
+		});
+		return records.map(r => ({
+			id: r.id,
+			user_id: r.user_id,
+			file_name: r.file_name,
+			file_type: r.file_type || '',
+			file_size: r.file_size || 0,
+			extracted_text: r.extracted_text || '',
+			diff_summary: r.diff_summary || '',
+			created: r.created,
+			updated: r.updated
+		}));
+	} catch (err) {
+		console.warn('Failed to list resume revisions from PocketBase:', err);
+		return [];
+	}
+}
+
+export async function createResumeRevision(
+	rev: Partial<ResumeRevision>,
+	userId = 'default'
+): Promise<ResumeRevision> {
+	const newId = generatePbId();
+	const data = {
+		id: newId,
+		user_id: userId,
+		file_name: rev.file_name || 'resume.txt',
+		file_type: rev.file_type || 'txt',
+		file_size: rev.file_size || 0,
+		extracted_text: rev.extracted_text || '',
+		diff_summary: rev.diff_summary || ''
+	};
+	try {
+		const created = await pb.collection('resume_revisions').create(data);
+		return {
+			id: created.id,
+			user_id: created.user_id,
+			file_name: created.file_name,
+			file_type: created.file_type,
+			file_size: created.file_size,
+			extracted_text: created.extracted_text,
+			diff_summary: created.diff_summary,
+			created: created.created,
+			updated: created.updated
+		};
+	} catch (err) {
+		console.warn('Failed to save resume revision to PocketBase:', err);
+		return {
+			...data,
+			created: new Date().toISOString(),
+			updated: new Date().toISOString()
+		};
 	}
 }
 

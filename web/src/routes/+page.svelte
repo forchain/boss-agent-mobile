@@ -18,6 +18,8 @@
 		education: [],
 		core_skills: [],
 		project_highlights: [],
+		work_experiences: [],
+		projects: [],
 		target_positions: [],
 		raw_summary: ''
 	});
@@ -65,8 +67,11 @@
 			education: p.education || [],
 			core_skills: p.core_skills || [],
 			project_highlights: p.project_highlights || [],
+			work_experiences: p.work_experiences || [],
+			projects: p.projects || [],
 			target_positions: p.target_positions || [],
-			raw_summary: p.raw_summary || ''
+			raw_summary: p.raw_summary || '',
+			raw_resume_text: p.raw_resume_text || ''
 		};
 		skillsInput = (p.core_skills || []).join(', ');
 		positionsInput = (p.target_positions || []).join(', ');
@@ -301,151 +306,80 @@
 	<div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
 		<!-- Left Column: Candidate Studio & LLM Config (5 Cols) -->
 		<div class="lg:col-span-5 space-y-8">
-			<!-- Candidate Profile Studio Card -->
-			<div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-5">
-				<div class="flex items-center justify-between border-b border-slate-800/80 pb-4">
+			<!-- Candidate Profile Readiness Status Card -->
+			<div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
+				<div class="flex items-center justify-between border-b border-slate-800/80 pb-3">
 					<div class="flex items-center space-x-2">
 						<span class="text-xl">👤</span>
-						<h2 class="font-semibold text-sm text-slate-100">求职者画像与结构化记忆</h2>
+						<h2 class="font-semibold text-sm text-slate-100">求职者画像与记忆就绪状态</h2>
 					</div>
-					<span class="text-[10px] px-2 py-0.5 rounded bg-cyan-950 text-cyan-400 border border-cyan-800 font-mono">
-						PocketBase Synced
-					</span>
-				</div>
-
-				<!-- Resume Dropzone -->
-				<div>
-					<label class="block text-xs font-medium text-slate-400 mb-2">
-						上传最新简历 (PDF / Docx / TXT / MD)
-					</label>
-					<div
-						class="border-2 border-dashed rounded-xl p-5 text-center cursor-pointer transition relative overflow-hidden group {isDraggingOver ? 'border-cyan-400 bg-cyan-950/40 shadow-lg shadow-cyan-900/30' : 'border-slate-700 hover:border-cyan-500 bg-slate-950/70'}"
-						role="button"
-						tabindex="0"
-						onclick={() => fileInputRef?.click()}
-						onkeydown={(e) => {
-							if (e.key === 'Enter' || e.key === ' ') {
-								e.preventDefault();
-								fileInputRef?.click();
-							}
-						}}
-						ondragover={(e) => {
-							e.preventDefault();
-							isDraggingOver = true;
-						}}
-						ondragleave={() => {
-							isDraggingOver = false;
-						}}
-						ondrop={(e) => {
-							e.preventDefault();
-							isDraggingOver = false;
-							const file = e.dataTransfer?.files?.[0];
-							if (file) handleResumeUpload(file);
-						}}
+					<a
+						href="/profile"
+						class="text-xs text-cyan-400 hover:text-cyan-300 font-medium flex items-center gap-1 transition"
 					>
-						<input
-							bind:this={fileInputRef}
-							type="file"
-							accept=".pdf,.docx,.doc,.txt,.md,.json"
-							class="hidden"
-							onchange={(e) => {
-								const file = e.currentTarget.files?.[0];
-								if (file) handleResumeUpload(file);
-							}}
-						/>
-						<div class="space-y-1.5 pointer-events-none">
-							<div class="text-3xl group-hover:scale-110 transition-transform">
-								{isUploadingResume ? '🌀' : '📄'}
-							</div>
-							<p class="text-xs text-slate-300 font-medium">
-								{isUploadingResume ? `正在解析 ${uploadedFileName}...` : isDraggingOver ? '松开鼠标立即上传解析' : '点击或拖拽简历文件至此'}
-							</p>
-							<p class="text-[11px] text-slate-500">支持 PDF / Docx / TXT / MD，大模型将自动提取并更新求职者画像</p>
-						</div>
-					</div>
-					{#if isUploadingResume || uploadStatusText}
-						<div class="mt-2 text-xs font-medium text-cyan-400 flex items-center space-x-2">
-							{#if isUploadingResume}
-								<span class="animate-spin">🌀</span>
-							{/if}
-							<span>{uploadStatusText}</span>
-						</div>
-					{/if}
+						管理详细履历与历史 ↗
+					</a>
 				</div>
 
-				<!-- Candidate Form -->
-				<form
-					class="space-y-4"
-					onsubmit={(e) => {
-						e.preventDefault();
-						onSaveProfile();
-					}}
-				>
-					<div class="grid grid-cols-2 gap-4">
-						<div>
-							<label class="block text-xs font-medium text-slate-400 mb-1">姓名</label>
-							<input
-								type="text"
-								bind:value={profile.name}
-								placeholder="如：求职者 / 张三"
-								class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-cyan-500 transition-colors"
-							/>
+				{#if profile.name}
+					<div class="p-4 rounded-xl bg-slate-950/70 border border-slate-800 space-y-3">
+						<div class="flex items-center justify-between">
+							<div class="flex items-center space-x-3">
+								<div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-600 to-blue-600 flex items-center justify-center font-bold text-white text-base shadow">
+									{profile.name.slice(0, 1)}
+								</div>
+								<div>
+									<h3 class="text-sm font-bold text-white flex items-center gap-2">
+										{profile.name}
+										<span class="text-xs text-slate-400 font-normal">({profile.years_of_experience || 0}年经验)</span>
+									</h3>
+									<p class="text-xs text-slate-400 mt-0.5">
+										{profile.target_positions?.join(' / ') || '未设定期望职位'}
+									</p>
+								</div>
+							</div>
+							<span class="px-2.5 py-1 rounded-full text-[11px] font-medium bg-emerald-950 text-emerald-400 border border-emerald-800/80 flex items-center gap-1">
+								<span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span> 就绪
+							</span>
 						</div>
-						<div>
-							<label class="block text-xs font-medium text-slate-400 mb-1">工作年限 (年)</label>
-							<input
-								type="number"
-								bind:value={profile.years_of_experience}
-								placeholder="如：5"
-								class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-cyan-500 transition-colors"
-							/>
+
+						<div class="grid grid-cols-2 gap-2 text-xs pt-1">
+							<div class="p-2.5 rounded-lg bg-slate-900/80 border border-slate-800/60">
+								<span class="text-slate-500 text-[10px] block">工作经历</span>
+								<span class="font-bold text-white text-xs">{profile.work_experiences?.length || 0} 段全量记录</span>
+							</div>
+							<div class="p-2.5 rounded-lg bg-slate-900/80 border border-slate-800/60">
+								<span class="text-slate-500 text-[10px] block">项目履历</span>
+								<span class="font-bold text-white text-xs">{profile.projects?.length || 0} 个深度项目</span>
+							</div>
 						</div>
-					</div>
 
-					<div>
-						<label class="block text-xs font-medium text-slate-400 mb-1">核心技能标签 (逗号分隔)</label>
-						<input
-							type="text"
-							bind:value={skillsInput}
-							placeholder="如：Python, FastAPI, LLM Agent, Android, TypeScript"
-							class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-cyan-500 transition-colors"
-						/>
-					</div>
-
-					<div>
-						<label class="block text-xs font-medium text-slate-400 mb-1">期望职位 (逗号分隔)</label>
-						<input
-							type="text"
-							bind:value={positionsInput}
-							placeholder="如：AI Agent 架构师, 大模型应用专家"
-							class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-cyan-500 transition-colors"
-						/>
-					</div>
-
-					<div>
-						<label class="block text-xs font-medium text-slate-400 mb-1">背景亮点与概要</label>
-						<textarea
-							rows="3"
-							bind:value={profile.raw_summary}
-							placeholder="如：具备多年大模型 Agent 架构与移动端自动化研发经验，主导核心业务闭环..."
-							class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-cyan-500 custom-scrollbar leading-relaxed transition-colors"
-						></textarea>
-					</div>
-
-					<div class="flex items-center justify-between pt-1">
-						{#if profileSavedSuccess}
-							<span class="text-xs text-emerald-400 font-medium">✅ 画像已保存至 PocketBase</span>
-						{:else}
-							<span></span>
+						{#if profile.core_skills && profile.core_skills.length > 0}
+							<div class="flex flex-wrap gap-1.5 pt-1">
+								{#each profile.core_skills.slice(0, 5) as skill}
+									<span class="px-2 py-0.5 rounded text-[10px] bg-slate-900 text-cyan-300 border border-slate-700/80">
+										{skill}
+									</span>
+								{/each}
+								{#if profile.core_skills.length > 5}
+									<span class="px-1.5 py-0.5 rounded text-[10px] bg-slate-900 text-slate-400">
+										+{profile.core_skills.length - 5}
+									</span>
+								{/if}
+							</div>
 						{/if}
-						<button
-							type="submit"
-							class="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-medium px-4 py-2 rounded-lg text-xs transition shadow"
-						>
-							💾 保存画像修改
-						</button>
 					</div>
-				</form>
+				{:else}
+					<div class="p-4 rounded-xl bg-slate-950/40 border border-dashed border-slate-800 text-center py-6 space-y-2">
+						<p class="text-xs text-slate-400">尚未配置求职者履历画像</p>
+						<a
+							href="/profile"
+							class="inline-block px-3.5 py-1.5 text-xs font-semibold rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white transition"
+						>
+							前往画像中心上传或录入简历
+						</a>
+					</div>
+				{/if}
 			</div>
 
 			<!-- LLM Settings Panel -->

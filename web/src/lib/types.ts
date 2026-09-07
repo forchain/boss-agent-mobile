@@ -2,6 +2,32 @@ export interface EducationItem {
 	school: string;
 	degree: string;
 	major: string;
+	start_date?: string;
+	end_date?: string;
+}
+
+export interface WorkExperienceItem {
+	company: string;
+	role: string;
+	start_date?: string;
+	end_date?: string;
+	department?: string;
+	responsibilities?: string;
+	achievements?: string;
+	tech_stack?: string[];
+	raw_details?: string;
+}
+
+export interface ProjectItem {
+	name: string;
+	role?: string;
+	start_date?: string;
+	end_date?: string;
+	tech_stack?: string[];
+	description: string;
+	responsibilities?: string;
+	achievements?: string;
+	raw_details?: string;
 }
 
 export interface ProjectHighlight {
@@ -16,10 +42,26 @@ export interface CandidateProfile {
 	years_of_experience?: number | null;
 	education: EducationItem[];
 	core_skills: string[];
-	project_highlights: ProjectHighlight[];
+	work_experiences: WorkExperienceItem[];
+	projects: ProjectItem[];
+	project_highlights?: ProjectHighlight[];
 	target_positions: string[];
 	raw_summary: string;
+	raw_resume_text?: string;
 }
+
+export interface ResumeRevision {
+	id: string;
+	user_id: string;
+	file_name: string;
+	file_type: string;
+	file_size: number;
+	extracted_text?: string;
+	diff_summary: string;
+	created: string;
+	updated?: string;
+}
+
 
 export interface LLMSettings {
 	provider: 'openai' | 'minimax' | 'deepseek' | string;

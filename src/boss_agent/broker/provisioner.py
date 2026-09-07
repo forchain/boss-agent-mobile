@@ -26,6 +26,7 @@ from boss_agent.settings import resolve_pocketbase_db_path  # noqa: E402
 
 logger = logging.getLogger("boss_agent.broker.provisioner")
 
+
 AUTOMATION_TASKS_FIELDS = [
     {"name": "id", "type": "text", "primaryKey": True, "required": False},
     {"name": "task_type", "type": "text", "required": True},
@@ -50,8 +51,23 @@ CANDIDATE_PROFILES_FIELDS = [
     {"name": "education", "type": "json", "required": False},
     {"name": "core_skills", "type": "json", "required": False},
     {"name": "project_highlights", "type": "json", "required": False},
+    {"name": "work_experiences", "type": "json", "required": False},
+    {"name": "projects", "type": "json", "required": False},
     {"name": "target_positions", "type": "json", "required": False},
     {"name": "raw_summary", "type": "text", "required": False},
+    {"name": "raw_resume_text", "type": "text", "required": False},
+    {"name": "created", "type": "autodate", "onCreate": True},
+    {"name": "updated", "type": "autodate", "onCreate": True, "onUpdate": True},
+]
+
+RESUME_REVISIONS_FIELDS = [
+    {"name": "id", "type": "text", "primaryKey": True, "required": False},
+    {"name": "user_id", "type": "text", "required": True},
+    {"name": "file_name", "type": "text", "required": True},
+    {"name": "file_type", "type": "text", "required": False},
+    {"name": "file_size", "type": "number", "required": False},
+    {"name": "extracted_text", "type": "text", "required": False},
+    {"name": "diff_summary", "type": "text", "required": False},
     {"name": "created", "type": "autodate", "onCreate": True},
     {"name": "updated", "type": "autodate", "onCreate": True, "onUpdate": True},
 ]
@@ -76,7 +92,6 @@ JOB_RECORDS_FIELDS = [
     {"name": "created", "type": "autodate", "onCreate": True},
     {"name": "updated", "type": "autodate", "onCreate": True, "onUpdate": True},
 ]
-
 SAVED_SEARCHES_FIELDS = [
     {"name": "id", "type": "text", "primaryKey": True, "required": False},
     {"name": "name", "type": "text", "required": True},
@@ -162,8 +177,6 @@ def provision_sqlite_database(
     """
     resolved_path = resolve_pocketbase_db_path(db_path, resolve_common_root=True)
     db_file = Path(resolved_path)
-    db_file.parent.mkdir(parents=True, exist_ok=True)
-
     if not db_file.exists():
         logger.warning("Database file %s does not exist, cannot provision schema", db_file)
         return False
@@ -181,6 +194,7 @@ def provision_sqlite_database(
 
         auto_tasks_json = json.dumps(AUTOMATION_TASKS_FIELDS)
         cand_prof_json = json.dumps(CANDIDATE_PROFILES_FIELDS)
+        res_rev_json = json.dumps(RESUME_REVISIONS_FIELDS)
         job_records_json = json.dumps(JOB_RECORDS_FIELDS)
         saved_searches_json = json.dumps(SAVED_SEARCHES_FIELDS)
 
@@ -239,8 +253,11 @@ def provision_sqlite_database(
                     education JSON,
                     core_skills JSON,
                     project_highlights JSON,
+                    work_experiences JSON,
+                    projects JSON,
                     target_positions JSON,
                     raw_summary TEXT,
+                    raw_resume_text TEXT,
                     created TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%fZ')),
                     updated TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%fZ'))
                 )
@@ -254,6 +271,54 @@ def provision_sqlite_database(
                 WHERE name = 'candidate_profiles'
                 """,
                 (cand_prof_json,),
+            )
+            # Ensure new columns exist on existing candidate_profiles table
+            try:
+                cursor.execute("PRAGMA table_info(candidate_profiles)")
+                cand_cols = {row[1] for row in cursor.fetchall()}
+                for col_name, col_type in [
+                    ("work_experiences", "JSON"),
+                    ("projects", "JSON"),
+                    ("raw_resume_text", "TEXT"),
+                ]:
+                    if col_name not in cand_cols:
+                        cursor.execute(
+                            f"ALTER TABLE candidate_profiles ADD COLUMN {col_name} {col_type}"
+                        )
+            except Exception as e:
+                logger.warning("Failed to migrate candidate_profiles table columns: %s", e)
+
+        if "resume_revisions" not in existing:
+            cursor.execute(
+                """
+                INSERT INTO _collections (id, system, type, name, fields, listRule, viewRule, createRule, updateRule, deleteRule)
+                VALUES ('pbc_res_rev', 0, 'base', 'resume_revisions', ?, '', '', '', '', '')
+                """,
+                (res_rev_json,),
+            )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS resume_revisions (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT,
+                    file_name TEXT,
+                    file_type TEXT,
+                    file_size INTEGER,
+                    extracted_text TEXT,
+                    diff_summary TEXT,
+                    created TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%fZ')),
+                    updated TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%fZ'))
+                )
+                """
+            )
+        else:
+            cursor.execute(
+                """
+                UPDATE _collections
+                SET fields = ?, listRule = '', viewRule = '', createRule = '', updateRule = '', deleteRule = ''
+                WHERE name = 'resume_revisions'
+                """,
+                (res_rev_json,),
             )
 
         if "job_records" not in existing:
@@ -408,7 +473,9 @@ def provision_remote_pocketbase(
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
     except ImportError:
         logger.error("The 'requests' package is required for remote PocketBase provisioning.")
-        print("❌ Error: 'requests' package is required for remote provisioning. Install via: pip install requests")
+        print(
+            "❌ Error: 'requests' package is required for remote provisioning. Install via: pip install requests"
+        )
         return False
     base_url = pb_url.rstrip("/")
     session = requests.Session()
@@ -446,7 +513,9 @@ def provision_remote_pocketbase(
 
     # 2. Fetch existing collections
     try:
-        resp = session.get(f"{base_url}/api/collections", params={"perPage": 200}, timeout=timeout, verify=False)
+        resp = session.get(
+            f"{base_url}/api/collections", params={"perPage": 200}, timeout=timeout, verify=False
+        )
         if not resp.ok:
             logger.error("Failed to list collections: %s", resp.text)
             print(f"❌ Failed to list collections: {resp.text}")
@@ -498,8 +567,29 @@ def provision_remote_pocketbase(
                 {"name": "education", "type": "json", "required": False},
                 {"name": "core_skills", "type": "json", "required": False},
                 {"name": "project_highlights", "type": "json", "required": False},
+                {"name": "work_experiences", "type": "json", "required": False},
+                {"name": "projects", "type": "json", "required": False},
                 {"name": "target_positions", "type": "json", "required": False},
                 {"name": "raw_summary", "type": "text", "required": False},
+                {"name": "raw_resume_text", "type": "text", "required": False},
+            ],
+        },
+        {
+            "id": "pbc_res_rev",
+            "name": "resume_revisions",
+            "type": "base",
+            "listRule": "",
+            "viewRule": "",
+            "createRule": "",
+            "updateRule": "",
+            "deleteRule": "",
+            "fields": [
+                {"name": "user_id", "type": "text", "required": True},
+                {"name": "file_name", "type": "text", "required": True},
+                {"name": "file_type", "type": "text", "required": False},
+                {"name": "file_size", "type": "number", "required": False},
+                {"name": "extracted_text", "type": "text", "required": False},
+                {"name": "diff_summary", "type": "text", "required": False},
             ],
         },
         {
@@ -556,7 +646,9 @@ def provision_remote_pocketbase(
     for col in collections_to_create:
         c_name = col["name"]
         if c_name not in existing_names:
-            create_resp = session.post(f"{base_url}/api/collections", json=col, timeout=timeout, verify=False)
+            create_resp = session.post(
+                f"{base_url}/api/collections", json=col, timeout=timeout, verify=False
+            )
             if create_resp.ok:
                 logger.info("Created collection '%s' via REST API", c_name)
                 print(f"✨ Created collection '{c_name}' successfully")
@@ -610,6 +702,9 @@ def provision_remote_pocketbase(
     return True
 
 
+provision_pocketbase_sqlite = provision_sqlite_database
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="PocketBase Collection and SQLite Provisioner")
     parser.add_argument(
@@ -618,7 +713,9 @@ if __name__ == "__main__":
         default=None,
         help="Path to local data.db SQLite file (defaults to configured pocketbase_db_path)",
     )
-    parser.add_argument("--url", help="Remote PocketBase URL, e.g. https://pocketbase.chainer.tech:4433")
+    parser.add_argument(
+        "--url", help="Remote PocketBase URL, e.g. https://pocketbase.chainer.tech:4433"
+    )
     parser.add_argument("--email", help="Superuser / Admin email")
     parser.add_argument("--password", help="Superuser / Admin password")
 
