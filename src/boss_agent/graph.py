@@ -175,10 +175,15 @@ def should_continue_after_deep_screen(state: JobApplicationState) -> str:
 class GreetingDrafterAgent:
     """Agent generating personalized, anti-template greeting messages fusing full JD and candidate profile."""
 
-    def __init__(self, llm_client: Any | None = None) -> None:
-        from .matching import JobMatchGreetingService
+    def __init__(
+        self, llm_client: Any | None = None, matching_service: Any | None = None
+    ) -> None:
+        if matching_service is not None:
+            self.matching_service = matching_service
+        else:
+            from .matching import JobMatchGreetingService
 
-        self.matching_service = JobMatchGreetingService(llm_client=llm_client)
+            self.matching_service = JobMatchGreetingService(llm_client=llm_client)
 
     def draft(
         self,
@@ -232,10 +237,13 @@ def make_greeting_drafter_node(agent: GreetingDrafterAgent):
     return greeting_drafter_node
 
 
-def build_job_application_graph(llm_client: Any | None = None) -> Any:
+def build_job_application_graph(
+    llm_client: Any | None = None,
+    matching_service: Any | None = None,
+) -> Any:
     """Construct and compile the stateful job screening and application graph."""
     screener_agent = JDSemanticScreenerAgent(llm_client=llm_client)
-    drafter_agent = GreetingDrafterAgent(llm_client=llm_client)
+    drafter_agent = GreetingDrafterAgent(llm_client=llm_client, matching_service=matching_service)
 
     builder = StateGraph(JobApplicationState)
 
@@ -285,11 +293,14 @@ def run_job_application_graph(
     candidate_profile: Any | None = None,
     jd_text: str = "",
     llm_client: Any | None = None,
+    matching_service: Any | None = None,
     graph: Any | None = None,
 ) -> JobApplicationState:
     """Run the job application workflow graph on a single job posting card."""
     if graph is None:
-        graph = build_job_application_graph(llm_client=llm_client)
+        graph = build_job_application_graph(
+            llm_client=llm_client, matching_service=matching_service
+        )
 
     if isinstance(card, JobCardBrief):
         card_dict = {
