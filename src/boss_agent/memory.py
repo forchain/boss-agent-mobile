@@ -31,9 +31,24 @@ class StructuredCandidateProfile:
     target_positions: list[str] = field(default_factory=list)
     raw_summary: str = ""
     raw_resume_text: str = ""
+    profile_document: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        d = asdict(self)
+        doc = (self.profile_document or self.raw_summary or "").strip()
+        d["profile_document"] = doc
+        d["raw_summary"] = doc
+        if d.get("projects") is None:
+            d["projects"] = []
+        if d.get("work_experiences") is None:
+            d["work_experiences"] = []
+        if d.get("project_highlights") is None:
+            d["project_highlights"] = []
+        if d.get("target_positions") is None:
+            d["target_positions"] = []
+        if d.get("core_skills") is None:
+            d["core_skills"] = []
+        return d
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "StructuredCandidateProfile":
@@ -80,6 +95,8 @@ class StructuredCandidateProfile:
                 for p in raw_projects
             ]
 
+        doc = (data.get("profile_document") or data.get("raw_summary") or "").strip()
+
         return cls(
             name=data.get("name") or "求职者",
             years_of_experience=int(data.get("years_of_experience") or 0),
@@ -89,8 +106,9 @@ class StructuredCandidateProfile:
             projects=raw_projects,
             project_highlights=raw_highlights,
             target_positions=data.get("target_positions") or [],
-            raw_summary=data.get("raw_summary") or "",
+            raw_summary=doc,
             raw_resume_text=data.get("raw_resume_text") or "",
+            profile_document=doc,
         )
 
     def format_for_prompt(self) -> str:
@@ -119,7 +137,7 @@ class StructuredCandidateProfile:
             if w.get("raw_details"):
                 details.append(f"  详细履历: {w.get('raw_details')}")
             work_items.append(header + ("\n" + "\n".join(details) if details else ""))
-        work_str = "\n".join(work_items) if work_items else "未注明"
+        work_str = "\n".join(work_items) if work_items else ""
 
         active_projects = self.projects if self.projects else self.project_highlights
         proj_items = []
@@ -144,7 +162,7 @@ class StructuredCandidateProfile:
             if p.get("raw_details"):
                 p_details.append(f"  技术攻坚细节: {p.get('raw_details')}")
             proj_items.append(header + ("\n" + "\n".join(p_details) if p_details else ""))
-        projects_str = "\n".join(proj_items) if proj_items else "未注明"
+        projects_str = "\n".join(proj_items) if proj_items else ""
 
         ground_truth = (
             f"\n\n[原始简历无损语料 (Ground Truth 参考)]\n{self.raw_resume_text.strip()}"
@@ -152,17 +170,29 @@ class StructuredCandidateProfile:
             else ""
         )
 
-        return (
+        parts = []
+        if self.profile_document and ("#" in self.profile_document or len(self.profile_document) > 200):
+            parts.append(
+                f"[候选人结构化全景画像 (Lossless Profile Document)]\n{self.profile_document.strip()}"
+            )
+
+        metadata_block = (
             f"姓名: {self.name}\n"
             f"工作经验: {self.years_of_experience}年\n"
             f"教育背景: {edu_str or '未注明'}\n"
             f"核心技能栈:\n{skills_str}\n"
-            f"期望职位: {targets_str or '未注明'}\n"
-            f"工作经历 (无损完整履历):\n{work_str}\n"
-            f"项目经历 (完整架构与指标):\n{projects_str}\n"
-            f"个人总结与背景优势: {self.raw_summary or '未注明'}"
-            f"{ground_truth}"
+            f"期望职位: {targets_str or '未注明'}"
         )
+        parts.append(metadata_block)
+
+        if work_str:
+            parts.append(f"工作经历 (无损完整履历):\n{work_str}")
+        if projects_str:
+            parts.append(f"项目经历 (完整架构与指标):\n{projects_str}")
+        if not ("#" in self.profile_document or len(self.profile_document) > 200) and self.raw_summary:
+            parts.append(f"个人总结与背景优势: {self.raw_summary}")
+
+        return "\n\n".join(parts) + ground_truth
 
 
 class ResumeTextExtractor:
@@ -226,6 +256,174 @@ class ResumeTextExtractor:
                 f"[yellow]⚠️  python-docx extraction failed ({e}), falling back to text read[/yellow]"
             )
             return self._read_text_file(path)
+
+
+class ProfileNormalizer:
+    """Ensures structured candidate profile data integrity and self-heals missing or null fields."""
+
+    @classmethod
+    def normalize(
+        cls,
+        data: dict[str, Any],
+        raw_text: str = "",
+    ) -> dict[str, Any]:
+        result = dict(data)
+        raw_text_clean = (raw_text or result.get("raw_resume_text") or "").strip()
+
+        # 1. Normalize and guarantee profile_document & raw_summary
+        doc = (result.get("profile_document") or result.get("raw_summary") or "").strip()
+        if (not doc or "#" not in doc) and raw_text_clean:
+            doc = (
+                f"# 候选人全景画像 (Candidate Profile)\n\n"
+                f"## 1. 核心职业定位与背景概览\n{doc or raw_text_clean[:400]}\n\n"
+                f"## 2. 核心技术栈与专业能力矩阵\n- 参见原始简历全文\n\n"
+                f"## 3. 核心主导项目与技术攻坚 (Key Projects & Architecture)\n{raw_text_clean}\n\n"
+                f"## 4. 可量化成果与标志性突破 (Measurable Achievements)\n- 参见经历详情\n\n"
+                f"## 5. 资格认证、语言能力与附加信息\n- 详见原始档案"
+            )
+
+        result["profile_document"] = doc
+        result["raw_summary"] = doc
+        result["raw_resume_text"] = raw_text_clean or result.get("raw_resume_text", "")
+
+        # 2. Self-heal target_positions
+        positions = result.get("target_positions")
+        if not positions or not isinstance(positions, list):
+            positions = []
+            import re
+
+            search_corpus = f"{doc}\n{raw_text_clean}"
+            m = re.search(
+                r"(?:求职意向|期望职位|期望岗位|求职岗位|意向岗位)[:：\s]*([^\n，,；;]+)",
+                search_corpus,
+            )
+            if m:
+                extracted = m.group(1).strip()
+                if extracted and len(extracted) < 30:
+                    positions.append(extracted)
+            if not positions:
+                known_positions = [
+                    "AI Agent 架构师",
+                    "全栈技术专家",
+                    "全栈架构师",
+                    "架构师",
+                    "技术专家",
+                    "算法工程师",
+                    "Android 开发",
+                    "Python 开发",
+                    "前端开发",
+                    "后端开发",
+                    "全栈开发",
+                ]
+                for pos in known_positions:
+                    if pos in search_corpus and pos not in positions:
+                        positions.append(pos)
+        result["target_positions"] = [str(p).strip() for p in positions if str(p).strip()]
+
+        # 3. Self-heal name
+        name = result.get("name") or ""
+        if not name or name in ["求职者", "Candidate", "None"]:
+            import re
+
+            m_name = re.search(r"(?:姓名|Name)[:：\s]*([^\s,，;；]+)", raw_text_clean)
+            if m_name:
+                result["name"] = m_name.group(1).strip()
+            else:
+                first_line = raw_text_clean.split("\n", 1)[0].strip() if raw_text_clean else ""
+                words = first_line.split()
+                if (
+                    words
+                    and 2 <= len(words[0]) <= 4
+                    and not any(
+                        k in words[0] for k in ["简历", "个人", "电话", "邮箱", "求职", "求职者"]
+                    )
+                ):
+                    result["name"] = words[0]
+                else:
+                    result["name"] = name or "求职者"
+        else:
+            result["name"] = name
+
+        # 4. Self-heal years_of_experience
+        exp = result.get("years_of_experience")
+        if exp is None or (isinstance(exp, int) and exp == 0):
+            import re
+
+            m_exp = re.search(
+                r"(?<!\d)([1-9]|[1-4]\d)\s*(?:年|years|yrs)(?:研发经验|工作经验|经验)?",
+                f"{doc}\n{raw_text_clean}",
+                re.IGNORECASE,
+            )
+            if m_exp:
+                result["years_of_experience"] = int(m_exp.group(1))
+            else:
+                result["years_of_experience"] = 0
+        else:
+            try:
+                result["years_of_experience"] = int(exp)
+            except Exception:
+                result["years_of_experience"] = 0
+
+        # 5. Self-heal core_skills if empty
+        skills = result.get("core_skills")
+        if not skills or not isinstance(skills, list):
+            skills = []
+            known_skills = [
+                "Python",
+                "FastAPI",
+                "Django",
+                "Flask",
+                "TypeScript",
+                "JavaScript",
+                "Android",
+                "iOS",
+                "Unity",
+                "Java",
+                "Go",
+                "Golang",
+                "C++",
+                "Rust",
+                "Vue",
+                "React",
+                "Svelte",
+                "Node.js",
+                "Docker",
+                "Kubernetes",
+                "K8s",
+                "LLM",
+                "Agent",
+                "LangChain",
+                "PyTorch",
+                "TensorFlow",
+                "PostgreSQL",
+                "MySQL",
+                "Redis",
+            ]
+            import re
+
+            for s in known_skills:
+                if re.search(rf"\b{re.escape(s)}\b", raw_text_clean, re.IGNORECASE):
+                    skills.append(s)
+            result["core_skills"] = skills
+
+        # 6. Guarantee array fields are lists, never None or null
+        for array_key in [
+            "core_skills",
+            "education",
+            "work_experiences",
+            "projects",
+            "project_highlights",
+        ]:
+            val = result.get(array_key)
+            if val is None:
+                result[array_key] = []
+            elif not isinstance(val, list):
+                if isinstance(val, dict):
+                    result[array_key] = [f"{k}: {v}" for k, v in val.items()]
+                else:
+                    result[array_key] = [val]
+
+        return result
 
 
 class ResumeMemoryManager:
@@ -349,42 +547,47 @@ class ResumeMemoryManager:
             "🧠 [bold cyan]Structuring candidate profile via LLM (unabbreviated)...[/bold cyan]"
         )
         prompt = (
-            "请全面、无损、完整地解析以下求职者原始简历文本，并提取出结构化信息：\n\n"
+            "请全面、深度、无损地解析以下求职者原始简历文本，并以标准严格的 JSON 格式输出：\n\n"
             f"[简历文本内容]\n{raw_text}\n\n"
-            "请严格以标准 JSON 格式输出以下结构。严禁进行摘要删减，必须全量保留所有工作经历与项目履历中的职责、业务场景、技术选型与量化成果：\n"
+            "输出的 JSON 结构规范如下：\n"
             "{\n"
             '  "name": "姓名",\n'
             '  "years_of_experience": 经验年限(整数),\n'
-            '  "education": [{"school": "学校", "degree": "学历", "major": "专业", "start_date": "开始时间", "end_date": "结束时间"}],\n'
+            '  "target_positions": ["期望职位1", "期望职位2"],\n'
             '  "core_skills": ["分类1: 技能列表", "分类2: 技能列表"],\n'
+            '  "profile_document": "详尽完整的 Markdown 格式候选人全景画像文档",\n'
             '  "work_experiences": [\n'
             "    {\n"
-            '      "company": "公司名称",\n'
+            '      "company": "公司名称或组织(若无明确公司可填独立开发/开源/业务线/项目名)",\n'
             '      "role": "职位/角色",\n'
-            '      "start_date": "起止年或年月",\n'
-            '      "end_date": "结束年月或至今",\n'
-            '      "department": "所属部门/业务线",\n'
-            '      "responsibilities": "完整详细的工作职责描述与主导内容",\n'
-            '      "achievements": "核心量化业绩、技术攻坚指标与业务成果",\n'
-            '      "raw_details": "该段经历的完整原文及补充细节"\n'
+            '      "start_date": "起止时间或年份",\n'
+            '      "end_date": "结束时间或至今",\n'
+            '      "responsibilities": "工作职责与攻坚内容",\n'
+            '      "achievements": "量化成果与指标突破"\n'
             "    }\n"
             "  ],\n"
             '  "projects": [\n'
             "    {\n"
             '      "name": "项目名称",\n'
-            '      "role": "担任角色",\n'
-            '      "start_date": "开始时间",\n'
-            '      "end_date": "结束时间",\n'
+            '      "role": "角色",\n'
             '      "tech_stack": ["技术1", "技术2"],\n'
-            '      "description": "完整项目背景、技术架构与负责模块",\n'
-            '      "achievements": "项目可量化成果、指标突破与关键产出",\n'
-            '      "raw_details": "技术攻坚与落地细节"\n'
+            '      "description": "项目背景与架构",\n'
+            '      "achievements": "指标与产出成果"\n'
             "    }\n"
-            "  ],\n"
-            '  "target_positions": ["期望职位1", "期望职位2"],\n'
-            '  "raw_summary": "全面总结的核心个人背景亮点与技术优势概述"\n'
+            "  ]\n"
             "}\n\n"
-            "注意：必须输出标准严格合法的 JSON。所有经历必须完整提取，严禁做概括删减；字符串内严禁未转义的双引号（若需引用请用中文书名号《》或单引号）。"
+            "【profile_document 的 Markdown 章节规范（必须极其详尽，100%保留所有项目、架构、技术栈、量化成果与开源链接，严禁做删减概括）】：\n"
+            "# 候选人全景画像 (Candidate Profile)\n\n"
+            "## 1. 核心职业定位与背景概览\n"
+            "(包含姓名、经验年限、学历背景、求职意向与核心定位优势)\n\n"
+            "## 2. 核心技术栈与专业能力矩阵\n"
+            "(按维度清晰列出 AI Agent/大模型编排、编程语言、后端架构、前端全栈、Web3/量化、云原生与工程化等)\n\n"
+            "## 3. 核心主导项目与技术攻坚 (Key Projects & Architecture)\n"
+            "(逐个详述各项目/经历的业务背景、系统架构设计、负责模块、攻坚难点、量化表现与开源代码仓库链接)\n\n"
+            "## 4. 可量化成果与标志性突破 (Measurable Achievements)\n"
+            "(量化指标突破、业务跃升、日活表现、性能突破、行业或社区影响力)\n\n"
+            "## 5. 资格认证、语言能力与附加信息\n\n"
+            "注意：必须输出标准严格合法的 JSON。所有经历与项目必须在 profile_document 中全量无损展开；字符串内严禁未转义的双引号（若需引用请用中文书名号《》或单引号）。"
         )
         messages = [
             {
@@ -407,7 +610,8 @@ class ResumeMemoryManager:
             extra_payload=extra_payload,
         )
         result_dict["raw_resume_text"] = raw_text
-        profile = StructuredCandidateProfile.from_dict(result_dict)
+        normalized = ProfileNormalizer.normalize(result_dict, raw_text=raw_text)
+        profile = StructuredCandidateProfile.from_dict(normalized)
 
         self.save_memory_profile(profile)
         return profile
