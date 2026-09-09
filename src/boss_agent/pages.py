@@ -306,10 +306,11 @@ class JobListPage(BaseBossPage):
                 else:
                     elems = card_elem.find_elements(by=sel.by.value, value=sel.value)
                 if elems:
-                    txt = getattr(elems[0], "text", None) or ""
-                    txt = txt.strip()
-                    if txt:
-                        return txt
+                    for el in elems:
+                        txt = getattr(el, "text", None) or ""
+                        txt = txt.strip()
+                        if txt and txt not in ("猎", "新", "急", "热", "置顶"):
+                            return txt
             except Exception:
                 continue
         return ""

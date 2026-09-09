@@ -8,7 +8,7 @@ from typing import Any
 
 from boss_agent.broker.models import AutomationTask, TaskType
 from boss_agent.broker.pocketbase_adapter import BaseTaskBroker
-from boss_agent.models import FilterConfig
+from boss_agent.models import FilterConfig, ScreeningPolicy
 from boss_agent.pages import (
     FilterDialogPage,
     IndustryFilterDialogPage,
@@ -106,6 +106,9 @@ class ScrapeJobsHandler(BaseTaskHandler):
         skipped_count = 0
         detail_page = JobDetailPage(driver)
 
+        policy_raw = payload.get("screening_policy")
+        policy = ScreeningPolicy.from_dict(policy_raw) if policy_raw else ScreeningPolicy()
+
         visible_cards = list_page.extract_visible_job_cards(max_cards=max_jobs * 2)
         total_scanned = len(visible_cards)
 
@@ -124,7 +127,40 @@ class ScrapeJobsHandler(BaseTaskHandler):
                     )
                     continue
 
-                # 2. Immediate card-level ingestion: persist visible job card right away
+                digest_text = getattr(card, "digest", "") or getattr(card, "snippet", "") or ""
+                card_tags = getattr(card, "tags", []) or []
+
+                # 2. Card-level preliminary screening (zero-token gatekeeper)
+                passed, reason = policy.matches_card_keywords(
+                    title=card.title,
+                    company_name=card.company_name,
+                    tags=card_tags,
+                    digest=digest_text,
+                )
+                if not passed:
+                    skipped_count += 1
+                    ignored_record = {
+                        "fingerprint": card.fingerprint,
+                        "title": card.title,
+                        "company_name": card.company_name,
+                        "recruiter_name": card.recruiter_name,
+                        "salary_range": getattr(card, "salary_range", "") or "",
+                        "location": getattr(card, "location", "") or "",
+                        "digest": digest_text,
+                        "job_description": "",
+                        "jd_key_requirements": card_tags,
+                        "status": "ignored",
+                        "search_keywords": [keyword] if keyword else [],
+                        "source_task_id": task.id,
+                    }
+                    await broker.upsert_job_record(ignored_record)
+                    await broker.append_log(
+                        task.id,
+                        f"⏭️ [初筛淘汰] '{card.title}' @ '{card.company_name}': {reason}",
+                    )
+                    continue
+
+                # 3. Immediate card-level ingestion: persist visible job card with digest
                 card_record = {
                     "fingerprint": card.fingerprint,
                     "title": card.title,
@@ -132,8 +168,9 @@ class ScrapeJobsHandler(BaseTaskHandler):
                     "recruiter_name": card.recruiter_name,
                     "salary_range": getattr(card, "salary_range", "") or "",
                     "location": getattr(card, "location", "") or "",
-                    "job_description": getattr(card, "snippet", "") or "",
-                    "jd_key_requirements": getattr(card, "tags", []) or [],
+                    "digest": digest_text,
+                    "job_description": "",
+                    "jd_key_requirements": card_tags,
                     "status": "unmatched",
                     "search_keywords": [keyword] if keyword else [],
                     "source_task_id": task.id,
@@ -145,7 +182,7 @@ class ScrapeJobsHandler(BaseTaskHandler):
                     f"✅ [Direct Ingestion] Recorded job from search list: '{card.title}' @ '{card.company_name}' ({card_record.get('salary_range', '')})",
                 )
 
-                # 3. Optional detail page inspection to enrich with full JD
+                # 4. Detail page inspection to enrich with full JD
                 await broker.append_log(
                     task.id,
                     f"🔍 [Detail Inspection] Inspecting '{card.title}' @ '{card.company_name}'",
@@ -170,6 +207,7 @@ class ScrapeJobsHandler(BaseTaskHandler):
                             "recruiter_name": card.recruiter_name or job_posting.recruiter_name or "招聘者",
                             "salary_range": job_posting.salary_range or card_record.get("salary_range", ""),
                             "location": job_posting.location or card_record.get("location", ""),
+                            "digest": digest_text,
                             "job_description": job_posting.job_description or card_record.get("job_description", ""),
                             "status": "unmatched",
                             "search_keywords": [keyword] if keyword else [],
