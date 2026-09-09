@@ -344,3 +344,54 @@ def test_sqlite_single_source_roundtrip(tmp_path, monkeypatch):
     assert len(revs) == 1
     assert revs[0]["file_name"] == "resume_2026.md"
     assert revs[0]["diff_summary"] == "+ 新增 2024-2026 后端总监履历"
+
+
+def test_profile_normalizer_self_heals_empty_fields_and_extracts_target():
+    from boss_agent.memory import ProfileNormalizer
+
+    raw_resume = (
+        "周黄金\n"
+        "求职意向：Agent应用工程师，期望城市为上海\n"
+        "20年研发经验\n"
+        "核心技能：LangChain, LangGraph, Python, FastAPI\n"
+        "代表性经历包括主导AI教育应用架构，开发艾小象智能学伴、PopSocial和Merlin Chain。"
+    )
+
+    # Simulating LLM returning empty arrays or None
+    raw_llm_dict = {
+        "name": "周黄金",
+        "years_of_experience": 20,
+        "target_positions": [],
+        "core_skills": ["AI: LangChain", "Python"],
+        "work_experiences": None,
+        "projects": None,
+        "raw_summary": "拥有近20年开发经验，代表性经历包括主导AI教育应用架构...",
+    }
+
+    normalized = ProfileNormalizer.normalize(raw_llm_dict, raw_text=raw_resume)
+
+    assert normalized["name"] == "周黄金"
+    assert normalized["years_of_experience"] == 20
+    assert "Agent应用工程师" in normalized["target_positions"]
+    assert normalized["work_experiences"] == []
+    assert normalized["projects"] == []
+    assert normalized["project_highlights"] == []
+    assert normalized["profile_document"] != ""
+    assert normalized["raw_summary"] == normalized["profile_document"]
+    assert normalized["raw_resume_text"] == raw_resume
+
+    profile = StructuredCandidateProfile.from_dict(normalized)
+    assert profile.name == "周黄金"
+    assert "Agent应用工程师" in profile.target_positions
+    assert profile.projects == []
+    assert profile.work_experiences == []
+
+    d = profile.to_dict()
+    assert d["projects"] == []
+    assert d["work_experiences"] == []
+    assert d["raw_summary"] == profile.profile_document
+
+    prompt_out = profile.format_for_prompt()
+    assert "[候选人结构化全景画像 (Lossless Profile Document)]" in prompt_out
+    assert "Agent应用工程师" in prompt_out
+

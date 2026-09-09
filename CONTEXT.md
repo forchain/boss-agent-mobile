@@ -111,3 +111,16 @@ _Avoid_: Deep filter, JD checker, prompt screener
 **Greeting Drafter Agent**:
 The high-context LLM agent generating anti-template, tailored ice-breaking messages combining full candidate profile highlights with extracted JD pain points.
 _Avoid_: Greeting generator, ice breaker, message writer
+
+**Resume Lifecycle Graph (`ResumeLifecycleState`)**:
+The stateful LangGraph orchestrator governing candidate resume ingestion, text extraction, structured profile document generation, semantic diffing, and database persistence.
+_Avoid_: Resume script, resume pipeline, upload helper
+
+**Structured Profile Document (`profile_document`)**:
+The first-class lossless markdown document representing candidate background, technical taxonomy, key projects, architectures, achievements, and open-source contributions used as ground-truth context for matching and greeting.
+_Avoid_: raw summary string, candidate notes, unstructured bio
+
+**Profile Normalizer**:
+The deterministic self-healing node within the resume lifecycle ensuring core metadata (name, years of experience, target positions, skills) and structured documents are intact and properly formatted without null or missing critical sections.
+_Avoid_: Schema fixer, data cleaner, fallback parser
+
