@@ -313,3 +313,71 @@ def test_full_lifecycle_job_application_graph_with_profile():
     assert mock_llm.chat_completion_json.call_count == 2
 
 
+def test_matches_card_keywords_with_digest_blacklist_rejection():
+    """Card is rejected if jd_blacklist keyword appears in card digest."""
+    policy = ScreeningPolicy(
+        title_whitelist=["开发", "工程师"],
+        jd_blacklist=["驻场", "外包", "兼职"],
+    )
+    passed, reason = policy.matches_card_keywords(
+        title="Python开发工程师",
+        company_name="某信息科技",
+        tags=["Python", "全职"],
+        digest="此职位需长期在银行客户现场驻场办公，负责系统维护",
+    )
+    assert passed is False
+    assert "驻场" in reason
+
+
+def test_matches_card_keywords_with_tags_blacklist_rejection():
+    """Card is rejected if title_blacklist keyword appears in tags."""
+    policy = ScreeningPolicy(
+        title_blacklist=["Java", "C++"],
+    )
+    passed, reason = policy.matches_card_keywords(
+        title="高级后台研发工程师",
+        company_name="某互联网公司",
+        tags=["Java", "SpringCloud", "MySQL"],
+        digest="负责核心微服务系统架构",
+    )
+    assert passed is False
+    assert "Java" in reason
+
+
+def test_matches_card_keywords_with_digest_whitelist_admission():
+    """Generic title passes if whitelist keyword appears in digest."""
+    policy = ScreeningPolicy(
+        title_whitelist=["Agent", "大模型"],
+    )
+    passed, reason = policy.matches_card_keywords(
+        title="技术专家/TL",
+        company_name="某独角兽公司",
+        tags=["Python", "分布式"],
+        digest="负责构建企业级 LLM Agent 协同平台与工作流引擎",
+    )
+    assert passed is True
+    assert "通过卡片初筛" in reason
+
+
+def test_keyword_screener_in_graph_evaluates_digest():
+    """LangGraph keyword_screener node rejects card based on digest and stops graph execution."""
+    policy = ScreeningPolicy(
+        title_whitelist=["Agent"],
+        jd_blacklist=["驻场"],
+    )
+    card = JobCardBrief(
+        title="AI Agent研发专家",
+        company_name="某科技公司",
+        recruiter_name="HR",
+        digest="工作地点在客户现场，需要长期驻场支持",
+    )
+    mock_llm = MagicMock()
+    state = run_job_application_graph(card=card, policy=policy, llm_client=mock_llm)
+    assert state["keyword_pass"] is False
+    assert state["status"] == "filtered_by_keyword"
+    assert "驻场" in state["keyword_reason"]
+    # LLM should never be called when card fails keyword screener
+    mock_llm.chat_completion_json.assert_not_called()
+
+
+

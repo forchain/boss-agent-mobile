@@ -125,11 +125,13 @@ def keyword_screener_node(state: JobApplicationState) -> dict[str, Any]:
     title = card_dict.get("title", "")
     company = card_dict.get("company_name", "")
     tags = card_dict.get("tags") or []
+    digest = card_dict.get("digest") or card_dict.get("snippet", "")
 
     passed, reason = policy.matches_card_keywords(
         title=title,
         company_name=company,
         tags=tags,
+        digest=digest,
     )
 
     return {
@@ -321,7 +323,8 @@ def run_job_application_graph(
             "salary_range": card.salary_range,
             "location": card.location,
             "tags": card.tags,
-            "snippet": card.snippet,
+            "digest": card.digest or card.snippet,
+            "snippet": card.snippet or card.digest,
         }
     else:
         card_dict = dict(card)

@@ -159,9 +159,11 @@ class ScreeningPolicy:
         title: str,
         company_name: str = "",
         tags: list[str] | None = None,
+        digest: str = "",
     ) -> tuple[bool, str]:
         """Deterministic keyword evaluation for job card.
 
+        Evaluates title, company_name, tags, and digest against screening policy.
         Returns (passed: bool, reason: str).
         """
         if not self.enable_screening:
@@ -170,23 +172,33 @@ class ScreeningPolicy:
         norm_title = (title or "").lower()
         norm_company = (company_name or "").lower()
         norm_tags = [t.lower() for t in (tags or [])]
+        norm_digest = (digest or "").lower()
 
-        # 1. Check title blacklist (一票否决)
+        # 1. Check title blacklist (一票否决: 检查 title 和 tags)
         for black in self.title_blacklist:
             b = black.strip().lower()
-            if b and (b in norm_title or any(b == t for t in norm_tags)):
+            if b and (b in norm_title or any(b in t for t in norm_tags)):
                 return False, f"命中职位黑名单关键词: '{black}'"
 
-        # 2. Check company blacklist (一票否决)
+        # 2. Check company blacklist (一票否决: 检查 company_name)
         for black in self.company_blacklist:
             b = black.strip().lower()
             if b and b in norm_company:
                 return False, f"命中公司黑名单关键词: '{black}'"
 
-        # 3. Check title whitelist (若配置了白名单，必须命中至少一个)
+        # 3. Check JD/Digest blacklist (一票否决: 检查 digest 和 tags)
+        for black in self.jd_blacklist:
+            b = black.strip().lower()
+            if b and (b in norm_digest or any(b in t for t in norm_tags)):
+                return False, f"命中岗位摘要/标签黑名单关键词: '{black}'"
+
+        # 4. Check title whitelist (若配置了白名单，必须在 title, tags, 或 digest 中命中至少一个)
         active_whitelist = [w.strip().lower() for w in self.title_whitelist if w.strip()]
         if active_whitelist:
-            hit = any(w in norm_title or any(w in t for t in norm_tags) for w in active_whitelist)
+            hit = any(
+                w in norm_title or any(w in t for t in norm_tags) or w in norm_digest
+                for w in active_whitelist
+            )
             if not hit:
                 return False, f"未命中任何职位白名单关键词 (要求: {self.title_whitelist})"
 
