@@ -155,7 +155,8 @@ describe('SvelteKit Server Endpoints', () => {
 			company_name: '字节跳动(上海)',
 			recruiter_name: '买先生·产品研发',
 			salary_range: '3-5万元·14月',
-			job_description: '负责agent产品观测与评测'
+			job_description: '负责agent产品观测与评测',
+			status: 'unmatched'
 		};
 
 		const postEvent: any = {

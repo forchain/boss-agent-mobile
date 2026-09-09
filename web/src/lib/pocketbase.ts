@@ -73,7 +73,8 @@ export async function getCandidateProfile(userId = 'default'): Promise<Candidate
 				project_highlights: record.project_highlights || [],
 				target_positions: record.target_positions || [],
 				raw_summary: record.raw_summary || '',
-				raw_resume_text: record.raw_resume_text || ''
+				raw_resume_text: record.raw_resume_text || '',
+				profile_document: record.profile_document || record.raw_summary || ''
 			};
 			localCandidateMemoryMap[userId] = loadedProfile;
 			return loadedProfile;
@@ -104,8 +105,11 @@ export async function saveCandidateProfile(profile: Partial<CandidateProfile>, u
 		project_highlights: [],
 		target_positions: [],
 		raw_summary: '',
-		raw_resume_text: ''
+		raw_resume_text: '',
+		profile_document: ''
 	};
+
+	const doc = profile.profile_document || profile.raw_summary || existingMem.profile_document || existingMem.raw_summary || '';
 
 	const merged: CandidateProfile = {
 		...existingMem,
@@ -118,8 +122,9 @@ export async function saveCandidateProfile(profile: Partial<CandidateProfile>, u
 		projects: profile.projects ?? existingMem.projects ?? [],
 		project_highlights: profile.project_highlights ?? existingMem.project_highlights ?? [],
 		target_positions: profile.target_positions ?? existingMem.target_positions ?? [],
-		raw_summary: profile.raw_summary !== undefined ? profile.raw_summary : existingMem.raw_summary,
-		raw_resume_text: profile.raw_resume_text !== undefined ? profile.raw_resume_text : existingMem.raw_resume_text
+		raw_summary: doc,
+		raw_resume_text: profile.raw_resume_text !== undefined ? profile.raw_resume_text : existingMem.raw_resume_text,
+		profile_document: doc
 	};
 
 	localCandidateMemoryMap[userId] = merged;

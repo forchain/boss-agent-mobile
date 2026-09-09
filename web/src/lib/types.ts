@@ -48,6 +48,7 @@ export interface CandidateProfile {
 	target_positions: string[];
 	raw_summary: string;
 	raw_resume_text?: string;
+	profile_document?: string;
 }
 
 export interface ResumeRevision {

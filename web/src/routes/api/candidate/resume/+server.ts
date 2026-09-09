@@ -11,6 +11,9 @@ export const POST: RequestHandler = async ({ request }) => {
 		const formData = await request.formData();
 		const file = (formData.get('file') || formData.get('resume')) as File | null;
 		const llmSettingsStr = (formData.get('llmSettings') as string) || '';
+		const mergeMode = (formData.get('mergeMode') as string) || (formData.get('merge_mode') as string) || '';
+		const awaitReview = (formData.get('awaitReview') as string) === 'true' || (formData.get('await_review') as string) === 'true';
+		const userId = (formData.get('userId') as string) || (formData.get('user_id') as string) || 'default';
 
 		if (!file) {
 			return json({ success: false, message: '请上传有效的简历文件' }, { status: 400 });
@@ -33,9 +36,15 @@ export const POST: RequestHandler = async ({ request }) => {
 		const buffer = Buffer.from(await file.arrayBuffer());
 		fs.writeFileSync(tempFilePath, buffer);
 
-		const args = ['--file', tempFilePath];
+		const args = ['--file', tempFilePath, '--file-name', fileName, '--user-id', userId];
 		if (llmSettingsStr) {
 			args.push('--llm-config', llmSettingsStr);
+		}
+		if (mergeMode) {
+			args.push('--merge-mode', mergeMode);
+		}
+		if (awaitReview) {
+			args.push('--await-review');
 		}
 
 		console.log(`[ResumeAPI] Received file upload: ${fileName} (${buffer.length} bytes), temp path: ${tempFilePath}`);
@@ -58,6 +67,8 @@ export const POST: RequestHandler = async ({ request }) => {
 				success: true,
 				fileName,
 				profile: parsedResult.profile,
+				diff_summary: parsedResult.diff_summary || '',
+				status: parsedResult.status || 'completed',
 				message: parsedResult.message || '简历解析成功'
 			});
 		} else {

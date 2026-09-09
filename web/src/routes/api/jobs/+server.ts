@@ -15,6 +15,7 @@ export const GET: RequestHandler = async ({ url }) => {
 	const limit = parseInt(url.searchParams.get('limit') || '50', 10);
 	const pbBase = getPocketBaseUrl();
 
+	let items: any[] = [];
 	try {
 		const filter = status ? `status='${status}'` : '';
 		const query = new URLSearchParams({
@@ -30,18 +31,24 @@ export const GET: RequestHandler = async ({ url }) => {
 		});
 		if (resp.ok) {
 			const data = await resp.json();
-			if (data.items && data.items.length > 0) {
-				return json({ success: true, records: data.items });
+			if (data.items) {
+				items = data.items;
 			}
 		}
 	} catch (e) {}
 
-	// Fallback to durable local store
+	// Fallback / merge durable local store
 	const fallbackMap = readFallbackJobs();
-	let items = Object.values(fallbackMap);
-	if (status) {
-		items = items.filter((r: any) => r.status === status);
+	const existingFps = new Set(items.map((it: any) => it.fingerprint));
+	for (const fb of Object.values(fallbackMap)) {
+		const record = fb as any;
+		if (!existingFps.has(record.fingerprint)) {
+			if (!status || record.status === status) {
+				items.push(record);
+			}
+		}
 	}
+
 	items.sort((a: any, b: any) => {
 		const da = a.created || a.last_seen_at || '';
 		const db = b.created || b.last_seen_at || '';
@@ -74,10 +81,12 @@ export const POST: RequestHandler = async ({ request }) => {
 					const existing = checkData.items[0];
 					const newKw = body.search_keywords || [];
 					const mergedKw = Array.from(new Set([...(existing.search_keywords || []), ...newKw]));
+					const targetStatus = body.status || existing.status || 'unmatched';
 					const patchResp = await fetch(`${pbBase}/api/collections/job_records/records/${existing.id}`, {
 						method: 'PATCH',
 						headers: { 'Content-Type': 'application/json' },
 						body: JSON.stringify({
+							status: targetStatus,
 							last_seen_at: now,
 							search_keywords: mergedKw
 						})
@@ -87,8 +96,9 @@ export const POST: RequestHandler = async ({ request }) => {
 						writeFallbackJob(updated);
 						return json({ success: true, record: updated, is_new: false });
 					}
-					writeFallbackJob(existing);
-					return json({ success: true, record: existing, is_new: false });
+					const fallbackUpdated = { ...existing, status: targetStatus, last_seen_at: now, search_keywords: mergedKw };
+					writeFallbackJob(fallbackUpdated);
+					return json({ success: true, record: fallbackUpdated, is_new: false });
 				}
 			}
 		} catch (e) {}
