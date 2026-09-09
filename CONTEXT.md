@@ -80,6 +80,18 @@ _Avoid_: Search rule, search YAML, query profile
 The background Cron evaluation engine that monitors active SavedSearches, detects scheduling matches, and dispatches automation tasks into the State Stream Broker.
 _Avoid_: Crontab daemon, task timer, periodic runner
 
+**Task Management Dashboard**:
+The unified web operational command center (`/`) coordinating real-time active task telemetry, historical task audit logs, and scheduled automation jobs without duplicate entity widgets.
+_Avoid_: Control panel, home view, main dashboard
+
+**Settings Panel**:
+The dedicated, extensible system configuration view (`/settings`) housing LLM parameters, connectivity testing, and modular placeholders for future device bindings and notification rules.
+_Avoid_: Config tab, options modal, preference page
+
+**Scheduled Job**:
+The periodic automation instance defined by a standard Cron expression and bound to a SavedSearch strategy, evaluated by the Automation Scheduler and managed via the Task Management Dashboard.
+_Avoid_: Cron task, recurring search, periodic run
+
 **Candidate Profile (`candidate_profiles`)**:
 The single source of truth structured candidate persona stored in PocketBase, encapsulating full unabbreviated work experiences, detailed project accomplishments, deep skill taxonomies, target preferences, and ground truth raw resume context.
 _Avoid_: candidate_memory.json, candidate config, memory cache

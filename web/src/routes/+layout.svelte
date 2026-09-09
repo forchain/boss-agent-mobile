@@ -99,7 +99,7 @@
 					{/if}
 				</div>
 				<a
-					href="/#task-console"
+					href="/#new-task"
 					class="bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-medium px-2.5 py-1.5 sm:px-3.5 sm:py-1.5 rounded-lg shadow-lg shadow-cyan-500/10 transition text-xs whitespace-nowrap"
 				>
 					<span class="sm:hidden">🚀 任务</span>
@@ -116,7 +116,7 @@
 						href="/"
 						class="px-3.5 py-1.5 rounded-lg transition font-medium flex items-center space-x-1.5 whitespace-nowrap {page.url.pathname === '/' ? 'bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 font-semibold shadow-sm' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 border border-transparent'}"
 					>
-						<span>⚙️ 控制看板</span>
+						<span>📋 任务中心</span>
 					</a>
 					<a
 						href="/searches"
@@ -140,6 +140,12 @@
 						class="px-3.5 py-1.5 rounded-lg transition font-medium flex items-center space-x-1.5 whitespace-nowrap {page.url.pathname.startsWith('/profile') ? 'bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 font-semibold shadow-sm' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 border border-transparent'}"
 					>
 						<span>👤 候选人画像</span>
+					</a>
+					<a
+						href="/settings"
+						class="px-3.5 py-1.5 rounded-lg transition font-medium flex items-center space-x-1.5 whitespace-nowrap {page.url.pathname.startsWith('/settings') ? 'bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 font-semibold shadow-sm' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 border border-transparent'}"
+					>
+						<span>⚙️ 系统配置</span>
 					</a>
 				</nav>
 			</div>
