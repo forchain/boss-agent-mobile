@@ -42,6 +42,7 @@ class JobRecord:
     id: str | None = None
     salary_range: str = ""
     location: str | None = None
+    digest: str = ""
     job_description: str = ""
     status: str = "unmatched"
     match_score: int | None = None
@@ -69,6 +70,7 @@ class JobPosting:
     company_name: str
     salary_range: str
     job_description: str
+    digest: str = ""
     location: str | None = None
     tags: list[str] = field(default_factory=list)
     recruiter_name: str | None = None

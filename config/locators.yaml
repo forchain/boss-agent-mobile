@@ -30,9 +30,38 @@ job_list:
     - "//*[@resource-id='com.hpbr.bosszhipin:id/ly_menu']/android.widget.ImageView[2]"
     - "//*[@content-desc='搜索' or contains(@resource-id, 'search')]"
   job_card:
-    - "//*[contains(@resource-id, 'job_name') or contains(@resource-id, 'tv_position_name') or contains(@resource-id, 'cl_card_container') or contains(@resource-id, 'view_job_card')]"
+    - "com.hpbr.bosszhipin:id/view_job_card"
+    - "//*[contains(@resource-id, 'view_job_card') or contains(@resource-id, 'cl_card_container') or contains(@resource-id, 'cl_position')]"
+    - "//*[contains(@resource-id, 'job_name') or contains(@resource-id, 'tv_position_name')]"
     - "//*[contains(@resource-id, 'item_job') or contains(@resource-id, 'job_item') or contains(@resource-id, 'card_view') or contains(@resource-id, 'layout_job')]"
     - "//androidx.recyclerview.widget.RecyclerView/*[.//android.widget.TextView[contains(@text, '元') or contains(@text, '薪') or contains(@text, 'K') or contains(@text, 'k')]]"
+  card_title:
+    - "com.hpbr.bosszhipin:id/tv_position_name"
+    - "//*[contains(@resource-id, 'tv_position_name') or contains(@resource-id, 'job_name')]"
+  card_salary:
+    - "com.hpbr.bosszhipin:id/tv_salary_statue"
+    - "//*[contains(@resource-id, 'tv_salary_statue') or contains(@resource-id, 'salary')]"
+  card_company:
+    - "com.hpbr.bosszhipin:id/tv_company_name"
+    - "//*[contains(@resource-id, 'tv_company_name') or contains(@resource-id, 'company_name')]"
+  card_recruiter:
+    - "com.hpbr.bosszhipin:id/tv_employer"
+    - "//*[contains(@resource-id, 'tv_employer') or contains(@resource-id, 'employer')]"
+  card_location:
+    - "com.hpbr.bosszhipin:id/tv_distance"
+    - "//*[contains(@resource-id, 'tv_distance') or contains(@resource-id, 'area')]"
+  card_scale:
+    - "com.hpbr.bosszhipin:id/tv_scale"
+    - "//*[contains(@resource-id, 'tv_scale') or contains(@resource-id, 'scale')]"
+  card_industry:
+    - "com.hpbr.bosszhipin:id/tvIndustryName"
+    - "//*[contains(@resource-id, 'tvIndustryName') or contains(@resource-id, 'industry')]"
+  card_snippet:
+    - "com.hpbr.bosszhipin:id/tv_digest"
+    - "//*[contains(@resource-id, 'tv_digest') or contains(@resource-id, 'digest')]"
+  card_tags_container:
+    - "com.hpbr.bosszhipin:id/fl_require_info"
+    - "//*[contains(@resource-id, 'fl_require_info')]"
 
 search:
   search_input:
@@ -92,7 +121,8 @@ job_detail:
   salary:
     - "//*[contains(@resource-id, 'tv_job_salary') or contains(@resource-id, 'salary')]"
   desc:
-    - "//*[contains(@resource-id, 'tv_job_desc') or contains(@resource-id, 'job_description')]"
+    - "com.hpbr.bosszhipin:id/tv_description"
+    - "//*[contains(@resource-id, 'tv_description') or contains(@resource-id, 'tv_job_desc') or contains(@resource-id, 'job_description')]"
   expand_btn:
     - "//*[@text='查看全部' or @text='展开全文']"
   back_btn:
