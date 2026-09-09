@@ -126,6 +126,11 @@ cmd_start() {
         npm --prefix web install
     fi
 
+    # Ensure SvelteKit types & tsconfig are generated
+    if [[ ! -f "web/.svelte-kit/tsconfig.json" ]]; then
+        (cd web && npx svelte-kit sync)
+    fi
+
     # Check dependency: PocketBase health
     if [[ -z "${POCKETBASE_URL:-}" && -f "config/settings.local.yaml" ]]; then
         POCKETBASE_URL="$(grep -E "^[[:space:]]*(pocketbase_url|pb_url):" config/settings.local.yaml 2>/dev/null | awk '{print $2}' | tr -d '"' | tr -d "'" || true)"
