@@ -22,8 +22,18 @@ from .models import (
     FilterConfig,
     JobPosting,
     SavedSearch,
+    ScreeningPolicy,
     SearchConfig,
 )
+
+with contextlib.suppress(ImportError):
+    from .graph import (
+        GreetingDrafterAgent,
+        JDSemanticScreenerAgent,
+        JobApplicationState,
+        build_job_application_graph,
+        run_job_application_graph,
+    )
 
 with contextlib.suppress(ImportError):
     from .pages import (
@@ -58,7 +68,10 @@ __all__ = [
     "ChatPage",
     "FilterConfig",
     "FilterDialogPage",
+    "GreetingDrafterAgent",
     "IndustryFilterDialogPage",
+    "JDSemanticScreenerAgent",
+    "JobApplicationState",
     "JobDetailPage",
     "JobListPage",
     "JobMatchGreetingService",
@@ -69,16 +82,19 @@ __all__ = [
     "ResumeTextExtractor",
     "SavedSearch",
     "SavedSearchRegistry",
+    "ScreeningPolicy",
     "SearchConfig",
     "SearchPage",
     "SmokeHarness",
     "StartupDialogPage",
     "StructuredCandidateProfile",
     "TakeoverHandler",
+    "build_job_application_graph",
     "get_global_search_registry",
     "load_settings",
     "resolve_git_common_root",
     "resolve_pocketbase_data_dir",
     "resolve_pocketbase_db_path",
     "resolve_pocketbase_url",
+    "run_job_application_graph",
 ]

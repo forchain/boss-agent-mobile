@@ -245,6 +245,7 @@ class ResumeMemoryManager:
         # Load candidate config if available
         self.candidate_config = self._load_candidate_config(candidate_config_path)
 
+        self.explicit_memory_file = memory_file_path is not None
         configured_memory = (
             memory_file_path or self.candidate_config.get("memory_path") or self.DEFAULT_MEMORY_PATH
         )
@@ -286,6 +287,17 @@ class ResumeMemoryManager:
 
     def load_cached_memory(self) -> StructuredCandidateProfile | None:
         """Load memory profile from PocketBase database (single source of truth) with file fallback."""
+        # 0. If caller explicitly passed a memory file path and it exists, load it directly
+        if self.explicit_memory_file and self.has_memory_file():
+            try:
+                content = self.memory_path.read_text(encoding="utf-8")
+                data = json.loads(content)
+                return StructuredCandidateProfile.from_dict(data)
+            except Exception as e:
+                console.print(
+                    f"[yellow]⚠️  Failed to read explicit memory from {self.memory_path}: {e}[/yellow]"
+                )
+
         # 1. Primary: load from PocketBase database (HTTP or SQLite fallback)
         try:
             import asyncio

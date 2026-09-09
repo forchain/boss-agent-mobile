@@ -3,13 +3,14 @@ from typing import Any
 
 from boss_agent.broker.models import AutomationTask, TaskType
 from boss_agent.broker.pocketbase_adapter import BaseTaskBroker
-from boss_agent.matching import JobMatchGreetingService
+from boss_agent.graph import run_job_application_graph
 from boss_agent.memory import StructuredCandidateProfile
-from boss_agent.models import FilterConfig
+from boss_agent.models import FilterConfig, ScreeningPolicy
 from boss_agent.pages import (
     ChatPage,
     FilterDialogPage,
     IndustryFilterDialogPage,
+    JobCardBrief,
     JobDetailPage,
     JobListPage,
     SearchPage,
@@ -135,33 +136,83 @@ class AutoApplyHandler(BaseTaskHandler):
             await broker.append_log(task.id, f"Could not extract current job posting: {e}")
             return HandlerResult(success=False, error_message=str(e))
 
-        # 5. Evaluate Match & Draft Tailored Greeting via LLM
-        matching_svc = JobMatchGreetingService(
-            llm_client=self.llm_client, candidate_profile=profile
-        )
-        match_result = matching_svc.evaluate_and_draft_greeting(job=job_posting, profile=profile)
+        # 5. Execute Multi-Stage Screening & Greeting Pipeline via LangGraph
+        policy_raw = payload.get("screening_policy")
+        policy = ScreeningPolicy.from_dict(policy_raw) if policy_raw else ScreeningPolicy()
 
-        req_summary = (
-            "; ".join(match_result.jd_key_requirements)
-            if match_result.jd_key_requirements
-            else "无"
+        card = JobCardBrief(
+            title=job_posting.title,
+            company_name=job_posting.company_name,
+            recruiter_name=job_posting.recruiter_name or "",
+            salary_range=job_posting.salary_range,
+            location=job_posting.location or "",
+            tags=job_posting.tags,
         )
+
+        graph_result = run_job_application_graph(
+            card=card,
+            policy=policy,
+            candidate_profile=profile,
+            jd_text=job_posting.job_description,
+            llm_client=self.llm_client,
+        )
+
+        keyword_pass = graph_result.get("keyword_pass", True)
+        deep_pass = graph_result.get("deep_screen_pass", True)
+
+        if not keyword_pass:
+            reason = graph_result.get("keyword_reason", "未通过关键字初筛")
+            await broker.append_log(task.id, f"⏭️ [初筛淘汰] '{job_posting.title}': {reason}")
+            return HandlerResult(
+                success=True,
+                output={
+                    "applied": False,
+                    "status": "filtered_by_keyword",
+                    "reason": reason,
+                    "job": {
+                        "title": job_posting.title,
+                        "company_name": job_posting.company_name,
+                    },
+                },
+            )
+
+        if not deep_pass:
+            reason = graph_result.get("deep_screen_reason", "未通过JD语义精筛")
+            await broker.append_log(task.id, f"⏭️ [精筛淘汰] '{job_posting.title}': {reason}")
+            return HandlerResult(
+                success=True,
+                output={
+                    "applied": False,
+                    "status": "filtered_by_deep_screener",
+                    "reason": reason,
+                    "job": {
+                        "title": job_posting.title,
+                        "company_name": job_posting.company_name,
+                    },
+                },
+            )
+
+        greeting_message = graph_result.get("greeting_message") or ""
+        match_score = graph_result.get("match_score", 80)
+        match_reasons = graph_result.get("match_reasons") or []
+        req_summary = "; ".join(match_reasons) if match_reasons else "无"
+
         await broker.append_log(
             task.id,
             f"Evaluated '{job_posting.title}' @ '{job_posting.company_name}': "
-            f"Score {match_result.match_score}/100 | JD Requirements: [{req_summary}]",
+            f"Score {match_score}/100 | Match Reasons: [{req_summary}]",
         )
         await broker.append_log(
             task.id,
-            f'Tailored Greeting Draft: "{match_result.greeting_message}"',
+            f'Tailored Greeting Draft: "{greeting_message}"',
         )
 
         # 6. Branch Execution: Preview vs Auto-Send
         applied = False
         if auto_send and not preview_only:
-            if match_result.match_score >= min_score:
+            if match_score >= min_score:
                 if detail_page.open_chat(timeout_sec=5.0):
-                    chat_page.type_greeting_message(match_result.greeting_message, timeout_sec=5.0)
+                    chat_page.type_greeting_message(greeting_message, timeout_sec=5.0)
                     chat_page.click_send(timeout_sec=3.0)
                     applied = True
                     await broker.append_log(
@@ -172,12 +223,12 @@ class AutoApplyHandler(BaseTaskHandler):
             else:
                 await broker.append_log(
                     task.id,
-                    f"⏭️ [AUTO_SEND] Skipped: Match score {match_result.match_score} < threshold {min_score}",
+                    f"⏭️ [AUTO_SEND] Skipped: Match score {match_score} < threshold {min_score}",
                 )
         else:
             # Preview mode (safe mode)
             if detail_page.open_chat(timeout_sec=5.0):
-                chat_page.type_greeting_message(match_result.greeting_message, timeout_sec=5.0)
+                chat_page.type_greeting_message(greeting_message, timeout_sec=5.0)
                 await broker.append_log(
                     task.id,
                     f"⏳ [PREVIEW MODE] Entered greeting into chat box. Pausing for {preview_timeout_sec}s (NOT SENT)...",
@@ -190,9 +241,9 @@ class AutoApplyHandler(BaseTaskHandler):
             success=True,
             output={
                 "applied": applied,
-                "score": match_result.match_score,
-                "jd_key_requirements": match_result.jd_key_requirements,
-                "greeting_message": match_result.greeting_message,
+                "score": match_score,
+                "jd_key_requirements": match_reasons,
+                "greeting_message": greeting_message,
                 "job": {
                     "title": job_posting.title,
                     "company_name": job_posting.company_name,

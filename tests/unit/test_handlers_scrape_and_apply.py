@@ -262,3 +262,117 @@ async def test_scrape_jobs_handler_applies_filters(broker, mock_driver):
     assert finished_task is not None
     assert finished_task.status == TaskStatus.SUCCESS
     assert any("filter" in log.lower() for log in finished_task.logs)
+
+
+@pytest.mark.asyncio
+async def test_auto_apply_handler_filtered_by_keyword(broker, mock_driver):
+    """Verify AutoApplyHandler drops job immediately when title hits keyword blacklist."""
+    mock_title = MagicMock(text="Senior Java Developer")
+    mock_company = MagicMock(text="Legacy Banking")
+    mock_salary = MagicMock(text="30-50K")
+    mock_desc = MagicMock(text="Maintain enterprise Java 8 services.")
+    mock_elem = MagicMock()
+
+    def mock_find(by, value):
+        if "tv_job_name" in value or "job_name" in value:
+            return [mock_title]
+        if "tv_company_name" in value or "company_name" in value:
+            return [mock_company]
+        if "tv_job_salary" in value or "salary" in value:
+            return [mock_salary]
+        if "tv_job_desc" in value or "desc" in value:
+            return [mock_desc]
+        return [mock_elem]
+
+    mock_driver.find_elements.side_effect = mock_find
+
+    config = WorkerConfig(worker_id="test-worker-kw-filter", poll_interval_sec=0.01)
+    context = WorkerContext(config=config, driver=mock_driver)
+    mock_llm = MagicMock()
+
+    apply_handler = AutoApplyHandler(llm_client=mock_llm)
+    worker = AutomationWorker(
+        config=config,
+        broker=broker,
+        context=context,
+        handlers=[apply_handler],
+    )
+
+    task = await broker.create_task(
+        task_type=TaskType.AUTO_APPLY,
+        payload={
+            "keyword": "Java",
+            "screening_policy": {
+                "title_blacklist": ["Java"],
+            },
+        },
+    )
+
+    executed = await worker.run_once()
+    assert executed is True
+
+    finished_task = await broker.get_task(task.id)
+    assert finished_task is not None
+    assert finished_task.status == TaskStatus.SUCCESS
+    assert any("初筛淘汰" in log and "Java" in log for log in finished_task.logs)
+    # LLM should never be called when rejected by keyword screener
+    mock_llm.chat_completion_json.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_auto_apply_handler_filtered_by_deep_screener(broker, mock_driver):
+    """Verify AutoApplyHandler drops job when JD semantic screener rejects."""
+    mock_title = MagicMock(text="AI Agent 开发者")
+    mock_company = MagicMock(text="某大型外包")
+    mock_salary = MagicMock(text="35-50K")
+    mock_desc = MagicMock(text="负责全栈应用开发，要求精通Java微服务及JVM底层。")
+    mock_elem = MagicMock()
+
+    def mock_find(by, value):
+        if "tv_job_name" in value or "job_name" in value:
+            return [mock_title]
+        if "tv_company_name" in value or "company_name" in value:
+            return [mock_company]
+        if "tv_job_salary" in value or "salary" in value:
+            return [mock_salary]
+        if "tv_job_desc" in value or "desc" in value:
+            return [mock_desc]
+        return [mock_elem]
+
+    mock_driver.find_elements.side_effect = mock_find
+
+    config = WorkerConfig(worker_id="test-worker-deep-filter", poll_interval_sec=0.01)
+    context = WorkerContext(config=config, driver=mock_driver)
+
+    mock_llm = MagicMock()
+    mock_llm.chat_completion_json.return_value = {
+        "pass": False,
+        "reason": "JD正文明确要求熟练掌握Java微服务，触犯黑名单技术栈",
+    }
+
+    apply_handler = AutoApplyHandler(llm_client=mock_llm)
+    worker = AutomationWorker(
+        config=config,
+        broker=broker,
+        context=context,
+        handlers=[apply_handler],
+    )
+
+    task = await broker.create_task(
+        task_type=TaskType.AUTO_APPLY,
+        payload={
+            "keyword": "Agent",
+            "screening_policy": {
+                "title_whitelist": ["Agent"],
+                "jd_blacklist": ["Java"],
+            },
+        },
+    )
+
+    executed = await worker.run_once()
+    assert executed is True
+
+    finished_task = await broker.get_task(task.id)
+    assert finished_task is not None
+    assert finished_task.status == TaskStatus.SUCCESS
+    assert any("精筛淘汰" in log and "Java" in log for log in finished_task.logs)
