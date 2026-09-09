@@ -59,6 +59,47 @@ uv run python scripts/run_live_test.py
 
 ---
 
+## 🔍 LangSmith 可观测性与链路追踪 (Tracing & Observability)
+
+项目全面集成了 [LangSmith](https://smith.langchain.com/) 追踪能力，支持对 LangGraph 复合 Agent 决策图、JD 语义精筛、打招呼草稿生成、以及底层 LLM 请求全链路的可观测性监控与性能开销审计。
+
+### 1. 启用追踪
+
+通过环境变量或 `config/llm.local.yaml` 配置文件启用：
+
+```bash
+export LANGSMITH_TRACING=true
+export LANGSMITH_API_KEY="lsv2_pt_your_api_key_here"
+export LANGSMITH_PROJECT="boss-agent-mobile" # 默认为 boss-agent-mobile
+```
+
+或在 `config/llm.local.yaml` 中配置：
+```yaml
+langsmith_tracing: true
+langsmith_api_key: "lsv2_pt_your_api_key_here"
+langsmith_project: "boss-agent-mobile"
+```
+
+### 2. 使用 LangSmith CLI 查询与排错
+
+已通过 `langsmith-skills` 安装并配置 `langsmith` CLI 工具：
+
+```bash
+# 查看最新执行 Traces
+langsmith trace list --project boss-agent-mobile --limit 10
+
+# 包含耗时、Token 用量与成本元数据
+langsmith trace list --project boss-agent-mobile --include-metadata
+
+# 查看单条 Trace 完整树状层级
+langsmith trace get <trace-id>
+
+# 导出最近 Traces 为 JSONL 便于评估分析
+langsmith trace export ./traces --project boss-agent-mobile --full
+```
+
+---
+
 ## 🎬 演示视频更新说明 (Updating Demo Assets)
 
 为避免大体积多媒体文件在 Git 历史中不断累积，本项目将演示视频以 GitHub 附件形式托管：

@@ -14,6 +14,8 @@ from typing import Any
 
 import requests
 import yaml
+from langsmith import traceable
+from langsmith.run_helpers import get_current_run_tree
 
 
 class LLMError(Exception):
@@ -38,6 +40,10 @@ class LLMConfig:
     timeout_sec: float = 300.0
     max_tokens: int = 16384
     extra_params: dict[str, Any] = field(default_factory=dict)
+    langsmith_tracing: bool = False
+    langsmith_api_key: str | None = None
+    langsmith_project: str | None = None
+    langsmith_endpoint: str | None = None
 
     @classmethod
     def from_env_or_file(cls, config_path: str | Path | None = None) -> "LLMConfig":
@@ -92,6 +98,30 @@ class LLMConfig:
         max_tokens = int(os.getenv("LLM_MAX_TOKENS") or data.get("max_tokens") or 16384)
         extra_params = data.get("extra_params") or {}
 
+        # 3. LangSmith Tracing Configuration
+        langsmith_tracing_env = os.getenv("LANGSMITH_TRACING") or os.getenv("LANGCHAIN_TRACING_V2")
+        if langsmith_tracing_env is not None:
+            langsmith_tracing = langsmith_tracing_env.lower() in ("true", "1", "yes")
+        else:
+            langsmith_tracing = bool(data.get("langsmith_tracing", False))
+
+        langsmith_api_key = (
+            os.getenv("LANGSMITH_API_KEY")
+            or os.getenv("LANGCHAIN_API_KEY")
+            or data.get("langsmith_api_key")
+        )
+        langsmith_project = (
+            os.getenv("LANGSMITH_PROJECT")
+            or os.getenv("LANGCHAIN_PROJECT")
+            or data.get("langsmith_project")
+            or "boss-agent-mobile"
+        )
+        langsmith_endpoint = (
+            os.getenv("LANGSMITH_ENDPOINT")
+            or os.getenv("LANGCHAIN_ENDPOINT")
+            or data.get("langsmith_endpoint")
+        )
+
         return cls(
             provider=provider,
             base_url=base_url.rstrip("/"),
@@ -101,7 +131,34 @@ class LLMConfig:
             timeout_sec=timeout_sec,
             max_tokens=max_tokens,
             extra_params=extra_params,
+            langsmith_tracing=langsmith_tracing,
+            langsmith_api_key=langsmith_api_key,
+            langsmith_project=langsmith_project,
+            langsmith_endpoint=langsmith_endpoint,
         )
+
+
+def configure_langsmith(config: LLMConfig | None = None) -> None:
+    """Configure LangSmith tracing environment variables from config or existing env.
+
+    Sets LANGSMITH_TRACING, LANGCHAIN_TRACING_V2, LANGSMITH_API_KEY, LANGSMITH_PROJECT,
+    and LANGSMITH_ENDPOINT when tracing is enabled.
+    """
+    cfg = config or LLMConfig.from_env_or_file()
+    tracing_enabled = (
+        cfg.langsmith_tracing
+        or os.getenv("LANGSMITH_TRACING", "").lower() in ("true", "1", "yes")
+        or os.getenv("LANGCHAIN_TRACING_V2", "").lower() in ("true", "1", "yes")
+    )
+    if tracing_enabled:
+        os.environ["LANGSMITH_TRACING"] = "true"
+        os.environ["LANGCHAIN_TRACING_V2"] = "true"
+        if cfg.langsmith_api_key and not os.getenv("LANGSMITH_API_KEY"):
+            os.environ["LANGSMITH_API_KEY"] = cfg.langsmith_api_key
+        if cfg.langsmith_project and not os.getenv("LANGSMITH_PROJECT"):
+            os.environ["LANGSMITH_PROJECT"] = cfg.langsmith_project
+        if cfg.langsmith_endpoint and not os.getenv("LANGSMITH_ENDPOINT"):
+            os.environ["LANGSMITH_ENDPOINT"] = cfg.langsmith_endpoint
 
 
 class LLMDecisionClient(ABC):
@@ -141,7 +198,9 @@ class OpenAIChatClient(LLMDecisionClient):
     """Concrete OpenAI-compatible REST chat completion client."""
 
     def __init__(self, config: LLMConfig | None = None):
-        super().__init__(config or LLMConfig.from_env_or_file())
+        cfg = config or LLMConfig.from_env_or_file()
+        configure_langsmith(cfg)
+        super().__init__(cfg)
 
     def _get_headers(self) -> dict[str, str]:
         headers = {
@@ -151,6 +210,7 @@ class OpenAIChatClient(LLMDecisionClient):
             headers["Authorization"] = f"Bearer {self.config.api_key}"
         return headers
 
+    @traceable(name="OpenAIChatClient.chat_completion", run_type="llm")
     def chat_completion(
         self,
         messages: list[dict[str, str]],
@@ -224,6 +284,14 @@ class OpenAIChatClient(LLMDecisionClient):
             if not choices:
                 raise LLMError(f"LLM returned no choices in response: {resp_data}")
             content = choices[0].get("message", {}).get("content", "")
+
+            run_tree = get_current_run_tree()
+            if run_tree:
+                run_tree.metadata["model"] = self.config.model
+                run_tree.metadata["base_url"] = self.config.base_url
+                if "usage" in resp_data and isinstance(resp_data["usage"], dict):
+                    run_tree.metadata["usage"] = resp_data["usage"]
+
             return content
         except Exception as e:
             if isinstance(e, LLMError):
@@ -464,6 +532,7 @@ class OpenAIChatClient(LLMDecisionClient):
         except Exception as e:
             raise LLMError(f"Failed to decode LLM response into JSON: {raw}") from e
 
+    @traceable(name="OpenAIChatClient.chat_completion_json", run_type="chain")
     def chat_completion_json(
         self,
         messages: list[dict[str, str]],
@@ -484,6 +553,7 @@ class OpenAIChatClient(LLMDecisionClient):
         json_str = self._extract_json_block(raw_text)
         return self._robust_parse_json(json_str)
 
+    @traceable(name="OpenAIChatClient.evaluate_text_match", run_type="chain")
     def evaluate_text_match(self, candidate_resume: str, job_description: str) -> dict[str, Any]:
         prompt = (
             "请评估以下求职者简历与招聘岗位(JD)的匹配度：\n\n"

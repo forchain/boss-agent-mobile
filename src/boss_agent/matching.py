@@ -7,6 +7,7 @@ Job match evaluation, alignment scoring, customized greeting generation, and Ric
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from langsmith import traceable
 from rich.console import Console
 from rich.panel import Panel
 
@@ -76,6 +77,7 @@ class JobMatchGreetingService:
             "6. 【严格 JSON 输出】：严格以标准合法的 JSON 格式输出。字符串内容中严禁出现未转义的英文字符双引号（若需引用或书名请使用中文书名号《》或中文引号“”）。"
         )
 
+    @traceable(name="JobMatchGreetingService.evaluate_and_draft_greeting", run_type="chain")
     def evaluate_and_draft_greeting(
         self,
         job: JobPosting,
