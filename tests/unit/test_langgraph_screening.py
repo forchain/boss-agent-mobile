@@ -104,7 +104,8 @@ def test_keyword_screener_whitelist_hit_and_pass():
         "match_score": 85,
         "greeting_message": "您好，关注到贵司在招聘AI Agent岗位...",
     }
-    state = run_job_application_graph(card, policy=policy, llm_client=mock_llm)
+    jd_text = "岗位职责：负责智能体协同平台架构与大模型自动化体系建设，要求精通Python与Multi-Agent。"
+    state = run_job_application_graph(card, policy=policy, jd_text=jd_text, llm_client=mock_llm)
     assert state["keyword_pass"] is True
     assert state["deep_screen_pass"] is True
     assert state["status"] == "greeting_drafted"
@@ -127,7 +128,8 @@ def test_keyword_screener_disabled_policy():
         "match_score": 75,
         "greeting_message": "您好！",
     }
-    state = run_job_application_graph(card, policy=policy, llm_client=mock_llm)
+    jd_text = "岗位职责：负责金融科技核心系统架构设计，具备10年以上Java与高并发经验。"
+    state = run_job_application_graph(card, policy=policy, jd_text=jd_text, llm_client=mock_llm)
     assert state["keyword_pass"] is True
     assert state["status"] == "greeting_drafted"
 
@@ -238,7 +240,9 @@ def test_jd_semantic_screener_empty_jd_fallback():
     assert state["keyword_pass"] is True
     assert state["deep_screen_pass"] is True
     assert "跳过语义精筛" in state["deep_screen_reason"]
-    assert state["status"] == "greeting_drafted"
+    # With empty jd_text, greeting drafter correctly halts without generating outreach
+    assert state["status"] == "greeting_draft_failed"
+    assert state["greeting_message"] == ""
 
 
 def test_jd_semantic_screener_llm_exception_graceful_fallback():

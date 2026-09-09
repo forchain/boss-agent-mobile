@@ -11,7 +11,7 @@ import logging
 import sys
 
 from boss_agent.broker.pocketbase_adapter import PocketBaseTaskBroker
-from boss_agent.settings import resolve_pocketbase_url
+from boss_agent.settings import resolve_pocketbase_url, resolve_server_url
 from boss_agent.worker.config import WorkerConfig
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.daemon import AutomationWorker
@@ -28,7 +28,10 @@ def main() -> None:
         "--device-id", type=str, default="emulator-5554", help="Android device/emulator ID"
     )
     parser.add_argument(
-        "--appium-url", type=str, default="http://127.0.0.1:4723", help="Appium server URL"
+        "--appium-url",
+        type=str,
+        default=None,
+        help="Appium server URL (overrides config/env setting, default: resolved from config)",
     )
     parser.add_argument(
         "--pb-url",
@@ -53,11 +56,12 @@ def main() -> None:
     logger = logging.getLogger("worker_main")
 
     resolved_pb_url = resolve_pocketbase_url(explicit_url=args.pb_url)
+    resolved_appium_url = resolve_server_url(explicit_url=args.appium_url)
 
     config = WorkerConfig(
         worker_id=args.worker_id or f"worker-{args.device_id}",
         device_id=args.device_id,
-        appium_url=args.appium_url,
+        appium_url=resolved_appium_url,
         pocketbase_url=resolved_pb_url,
         poll_interval_sec=args.poll_interval,
     )

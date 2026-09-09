@@ -87,6 +87,14 @@ class JobMatchGreetingService:
         if profile:
             self.set_candidate_profile(profile)
 
+        # Strict precondition: job_description must be substantive (> 30 non-whitespace characters)
+        jd = (job.job_description or "").strip()
+        if len(jd) < 30 or jd in ("无详细岗位描述", "暂无详细描述", "未注明职位"):
+            raise ValueError(
+                f"Job description is missing or too short ({len(jd)} chars). "
+                "Full JD (tv_description) from detail page is strictly required for greeting generation."
+            )
+
         system_prompt = self._build_system_prompt()
 
         user_prompt = (

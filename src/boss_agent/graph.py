@@ -232,18 +232,27 @@ def make_greeting_drafter_node(agent: GreetingDrafterAgent):
         jd_text = state.get("jd_text") or ""
         profile_dict = state.get("candidate_profile") or {}
 
-        match_res = agent.draft(
-            card=card,
-            jd_text=jd_text,
-            candidate_profile=profile_dict,
-        )
-
-        return {
-            "greeting_message": match_res.greeting_message,
-            "match_score": match_res.match_score,
-            "match_reasons": match_res.match_reasons,
-            "status": "greeting_drafted",
-        }
+        try:
+            match_res = agent.draft(
+                card=card,
+                jd_text=jd_text,
+                candidate_profile=profile_dict,
+            )
+            return {
+                "greeting_message": match_res.greeting_message,
+                "match_score": match_res.match_score,
+                "match_reasons": match_res.match_reasons,
+                "status": "greeting_drafted",
+            }
+        except ValueError as e:
+            logger.warning("Greeting drafting skipped due to invalid JD: %s", e)
+            return {
+                "greeting_message": "",
+                "match_score": 0,
+                "match_reasons": [str(e)],
+                "status": "greeting_draft_failed",
+                "error_message": str(e),
+            }
 
     return greeting_drafter_node
 

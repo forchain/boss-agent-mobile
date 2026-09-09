@@ -202,9 +202,17 @@ check_dedicated_avd_ready() {
 }
 
 # 3. Resolve and check Appium server status
+if [[ -z "${APPIUM_URL:-}" && -f "config/settings.local.yaml" ]]; then
+    APPIUM_URL="$(grep -E "^[[:space:]]*(server_url|appium_url):" config/settings.local.yaml 2>/dev/null | awk '{print $2}' | tr -d '"' | tr -d "'" || true)"
+fi
+if [[ -z "${APPIUM_URL:-}" && -f "config/settings.yaml" ]]; then
+    APPIUM_URL="$(grep -E "^[[:space:]]*(server_url|appium_url):" config/settings.yaml 2>/dev/null | awk '{print $2}' | tr -d '"' | tr -d "'" || true)"
+fi
 APPIUM_URL="${APPIUM_URL:-http://127.0.0.1:4723}"
 check_appium_health() {
-    local STATUS_URL="${APPIUM_URL%/}/status"
+    local CHECK_URL="${APPIUM_URL%/}"
+    CHECK_URL="${CHECK_URL/0.0.0.0/127.0.0.1}"
+    local STATUS_URL="${CHECK_URL}/status"
     if ! curl -s -f "${STATUS_URL}" >/dev/null 2>&1; then
         echo "❌ Error: Appium server is not reachable at ${APPIUM_URL}" >&2
         echo "" >&2
