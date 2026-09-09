@@ -11,6 +11,7 @@ with contextlib.suppress(ImportError):
 
 with contextlib.suppress(ImportError):
     from .memory import (
+        ProfileNormalizer,
         ResumeMemoryManager,
         ResumeTextExtractor,
         StructuredCandidateProfile,
@@ -31,8 +32,11 @@ with contextlib.suppress(ImportError):
         GreetingDrafterAgent,
         JDSemanticScreenerAgent,
         JobApplicationState,
+        ResumeLifecycleState,
         build_job_application_graph,
+        build_resume_lifecycle_graph,
         run_job_application_graph,
+        run_resume_lifecycle_graph,
     )
 
 with contextlib.suppress(ImportError):
@@ -78,6 +82,8 @@ __all__ = [
     "JobPosting",
     "LoginPage",
     "MatchGreetingResult",
+    "ProfileNormalizer",
+    "ResumeLifecycleState",
     "ResumeMemoryManager",
     "ResumeTextExtractor",
     "SavedSearch",
@@ -90,6 +96,7 @@ __all__ = [
     "StructuredCandidateProfile",
     "TakeoverHandler",
     "build_job_application_graph",
+    "build_resume_lifecycle_graph",
     "get_global_search_registry",
     "load_settings",
     "resolve_git_common_root",
@@ -97,4 +104,5 @@ __all__ = [
     "resolve_pocketbase_db_path",
     "resolve_pocketbase_url",
     "run_job_application_graph",
+    "run_resume_lifecycle_graph",
 ]

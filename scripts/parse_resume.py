@@ -17,7 +17,9 @@ root_dir = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(root_dir))
 sys.path.insert(0, str(root_dir / "src"))
 
+from boss_agent.graph import run_resume_lifecycle_graph  # noqa: E402
 from boss_agent.memory import (  # noqa: E402
+    ProfileNormalizer,
     ResumeMemoryManager,
     ResumeTextExtractor,
     StructuredCandidateProfile,
@@ -38,8 +40,9 @@ logger = logging.getLogger("resume_parser")
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Parse resume file into structured profile JSON")
+    parser = argparse.ArgumentParser(description="Parse resume file into structured profile JSON via LangGraph")
     parser.add_argument("--file", "-f", type=str, required=True, help="Path to resume file")
+    parser.add_argument("--file-name", type=str, default="", help="Original file name")
     parser.add_argument(
         "--llm-config",
         type=str,
@@ -51,6 +54,24 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default="config/candidate_memory.json",
         help="Path to save candidate memory JSON",
+    )
+    parser.add_argument(
+        "--user-id",
+        type=str,
+        default="default",
+        help="User ID for profile persistence",
+    )
+    parser.add_argument(
+        "--merge-mode",
+        type=str,
+        default="",
+        choices=["", "initial", "merge", "overwrite"],
+        help="Merge mode when existing profile exists",
+    )
+    parser.add_argument(
+        "--await-review",
+        action="store_true",
+        help="Whether to stop at diff stage and await user review without persisting immediately",
     )
     return parser.parse_args()
 
@@ -129,22 +150,45 @@ def main() -> None:
         llm_client.config.base_url,
         llm_client.config.max_tokens,
     )
-    memory_manager = ResumeMemoryManager(
-        llm_client=llm_client,
-        memory_file_path=args.memory_path,
-    )
 
     try:
-        profile = memory_manager.generate_and_save_memory(file_path)
+        lifecycle_result = run_resume_lifecycle_graph(
+            file_path=str(file_path),
+            file_name=args.file_name or file_path.name,
+            user_id=args.user_id,
+            merge_mode=args.merge_mode or None,
+            await_review=args.await_review,
+            llm_client=llm_client,
+        )
+
+        final_profile = (
+            lifecycle_result.get("final_profile")
+            or lifecycle_result.get("normalized_profile")
+            or {}
+        )
+        diff_summary = lifecycle_result.get("diff_summary", "")
+
+        if args.memory_path and final_profile:
+            try:
+                prof_obj = StructuredCandidateProfile.from_dict(final_profile)
+                ResumeMemoryManager(
+                    llm_client=llm_client,
+                    memory_file_path=args.memory_path,
+                ).save_memory_profile(prof_obj)
+            except Exception as mem_err:
+                logger.warning("Failed to sync profile to memory file %s: %s", args.memory_path, mem_err)
+
         logger.info(
-            "Resume successfully parsed and saved for candidate: %s",
-            profile.name,
+            "Resume successfully processed by LangGraph lifecycle for candidate: %s",
+            final_profile.get("name", "求职者"),
         )
         sys.stdout.write(
             json.dumps(
                 {
                     "success": True,
-                    "profile": profile.to_dict(),
+                    "profile": final_profile,
+                    "diff_summary": diff_summary,
+                    "status": lifecycle_result.get("status", "completed"),
                     "message": "简历解析成功，已生成全量无损画像！",
                 },
                 ensure_ascii=False,
@@ -152,107 +196,29 @@ def main() -> None:
             + "\n"
         )
     except Exception as e:
-        logger.error("LLM resume parse error: %s\nTraceback:\n%s", e, traceback.format_exc())
-        sys.stderr.write(f"LLM parse warning: {e}, falling back to heuristic parsing.\n")
+        logger.error("LangGraph resume lifecycle error: %s\nTraceback:\n%s", e, traceback.format_exc())
+        sys.stderr.write(f"LangGraph parse warning: {e}, falling back to heuristic normalizer.\n")
         try:
-            import re
-
-            lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
-            extracted_name = "求职者"
-            for line in lines:
-                m_name = re.search(r"(?:姓名|Name)[:：\s]*([^\s,，;；]+)", line)
-                if m_name:
-                    extracted_name = m_name.group(1).strip()
-                    break
-                words = line.split()
-                if (
-                    words
-                    and len(words[0]) in [2, 3, 4]
-                    and not any(
-                        k in words[0] for k in ["简历", "个人", "电话", "邮箱", "求职", "求职者"]
-                    )
-                ):
-                    extracted_name = words[0]
-                    break
-
-            exp_years = 0
-            m_exp = re.search(
-                r"(?<!\d)([1-9]|[1-4]\d)\s*(?:年|years|yrs)(?:研发经验|工作经验|经验)?",
-                raw_text,
-                re.IGNORECASE,
-            )
-            if m_exp:
-                exp_years = int(m_exp.group(1))
-
-            skills = []
-            known_skills = [
-                "Python",
-                "FastAPI",
-                "TypeScript",
-                "Android",
-                "Unity",
-                "Java",
-                "Go",
-                "Golang",
-                "C++",
-                "Rust",
-                "Vue",
-                "React",
-                "Svelte",
-                "Node.js",
-                "Docker",
-                "Kubernetes",
-                "LLM",
-                "Agent",
-                "Appium",
-                "PyTorch",
-                "TensorFlow",
-            ]
-            for s in known_skills:
-                if re.search(rf"\b{re.escape(s)}\b", raw_text, re.IGNORECASE):
-                    skills.append(s)
-
-            positions = []
-            known_positions = [
-                "AI Agent 架构师",
-                "全栈技术专家",
-                "架构师",
-                "技术专家",
-                "算法工程师",
-                "Android 开发",
-                "Python 开发",
-                "前端开发",
-                "后端开发",
-            ]
-            for pos in known_positions:
-                if pos in raw_text:
-                    positions.append(pos)
-
-            profile = StructuredCandidateProfile(
-                name=extracted_name,
-                years_of_experience=exp_years,
-                education=[],
-                core_skills=skills,
-                project_highlights=[],
-                work_experiences=[],
-                projects=[],
-                target_positions=positions,
-                raw_summary=raw_text.strip()[:300],
-                raw_resume_text=raw_text,
-            )
-
-            memory_manager.save_memory_profile(profile)
+            normalized = ProfileNormalizer.normalize({}, raw_text=raw_text)
+            profile_obj = StructuredCandidateProfile.from_dict(normalized)
+            if args.memory_path:
+                ResumeMemoryManager(
+                    llm_client=llm_client,
+                    memory_file_path=args.memory_path,
+                ).save_memory_profile(profile_obj)
 
             logger.info(
                 "Resume parsed via heuristic fallback and saved for candidate: %s",
-                profile.name,
+                profile_obj.name,
             )
             sys.stdout.write(
                 json.dumps(
                     {
                         "success": True,
-                        "profile": profile.to_dict(),
-                        "message": "简历已解析（本地规则提取模式）",
+                        "profile": profile_obj.to_dict(),
+                        "diff_summary": "【解析降级】使用自愈规整器完成提取",
+                        "status": "completed",
+                        "message": "简历已解析（自愈规整模式）",
                     },
                     ensure_ascii=False,
                 )
