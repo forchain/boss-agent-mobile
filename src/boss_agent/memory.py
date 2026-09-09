@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from langsmith import traceable
 from rich.console import Console
 
 from droid_agent_core.llm import LLMDecisionClient, OpenAIChatClient
@@ -338,6 +339,7 @@ class ResumeMemoryManager:
                 )
         return None
 
+    @traceable(name="ResumeMemoryManager.generate_and_save_memory", run_type="chain")
     def generate_and_save_memory(self, resume_path: str | Path) -> StructuredCandidateProfile:
         """Extract text from resume file, call LLM to parse into unabbreviated schema, and save to database."""
         console.print(f"📄 [bold cyan]Parsing resume file:[/bold cyan] {resume_path}...")
@@ -447,6 +449,7 @@ class ResumeMemoryManager:
         except Exception:
             pass
 
+    @traceable(name="ResumeMemoryManager.load_memory", run_type="tool")
     def load_memory(
         self,
         force_refresh: bool = False,

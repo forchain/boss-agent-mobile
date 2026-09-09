@@ -7,6 +7,7 @@ LangGraph multi-agent workflow for multi-tier job screening, JD evaluation, and 
 from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
+from langsmith import traceable
 
 from .models import ScreeningPolicy
 from .pages import JobCardBrief
@@ -45,6 +46,7 @@ class JDSemanticScreenerAgent:
     def __init__(self, llm_client: Any | None = None) -> None:
         self.llm_client = llm_client
 
+    @traceable(name="JDSemanticScreenerAgent.evaluate", run_type="chain")
     def evaluate(
         self,
         jd_text: str,
@@ -108,6 +110,7 @@ class JDSemanticScreenerAgent:
             return True, f"LLM精筛调用异常，降级放行: {e}"
 
 
+@traceable(name="keyword_screener_node", run_type="tool")
 def keyword_screener_node(state: JobApplicationState) -> dict[str, Any]:
     """Purely deterministic keyword screener node evaluating job card against policy."""
     card_dict = state.get("card") or {}
@@ -185,6 +188,7 @@ class GreetingDrafterAgent:
 
             self.matching_service = JobMatchGreetingService(llm_client=llm_client)
 
+    @traceable(name="GreetingDrafterAgent.draft", run_type="chain")
     def draft(
         self,
         card: dict[str, Any],
@@ -287,6 +291,7 @@ def build_job_application_graph(
     return builder.compile()
 
 
+@traceable(name="run_job_application_graph", run_type="chain")
 def run_job_application_graph(
     card: JobCardBrief | dict[str, Any],
     policy: ScreeningPolicy | dict[str, Any] | None = None,
@@ -295,6 +300,7 @@ def run_job_application_graph(
     llm_client: Any | None = None,
     matching_service: Any | None = None,
     graph: Any | None = None,
+    config: dict[str, Any] | None = None,
 ) -> JobApplicationState:
     """Run the job application workflow graph on a single job posting card."""
     if graph is None:
@@ -337,5 +343,17 @@ def run_job_application_graph(
         "status": "pending",
     }
 
-    result = graph.invoke(initial_state)
+    run_config: dict[str, Any] = {
+        "tags": ["boss-agent", "screening-graph"],
+        "metadata": {
+            "title": card_dict.get("title", ""),
+            "company_name": card_dict.get("company_name", ""),
+            "salary_range": card_dict.get("salary_range", ""),
+            "location": card_dict.get("location", ""),
+        },
+    }
+    if config:
+        run_config.update(config)
+
+    result = graph.invoke(initial_state, config=run_config)
     return result

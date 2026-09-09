@@ -39,3 +39,22 @@ timeout_sec: 120.0
 
 # Max completion tokens in response (default: 262144 for MiniMax/large models)
 max_tokens: 262144
+
+# ==============================================================================
+# LangSmith Observability & Tracing Configuration
+# ==============================================================================
+# Tracing can be enabled here or via environment variables:
+#   export LANGSMITH_TRACING=true
+#   export LANGSMITH_API_KEY="lsv2_pt_..."
+#   export LANGSMITH_PROJECT="boss-agent-mobile"
+#
+# When enabled, all LLM reasoning, LangGraph screening workflows, and greeting
+# drafting executions are automatically recorded to LangSmith.
+# Query traces via CLI:
+#   langsmith trace list --project boss-agent-mobile
+# ==============================================================================
+langsmith_tracing: false
+langsmith_api_key: "your-langsmith-api-key-here"
+langsmith_project: "boss-agent-mobile"
+# langsmith_endpoint: "https://api.smith.langchain.com"
+
