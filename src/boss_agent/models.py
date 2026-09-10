@@ -162,6 +162,51 @@ class FilterConfig:
         return bool(self.industries)
 
 
+def is_masked_company_name(name: str | None) -> bool:
+    """Check whether a company name is an anonymous, confidential, or masked placeholder.
+
+    Headhunters and agencies often use masked employer names such as:
+    - '某中型人工智能公司'
+    - '成都某中型...智能公司'
+    - '某知名互联网公司'
+    - '某大型国企'
+    - '某上市公司'
+    - '某独角兽'
+    - '***公司' / '***'
+    - '保密公司' / '保密'
+
+    Authentic employer entities (e.g. '深至科技', '游族网络', '腾讯科技') return False.
+    """
+    if not name or not isinstance(name, str):
+        return False
+
+    cleaned = name.strip()
+    if not cleaned:
+        return False
+
+    # Confidential / hidden placeholders
+    if any(marker in cleaned for marker in ("***", "保密", "隐藏", "匿名")):
+        return True
+
+    # Check for presence of Chinese placeholder character '某' (a certain / anonymous)
+    # In Chinese business naming regulations, real enterprise names never use '某'.
+    # On recruitment platforms, '某' is exclusively used to mask actual company names.
+    if "某" in cleaned:
+        return True
+
+    # Generic descriptors without proper names
+    import re
+
+    return bool(
+        re.match(
+            r"^(?:知名|头部|大型|中型|小型|外资|民营|上市|创业|初创)"
+            r"(?:互联网|科技|金融|量化|医疗|AI|人工智能)?"
+            r"(?:公司|企业|集团|机构|团队|厂商|大厂|外企)$",
+            cleaned,
+        )
+    )
+
+
 @dataclass
 class ScreeningPolicy:
     """Policy rules for multi-stage job screening."""
@@ -171,6 +216,65 @@ class ScreeningPolicy:
     company_blacklist: list[str] = field(default_factory=list)
     jd_blacklist: list[str] = field(default_factory=list)
     enable_screening: bool = True
+
+    def validate_can_blacklist_company(
+        self,
+        company_name: str,
+        is_headhunter: bool = False,
+    ) -> tuple[bool, str]:
+        """Validate whether a company can safely be added to company_blacklist under guardrail rules.
+
+        Returns (allowed: bool, notice: str).
+        """
+        if not company_name or not company_name.strip():
+            return False, "公司名称不能为空"
+
+        cleaned = company_name.strip()
+
+        # Guardrail 1: Headhunter job posting's company name must not be blacklisted
+        if is_headhunter:
+            return (
+                False,
+                f"【黑名单保护生效】岗位为猎头代招岗位，公司名称 '{cleaned}' 为聚合或代招渠道，禁止加入全局黑名单以避免误伤其他雇主",
+            )
+
+        # Guardrail 2: Masked / placeholder company name must not be blacklisted
+        if is_masked_company_name(cleaned):
+            return (
+                False,
+                f"【黑名单保护生效】'{cleaned}' 属于保密/占位公司名称（如某...公司），禁止加入全局黑名单以避免大范围误伤不相关企业",
+            )
+
+        return True, f"公司 '{cleaned}' 为真实直招企业，允许加入黑名单"
+
+    def add_company_to_blacklist(
+        self,
+        company_name: str,
+        is_headhunter: bool = False,
+    ) -> tuple[bool, str]:
+        """Attempt to add a company to company_blacklist with guardrail enforcement.
+
+        Returns (success: bool, notice: str).
+        """
+        allowed, notice = self.validate_can_blacklist_company(
+            company_name, is_headhunter=is_headhunter
+        )
+        if not allowed:
+            return False, notice
+
+        cleaned = company_name.strip()
+        if cleaned not in self.company_blacklist:
+            self.company_blacklist.append(cleaned)
+            return True, f"已成功将直招企业 '{cleaned}' 加入公司黑名单，后续该企业的岗位将自动过滤以节省每日投递额度"
+        return True, f"企业 '{cleaned}' 已在公司黑名单中"
+
+    def remove_company_from_blacklist(self, company_name: str) -> bool:
+        """Remove a company from company_blacklist."""
+        cleaned = company_name.strip()
+        if cleaned in self.company_blacklist:
+            self.company_blacklist.remove(cleaned)
+            return True
+        return False
 
     def matches_card_keywords(
         self,
