@@ -59,7 +59,7 @@ const localCandidateMemoryMap: Record<string, CandidateProfile> = {};
 
 export async function getCandidateProfile(userId = 'default'): Promise<CandidateProfile | null> {
 	try {
-		const record = await pb.collection('candidate_profiles').getFirstListItem(`user_id='${userId}'`);
+		const record = await pb.collection('candidate_profiles').getFirstListItem(`user_id='${userId}'`, { sort: '-updated' });
 		if (record) {
 			const loadedProfile: CandidateProfile = {
 				id: record.id,
@@ -130,7 +130,7 @@ export async function saveCandidateProfile(profile: Partial<CandidateProfile>, u
 	localCandidateMemoryMap[userId] = merged;
 
 	try {
-		const existing = await pb.collection('candidate_profiles').getFirstListItem(`user_id='${userId}'`).catch(() => null);
+		const existing = await pb.collection('candidate_profiles').getFirstListItem(`user_id='${userId}'`, { sort: '-updated' }).catch(() => null);
 		const data = {
 			user_id: userId,
 			name: merged.name,
@@ -218,19 +218,25 @@ export async function createResumeRevision(
 	}
 }
 
+// In-memory fallback map for automation tasks
+const localAutomationTasksMap: Record<string, AutomationTask> = {};
+
 export async function createAutomationTask(taskType: string, payload: Record<string, any>): Promise<AutomationTask> {
 	const taskId = generatePbId();
+	const now = new Date().toISOString();
 	const taskData = {
 		id: taskId,
-		task_type: taskType,
-		status: 'pending',
+		task_type: taskType as any,
+		status: 'pending' as const,
 		payload: payload,
-		logs: [`[System] Task created and waiting for worker dispatch...`]
+		logs: [`[System] Task created and waiting for worker dispatch...`],
+		created: now,
+		updated: now
 	};
 
 	try {
 		const record = await pb.collection('automation_tasks').create(taskData);
-		return {
+		const createdTask: AutomationTask = {
 			id: record.id,
 			task_type: record.task_type,
 			status: record.status,
@@ -241,17 +247,118 @@ export async function createAutomationTask(taskType: string, payload: Record<str
 			created: record.created,
 			updated: record.updated
 		};
+		localAutomationTasksMap[createdTask.id] = createdTask;
+		return createdTask;
 	} catch (err) {
 		// Generate client task ID when offline
 		const fakeId = 'task_' + Math.random().toString(36).substring(2, 11);
-		return {
+		const localTask: AutomationTask = {
 			id: fakeId,
 			task_type: taskType as any,
 			status: 'pending',
 			payload,
-			logs: [`[Local/Offline] Task queued: ${taskType}`]
+			logs: [`[Local/Offline] Task queued: ${taskType}`],
+			created: now,
+			updated: now
+		};
+		localAutomationTasksMap[fakeId] = localTask;
+		return localTask;
+	}
+}
+
+export async function listAutomationTasks(options?: {
+	status?: string;
+	page?: number;
+	limit?: number;
+}): Promise<{ items: AutomationTask[]; totalItems: number; totalPages: number }> {
+	const page = options?.page || 1;
+	const limit = options?.limit || 20;
+	const status = options?.status;
+
+	try {
+		const filterParts: string[] = [];
+		if (status && status !== 'all') {
+			filterParts.push(`status='${status}'`);
+		}
+		const filter = filterParts.join(' && ');
+
+		const res = await pb.collection('automation_tasks').getList(page, limit, {
+			filter,
+			sort: '-created'
+		});
+
+		const items: AutomationTask[] = res.items.map((r: any) => ({
+			id: r.id,
+			task_type: r.task_type,
+			status: r.status,
+			payload: r.payload || {},
+			logs: r.logs || [],
+			error_message: r.error_message,
+			assigned_worker: r.assigned_worker,
+			created: r.created,
+			updated: r.updated
+		}));
+
+		for (const t of items) {
+			localAutomationTasksMap[t.id] = t;
+		}
+
+		return {
+			items,
+			totalItems: res.totalItems,
+			totalPages: res.totalPages
+		};
+	} catch (e) {
+		// In-memory fallback
+		let all = Object.values(localAutomationTasksMap).sort((a, b) => {
+			const tA = a.created ? new Date(a.created).getTime() : 0;
+			const tB = b.created ? new Date(b.created).getTime() : 0;
+			return tB - tA;
+		});
+		if (status && status !== 'all') {
+			all = all.filter((t) => t.status === status);
+		}
+		const start = (page - 1) * limit;
+		const sliced = all.slice(start, start + limit);
+		return {
+			items: sliced,
+			totalItems: all.length,
+			totalPages: Math.ceil(all.length / limit) || 1
 		};
 	}
+}
+
+export async function getAutomationTask(taskId: string): Promise<AutomationTask | null> {
+	try {
+		const r = await pb.collection('automation_tasks').getOne(taskId);
+		if (r) {
+			const task: AutomationTask = {
+				id: r.id,
+				task_type: r.task_type,
+				status: r.status,
+				payload: r.payload || {},
+				logs: r.logs || [],
+				error_message: r.error_message,
+				assigned_worker: r.assigned_worker,
+				created: r.created,
+				updated: r.updated
+			};
+			localAutomationTasksMap[task.id] = task;
+			return task;
+		}
+	} catch (e) {
+		// Fallback to local memory
+	}
+	return localAutomationTasksMap[taskId] || null;
+}
+
+export async function rerunTask(taskId: string): Promise<AutomationTask | null> {
+	const original = await getAutomationTask(taskId);
+	if (!original) return null;
+	return createAutomationTask(original.task_type, {
+		...original.payload,
+		rerun_of: taskId
+	});
 }
 
 export async function resumeTask(taskId: string): Promise<boolean> {
@@ -259,8 +366,15 @@ export async function resumeTask(taskId: string): Promise<boolean> {
 		await pb.collection('automation_tasks').update(taskId, {
 			status: 'resuming'
 		});
+		if (localAutomationTasksMap[taskId]) {
+			localAutomationTasksMap[taskId].status = 'resuming';
+		}
 		return true;
 	} catch (e) {
+		if (localAutomationTasksMap[taskId]) {
+			localAutomationTasksMap[taskId].status = 'resuming';
+			return true;
+		}
 		return false;
 	}
 }
@@ -270,8 +384,15 @@ export async function cancelTask(taskId: string): Promise<boolean> {
 		await pb.collection('automation_tasks').update(taskId, {
 			status: 'cancelled'
 		});
+		if (localAutomationTasksMap[taskId]) {
+			localAutomationTasksMap[taskId].status = 'cancelled';
+		}
 		return true;
 	} catch (e) {
+		if (localAutomationTasksMap[taskId]) {
+			localAutomationTasksMap[taskId].status = 'cancelled';
+			return true;
+		}
 		return false;
 	}
 }
@@ -485,4 +606,27 @@ export async function updateSavedSearch(id: string, search: Partial<SavedSearch>
 		target_task_type: search.target_task_type ?? current?.target_task_type
 	};
 	return saveSavedSearch(merged);
+}
+
+export function formatCronHuman(cronExpr?: string): string {
+	if (!cronExpr || !cronExpr.trim()) return '未设置定时';
+	const parts = cronExpr.trim().split(/\s+/);
+	if (parts.length !== 5) return cronExpr;
+	const [min, hour, dom, mon, dow] = parts;
+	const pad = (n: string | number) => String(n).padStart(2, '0');
+
+	if (dom === '*' && mon === '*' && dow === '*') {
+		if (/^\d+$/.test(hour) && /^\d+$/.test(min)) {
+			return `每天 ${pad(hour)}:${pad(min)}`;
+		}
+		if (hour.startsWith('*/') && /^\d+$/.test(min)) {
+			return `每 ${hour.slice(2)} 小时 (第 ${pad(min)} 分)`;
+		}
+	}
+	if (dow === '1-5' && dom === '*' && mon === '*') {
+		if (/^\d+$/.test(hour) && /^\d+$/.test(min)) {
+			return `工作日 (周一至五) ${pad(hour)}:${pad(min)}`;
+		}
+	}
+	return `Cron: ${cronExpr}`;
 }

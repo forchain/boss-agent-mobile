@@ -1,118 +1,184 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import type { CandidateProfile, LLMSettings, AutomationTask, TaskStatus } from '$lib/types';
+	import type { AutomationTask, SavedSearch, TaskStatus } from '$lib/types';
 	import {
 		pb,
 		checkPocketBaseHealth,
-		getCandidateProfile,
-		saveCandidateProfile,
 		createAutomationTask,
+		listAutomationTasks,
+		getAutomationTask,
+		rerunTask,
 		resumeTask,
-		cancelTask
+		cancelTask,
+		listSavedSearches,
+		updateSavedSearch,
+		formatCronHuman
 	} from '$lib/pocketbase';
+	import TaskLaunchModal from '$lib/components/TaskLaunchModal.svelte';
+	import TaskLogModal from '$lib/components/TaskLogModal.svelte';
 
-	// Candidate Profile State
-	let profile = $state<CandidateProfile>({
-		name: '',
-		years_of_experience: null,
-		education: [],
-		core_skills: [],
-		project_highlights: [],
-		work_experiences: [],
-		projects: [],
-		target_positions: [],
-		raw_summary: ''
-	});
-
-	let skillsInput = $state('');
-	let positionsInput = $state('');
-	let isUploadingResume = $state(false);
-	let uploadStatusText = $state('');
-	let uploadedFileName = $state('');
-	let isDraggingOver = $state(false);
-	let profileSavedSuccess = $state(false);
-	let fileInputRef: HTMLInputElement | null = $state(null);
-
-	// LLM Settings State
-	let llmSettings = $state<LLMSettings>({
-		provider: 'openai',
-		model: 'MiniMax-M3',
-		base_url: 'https://api.minimaxi.com/v1',
-		api_key: '',
-		temperature: 0.2
-	});
-	let llmSavedSuccess = $state(false);
-
-	// Task Control Center State
-	let taskKeyword = $state('agent');
-	let taskMinScore = $state(75);
-	let taskMode = $state<'preview' | 'auto_send'>('preview');
+	// Active Running Task State
 	let activeTaskId = $state<string | null>(null);
 	let activeTask = $state<AutomationTask | null>(null);
-	let logLines = $state<string[]>([
-		'[System] SvelteKit 控制台就绪，直连 PocketBase State Stream...'
-	]);
 	let isPausedForTakeover = $state(false);
+	let logLines = $state<string[]>([
+		'[System] 任务控制台就绪，正在监听自动化状态流...'
+	]);
 
-	// Polling fallback / interval
+	// Task History State
+	let historyTasks = $state<AutomationTask[]>([]);
+	let historyFilter = $state<string>('all');
+	let isHistoryLoading = $state(false);
+
+	// Scheduled Tasks State
+	let scheduledSearches = $state<SavedSearch[]>([]);
+	let isScheduleLoading = $state(false);
+
+	// Tab Switch State (Bottom Section)
+	let bottomTab = $state<'history' | 'scheduled'>('history');
+
+	// Modals State
+	let isLaunchModalOpen = $state(false);
+	let isLogModalOpen = $state(false);
+	let inspectTask = $state<AutomationTask | null>(null);
+
+	// Polling timer fallback
 	let pollTimer: any = null;
 
-	function applyLoadedProfile(p: Partial<CandidateProfile>) {
-		profile = {
-			name: p.name || '',
-			years_of_experience:
-				p.years_of_experience !== undefined && p.years_of_experience !== null
-					? Number(p.years_of_experience)
-					: null,
-			education: p.education || [],
-			core_skills: p.core_skills || [],
-			project_highlights: p.project_highlights || [],
-			work_experiences: p.work_experiences || [],
-			projects: p.projects || [],
-			target_positions: p.target_positions || [],
-			raw_summary: p.raw_summary || '',
-			raw_resume_text: p.raw_resume_text || ''
+	async function refreshAllData() {
+		await Promise.all([loadTaskHistory(), loadScheduledSearches(), checkActiveTask()]);
+	}
+
+	async function checkActiveTask() {
+		try {
+			// Find most recent running or pending or paused task
+			const res = await listAutomationTasks({ limit: 5 });
+			const running = res.items.find((t) =>
+				['running', 'paused_for_takeover', 'resuming', 'pending'].includes(t.status)
+			);
+			if (running) {
+				activeTaskId = running.id;
+				activeTask = running;
+				if (running.logs && running.logs.length) {
+					logLines = running.logs;
+				}
+				isPausedForTakeover = running.status === 'paused_for_takeover';
+			} else if (activeTask && ['success', 'failed', 'cancelled'].includes(activeTask.status)) {
+				// Keep activeTask visible until refreshed or new task started
+			} else {
+				activeTaskId = null;
+				activeTask = null;
+				isPausedForTakeover = false;
+			}
+		} catch (e) {}
+	}
+
+	async function loadTaskHistory() {
+		isHistoryLoading = true;
+		try {
+			const res = await listAutomationTasks({
+				status: historyFilter === 'all' ? undefined : historyFilter,
+				limit: 30
+			});
+			historyTasks = res.items;
+		} catch (e) {
+			console.warn('Failed to load task history:', e);
+		} finally {
+			isHistoryLoading = false;
+		}
+	}
+
+	async function loadScheduledSearches() {
+		isScheduleLoading = true;
+		try {
+			const list = await listSavedSearches();
+			// Filter to searches that have cron expressions
+			scheduledSearches = list.filter((s) => s.cron_expression && s.cron_expression.trim().length > 0);
+		} catch (e) {
+			console.warn('Failed to load scheduled searches:', e);
+		} finally {
+			isScheduleLoading = false;
+		}
+	}
+
+	async function onResumeActiveTask() {
+		if (!activeTaskId) return;
+		await resumeTask(activeTaskId);
+		isPausedForTakeover = false;
+		logLines.push(`[User Action] 已发送人工接管恢复信号 (RESUMING)...`);
+	}
+
+	async function onCancelActiveTask() {
+		if (!activeTaskId) return;
+		await cancelTask(activeTaskId);
+		isPausedForTakeover = false;
+		logLines.push(`[User Action] 任务已被人工取消 (CANCELLED)。`);
+		await loadTaskHistory();
+	}
+
+	async function onRerunTask(t: AutomationTask) {
+		const newRun = await rerunTask(t.id);
+		if (newRun) {
+			activeTaskId = newRun.id;
+			activeTask = newRun;
+			logLines = [`[System] 已重新下发任务 ${newRun.id} (来源于 ${t.id})...`];
+			await loadTaskHistory();
+		}
+	}
+
+	async function onToggleSchedule(search: SavedSearch) {
+		const newEnabled = !search.is_enabled;
+		search.is_enabled = newEnabled;
+		try {
+			await updateSavedSearch(search.id, { is_enabled: newEnabled });
+		} catch (e) {
+			search.is_enabled = !newEnabled; // rollback
+		}
+	}
+
+	async function onRunScheduledNow(search: SavedSearch) {
+		const type = (search.target_task_type || 'AUTO_APPLY') as any;
+		const payload = {
+			search_id: search.id,
+			search_name: search.name,
+			keyword: search.keyword || '',
+			filter: search.filter || {},
+			preview_only: true,
+			triggered_manually: true
 		};
-		skillsInput = (p.core_skills || []).join(', ');
-		positionsInput = (p.target_positions || []).join(', ');
+		const task = await createAutomationTask(type, payload);
+		activeTaskId = task.id;
+		activeTask = task;
+		logLines = [`[Scheduled] 手动触发定时策略 [${search.name}] 任务下发成功 (ID: ${task.id})...`];
+		await loadTaskHistory();
+	}
+
+	function handleTaskCreated(task: AutomationTask) {
+		activeTaskId = task.id;
+		activeTask = task;
+		logLines = [`[System] 任务下发成功 (ID: ${task.id}), 等待 Worker 认领...`];
+		loadTaskHistory();
+	}
+
+	function handleOpenLogModal(t: AutomationTask) {
+		inspectTask = t;
+		isLogModalOpen = true;
+	}
+
+	function checkHashTrigger() {
+		if (typeof window !== 'undefined' && (window.location.hash === '#new-task' || window.location.hash === '#task-console')) {
+			isLaunchModalOpen = true;
+			history.replaceState(null, '', window.location.pathname);
+		}
 	}
 
 	onMount(async () => {
-		// Load candidate profile from PocketBase / local cache
-		try {
-			const loaded = await getCandidateProfile();
-			if (
-				loaded &&
-				(loaded.name ||
-					loaded.years_of_experience !== null ||
-					loaded.core_skills?.length ||
-					loaded.target_positions?.length ||
-					loaded.raw_summary)
-			) {
-				applyLoadedProfile(loaded);
-			}
-		} catch (e) {
-			console.error('Failed to load profile', e);
-		}
+		checkHashTrigger();
+		window.addEventListener('hashchange', checkHashTrigger);
 
-		// Load active LLM settings from backend
-		try {
-			const res = await fetch('/api/llm/settings');
-			if (res.ok) {
-				const conf = await res.json();
-				llmSettings = {
-					provider: conf.provider || 'openai',
-					model: conf.model || 'MiniMax-M3',
-					base_url: conf.base_url || 'https://api.minimaxi.com/v1',
-					api_key: conf.api_key || '',
-					temperature: conf.temperature ?? 0.2
-				};
-			}
-		} catch (e) {
-			console.warn('Failed to load LLM settings:', e);
-		}
+		await refreshAllData();
 
-		// Subscribe to PocketBase Realtime SSE only when online
+		// Subscribe to Realtime SSE updates
 		if (await checkPocketBaseHealth()) {
 			try {
 				pb.collection('automation_tasks').subscribe('*', (e) => {
@@ -125,176 +191,100 @@
 							}
 							isPausedForTakeover = t.status === 'paused_for_takeover';
 						}
+						// Refresh history in background
+						loadTaskHistory();
 					}
 				});
 			} catch (err) {
-				console.warn('PocketBase realtime subscribe not available:', err);
+				console.warn('Realtime subscription fallback:', err);
 			}
 		}
+
+		// Polling fallback every 2s
+		pollTimer = setInterval(async () => {
+			if (activeTaskId) {
+				try {
+					const rec = await getAutomationTask(activeTaskId);
+					if (rec) {
+						activeTask = rec;
+						if (rec.logs && rec.logs.length) {
+							logLines = rec.logs;
+						}
+						isPausedForTakeover = rec.status === 'paused_for_takeover';
+					}
+				} catch (e) {}
+			}
+		}, 2000);
 	});
 
 	onDestroy(() => {
+		if (typeof window !== 'undefined') {
+			window.removeEventListener('hashchange', checkHashTrigger);
+		}
 		try {
 			pb.collection('automation_tasks').unsubscribe('*');
 		} catch (e) {}
 		if (pollTimer) clearInterval(pollTimer);
 	});
-
-	// Resume Upload Handler
-	async function handleResumeUpload(file: File) {
-		isUploadingResume = true;
-		uploadedFileName = file.name;
-		uploadStatusText = `正在提取并解析简历: ${file.name} (大模型提取中)...`;
-
-		const formData = new FormData();
-		formData.append('file', file);
-		formData.append('llmSettings', JSON.stringify(llmSettings));
-
-		try {
-			const res = await fetch('/api/candidate/resume', {
-				method: 'POST',
-				body: formData
-			});
-			const data = await res.json();
-			if (res.ok && data.success && data.profile) {
-				applyLoadedProfile(data.profile);
-				await saveCandidateProfile(profile);
-				uploadStatusText = `✅ 简历解析成功！画像已更新并持久化`;
-				setTimeout(() => {
-					uploadStatusText = '';
-				}, 5000);
-			} else {
-				uploadStatusText = `❌ 解析失败: ${data.message || '未知错误'}`;
-			}
-		} catch (err: any) {
-			uploadStatusText = `❌ 上传错误: ${err?.message || err}`;
-		} finally {
-			isUploadingResume = false;
-		}
-	}
-
-	async function onSaveProfile() {
-		profile.core_skills = skillsInput
-			.split(/[,，]/)
-			.map((s) => s.trim())
-			.filter(Boolean);
-		profile.target_positions = positionsInput
-			.split(/[,，]/)
-			.map((s) => s.trim())
-			.filter(Boolean);
-
-		await saveCandidateProfile(profile);
-		profileSavedSuccess = true;
-		setTimeout(() => {
-			profileSavedSuccess = false;
-		}, 3000);
-	}
-
-	async function onSaveLLMSettings() {
-		try {
-			const res = await fetch('/api/llm/settings', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify(llmSettings)
-			});
-			if (res.ok) {
-				llmSavedSuccess = true;
-				setTimeout(() => {
-					llmSavedSuccess = false;
-				}, 3000);
-			} else {
-				const err = await res.json();
-				alert('保存配置失败: ' + err.message);
-			}
-		} catch (e) {
-			alert('保存配置异常: ' + e);
-		}
-	}
-
-
-	// Task Launch Handler
-	async function onLaunchTask(taskType: 'AUTO_APPLY' | 'SCRAPE_JOBS' | 'CHECK_LOGIN') {
-		const payload = {
-			keyword: taskKeyword,
-			min_score: taskMinScore,
-			preview_only: taskMode === 'preview',
-			auto_send: taskMode === 'auto_send',
-			preview_timeout_sec: 3.0,
-			candidate_profile: profile
-		};
-
-		logLines = [
-			`[System] 正在向 PocketBase 提交 ${taskType} 任务...`,
-			`[Config] 关键词='${taskKeyword}', 最低评分=${taskMinScore}, 模式=${taskMode === 'preview' ? '安全草稿预览' : '自动发送'}`
-		];
-
-		const task = await createAutomationTask(taskType, payload);
-		activeTaskId = task.id;
-		activeTask = task;
-		logLines.push(`[PocketBase] Task ID: ${task.id} (Status: pending) - 等待 Worker 守护进程认领...`);
-
-		// Start polling fallback in case SSE is disconnected
-		if (pollTimer) clearInterval(pollTimer);
-		pollTimer = setInterval(async () => {
-			if (!activeTaskId) return;
-			try {
-				const rec = await pb.collection('automation_tasks').getOne(activeTaskId).catch(() => null);
-				if (rec) {
-					activeTask = rec as unknown as AutomationTask;
-					if (rec.logs && rec.logs.length) {
-						logLines = rec.logs;
-					}
-					isPausedForTakeover = rec.status === 'paused_for_takeover';
-					if (['success', 'failed', 'cancelled'].includes(rec.status)) {
-						clearInterval(pollTimer);
-					}
-				}
-			} catch (e) {}
-		}, 1000);
-	}
-
-	async function onResumeTask() {
-		if (!activeTaskId) return;
-		await resumeTask(activeTaskId);
-		isPausedForTakeover = false;
-		logLines.push(`[User Action] 已发送恢复信号 (RESUMING)...`);
-	}
-
-	async function onCancelTask() {
-		if (!activeTaskId) return;
-		await cancelTask(activeTaskId);
-		isPausedForTakeover = false;
-		logLines.push(`[User Action] 任务已被人工取消 (CANCELLED)。`);
-	}
 </script>
 
-<div class="space-y-8">
-	<!-- Takeover HITL Alert Banner -->
+<div class="space-y-8 pb-12">
+	<!-- Top Operation Header -->
+	<div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-slate-800/80 pb-6">
+		<div>
+			<div class="flex items-center space-x-2.5">
+				<span class="text-2xl">📋</span>
+				<h1 class="text-xl font-bold bg-gradient-to-r from-white to-slate-200 bg-clip-text text-transparent">
+					自动化任务管理看板 (Task Operations Center)
+				</h1>
+			</div>
+			<p class="text-xs text-slate-400 mt-1">
+				实时监控移动端自动化执行流，处理人机交互接管，并统筹历史审计与周期定时任务。
+			</p>
+		</div>
+
+		<div class="flex items-center space-x-3">
+			<button
+				onclick={refreshAllData}
+				class="text-xs text-slate-400 hover:text-slate-200 border border-slate-800 bg-slate-900/60 px-3 py-2 rounded-xl transition flex items-center gap-1.5"
+			>
+				<span>🔄 刷新看板</span>
+			</button>
+			<button
+				onclick={() => (isLaunchModalOpen = true)}
+				class="bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-semibold px-4 py-2 rounded-xl text-xs transition shadow-lg shadow-cyan-500/20 flex items-center space-x-1.5"
+			>
+				<span>🚀 发起新任务</span>
+			</button>
+		</div>
+	</div>
+
+	<!-- HITL Takeover Alert Banner -->
 	{#if isPausedForTakeover}
 		<div
-			class="border border-amber-500/60 bg-amber-950/50 p-5 rounded-2xl flex flex-col md:flex-row items-center justify-between shadow-2xl shadow-amber-900/30 animate-pulse gap-4"
+			class="border border-amber-500/70 bg-amber-950/60 p-5 rounded-2xl flex flex-col md:flex-row items-center justify-between shadow-2xl shadow-amber-900/40 animate-pulse gap-4"
 		>
-			<div class="flex items-center space-x-3">
-				<span class="text-3xl">⚠️</span>
+			<div class="flex items-center space-x-3.5">
+				<span class="text-3xl shrink-0">⚠️</span>
 				<div>
 					<h3 class="font-bold text-amber-300 text-sm md:text-base">
-						检测到安全验证码 / 页面需要人工接管 (HITL)
+						检测到安全验证码 / 页面需要人工接管 (HITL Required)
 					</h3>
-					<p class="text-xs text-amber-200/80 mt-0.5">
-						请在 Android 模拟器或真机窗口完成滑块验证或确认，完成后点击右侧恢复按钮继续自动化。
+					<p class="text-xs text-amber-200/90 mt-0.5 leading-relaxed">
+						检测到滑块验证码或安全挑战。请在 Android 模拟器/真机窗口完成验证，完成后点击右侧恢复继续自动化。
 					</p>
 				</div>
 			</div>
-			<div class="flex items-center space-x-2">
+			<div class="flex items-center space-x-2.5 shrink-0">
 				<button
-					onclick={onResumeTask}
+					onclick={onResumeActiveTask}
 					class="bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold px-4 py-2 rounded-xl text-xs shadow-lg transition"
 				>
-					✅ 我已完成验证，继续任务
+					✅ 我已完成验证，恢复执行
 				</button>
 				<button
-					onclick={onCancelTask}
-					class="bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium px-3 py-2 rounded-xl text-xs transition"
+					onclick={onCancelActiveTask}
+					class="bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium px-3.5 py-2 rounded-xl text-xs transition border border-slate-700"
 				>
 					取消任务
 				</button>
@@ -302,288 +292,370 @@
 		</div>
 	{/if}
 
-	<!-- 2-Column Responsive Grid -->
-	<div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
-		<!-- Left Column: Candidate Studio & LLM Config (5 Cols) -->
-		<div class="lg:col-span-5 space-y-8">
-			<!-- Candidate Profile Readiness Status Card -->
-			<div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
-				<div class="flex items-center justify-between border-b border-slate-800/80 pb-3">
+	<!-- Section 1: Active Task Console -->
+	<div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
+		<div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-800/80 pb-4">
+			<div class="flex items-center space-x-2.5">
+				<span class="text-xl">⚡</span>
+				<div>
 					<div class="flex items-center space-x-2">
-						<span class="text-xl">👤</span>
-						<h2 class="font-semibold text-sm text-slate-100">求职者画像与记忆就绪状态</h2>
-					</div>
-					<a
-						href="/profile"
-						class="text-xs text-cyan-400 hover:text-cyan-300 font-medium flex items-center gap-1 transition"
-					>
-						管理详细履历与历史 ↗
-					</a>
-				</div>
-
-				{#if profile.name}
-					<div class="p-4 rounded-xl bg-slate-950/70 border border-slate-800 space-y-3">
-						<div class="flex items-center justify-between">
-							<div class="flex items-center space-x-3">
-								<div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-600 to-blue-600 flex items-center justify-center font-bold text-white text-base shadow">
-									{profile.name.slice(0, 1)}
-								</div>
-								<div>
-									<h3 class="text-sm font-bold text-white flex items-center gap-2">
-										{profile.name}
-										<span class="text-xs text-slate-400 font-normal">({profile.years_of_experience || 0}年经验)</span>
-									</h3>
-									<p class="text-xs text-slate-400 mt-0.5">
-										{profile.target_positions?.join(' / ') || '未设定期望职位'}
-									</p>
-								</div>
-							</div>
-							<span class="px-2.5 py-1 rounded-full text-[11px] font-medium bg-emerald-950 text-emerald-400 border border-emerald-800/80 flex items-center gap-1">
-								<span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span> 就绪
-							</span>
-						</div>
-
-						<div class="grid grid-cols-2 gap-2 text-xs pt-1">
-							<div class="p-2.5 rounded-lg bg-slate-900/80 border border-slate-800/60">
-								<span class="text-slate-500 text-[10px] block">工作经历</span>
-								<span class="font-bold text-white text-xs">{profile.work_experiences?.length || 0} 段全量记录</span>
-							</div>
-							<div class="p-2.5 rounded-lg bg-slate-900/80 border border-slate-800/60">
-								<span class="text-slate-500 text-[10px] block">项目履历</span>
-								<span class="font-bold text-white text-xs">{profile.projects?.length || 0} 个深度项目</span>
-							</div>
-						</div>
-
-						{#if profile.core_skills && profile.core_skills.length > 0}
-							<div class="flex flex-wrap gap-1.5 pt-1">
-								{#each profile.core_skills.slice(0, 5) as skill}
-									<span class="px-2 py-0.5 rounded text-[10px] bg-slate-900 text-cyan-300 border border-slate-700/80">
-										{skill}
-									</span>
-								{/each}
-								{#if profile.core_skills.length > 5}
-									<span class="px-1.5 py-0.5 rounded text-[10px] bg-slate-900 text-slate-400">
-										+{profile.core_skills.length - 5}
-									</span>
-								{/if}
-							</div>
+						<h2 class="font-semibold text-sm text-slate-100">正在运行的任务 (Active Task Stream)</h2>
+						{#if activeTask && ['running', 'paused_for_takeover', 'resuming'].includes(activeTask.status)}
+							<span class="w-2 h-2 rounded-full bg-cyan-400 animate-ping"></span>
 						{/if}
 					</div>
-				{:else}
-					<div class="p-4 rounded-xl bg-slate-950/40 border border-dashed border-slate-800 text-center py-6 space-y-2">
-						<p class="text-xs text-slate-400">尚未配置求职者履历画像</p>
-						<a
-							href="/profile"
-							class="inline-block px-3.5 py-1.5 text-xs font-semibold rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white transition"
-						>
-							前往画像中心上传或录入简历
-						</a>
-					</div>
-				{/if}
+					<p class="text-[11px] text-slate-400">
+						独占绑定 Virtual Device Session 的实时控制台与执行遥测日志
+					</p>
+				</div>
 			</div>
 
-			<!-- LLM Settings Panel -->
-			<div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
-				<div class="flex items-center space-x-2 border-b border-slate-800/80 pb-4">
-					<span class="text-xl">⚙️</span>
-					<h2 class="font-semibold text-sm text-slate-100">大模型配置 (LLM Settings)</h2>
-				</div>
-
-				<form
-					class="space-y-4"
-					onsubmit={(e) => {
-						e.preventDefault();
-						onSaveLLMSettings();
-					}}
-				>
-					<div class="grid grid-cols-2 gap-4">
-						<div>
-							<label class="block text-xs font-medium text-slate-400 mb-1">Provider</label>
-							<select
-								bind:value={llmSettings.provider}
-								class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-cyan-500"
-							>
-								<option value="openai">OpenAI / 兼容接口</option>
-								<option value="minimax">MiniMax (海螺大模型)</option>
-								<option value="deepseek">DeepSeek</option>
-							</select>
-						</div>
-						<div>
-							<label class="block text-xs font-medium text-slate-400 mb-1">Model Name</label>
-							<input
-								type="text"
-								bind:value={llmSettings.model}
-								class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-cyan-500"
-							/>
-						</div>
-					</div>
-
-					<div>
-						<label class="block text-xs font-medium text-slate-400 mb-1">Base URL</label>
-						<input
-							type="text"
-							bind:value={llmSettings.base_url}
-							class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono text-slate-300 focus:outline-none focus:border-cyan-500"
-						/>
-					</div>
-
-					<div>
-						<label class="block text-xs font-medium text-slate-400 mb-1">API Key</label>
-						<input
-							type="password"
-							placeholder="保留原密钥请留空或输入新 Key"
-							bind:value={llmSettings.api_key}
-							class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono text-slate-300 focus:outline-none focus:border-cyan-500"
-						/>
-					</div>
-
-					<div class="flex items-center justify-between pt-1">
-						{#if llmSavedSuccess}
-							<span class="text-xs text-emerald-400 font-medium">✅ LLM 配置已更新</span>
-						{:else}
-							<span></span>
-						{/if}
+			<div class="flex items-center space-x-2.5">
+				{#if activeTask}
+					<span
+						class="text-[11px] px-2.5 py-1 rounded-full font-mono font-medium {activeTask.status === 'running'
+							? 'bg-cyan-950 text-cyan-400 border border-cyan-800 animate-pulse'
+							: activeTask.status === 'paused_for_takeover'
+								? 'bg-amber-950 text-amber-300 border border-amber-700'
+								: activeTask.status === 'success'
+									? 'bg-emerald-950 text-emerald-400 border border-emerald-800'
+									: 'bg-slate-800 text-slate-300'}"
+					>
+						{activeTask.status.toUpperCase()}: {activeTask.task_type}
+					</span>
+					{#if ['running', 'paused_for_takeover', 'pending'].includes(activeTask.status)}
 						<button
-							type="submit"
-							class="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-medium px-4 py-2 rounded-lg text-xs transition shadow"
+							onclick={onCancelActiveTask}
+							class="text-[11px] text-rose-400 hover:text-rose-300 border border-rose-900 bg-rose-950/40 px-2.5 py-1 rounded-lg transition"
 						>
-							💾 更新大模型配置
+							⏹ 终止任务
 						</button>
-					</div>
-				</form>
+					{/if}
+				{:else}
+					<span class="text-[11px] px-2.5 py-1 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800/80 flex items-center gap-1.5 font-medium">
+						<span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> 守护就绪待命 (Idle Ready)
+					</span>
+				{/if}
 			</div>
 		</div>
 
-		<!-- Right Column: Job Workbench & Task Console (7 Cols) -->
-		<div class="lg:col-span-7 space-y-8">
-			<!-- Job Workbench Quick Entry Banner -->
-			<div
-				class="bg-gradient-to-r from-cyan-950/40 via-blue-950/20 to-slate-900 border border-cyan-800/40 rounded-2xl p-5 shadow-xl flex items-center justify-between"
-			>
-				<div class="flex items-center space-x-3.5">
-					<div
-						class="w-10 h-10 rounded-xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-xl shrink-0"
-					>
-						💼
+		{#if activeTask}
+			<!-- Active Task Details Bar -->
+			<div class="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs">
+				<div class="flex items-center space-x-4">
+					<div>
+						<span class="text-slate-500 text-[10px] block">任务 ID</span>
+						<span class="font-mono text-slate-200">{activeTask.id}</span>
 					</div>
 					<div>
-						<div class="flex items-center space-x-2">
-							<h2 class="font-semibold text-sm text-slate-100">职位与匹配工作台</h2>
-							<span
-								class="px-2 py-0.5 rounded-full text-[10px] font-medium bg-cyan-500/10 text-cyan-400 border border-cyan-500/20"
-							>
-								已独立升级
-							</span>
+						<span class="text-slate-500 text-[10px] block">任务类型</span>
+						<span class="font-semibold text-cyan-400 font-mono">{activeTask.task_type}</span>
+					</div>
+					{#if activeTask.payload?.keyword}
+						<div>
+							<span class="text-slate-500 text-[10px] block">关键词</span>
+							<span class="font-mono text-slate-200">"{activeTask.payload.keyword}"</span>
 						</div>
-						<p class="text-xs text-slate-400 mt-1">
-							搜索采集的职位已自动完成指纹查重并汇入独立工作台。点击进入按状态分类管理、查看未匹配职位、触发 AI 深度评测与个性化破冰招呼语。
-						</p>
-					</div>
-				</div>
-				<a
-					href="/jobs"
-					class="bg-cyan-600 hover:bg-cyan-500 text-white font-medium px-4 py-2 rounded-xl text-xs shadow-lg shadow-cyan-950/50 transition flex items-center space-x-1.5 shrink-0 ml-4"
-				>
-					<span>打开工作台</span>
-					<span class="text-sm">→</span>
-				</a>
-			</div>
-
-			<!-- Automation Task Control Center -->
-			<div
-				id="task-console"
-				class="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-5"
-			>
-				<div class="flex items-center justify-between border-b border-slate-800/80 pb-4">
-					<div class="flex items-center space-x-2">
-						<span class="text-xl">🤖</span>
-						<h2 class="font-semibold text-sm text-slate-100">
-							自动化任务控制台 (Task Control Center)
-						</h2>
-					</div>
-					{#if activeTask}
-						<span
-							class="text-xs px-2.5 py-1 rounded-full bg-cyan-950 text-cyan-400 border border-cyan-800 font-mono font-medium animate-pulse"
-						>
-							{activeTask.status.toUpperCase()}: {activeTask.task_type}
-						</span>
+					{/if}
+					{#if activeTask.payload?.min_score}
+						<div>
+							<span class="text-slate-500 text-[10px] block">最低匹配分</span>
+							<span class="font-mono text-slate-200">{activeTask.payload.min_score}分</span>
+						</div>
 					{/if}
 				</div>
 
-				<!-- Task Config Form -->
-				<div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-					<div>
-						<label class="block text-xs font-medium text-slate-400 mb-1">搜索关键词</label>
-						<input
-							type="text"
-							bind:value={taskKeyword}
-							class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-cyan-500"
-						/>
-					</div>
-					<div>
-						<label class="block text-xs font-medium text-slate-400 mb-1">最低匹配分 (0-100)</label>
-						<input
-							type="number"
-							bind:value={taskMinScore}
-							class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-cyan-500"
-						/>
-					</div>
-					<div>
-						<label class="block text-xs font-medium text-slate-400 mb-1">执行模式</label>
-						<select
-							bind:value={taskMode}
-							class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-cyan-500"
-						>
-							<option value="preview">安全预览模式 (打出草稿，不发送)</option>
-							<option value="auto_send">自动发送模式 (达标自动点击发送)</option>
-						</select>
-					</div>
-				</div>
-
-				<!-- Task Dispatch Action Buttons -->
-				<div class="flex items-center justify-between pt-2">
-					<div class="flex items-center space-x-2">
-						<button
-							onclick={() => onLaunchTask('AUTO_APPLY')}
-							class="bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-semibold px-4 py-2 rounded-lg text-xs shadow-lg shadow-cyan-500/20 transition"
-						>
-							🚀 下发 AUTO_APPLY 智能投递任务
-						</button>
-						<button
-							onclick={() => onLaunchTask('SCRAPE_JOBS')}
-							class="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 font-medium px-3.5 py-2 rounded-lg text-xs transition"
-						>
-							🔍 仅抓取职位 (SCRAPE)
-						</button>
-					</div>
-					<button
-						onclick={() => onLaunchTask('CHECK_LOGIN')}
-						class="text-xs text-slate-400 hover:text-slate-200 underline"
-					>
-						检查登录状态
-					</button>
-				</div>
-
-				<!-- Realtime SSE Log Stream Console -->
-				<div class="space-y-2">
-					<div class="flex items-center justify-between text-xs text-slate-400">
-						<div class="flex items-center space-x-2">
-							<span>实时执行日志流 (Realtime Log Stream)</span>
-							<span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
-						</div>
-						<span class="font-mono text-[11px] text-slate-500">
-							{activeTaskId ? `Task: ${activeTaskId}` : 'No active task'}
+				<div class="flex items-center space-x-3 text-[11px] text-slate-400 font-mono">
+					<span>创建: {activeTask.created?.slice(11, 19) || '刚刚'}</span>
+					{#if activeTask.assigned_worker}
+						<span class="px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-slate-300">
+							Worker: {activeTask.assigned_worker}
 						</span>
-					</div>
-					<div
-						class="bg-slate-950 border border-slate-800 rounded-xl p-4 h-64 overflow-y-auto font-mono text-xs text-slate-300 space-y-1 custom-scrollbar leading-relaxed"
-					>
-						{#each logLines as line}
-							<div class="text-slate-300">{line}</div>
-						{/each}
-					</div>
+					{/if}
 				</div>
 			</div>
+
+			<!-- Live Log Stream Box -->
+			<div class="space-y-1.5">
+				<div class="flex items-center justify-between text-[11px] text-slate-400">
+					<div class="flex items-center space-x-2">
+						<span>实时终端日志流 (Realtime Terminal Output)</span>
+						<span class="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping"></span>
+					</div>
+					<button
+						onclick={() => (logLines = ['[System] 日志已清空视窗，等待新日志流...'])}
+						class="text-[10px] text-slate-500 hover:text-slate-300 transition"
+					>
+						清空视窗
+					</button>
+				</div>
+				<div
+					class="bg-slate-950 border border-slate-800 rounded-xl p-4 h-64 overflow-y-auto font-mono text-xs text-slate-300 space-y-1 custom-scrollbar leading-relaxed"
+				>
+					{#each logLines as line}
+						<div class="text-slate-300 break-all">{line}</div>
+					{/each}
+				</div>
+			</div>
+		{:else}
+			<!-- Idle Standby State -->
+			<div class="p-8 rounded-xl bg-slate-950/40 border border-dashed border-slate-800 text-center space-y-3">
+				<div class="w-12 h-12 rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-center text-2xl mx-auto text-cyan-400 shadow">
+					🤖
+				</div>
+				<div>
+					<h3 class="text-sm font-bold text-slate-200">当前没有正在执行的自动化任务</h3>
+					<p class="text-xs text-slate-400 mt-1 max-w-md mx-auto">
+						自动化 Worker 守护进程处于空闲就绪状态。您可以点击上方按钮选择搜索策略发起任务，或等待定时计划触发。
+					</p>
+				</div>
+				<div class="flex items-center justify-center gap-3 pt-2">
+					<button
+						onclick={() => (isLaunchModalOpen = true)}
+						class="px-3.5 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-medium transition shadow"
+					>
+						🚀 发起自动化任务
+					</button>
+					<button
+						onclick={() => (bottomTab = 'scheduled')}
+						class="px-3.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium transition"
+					>
+						⏰ 查看定时任务计划
+					</button>
+				</div>
+			</div>
+		{/if}
+	</div>
+
+	<!-- Section 2: History & Scheduled Jobs Tabs -->
+	<div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-5">
+		<!-- Tab Switcher -->
+		<div class="flex items-center justify-between border-b border-slate-800/80 pb-3">
+			<div class="flex items-center space-x-4">
+				<button
+					onclick={() => (bottomTab = 'history')}
+					class="font-semibold text-sm transition pb-2 border-b-2 flex items-center space-x-2 {bottomTab === 'history'
+						? 'border-cyan-400 text-cyan-300 font-bold'
+						: 'border-transparent text-slate-400 hover:text-slate-200'}"
+				>
+					<span>📋 任务执行历史与审计 (Task History)</span>
+					<span class="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-800 text-slate-400 font-mono">
+						{historyTasks.length}
+					</span>
+				</button>
+
+				<button
+					onclick={() => (bottomTab = 'scheduled')}
+					class="font-semibold text-sm transition pb-2 border-b-2 flex items-center space-x-2 {bottomTab === 'scheduled'
+						? 'border-cyan-400 text-cyan-300 font-bold'
+						: 'border-transparent text-slate-400 hover:text-slate-200'}"
+				>
+					<span>⏰ 定时任务与周期触发 (Scheduled Jobs)</span>
+					<span class="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-800 text-slate-400 font-mono">
+						{scheduledSearches.length}
+					</span>
+				</button>
+			</div>
+
+			{#if bottomTab === 'history'}
+				<!-- Filter Pills -->
+				<div class="flex items-center space-x-1 text-xs">
+					{#each ['all', 'success', 'failed', 'cancelled'] as f}
+						<button
+							onclick={() => {
+								historyFilter = f;
+								loadTaskHistory();
+							}}
+							class="px-2.5 py-1 rounded-lg text-[11px] font-medium transition {historyFilter === f
+								? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
+								: 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'}"
+						>
+							{f === 'all' ? '全部' : f === 'success' ? '成功' : f === 'failed' ? '失败' : '已取消'}
+						</button>
+					{/each}
+				</div>
+			{:else}
+				<a
+					href="/searches"
+					class="text-xs text-cyan-400 hover:text-cyan-300 font-medium flex items-center gap-1"
+				>
+					管理全部策略库 ↗
+				</a>
+			{/if}
 		</div>
+
+		<!-- Tab Content: Task History -->
+		{#if bottomTab === 'history'}
+			{#if isHistoryLoading}
+				<div class="p-8 text-center text-xs text-slate-500">正在加载历史任务...</div>
+			{:else if historyTasks.length === 0}
+				<div class="p-8 text-center text-xs text-slate-500 rounded-xl bg-slate-950/40 border border-dashed border-slate-800">
+					暂无符合条件的历史任务记录
+				</div>
+			{:else}
+				<div class="overflow-x-auto">
+					<table class="w-full text-left text-xs">
+						<thead>
+							<tr class="border-b border-slate-800 text-slate-400 text-[11px]">
+								<th class="pb-2.5 font-medium">任务 ID</th>
+								<th class="pb-2.5 font-medium">类型</th>
+								<th class="pb-2.5 font-medium">状态</th>
+								<th class="pb-2.5 font-medium">执行参数 / 关键词</th>
+								<th class="pb-2.5 font-medium">时间</th>
+								<th class="pb-2.5 font-medium text-right">操作</th>
+							</tr>
+						</thead>
+						<tbody class="divide-y divide-slate-800/60">
+							{#each historyTasks as t}
+								<tr class="hover:bg-slate-800/30 transition group">
+									<td class="py-3 font-mono text-slate-300 text-[11px]">
+										{t.id.slice(0, 10)}...
+									</td>
+									<td class="py-3">
+										<span class="px-2 py-0.5 rounded font-mono text-[10px] bg-slate-800 text-slate-200 border border-slate-700">
+											{t.task_type}
+										</span>
+									</td>
+									<td class="py-3">
+										<span
+											class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium {t.status === 'success'
+												? 'bg-emerald-950 text-emerald-400 border border-emerald-800/80'
+												: t.status === 'failed'
+													? 'bg-rose-950 text-rose-400 border border-rose-800/80'
+													: t.status === 'running'
+														? 'bg-cyan-950 text-cyan-300 border border-cyan-800 animate-pulse'
+														: 'bg-slate-800 text-slate-400'}"
+										>
+											<span class="w-1 h-1 rounded-full {t.status === 'success' ? 'bg-emerald-400' : t.status === 'failed' ? 'bg-rose-400' : 'bg-slate-400'}"></span>
+											{t.status.toUpperCase()}
+										</span>
+									</td>
+									<td class="py-3 text-slate-400 text-[11px] max-w-xs truncate">
+										{#if t.payload?.keyword}
+											<span class="text-slate-200 font-medium">"{t.payload.keyword}"</span>
+											{#if t.payload?.min_score}
+												<span class="text-slate-500 ml-1">({t.payload.min_score}分)</span>
+											{/if}
+										{:else if t.payload?.search_name}
+											<span class="text-slate-200">{t.payload.search_name}</span>
+										{:else}
+											<span class="text-slate-500 font-mono">系统任务</span>
+										{/if}
+									</td>
+									<td class="py-3 font-mono text-slate-500 text-[10px]">
+										{t.created?.slice(0, 16).replace('T', ' ') || '-'}
+									</td>
+									<td class="py-3 text-right space-x-2">
+										<button
+											onclick={() => handleOpenLogModal(t)}
+											class="text-cyan-400 hover:text-cyan-300 font-medium transition text-[11px]"
+										>
+											📜 查看日志
+										</button>
+										<button
+											onclick={() => onRerunTask(t)}
+											class="text-slate-400 hover:text-slate-200 transition text-[11px]"
+										>
+											🔁 重跑
+										</button>
+									</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
+			{/if}
+
+		<!-- Tab Content: Scheduled Jobs -->
+		{:else if bottomTab === 'scheduled'}
+			{#if isScheduleLoading}
+				<div class="p-8 text-center text-xs text-slate-500">正在加载定时任务配置...</div>
+			{:else if scheduledSearches.length === 0}
+				<div class="p-8 text-center rounded-xl bg-slate-950/40 border border-dashed border-slate-800 space-y-2">
+					<p class="text-xs text-slate-400">尚未为任何搜索策略配置 Cron 表达式定时调度</p>
+					<a href="/searches" class="inline-block text-xs text-cyan-400 hover:underline">
+						前往搜索策略库添加定时计划 →
+					</a>
+				</div>
+			{:else}
+				<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+					{#each scheduledSearches as s}
+						<div class="p-4 rounded-xl bg-slate-950/70 border border-slate-800/80 space-y-3 flex flex-col justify-between">
+							<div class="space-y-2">
+								<div class="flex items-center justify-between">
+									<div class="flex items-center space-x-2">
+										<h3 class="text-xs font-bold text-slate-100">{s.name}</h3>
+										<span class="px-1.5 py-0.2 rounded font-mono text-[9px] bg-cyan-950 text-cyan-400 border border-cyan-800">
+											{s.target_task_type || 'AUTO_APPLY'}
+										</span>
+									</div>
+									<!-- Toggle switch -->
+									<button
+										type="button"
+										onclick={() => onToggleSchedule(s)}
+										class="px-2 py-0.5 rounded-full text-[10px] font-medium transition flex items-center gap-1 {s.is_enabled
+											? 'bg-emerald-950 text-emerald-400 border border-emerald-800'
+											: 'bg-slate-800 text-slate-400 border border-slate-700'}"
+									>
+										<span class="w-1.5 h-1.5 rounded-full {s.is_enabled ? 'bg-emerald-400' : 'bg-slate-500'}"></span>
+										{s.is_enabled ? '已启用调度' : '已暂停'}
+									</button>
+								</div>
+
+								<div class="flex items-center space-x-2 text-xs">
+									<span class="text-slate-500 text-[11px]">周期规则:</span>
+									<span class="text-cyan-300 font-medium text-[11px]">
+										{formatCronHuman(s.cron_expression)}
+									</span>
+									<span class="text-slate-500 font-mono text-[10px]">({s.cron_expression})</span>
+								</div>
+
+								{#if s.keyword}
+									<div class="text-[11px] text-slate-400">
+										关键词: <span class="text-slate-200 font-mono">"{s.keyword}"</span>
+									</div>
+								{/if}
+
+								<div class="text-[10px] text-slate-500">
+									上次执行: {s.last_run_at ? s.last_run_at.slice(0, 16).replace('T', ' ') : '尚未触发'}
+								</div>
+							</div>
+
+							<div class="pt-2 border-t border-slate-800/60 flex items-center justify-between text-xs">
+								<a
+									href="/searches"
+									class="text-[11px] text-slate-400 hover:text-slate-200 transition"
+								>
+									✏️ 编辑策略条件
+								</a>
+								<button
+									onclick={() => onRunScheduledNow(s)}
+									class="bg-slate-800 hover:bg-slate-700 text-cyan-300 px-3 py-1 rounded-lg text-[11px] transition border border-slate-700 flex items-center space-x-1"
+								>
+									<span>⚡ 立即执行一次</span>
+								</button>
+							</div>
+						</div>
+					{/each}
+				</div>
+			{/if}
+		{/if}
 	</div>
 </div>
+
+<!-- Universal Modals -->
+<TaskLaunchModal
+	isOpen={isLaunchModalOpen}
+	onClose={() => (isLaunchModalOpen = false)}
+	onTaskCreated={handleTaskCreated}
+/>
+
+<TaskLogModal
+	isOpen={isLogModalOpen}
+	task={inspectTask}
+	onClose={() => {
+		isLogModalOpen = false;
+		inspectTask = null;
+	}}
+	onRerun={onRerunTask}
+/>

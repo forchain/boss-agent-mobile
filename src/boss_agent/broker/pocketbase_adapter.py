@@ -832,8 +832,18 @@ class PocketBaseTaskBroker(BaseTaskBroker):
 
             with sqlite3.connect(str(db_path)) as conn:
                 cursor = conn.cursor()
-                now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%fZ")
-                p_id = profile_data.get("id") or str(uuid.uuid4())[:15]
+                now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] + "Z"
+                p_id = profile_data.get("id")
+                if not p_id:
+                    cursor.execute(
+                        "SELECT id FROM candidate_profiles WHERE user_id = ? ORDER BY updated DESC LIMIT 1",
+                        (user_id,),
+                    )
+                    existing_row = cursor.fetchone()
+                    if existing_row:
+                        p_id = existing_row[0]
+                    else:
+                        p_id = str(uuid.uuid4())[:15]
                 cursor.execute(
                     """
                     INSERT INTO candidate_profiles (
@@ -884,7 +894,7 @@ class PocketBaseTaskBroker(BaseTaskBroker):
                 None,
                 lambda: self.session.get(
                     url,
-                    params={"filter": f"user_id='{user_id}'", "perPage": "1"},
+                    params={"filter": f"user_id='{user_id}'", "perPage": "1", "sort": "-updated"},
                     headers=self._headers(),
                 ),
             )
@@ -963,7 +973,7 @@ class PocketBaseTaskBroker(BaseTaskBroker):
 
             with sqlite3.connect(str(db_path)) as conn:
                 cursor = conn.cursor()
-                now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%fZ")
+                now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] + "Z"
                 r_id = revision_data.get("id") or str(uuid.uuid4())[:15]
                 cursor.execute(
                     """

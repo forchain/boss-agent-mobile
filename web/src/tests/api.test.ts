@@ -40,6 +40,36 @@ describe('PocketBase Client Helpers', () => {
 		expect(task.status).toBe('pending');
 	});
 
+	it('supports listAutomationTasks, getAutomationTask, and rerunTask', async () => {
+		const { listAutomationTasks, getAutomationTask, rerunTask } = await import('../lib/pocketbase');
+
+		// 1. Create a task
+		const original = await createAutomationTask('SCRAPE_JOBS', {
+			keyword: 'flutter',
+			min_score: 85
+		});
+		expect(original.id).toBeDefined();
+
+		// 2. Query task list
+		const listRes = await listAutomationTasks({ limit: 10 });
+		expect(listRes.items.length).toBeGreaterThan(0);
+		expect(listRes.items.some(t => t.id === original.id)).toBe(true);
+
+		// 3. Query single task
+		const fetched = await getAutomationTask(original.id);
+		expect(fetched).not.toBeNull();
+		expect(fetched?.task_type).toBe('SCRAPE_JOBS');
+		expect(fetched?.payload.keyword).toBe('flutter');
+
+		// 4. Re-run task
+		const rerun = await rerunTask(original.id);
+		expect(rerun).not.toBeNull();
+		expect(rerun?.id).not.toBe(original.id);
+		expect(rerun?.task_type).toBe('SCRAPE_JOBS');
+		expect(rerun?.payload.keyword).toBe('flutter');
+		expect(rerun?.status).toBe('pending');
+	});
+
 	it('supports SavedSearch CRUD and local caching', async () => {
 		const { listSavedSearches, getSavedSearch, saveSavedSearch, deleteSavedSearch } = await import('../lib/pocketbase');
 		const saved = await saveSavedSearch({
@@ -109,6 +139,7 @@ describe('SvelteKit Server Endpoints', () => {
 		const formData = new FormData();
 		const blob = new Blob(['周黄金 19年研发经验 精通 Python, TypeScript, Unity 与大模型 Agent 架构'], { type: 'text/plain' });
 		formData.append('file', blob, 'resume.txt');
+		formData.append('userId', 'test_user_unique');
 
 		const mockEvent: any = {
 			request: {
@@ -179,6 +210,63 @@ describe('SvelteKit Server Endpoints', () => {
 		expect(getRes.status).toBe(200);
 		expect(getJson.success).toBe(true);
 		expect(getJson.records.some((r: any) => r.fingerprint === postJson.record.fingerprint)).toBe(true);
+	});
+
+	it('POST /api/llm/test validates input and tests API connection', async () => {
+		const { POST: handleLlmTest } = await import('../routes/api/llm/test/+server');
+
+		// 1. Missing API Key should return error
+		const emptyKeyEvent: any = {
+			request: {
+				json: async () => ({
+					provider: 'openai',
+					base_url: 'https://api.example.com/v1',
+					api_key: '',
+					model: 'test-model'
+				})
+			}
+		};
+		const res1 = await handleLlmTest(emptyKeyEvent);
+		const json1 = await res1.json();
+		expect(res1.status).toBe(400);
+		expect(json1.success).toBe(false);
+		expect(json1.message).toContain('API Key');
+
+		// 2. Unreachable base url should return friendly error
+		const unreachableEvent: any = {
+			request: {
+				json: async () => ({
+					provider: 'openai',
+					base_url: 'http://127.0.0.1:54321/v1',
+					api_key: 'fake_key',
+					model: 'test-model'
+				})
+			}
+		};
+		const res2 = await handleLlmTest(unreachableEvent);
+		const json2 = await res2.json();
+		expect(json2.success).toBe(false);
+		expect(json2.message).toBeDefined();
+	});
+
+	it('GET /api/tasks returns paginated task list with fallback', async () => {
+		const { GET: handleTasksGet } = await import('../routes/api/tasks/+server');
+		const getEvent: any = {
+			url: new URL('http://localhost/api/tasks?limit=5')
+		};
+		const res = await handleTasksGet(getEvent);
+		const data = await res.json();
+		expect(res.status).toBe(200);
+		expect(data.success).toBe(true);
+		expect(Array.isArray(data.tasks)).toBe(true);
+	});
+
+	it('formats cron expressions into readable Chinese text', async () => {
+		const { formatCronHuman } = await import('../lib/pocketbase');
+		expect(formatCronHuman('0 9 * * *')).toBe('每天 09:00');
+		expect(formatCronHuman('30 18 * * *')).toBe('每天 18:30');
+		expect(formatCronHuman('0 10 * * 1-5')).toBe('工作日 (周一至五) 10:00');
+		expect(formatCronHuman('')).toBe('未设置定时');
 	});
 });
 

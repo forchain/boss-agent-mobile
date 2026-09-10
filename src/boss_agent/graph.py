@@ -643,10 +643,26 @@ def make_resume_persister_node(broker: Any | None = None):
             final["raw_resume_text"] = incoming.get("raw_resume_text") or existing.get(
                 "raw_resume_text", ""
             )
-            final["work_experiences"] = []
-            final["projects"] = []
-            final["project_highlights"] = []
-            final["education"] = final.get("education") or incoming.get("education") or []
+            final["work_experiences"] = (
+                incoming.get("work_experiences")
+                or existing.get("work_experiences")
+                or []
+            )
+            final["projects"] = (
+                incoming.get("projects")
+                or existing.get("projects")
+                or []
+            )
+            final["project_highlights"] = (
+                incoming.get("project_highlights")
+                or existing.get("project_highlights")
+                or []
+            )
+            final["education"] = (
+                incoming.get("education")
+                or existing.get("education")
+                or []
+            )
 
         async def _save():
             saved_prof = await broker.save_candidate_profile(final, user_id=user_id)

@@ -5,13 +5,16 @@ Unit tests for resume extraction, structured candidate memory, and idempotent ca
 """
 
 import json
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 from boss_agent.memory import (
     ResumeMemoryManager,
     ResumeTextExtractor,
     StructuredCandidateProfile,
 )
+
 
 
 def test_structured_candidate_profile_serialization():
@@ -152,7 +155,8 @@ def test_resume_memory_manager_save_memory_profile(tmp_path):
         years_of_experience=3,
         core_skills=["Go", "Python"],
     )
-    manager.save_memory_profile(profile)
+    with patch("boss_agent.broker.PocketBaseBroker"):
+        manager.save_memory_profile(profile)
 
     assert memory_file.is_file()
     saved = json.loads(memory_file.read_text(encoding="utf-8"))

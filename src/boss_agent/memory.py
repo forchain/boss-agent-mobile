@@ -444,7 +444,9 @@ class ResumeMemoryManager:
         # Load candidate config if available
         self.candidate_config = self._load_candidate_config(candidate_config_path)
 
-        self.explicit_memory_file = memory_file_path is not None
+        self.explicit_memory_file = (
+            memory_file_path is not None or bool(self.candidate_config.get("memory_path"))
+        )
         configured_memory = (
             memory_file_path or self.candidate_config.get("memory_path") or self.DEFAULT_MEMORY_PATH
         )
@@ -618,30 +620,36 @@ class ResumeMemoryManager:
         self.save_memory_profile(profile)
         return profile
 
-    def save_memory_profile(self, profile: StructuredCandidateProfile) -> None:
+    def save_memory_profile(
+        self, profile: StructuredCandidateProfile, sync_to_db: bool | None = None
+    ) -> None:
         """Save candidate profile to PocketBase database with local file fallback."""
+        if sync_to_db is None:
+            sync_to_db = not self.explicit_memory_file
+
         # 1. Primary: Save to PocketBase database (HTTP or SQLite fallback)
-        try:
-            import asyncio
-
-            from boss_agent.broker import PocketBaseBroker
-
-            broker = PocketBaseBroker()
+        if sync_to_db:
             try:
-                asyncio.get_running_loop()
-                import concurrent.futures
+                import asyncio
 
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                    pool.submit(
-                        asyncio.run, broker.save_candidate_profile(profile.to_dict())
-                    ).result(timeout=5.0)
-            except RuntimeError:
-                asyncio.run(broker.save_candidate_profile(profile.to_dict()))
-            console.print(
-                "✅ [bold green]Structured candidate profile saved to PocketBase database.[/bold green]"
-            )
-        except Exception as e:
-            console.print(f"[yellow]⚠️  Failed to save profile to database: {e}[/yellow]")
+                from boss_agent.broker import PocketBaseBroker
+
+                broker = PocketBaseBroker()
+                try:
+                    asyncio.get_running_loop()
+                    import concurrent.futures
+
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                        pool.submit(
+                            asyncio.run, broker.save_candidate_profile(profile.to_dict())
+                        ).result(timeout=5.0)
+                except RuntimeError:
+                    asyncio.run(broker.save_candidate_profile(profile.to_dict()))
+                console.print(
+                    "✅ [bold green]Structured candidate profile saved to PocketBase database.[/bold green]"
+                )
+            except Exception as e:
+                console.print(f"[yellow]⚠️  Failed to save profile to database: {e}[/yellow]")
 
         # 2. Save to local file if path is specified
         try:
