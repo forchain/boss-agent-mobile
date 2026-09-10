@@ -264,6 +264,16 @@ class InMemoryTaskBroker(BaseTaskBroker):
                     rec["digest"] = record_data["digest"]
                 if record_data.get("job_description") and not rec.get("job_description"):
                     rec["job_description"] = record_data["job_description"]
+                if record_data.get("company_scale") and not rec.get("company_scale"):
+                    rec["company_scale"] = record_data["company_scale"]
+                if record_data.get("industry") and not rec.get("industry"):
+                    rec["industry"] = record_data["industry"]
+                if record_data.get("tags") and not rec.get("tags"):
+                    rec["tags"] = record_data["tags"]
+                if record_data.get("recruiter_title") and not rec.get("recruiter_title"):
+                    rec["recruiter_title"] = record_data["recruiter_title"]
+                if "is_headhunter" in record_data and rec.get("is_headhunter") is None:
+                    rec["is_headhunter"] = record_data["is_headhunter"]
                 if record_data.get("salary_range") and not rec.get("salary_range"):
                     rec["salary_range"] = record_data["salary_range"]
                 if record_data.get("location") and not rec.get("location"):
@@ -277,6 +287,11 @@ class InMemoryTaskBroker(BaseTaskBroker):
                 "title": record_data.get("title", ""),
                 "company_name": record_data.get("company_name", ""),
                 "recruiter_name": record_data.get("recruiter_name", ""),
+                "recruiter_title": record_data.get("recruiter_title", ""),
+                "is_headhunter": record_data.get("is_headhunter", False),
+                "company_scale": record_data.get("company_scale", ""),
+                "industry": record_data.get("industry", ""),
+                "tags": record_data.get("tags", []),
                 "salary_range": record_data.get("salary_range", ""),
                 "location": record_data.get("location", ""),
                 "digest": record_data.get("digest", "") or record_data.get("snippet", ""),
@@ -1106,6 +1121,16 @@ class PocketBaseTaskBroker(BaseTaskBroker):
                         patch_body["digest"] = record_data["digest"]
                     if record_data.get("job_description") and not existing.get("job_description"):
                         patch_body["job_description"] = record_data["job_description"]
+                    if record_data.get("company_scale") and not existing.get("company_scale"):
+                        patch_body["company_scale"] = record_data["company_scale"]
+                    if record_data.get("industry") and not existing.get("industry"):
+                        patch_body["industry"] = record_data["industry"]
+                    if record_data.get("tags") and not existing.get("tags"):
+                        patch_body["tags"] = record_data["tags"]
+                    if record_data.get("recruiter_title") and not existing.get("recruiter_title"):
+                        patch_body["recruiter_title"] = record_data["recruiter_title"]
+                    if "is_headhunter" in record_data and existing.get("is_headhunter") is None:
+                        patch_body["is_headhunter"] = record_data["is_headhunter"]
                     if record_data.get("salary_range") and not existing.get("salary_range"):
                         patch_body["salary_range"] = record_data["salary_range"]
                     if record_data.get("location") and not existing.get("location"):
@@ -1136,6 +1161,16 @@ class PocketBaseTaskBroker(BaseTaskBroker):
                 existing_fallback["digest"] = record_data["digest"]
             if record_data.get("job_description") and not existing_fallback.get("job_description"):
                 existing_fallback["job_description"] = record_data["job_description"]
+            if record_data.get("company_scale") and not existing_fallback.get("company_scale"):
+                existing_fallback["company_scale"] = record_data["company_scale"]
+            if record_data.get("industry") and not existing_fallback.get("industry"):
+                existing_fallback["industry"] = record_data["industry"]
+            if record_data.get("tags") and not existing_fallback.get("tags"):
+                existing_fallback["tags"] = record_data["tags"]
+            if record_data.get("recruiter_title") and not existing_fallback.get("recruiter_title"):
+                existing_fallback["recruiter_title"] = record_data["recruiter_title"]
+            if "is_headhunter" in record_data and existing_fallback.get("is_headhunter") is None:
+                existing_fallback["is_headhunter"] = record_data["is_headhunter"]
             if record_data.get("salary_range") and not existing_fallback.get("salary_range"):
                 existing_fallback["salary_range"] = record_data["salary_range"]
             if record_data.get("location") and not existing_fallback.get("location"):
@@ -1148,6 +1183,11 @@ class PocketBaseTaskBroker(BaseTaskBroker):
             "title": record_data.get("title", ""),
             "company_name": record_data.get("company_name", ""),
             "recruiter_name": record_data.get("recruiter_name", ""),
+            "recruiter_title": record_data.get("recruiter_title", ""),
+            "is_headhunter": record_data.get("is_headhunter", False),
+            "company_scale": record_data.get("company_scale", ""),
+            "industry": record_data.get("industry", ""),
+            "tags": record_data.get("tags", []),
             "salary_range": record_data.get("salary_range", ""),
             "location": record_data.get("location", ""),
             "digest": record_data.get("digest", "") or record_data.get("snippet", ""),

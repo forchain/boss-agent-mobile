@@ -328,3 +328,118 @@ async def test_scrape_jobs_handler_preliminary_card_screening_and_enrichment():
     assert unmatched_records[0]["digest"] == "负责核心智能体工作流平台搭建"
     assert unmatched_records[0]["job_description"].startswith("完整详细岗位职责")
 
+
+@pytest.mark.asyncio
+async def test_scrape_jobs_handler_facet_persistence_and_recruitment_type_telemetry():
+    """Verify ScrapeJobsHandler persists company_scale, industry, tags, recruiter_title, and is_headhunter with logs."""
+    from boss_agent.worker.config import WorkerConfig
+
+    broker = InMemoryTaskBroker()
+    mock_driver = MagicMock()
+    mock_driver.get_window_size.return_value = {"width": 1080, "height": 2400}
+
+    card_hh_elem = MagicMock()
+    card_hh = JobCardBrief(
+        title="技术负责人-CTO级别 | 医疗AI",
+        company_name="某中型人工智能公司",
+        recruiter_name="钟先生",
+        recruiter_title="猎头顾问",
+        company_scale="100-499人",
+        industry="人工智能",
+        tags=["10年以上", "硕士", "容器技术"],
+        digest="核心研发与平台建设领导团队研发医疗领域专用的大模型",
+        element=card_hh_elem,
+    )
+
+    card_dir_elem = MagicMock()
+    card_dir = JobCardBrief(
+        title="技术负责人",
+        company_name="深至科技",
+        recruiter_name="农女士",
+        recruiter_title="高级招聘专员",
+        company_scale="100-499人",
+        industry="人工智能",
+        tags=["10年以上", "硕士", "互联网/AI"],
+        digest="负责核心研发团队管理与前沿算法落地",
+        element=card_dir_elem,
+    )
+
+    handler = ScrapeJobsHandler()
+    context = WorkerContext(config=WorkerConfig(worker_id="test-worker"), driver=mock_driver)
+    task = await broker.create_task(
+        task_type=TaskType.SCRAPE_JOBS,
+        payload={"keyword": "agent", "max_jobs": 2},
+    )
+
+    with (
+        patch("boss_agent.worker.handlers.scrape_jobs.StartupDialogPage") as mock_startup_cls,
+        patch("boss_agent.worker.handlers.scrape_jobs.JobListPage") as mock_list_cls,
+        patch("boss_agent.worker.handlers.scrape_jobs.SearchPage") as mock_search_cls,
+        patch("boss_agent.worker.handlers.scrape_jobs.JobDetailPage") as mock_detail_cls,
+    ):
+        mock_startup = mock_startup_cls.return_value
+        mock_startup.is_dialog_present.return_value = False
+
+        mock_list = mock_list_cls.return_value
+        mock_list.extract_visible_job_cards.return_value = [card_hh, card_dir]
+
+        mock_search = mock_search_cls.return_value
+        mock_search.is_search_page.return_value = True
+
+        mock_detail = mock_detail_cls.return_value
+        mock_detail.extract_job_posting.side_effect = [
+            JobPosting(
+                title="技术负责人-CTO级别 | 医疗AI",
+                company_name="某中型人工智能公司",
+                salary_range="20-26万元·18月",
+                job_description="完整职位要求：精通分布式大模型训练与平台架构...",
+                recruiter_name="钟先生",
+                recruiter_title="猎头顾问",
+                company_scale="100-499人",
+                industry="人工智能",
+                is_headhunter=True,
+            ),
+            JobPosting(
+                title="技术负责人",
+                company_name="深至科技",
+                salary_range="10-20万元·18月",
+                job_description="完整职位要求：负责医疗AI影像分析与模型工程化...",
+                recruiter_name="农女士",
+                recruiter_title="高级招聘专员",
+                company_scale="100-499人",
+                industry="人工智能",
+                is_headhunter=False,
+            ),
+        ]
+
+        result = await handler.handle(task, broker, context)
+
+    assert result.success is True
+    assert result.output["scraped_count"] == 2
+
+    records = await broker.list_job_records()
+    assert len(records) == 2
+
+    hh_rec = next(r for r in records if r["company_name"] == "某中型人工智能公司")
+    assert hh_rec["recruiter_title"] == "猎头顾问"
+    assert hh_rec["is_headhunter"] is True
+    assert hh_rec["company_scale"] == "100-499人"
+    assert hh_rec["industry"] == "人工智能"
+    assert hh_rec["tags"] == ["10年以上", "硕士", "容器技术"]
+    assert hh_rec["job_description"].startswith("完整职位要求：精通分布式大模型")
+
+    dir_rec = next(r for r in records if r["company_name"] == "深至科技")
+    assert dir_rec["recruiter_title"] == "高级招聘专员"
+    assert dir_rec["is_headhunter"] is False
+    assert dir_rec["company_scale"] == "100-499人"
+    assert dir_rec["industry"] == "人工智能"
+    assert dir_rec["tags"] == ["10年以上", "硕士", "互联网/AI"]
+
+    # Verify telemetry logs in task
+    updated_task = await broker.get_task(task.id)
+    assert updated_task is not None
+    logs = updated_task.logs
+    assert any("[猎头]" in line for line in logs)
+    assert any("[直招]" in line for line in logs)
+
+

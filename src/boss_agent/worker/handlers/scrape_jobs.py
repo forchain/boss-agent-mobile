@@ -144,6 +144,11 @@ class ScrapeJobsHandler(BaseTaskHandler):
                         "title": card.title,
                         "company_name": card.company_name,
                         "recruiter_name": card.recruiter_name,
+                        "recruiter_title": getattr(card, "recruiter_title", "") or "",
+                        "is_headhunter": getattr(card, "is_headhunter", False),
+                        "company_scale": getattr(card, "company_scale", "") or "",
+                        "industry": getattr(card, "industry", "") or "",
+                        "tags": card_tags,
                         "salary_range": getattr(card, "salary_range", "") or "",
                         "location": getattr(card, "location", "") or "",
                         "digest": digest_text,
@@ -160,12 +165,18 @@ class ScrapeJobsHandler(BaseTaskHandler):
                     )
                     continue
 
-                # 3. Immediate card-level ingestion: persist visible job card with digest
+                # 3. Immediate card-level ingestion: persist visible job card with rich facets
+                rec_type = "[猎头]" if getattr(card, "is_headhunter", False) else "[直招]"
                 card_record = {
                     "fingerprint": card.fingerprint,
                     "title": card.title,
                     "company_name": card.company_name,
                     "recruiter_name": card.recruiter_name,
+                    "recruiter_title": getattr(card, "recruiter_title", "") or "",
+                    "is_headhunter": getattr(card, "is_headhunter", False),
+                    "company_scale": getattr(card, "company_scale", "") or "",
+                    "industry": getattr(card, "industry", "") or "",
+                    "tags": card_tags,
                     "salary_range": getattr(card, "salary_range", "") or "",
                     "location": getattr(card, "location", "") or "",
                     "digest": digest_text,
@@ -179,7 +190,7 @@ class ScrapeJobsHandler(BaseTaskHandler):
                 scraped_jobs.append(persisted)
                 await broker.append_log(
                     task.id,
-                    f"✅ [Direct Ingestion] Recorded job from search list: '{card.title}' @ '{card.company_name}' ({card_record.get('salary_range', '')})",
+                    f"✅ [Direct Ingestion] Recorded {rec_type} job from search list: '{card.title}' @ '{card.company_name}' ({card_record.get('salary_range', '')})",
                 )
 
                 # 4. Detail page inspection to enrich with full JD
@@ -205,6 +216,11 @@ class ScrapeJobsHandler(BaseTaskHandler):
                             "title": job_posting.title or card.title,
                             "company_name": job_posting.company_name or card.company_name,
                             "recruiter_name": card.recruiter_name or job_posting.recruiter_name or "招聘者",
+                            "recruiter_title": card.recruiter_title or getattr(job_posting, "recruiter_title", "") or "",
+                            "is_headhunter": card.is_headhunter or getattr(job_posting, "is_headhunter", False),
+                            "company_scale": card.company_scale or getattr(job_posting, "company_scale", "") or "",
+                            "industry": card.industry or getattr(job_posting, "industry", "") or "",
+                            "tags": card_tags or getattr(job_posting, "tags", []) or [],
                             "salary_range": job_posting.salary_range or card_record.get("salary_range", ""),
                             "location": job_posting.location or card_record.get("location", ""),
                             "digest": digest_text,
@@ -242,8 +258,14 @@ class ScrapeJobsHandler(BaseTaskHandler):
                             "title": job_posting.title,
                             "company_name": job_posting.company_name,
                             "recruiter_name": job_posting.recruiter_name or "招聘者",
+                            "recruiter_title": getattr(job_posting, "recruiter_title", "") or "",
+                            "is_headhunter": getattr(job_posting, "is_headhunter", False),
+                            "company_scale": getattr(job_posting, "company_scale", "") or "",
+                            "industry": getattr(job_posting, "industry", "") or "",
+                            "tags": getattr(job_posting, "tags", []) or [],
                             "salary_range": job_posting.salary_range,
                             "location": job_posting.location,
+                            "digest": getattr(job_posting, "digest", "") or "",
                             "job_description": job_posting.job_description,
                             "status": "unmatched",
                             "search_keywords": [keyword] if keyword else [],
@@ -251,9 +273,10 @@ class ScrapeJobsHandler(BaseTaskHandler):
                         }
                     )
                     scraped_jobs.append(persisted)
+                    rec_tag = "[猎头]" if getattr(job_posting, "is_headhunter", False) else "[直招]"
                     await broker.append_log(
                         task.id,
-                        f"✅ Extracted job: {job_posting.title} @ {job_posting.company_name} ({job_posting.salary_range})",
+                        f"✅ Extracted {rec_tag} job: {job_posting.title} @ {job_posting.company_name} ({job_posting.salary_range})",
                     )
             except Exception as e:
                 await broker.append_log(task.id, f"Notice on job extraction: {e}")
