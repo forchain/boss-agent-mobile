@@ -59,7 +59,7 @@ const localCandidateMemoryMap: Record<string, CandidateProfile> = {};
 
 export async function getCandidateProfile(userId = 'default'): Promise<CandidateProfile | null> {
 	try {
-		const record = await pb.collection('candidate_profiles').getFirstListItem(`user_id='${userId}'`);
+		const record = await pb.collection('candidate_profiles').getFirstListItem(`user_id='${userId}'`, { sort: '-updated' });
 		if (record) {
 			const loadedProfile: CandidateProfile = {
 				id: record.id,
@@ -130,7 +130,7 @@ export async function saveCandidateProfile(profile: Partial<CandidateProfile>, u
 	localCandidateMemoryMap[userId] = merged;
 
 	try {
-		const existing = await pb.collection('candidate_profiles').getFirstListItem(`user_id='${userId}'`).catch(() => null);
+		const existing = await pb.collection('candidate_profiles').getFirstListItem(`user_id='${userId}'`, { sort: '-updated' }).catch(() => null);
 		const data = {
 			user_id: userId,
 			name: merged.name,

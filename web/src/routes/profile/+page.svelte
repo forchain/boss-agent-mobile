@@ -199,6 +199,26 @@
 		}
 	}
 
+	function formatRevisionDate(dateStr?: string): string {
+		if (!dateStr) return "";
+		const d = new Date(dateStr);
+		if (!isNaN(d.getTime())) {
+			return d.toLocaleString();
+		}
+		const match = dateStr.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}):(\d{2}):?(\d*)(.*)$/);
+		if (match) {
+			const [, datePart, h, m, frac, rest] = match;
+			const sec = frac ? frac.slice(0, 2).padEnd(2, "0") : "00";
+			const ms = frac && frac.length > 2 ? frac.slice(2, 5).padEnd(3, "0") : "000";
+			const fixedStr = `${datePart}T${h}:${m}:${sec}.${ms}${rest.endsWith("Z") ? "Z" : ""}`;
+			const fixedDate = new Date(fixedStr);
+			if (!isNaN(fixedDate.getTime())) {
+				return fixedDate.toLocaleString();
+			}
+		}
+		return dateStr;
+	}
+
 	function computeLocalDiff(incoming: Partial<CandidateProfile>) {
 		const changes: string[] = [];
 		if (incoming.name && incoming.name !== profile.name) {
@@ -487,7 +507,7 @@
 									</span>
 								</div>
 								<span class="text-slate-500 text-[11px]">
-									{new Date(rev.created || "").toLocaleString()}
+									{formatRevisionDate(rev.created)}
 								</span>
 							</div>
 							{#if rev.diff_summary}
