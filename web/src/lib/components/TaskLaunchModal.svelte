@@ -13,53 +13,50 @@
 		onTaskCreated: (task: AutomationTask) => void;
 	} = $props();
 
-	let activeTab = $state<'template' | 'custom' | 'diagnostic'>('custom');
+	let activeTab = $state<'template' | 'diagnostic'>('template');
 	let isSubmitting = $state(false);
 	let errorMessage = $state('');
 
-	// Saved searches for template mode
+	// Saved searches for strategy mode
 	let searches = $state<SavedSearch[]>([]);
 	let selectedSearchId = $state<string>('');
 
-	// Custom task inputs
+	// Task execution parameters
 	let taskType = $state<TaskType>('AUTO_APPLY');
-	let keyword = $state('agent');
 	let minScore = $state(75);
 	let taskMode = $state<'preview' | 'auto_send'>('preview');
 
-	onMount(async () => {
+	async function loadSearches() {
 		try {
 			const list = await listSavedSearches();
 			searches = list;
-			if (list.length > 0) {
+			if (list.length > 0 && (!selectedSearchId || !list.some((s) => s.id === selectedSearchId))) {
 				selectedSearchId = list[0].id;
+				if (list[0].target_task_type) {
+					taskType = list[0].target_task_type as TaskType;
+				}
 			}
 		} catch (e) {}
+	}
+
+	$effect(() => {
+		if (isOpen) {
+			loadSearches();
+		}
 	});
 
-	async function handleLaunchCustom() {
-		isSubmitting = true;
-		errorMessage = '';
-		try {
-			const profile = await getCandidateProfile();
-			const payload = {
-				keyword: keyword.trim() || 'agent',
-				min_score: minScore,
-				preview_only: taskMode === 'preview',
-				auto_send: taskMode === 'auto_send',
-				preview_timeout_sec: 3.0,
-				candidate_profile: profile || {}
-			};
-
-			const task = await createAutomationTask(taskType, payload);
-			onTaskCreated(task);
-			onClose();
-		} catch (e: any) {
-			errorMessage = e?.message || '下发任务失败';
-		} finally {
-			isSubmitting = false;
+	$effect(() => {
+		if (selectedSearchId) {
+			const target = searches.find((s) => s.id === selectedSearchId);
+			if (target?.target_task_type) {
+				taskType = target.target_task_type as TaskType;
+			}
 		}
-	}
+	});
+
+	onMount(() => {
+		loadSearches();
+	});
 
 	async function handleLaunchTemplate() {
 		if (!selectedSearchId) return;
@@ -72,21 +69,25 @@
 			const profile = await getCandidateProfile();
 			const payload = {
 				search_id: target.id,
+				saved_search_id: target.id,
 				search_name: target.name,
 				keyword: target.keyword || '',
+				enable_search: target.enable_search !== false,
+				enable_filter: target.enable_filter !== false,
 				filter: target.filter || {},
 				min_score: minScore,
 				preview_only: taskMode === 'preview',
 				auto_send: taskMode === 'auto_send',
+				preview_timeout_sec: 3.0,
 				candidate_profile: profile || {}
 			};
 
-			const type = (target.target_task_type as TaskType) || 'AUTO_APPLY';
+			const type = taskType || (target.target_task_type as TaskType) || 'AUTO_APPLY';
 			const task = await createAutomationTask(type, payload);
 			onTaskCreated(task);
 			onClose();
 		} catch (e: any) {
-			errorMessage = e?.message || '通过策略模版下发任务失败';
+			errorMessage = e?.message || '通过搜索策略下发任务失败';
 		} finally {
 			isSubmitting = false;
 		}
@@ -127,7 +128,7 @@
 					</div>
 					<div>
 						<h3 class="text-sm font-bold text-slate-100">发起自动化任务 (Launch Task)</h3>
-						<p class="text-[11px] text-slate-400">选择策略模板、自定义参数或下发系统自检任务</p>
+						<p class="text-[11px] text-slate-400">选择已配置的搜索条件策略发起任务，或下发系统自检任务</p>
 					</div>
 				</div>
 				<button
@@ -142,20 +143,12 @@
 			<!-- Tab Navigation -->
 			<div class="px-6 pt-3 border-b border-slate-800 bg-slate-950/50 flex space-x-3 text-xs">
 				<button
-					onclick={() => (activeTab = 'custom')}
-					class="pb-2.5 px-2 font-medium transition border-b-2 {activeTab === 'custom'
-						? 'border-cyan-400 text-cyan-300 font-semibold'
-						: 'border-transparent text-slate-400 hover:text-slate-200'}"
-				>
-					⚡ 自定义即时任务
-				</button>
-				<button
 					onclick={() => (activeTab = 'template')}
 					class="pb-2.5 px-2 font-medium transition border-b-2 {activeTab === 'template'
 						? 'border-cyan-400 text-cyan-300 font-semibold'
 						: 'border-transparent text-slate-400 hover:text-slate-200'}"
 				>
-					🔍 搜索策略模板
+					🔍 搜索策略任务
 				</button>
 				<button
 					onclick={() => (activeTab = 'diagnostic')}
@@ -175,76 +168,38 @@
 					</div>
 				{/if}
 
-				{#if activeTab === 'custom'}
-					<div class="space-y-4">
-						<div class="grid grid-cols-2 gap-3">
-							<div>
-								<label for="task-type-select" class="block text-slate-400 mb-1 font-medium">任务类型</label>
-								<select
-									id="task-type-select"
-									bind:value={taskType}
-									class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-cyan-500"
-								>
-									<option value="AUTO_APPLY">🚀 AUTO_APPLY (智能筛选与打招呼)</option>
-									<option value="SCRAPE_JOBS">🔍 SCRAPE_JOBS (仅抓取职位数据)</option>
-								</select>
-							</div>
-
-							<div>
-								<label for="task-mode-select" class="block text-slate-400 mb-1 font-medium">发送模式</label>
-								<select
-									id="task-mode-select"
-									bind:value={taskMode}
-									class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-cyan-500"
-								>
-									<option value="preview">安全预览模式 (输入草稿不发送)</option>
-									<option value="auto_send">自动发送模式 (达标自动点击发送)</option>
-								</select>
-							</div>
-						</div>
-
-						<div>
-							<label for="task-keyword-input" class="block text-slate-400 mb-1 font-medium">搜索关键词</label>
-							<input
-								id="task-keyword-input"
-								type="text"
-								placeholder="例如: agent, 大模型架构师, Python"
-								bind:value={keyword}
-								class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-slate-200 focus:outline-none focus:border-cyan-500"
-							/>
-						</div>
-
-						<div>
-							<div class="flex justify-between items-center mb-1">
-								<label for="task-minscore-input" class="text-slate-400 font-medium">最低匹配分阈值 (0 - 100)</label>
-								<span class="text-cyan-400 font-bold font-mono">{minScore} 分</span>
-							</div>
-							<input
-								id="task-minscore-input"
-								type="range"
-								min="50"
-								max="95"
-								step="5"
-								bind:value={minScore}
-								class="w-full accent-cyan-500"
-							/>
-							<div class="flex justify-between text-[10px] text-slate-500 mt-0.5">
-								<span>宽松 (50分)</span>
-								<span>平衡 (75分)</span>
-								<span>严谨 (90+分)</span>
-							</div>
-						</div>
-					</div>
-				{:else if activeTab === 'template'}
+				{#if activeTab === 'template'}
 					<div class="space-y-4">
 						{#if searches.length === 0}
-							<div class="p-6 text-center rounded-xl bg-slate-950/40 border border-dashed border-slate-800 space-y-2">
-								<p class="text-slate-400">策略库中暂无保存的搜索策略</p>
-								<a href="/searches" class="text-cyan-400 hover:underline">前往搜索策略库创建 →</a>
+							<div class="p-6 text-center rounded-xl bg-slate-950/40 border border-dashed border-slate-800 space-y-3">
+								<div class="w-10 h-10 rounded-xl bg-amber-500/10 text-amber-400 border border-amber-500/20 flex items-center justify-center mx-auto text-lg">
+									⚠️
+								</div>
+								<div>
+									<p class="text-slate-200 font-medium text-xs">策略库中暂无保存的搜索条件</p>
+									<p class="text-slate-400 text-[11px] mt-1 max-w-sm mx-auto">
+										所有自动化任务均需先设置搜索条件。请先前往搜索策略库配置目标职位关键词、学历、薪资、行业等筛选规则。
+									</p>
+								</div>
+								<a
+									href="/searches"
+									class="inline-flex items-center space-x-1.5 px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-semibold transition shadow-lg shadow-cyan-500/20"
+								>
+									<span>⚙️ 前往设置搜索条件 →</span>
+								</a>
 							</div>
 						{:else}
 							<div>
-								<label for="template-search-select" class="block text-slate-400 mb-1.5 font-medium">选择预设搜索策略</label>
+								<div class="flex items-center justify-between mb-1.5">
+									<label for="template-search-select" class="text-slate-400 font-medium">选择预设搜索策略 / 条件</label>
+									<a
+										href="/searches"
+										class="text-cyan-400 hover:text-cyan-300 text-[11px] flex items-center gap-1 transition"
+									>
+										<span>⚙️ 管理策略库</span>
+										<span>→</span>
+									</a>
+								</div>
 								<select
 									id="template-search-select"
 									bind:value={selectedSearchId}
@@ -260,24 +215,69 @@
 
 							{#if searches.find((s) => s.id === selectedSearchId)}
 								{@const selected = searches.find((s) => s.id === selectedSearchId)!}
-								<div class="p-3.5 rounded-xl bg-slate-950 border border-slate-800/80 space-y-2 text-[11px]">
+								<div class="p-3.5 rounded-xl bg-slate-950 border border-slate-800/80 space-y-2.5 text-[11px]">
 									<div class="flex items-center justify-between">
 										<span class="text-slate-400">策略名称:</span>
 										<span class="text-slate-200 font-semibold">{selected.name}</span>
 									</div>
 									<div class="flex items-center justify-between">
 										<span class="text-slate-400">搜索关键词:</span>
-										<span class="text-cyan-400 font-mono">{selected.keyword || '不限'}</span>
+										<span class="text-cyan-400 font-mono font-medium">{selected.keyword || '不限'}</span>
 									</div>
+									
+									<!-- Detailed Search & Filter Conditions -->
+									<div class="pt-2 border-t border-slate-800/60 grid grid-cols-2 gap-2 text-[11px]">
+										<div>
+											<span class="text-slate-500">学历要求:</span>
+											<span class="text-slate-300 ml-1">{selected.filter?.education || '不限'}</span>
+										</div>
+										<div>
+											<span class="text-slate-500">薪资范围:</span>
+											<span class="text-slate-300 ml-1">{selected.filter?.salary || '不限'}</span>
+										</div>
+										<div>
+											<span class="text-slate-500">工作经验:</span>
+											<span class="text-slate-300 ml-1">{selected.filter?.experience || '不限'}</span>
+										</div>
+										<div>
+											<span class="text-slate-500">活跃度:</span>
+											<span class="text-slate-300 ml-1">{selected.filter?.activity || '不限'}</span>
+										</div>
+										{#if selected.filter?.industries && selected.filter.industries.length > 0}
+											<div class="col-span-2">
+												<span class="text-slate-500">行业分类:</span>
+												<span class="text-slate-300 ml-1">{selected.filter.industries.join('、')}</span>
+											</div>
+										{/if}
+										{#if selected.filter?.company_scales && selected.filter.company_scales.length > 0}
+											<div class="col-span-2">
+												<span class="text-slate-500">公司规模:</span>
+												<span class="text-slate-300 ml-1">{selected.filter.company_scales.join('、')}</span>
+											</div>
+										{/if}
+									</div>
+
 									{#if selected.description}
-										<p class="text-slate-400 text-[10px] pt-1 border-t border-slate-800/60">
+										<p class="text-slate-400 text-[10px] pt-1.5 border-t border-slate-800/60">
 											{selected.description}
 										</p>
 									{/if}
 								</div>
 							{/if}
 
+							<!-- Execution Parameters -->
 							<div class="grid grid-cols-2 gap-3 pt-1">
+								<div>
+									<label for="template-task-type-select" class="block text-slate-400 mb-1 font-medium">任务类型</label>
+									<select
+										id="template-task-type-select"
+										bind:value={taskType}
+										class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-cyan-500"
+									>
+										<option value="AUTO_APPLY">🚀 AUTO_APPLY (智能筛选与打招呼)</option>
+										<option value="SCRAPE_JOBS">🔍 SCRAPE_JOBS (仅抓取职位数据)</option>
+									</select>
+								</div>
 								<div>
 									<label for="template-mode-select" class="block text-slate-400 mb-1 font-medium">发送模式</label>
 									<select
@@ -285,20 +285,30 @@
 										bind:value={taskMode}
 										class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-cyan-500"
 									>
-										<option value="preview">安全预览模式</option>
-										<option value="auto_send">自动发送模式</option>
+										<option value="preview">安全预览模式 (输入草稿不发送)</option>
+										<option value="auto_send">自动发送模式 (达标自动点击发送)</option>
 									</select>
 								</div>
-								<div>
-									<label for="template-minscore-input" class="block text-slate-400 mb-1 font-medium">最低匹配分</label>
-									<input
-										id="template-minscore-input"
-										type="number"
-										min="50"
-										max="100"
-										bind:value={minScore}
-										class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-cyan-500"
-									/>
+							</div>
+
+							<div>
+								<div class="flex justify-between items-center mb-1">
+									<label for="template-minscore-input" class="text-slate-400 font-medium">最低匹配分阈值 (0 - 100)</label>
+									<span class="text-cyan-400 font-bold font-mono">{minScore} 分</span>
+								</div>
+								<input
+									id="template-minscore-input"
+									type="range"
+									min="50"
+									max="95"
+									step="5"
+									bind:value={minScore}
+									class="w-full accent-cyan-500"
+								/>
+								<div class="flex justify-between text-[10px] text-slate-500 mt-0.5">
+									<span>宽松 (50分)</span>
+									<span>平衡 (75分)</span>
+									<span>严谨 (90+分)</span>
 								</div>
 							</div>
 						{/if}
@@ -355,21 +365,7 @@
 					取消
 				</button>
 
-				{#if activeTab === 'custom'}
-					<button
-						type="button"
-						onclick={handleLaunchCustom}
-						disabled={isSubmitting}
-						class="bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-semibold px-5 py-2.5 rounded-xl text-xs transition shadow-lg shadow-cyan-500/20 disabled:opacity-60 flex items-center space-x-1.5"
-					>
-						{#if isSubmitting}
-							<span class="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
-							<span>下发中...</span>
-						{:else}
-							<span>🚀 立即发起即时任务</span>
-						{/if}
-					</button>
-				{:else if activeTab === 'template'}
+				{#if activeTab === 'template'}
 					<button
 						type="button"
 						onclick={handleLaunchTemplate}

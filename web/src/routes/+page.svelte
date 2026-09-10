@@ -406,7 +406,7 @@
 				<div>
 					<h3 class="text-sm font-bold text-slate-200">当前没有正在执行的自动化任务</h3>
 					<p class="text-xs text-slate-400 mt-1 max-w-md mx-auto">
-						自动化 Worker 守护进程处于空闲就绪状态。您可以点击上方按钮发起即时任务，或等待定时计划触发。
+						自动化 Worker 守护进程处于空闲就绪状态。您可以点击上方按钮选择搜索策略发起任务，或等待定时计划触发。
 					</p>
 				</div>
 				<div class="flex items-center justify-center gap-3 pt-2">
