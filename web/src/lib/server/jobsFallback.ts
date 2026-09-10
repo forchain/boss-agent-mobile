@@ -20,7 +20,26 @@ export function readFallbackJobs(): Record<string, any> {
 		const filePath = getFallbackFilePath();
 		if (fs.existsSync(filePath)) {
 			const content = fs.readFileSync(filePath, 'utf-8');
-			return JSON.parse(content);
+			const raw = JSON.parse(content);
+			if (raw && typeof raw === 'object') {
+				let modified = false;
+				const clean: Record<string, any> = {};
+				for (const [k, v] of Object.entries(raw)) {
+					const rec = v as any;
+					const comp = (rec?.company_name || '').trim();
+					if (!comp || comp === '未知公司') {
+						modified = true;
+					} else {
+						clean[k] = rec;
+					}
+				}
+				if (modified) {
+					try {
+						fs.writeFileSync(filePath, JSON.stringify(clean, null, 2), 'utf-8');
+					} catch (we) {}
+				}
+				return clean;
+			}
 		}
 	} catch (e) {}
 	return {};
@@ -28,6 +47,9 @@ export function readFallbackJobs(): Record<string, any> {
 
 export function writeFallbackJob(record: any): void {
 	try {
+		const comp = (record?.company_name || '').trim();
+		if (!comp || comp === '未知公司') return;
+
 		const filePath = getFallbackFilePath();
 		fs.mkdirSync(path.dirname(filePath), { recursive: true });
 		const data = readFallbackJobs();
@@ -38,3 +60,4 @@ export function writeFallbackJob(record: any): void {
 		fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
 	} catch (e) {}
 }
+

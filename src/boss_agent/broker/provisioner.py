@@ -10,6 +10,7 @@ Supports both local SQLite direct provisioning and remote PocketBase REST API pr
 import argparse
 import json
 import logging
+import re
 import sqlite3
 import sys
 from pathlib import Path
@@ -82,6 +83,11 @@ JOB_RECORDS_FIELDS = [
     {"name": "location", "type": "text", "required": False},
     {"name": "digest", "type": "text", "required": False},
     {"name": "job_description", "type": "text", "required": False},
+    {"name": "company_scale", "type": "text", "required": False},
+    {"name": "industry", "type": "text", "required": False},
+    {"name": "tags", "type": "json", "required": False},
+    {"name": "recruiter_title", "type": "text", "required": False},
+    {"name": "is_headhunter", "type": "bool", "required": False},
     {"name": "status", "type": "text", "required": True},
     {"name": "match_score", "type": "number", "required": False},
     {"name": "jd_key_requirements", "type": "json", "required": False},
@@ -342,6 +348,11 @@ def provision_sqlite_database(
                     location TEXT,
                     digest TEXT,
                     job_description TEXT,
+                    company_scale TEXT,
+                    industry TEXT,
+                    tags JSON,
+                    recruiter_title TEXT,
+                    is_headhunter BOOLEAN DEFAULT FALSE,
                     status TEXT DEFAULT 'unmatched',
                     match_score INTEGER,
                     jd_key_requirements JSON,
@@ -364,11 +375,23 @@ def provision_sqlite_database(
                 """,
                 (job_records_json,),
             )
-            # Ensure 'digest' column exists in existing SQLite table
+            # Ensure new columns exist in existing SQLite table
             cursor.execute("PRAGMA table_info(job_records)")
             job_cols = {row[1] for row in cursor.fetchall()}
-            if "digest" not in job_cols:
-                cursor.execute("ALTER TABLE job_records ADD COLUMN digest TEXT")
+            new_job_cols = [
+                ("digest", "TEXT"),
+                ("company_scale", "TEXT"),
+                ("industry", "TEXT"),
+                ("tags", "JSON"),
+                ("recruiter_title", "TEXT"),
+                ("is_headhunter", "BOOLEAN DEFAULT FALSE"),
+            ]
+            for col_name, col_type in new_job_cols:
+                if col_name not in job_cols:
+                    cursor.execute(f"ALTER TABLE job_records ADD COLUMN {col_name} {col_type}")
+
+            # Backfill and repair legacy job records
+            _backfill_legacy_job_records(cursor)
 
         if "saved_searches" not in existing:
             cursor.execute(
@@ -708,6 +731,132 @@ def provision_remote_pocketbase(
         print(f"⚠️ Error checking/seeding records: {ex}")
 
     return True
+
+
+def _backfill_legacy_job_records(cursor: sqlite3.Cursor) -> None:
+    """Migrate and repair existing legacy job records in SQLite database.
+
+    - Strips trailing &@, tags, and punctuation from title
+    - Fixes recruiter_name (stripping trailing ·) and moves recruiter titles mistakenly stored in location
+    - Re-evaluates is_headhunter based on '猎头' in recruiter_title or recruiter_name
+    - Backfills company_scale, industry, tags, and location from jd_key_requirements if missing
+    - Backfills digest from job_description if missing
+    """
+    try:
+        # Purge incomplete or partially visible cards where company is missing or 未知公司
+        cursor.execute("""
+            DELETE FROM job_records
+            WHERE company_name IS NULL
+               OR TRIM(company_name) = ''
+               OR company_name = '未知公司'
+        """)
+
+        cursor.execute("""
+            SELECT id, title, company_name, recruiter_name, recruiter_title, is_headhunter, 
+                   location, digest, job_description, company_scale, industry, tags, 
+                   jd_key_requirements 
+            FROM job_records
+        """)
+        rows = cursor.fetchall()
+        for row in rows:
+            (
+                rec_id, title, comp, rec_name, rec_title, is_hh,
+                loc, digest, jd, scale, ind, tags_json, reqs_json
+            ) = row
+
+            # 1. Clean title
+            clean_title = (title or "").strip()
+            while True:
+                t = re.sub(r"(?:\s*&@\s*|\s*&+\s*|\s*@+\s*)+$", "", clean_title).strip()
+                t = re.sub(r"[\s&@]+$", "", t).strip()
+                if t == clean_title:
+                    break
+                clean_title = t
+
+            # 2. Repair recruiter info and location
+            rec = (rec_name or "").strip()
+            rtitle = (rec_title or "").strip()
+            rloc = (loc or "").strip()
+
+            # If location currently holds recruiter title
+            if rloc and any(kw in rloc for kw in ("猎头", "顾问", "专员", "专家", "HR", "经理", "总监", "助理", "主管")):
+                if not rtitle:
+                    rtitle = rloc
+                rloc = ""
+
+            # If recruiter name contains "·"
+            if any(sep in rec for sep in ("·", "•", "・")):
+                parts = [p.strip() for p in re.split(r"[·•・]", rec, maxsplit=1)]
+                rec = parts[0].rstrip("·•・").strip()
+                if not rtitle and len(parts) > 1 and parts[1]:
+                    rtitle = parts[1].strip()
+            else:
+                rec = rec.rstrip("·•・").strip()
+
+            # If rtitle has trailing city attached
+            if rtitle and " " in rtitle:
+                sub_toks = rtitle.rsplit(" ", 1)
+                if (
+                    sub_toks[1] in ("上海", "北京", "深圳", "广州", "杭州", "成都", "武汉", "南京", "苏州", "西安", "海外")
+                    or sub_toks[1].endswith("市")
+                    or sub_toks[1].endswith("区")
+                ):
+                    rtitle = sub_toks[0].strip()
+                    if not rloc:
+                        rloc = sub_toks[1].strip()
+
+            new_is_hh = "猎头" in rtitle or "猎头" in rec
+
+            # 3. Backfill facets from requirements
+            new_scale = scale or ""
+            new_ind = ind or ""
+            new_loc = rloc
+            try:
+                reqs = json.loads(reqs_json) if isinstance(reqs_json, str) else (reqs_json or [])
+            except Exception:
+                reqs = []
+
+            try:
+                current_tags = json.loads(tags_json) if isinstance(tags_json, str) else (tags_json or [])
+            except Exception:
+                current_tags = []
+
+            remaining_tags = []
+            for r in reqs:
+                r_str = str(r).strip()
+                if not r_str:
+                    continue
+                if re.search(r"(\d+[-~至]\d+人|\d+人以上|少于\d+人|\d+人以下)", r_str):
+                    if not new_scale:
+                        new_scale = r_str
+                elif r_str in ("人工智能", "互联网", "互联网/AI", "电子商务", "游戏", "银行", "保险", "医疗健康", "计算机软件"):
+                    if not new_ind:
+                        new_ind = r_str
+                elif (
+                    r_str in ("上海", "北京", "深圳", "广州", "杭州", "成都", "武汉", "南京", "苏州", "西安", "海外")
+                    or r_str.endswith("市")
+                    or r_str.endswith("区")
+                ):
+                    if not new_loc:
+                        new_loc = r_str
+                elif r_str != rtitle and r_str != rec and not r_str.startswith("负责"):
+                    remaining_tags.append(r_str)
+
+            new_tags = current_tags if current_tags else remaining_tags
+            new_digest = digest or jd or ""
+
+            cursor.execute("""
+                UPDATE job_records
+                SET title = ?, recruiter_name = ?, recruiter_title = ?, is_headhunter = ?,
+                    location = ?, digest = ?, company_scale = ?, industry = ?, tags = ?
+                WHERE id = ?
+            """, (
+                clean_title, rec, rtitle, 1 if new_is_hh else 0,
+                new_loc, new_digest, new_scale, new_ind, json.dumps(new_tags, ensure_ascii=False),
+                rec_id
+            ))
+    except Exception as ex:
+        logger.warning("Error during _backfill_legacy_job_records: %s", ex)
 
 
 provision_pocketbase_sqlite = provision_sqlite_database

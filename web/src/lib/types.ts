@@ -117,6 +117,12 @@ export interface JobRecord {
 	title: string;
 	company_name: string;
 	recruiter_name: string;
+	recruiter_title?: string;
+	is_headhunter?: boolean;
+	company_scale?: string;
+	industry?: string;
+	tags?: string[];
+	digest?: string;
 	salary_range?: string;
 	location?: string;
 	job_description?: string;

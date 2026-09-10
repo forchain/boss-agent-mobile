@@ -25,6 +25,7 @@ from .models import (
     SavedSearch,
     ScreeningPolicy,
     SearchConfig,
+    is_masked_company_name,
 )
 
 with contextlib.suppress(ImportError):
@@ -98,6 +99,7 @@ __all__ = [
     "build_job_application_graph",
     "build_resume_lifecycle_graph",
     "get_global_search_registry",
+    "is_masked_company_name",
     "load_settings",
     "resolve_git_common_root",
     "resolve_pocketbase_data_dir",

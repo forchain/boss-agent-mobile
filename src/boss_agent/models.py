@@ -6,6 +6,7 @@ Domain dataclasses for Boss 直聘 entities.
 
 from dataclasses import dataclass, field
 from enum import StrEnum
+import re
 from typing import Any
 
 
@@ -15,13 +16,32 @@ class AuthStatus(StrEnum):
     CHALLENGE_REQUIRED = "CHALLENGE_REQUIRED"  # Captcha or SMS challenge
 
 
+def clean_job_title(raw_title: str) -> str:
+    """Clean job title by stripping trailing status badges, tag placeholders like '&@', and excess punctuation."""
+    if not raw_title:
+        return ""
+    t = raw_title.strip()
+    while True:
+        cleaned = re.sub(r"(?:\s*&@\s*|\s*&+\s*|\s*@+\s*)+$", "", t).strip()
+        cleaned = re.sub(r"[\s&@]+$", "", cleaned).strip()
+        if cleaned == t:
+            break
+        t = cleaned
+    return t
+
+
 def compute_job_fingerprint(company_name: str, title: str, recruiter_name: str) -> str:
     """Compute normalized SHA-256 fingerprint for a job card using the canonical 3 fields."""
     import hashlib
 
     norm_comp = (company_name or "").strip()
-    norm_title = (title or "").strip()
+    norm_title = clean_job_title(title)
     norm_recruiter = (recruiter_name or "").strip()
+    if any(sep in norm_recruiter for sep in ("·", "•", "・")):
+        parts = [p.strip() for p in re.split(r"[·•・]", norm_recruiter, maxsplit=1)]
+        norm_recruiter = parts[0].rstrip("·•・").strip()
+    else:
+        norm_recruiter = norm_recruiter.rstrip("·•・").strip()
     raw = f"{norm_comp}::{norm_title}::{norm_recruiter}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
@@ -44,6 +64,11 @@ class JobRecord:
     location: str | None = None
     digest: str = ""
     job_description: str = ""
+    company_scale: str = ""
+    industry: str = ""
+    tags: list[str] = field(default_factory=list)
+    recruiter_title: str = ""
+    is_headhunter: bool = False
     status: str = "unmatched"
     match_score: int | None = None
     jd_key_requirements: list[str] = field(default_factory=list)
@@ -56,6 +81,20 @@ class JobRecord:
     updated: str | None = None
 
     def __post_init__(self) -> None:
+        if self.title:
+            self.title = clean_job_title(self.title)
+        if self.recruiter_name and any(sep in self.recruiter_name for sep in ("·", "•", "・")):
+            parts = [p.strip() for p in re.split(r"[·•・]", self.recruiter_name, maxsplit=1)]
+            self.recruiter_name = parts[0].rstrip("·•・").strip()
+            if not self.recruiter_title and len(parts) > 1 and parts[1]:
+                self.recruiter_title = parts[1].strip()
+        elif self.recruiter_name:
+            self.recruiter_name = self.recruiter_name.rstrip("·•・").strip()
+
+        if not self.is_headhunter and (
+            "猎头" in (self.recruiter_title or "") or "猎头" in (self.recruiter_name or "")
+        ):
+            self.is_headhunter = True
         if not self.fingerprint:
             self.fingerprint = compute_job_fingerprint(
                 company_name=self.company_name,
@@ -75,6 +114,25 @@ class JobPosting:
     tags: list[str] = field(default_factory=list)
     recruiter_name: str | None = None
     recruiter_title: str | None = None
+    company_scale: str = ""
+    industry: str = ""
+    is_headhunter: bool = False
+
+    def __post_init__(self) -> None:
+        if self.title:
+            self.title = clean_job_title(self.title)
+        if self.recruiter_name and any(sep in self.recruiter_name for sep in ("·", "•", "・")):
+            parts = [p.strip() for p in re.split(r"[·•・]", self.recruiter_name, maxsplit=1)]
+            self.recruiter_name = parts[0].rstrip("·•・").strip()
+            if not self.recruiter_title and len(parts) > 1 and parts[1]:
+                self.recruiter_title = parts[1].strip()
+        elif self.recruiter_name:
+            self.recruiter_name = self.recruiter_name.rstrip("·•・").strip()
+
+        if not self.is_headhunter and (
+            "猎头" in (self.recruiter_title or "") or "猎头" in (self.recruiter_name or "")
+        ):
+            self.is_headhunter = True
 
 
 @dataclass
@@ -144,6 +202,51 @@ class FilterConfig:
         return bool(self.industries)
 
 
+def is_masked_company_name(name: str | None) -> bool:
+    """Check whether a company name is an anonymous, confidential, or masked placeholder.
+
+    Headhunters and agencies often use masked employer names such as:
+    - '某中型人工智能公司'
+    - '成都某中型...智能公司'
+    - '某知名互联网公司'
+    - '某大型国企'
+    - '某上市公司'
+    - '某独角兽'
+    - '***公司' / '***'
+    - '保密公司' / '保密'
+
+    Authentic employer entities (e.g. '深至科技', '游族网络', '腾讯科技') return False.
+    """
+    if not name or not isinstance(name, str):
+        return False
+
+    cleaned = name.strip()
+    if not cleaned:
+        return False
+
+    # Confidential / hidden placeholders
+    if any(marker in cleaned for marker in ("***", "保密", "隐藏", "匿名")):
+        return True
+
+    # Check for presence of Chinese placeholder character '某' (a certain / anonymous)
+    # In Chinese business naming regulations, real enterprise names never use '某'.
+    # On recruitment platforms, '某' is exclusively used to mask actual company names.
+    if "某" in cleaned:
+        return True
+
+    # Generic descriptors without proper names
+    import re
+
+    return bool(
+        re.match(
+            r"^(?:知名|头部|大型|中型|小型|外资|民营|上市|创业|初创)"
+            r"(?:互联网|科技|金融|量化|医疗|AI|人工智能)?"
+            r"(?:公司|企业|集团|机构|团队|厂商|大厂|外企)$",
+            cleaned,
+        )
+    )
+
+
 @dataclass
 class ScreeningPolicy:
     """Policy rules for multi-stage job screening."""
@@ -153,6 +256,65 @@ class ScreeningPolicy:
     company_blacklist: list[str] = field(default_factory=list)
     jd_blacklist: list[str] = field(default_factory=list)
     enable_screening: bool = True
+
+    def validate_can_blacklist_company(
+        self,
+        company_name: str,
+        is_headhunter: bool = False,
+    ) -> tuple[bool, str]:
+        """Validate whether a company can safely be added to company_blacklist under guardrail rules.
+
+        Returns (allowed: bool, notice: str).
+        """
+        if not company_name or not company_name.strip():
+            return False, "公司名称不能为空"
+
+        cleaned = company_name.strip()
+
+        # Guardrail 1: Headhunter job posting's company name must not be blacklisted
+        if is_headhunter:
+            return (
+                False,
+                f"【黑名单保护生效】岗位为猎头代招岗位，公司名称 '{cleaned}' 为聚合或代招渠道，禁止加入全局黑名单以避免误伤其他雇主",
+            )
+
+        # Guardrail 2: Masked / placeholder company name must not be blacklisted
+        if is_masked_company_name(cleaned):
+            return (
+                False,
+                f"【黑名单保护生效】'{cleaned}' 属于保密/占位公司名称（如某...公司），禁止加入全局黑名单以避免大范围误伤不相关企业",
+            )
+
+        return True, f"公司 '{cleaned}' 为真实直招企业，允许加入黑名单"
+
+    def add_company_to_blacklist(
+        self,
+        company_name: str,
+        is_headhunter: bool = False,
+    ) -> tuple[bool, str]:
+        """Attempt to add a company to company_blacklist with guardrail enforcement.
+
+        Returns (success: bool, notice: str).
+        """
+        allowed, notice = self.validate_can_blacklist_company(
+            company_name, is_headhunter=is_headhunter
+        )
+        if not allowed:
+            return False, notice
+
+        cleaned = company_name.strip()
+        if cleaned not in self.company_blacklist:
+            self.company_blacklist.append(cleaned)
+            return True, f"已成功将直招企业 '{cleaned}' 加入公司黑名单，后续该企业的岗位将自动过滤以节省每日投递额度"
+        return True, f"企业 '{cleaned}' 已在公司黑名单中"
+
+    def remove_company_from_blacklist(self, company_name: str) -> bool:
+        """Remove a company from company_blacklist."""
+        cleaned = company_name.strip()
+        if cleaned in self.company_blacklist:
+            self.company_blacklist.remove(cleaned)
+            return True
+        return False
 
     def matches_card_keywords(
         self,

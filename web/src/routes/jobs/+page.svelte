@@ -8,11 +8,13 @@
 		getCandidateProfile,
 		createAutomationTask
 	} from '$lib/pocketbase';
+	import { validateCanBlacklistCompany, isMaskedCompanyName } from '$lib/screening';
 
 	// State
 	let jobs = $state<JobRecord[]>([]);
 	let selectedJobId = $state<string | null>(null);
 	let currentFilter = $state<JobRecordStatus | 'all'>('unmatched');
+	let channelFilter = $state<'all' | 'direct' | 'headhunter'>('all');
 	let searchQuery = $state('');
 	let isLoading = $state(true);
 
@@ -25,6 +27,10 @@
 	let isDispatchingApply = $state(false);
 	let applyNotice = $state('');
 
+	// Blacklist Guardrail state
+	let isBlacklisting = $state(false);
+	let blacklistNotice = $state('');
+
 	// Candidate profile & LLM settings
 	let profile = $state<CandidateProfile | null>(null);
 	let llmSettings = $state<LLMSettings | null>(null);
@@ -32,17 +38,35 @@
 	// Derived: Selected job
 	let selectedJob = $derived(jobs.find((j) => j.id === selectedJobId) || null);
 
+	// Derived: Blacklist guardrail status for selected job
+	let blacklistGuardrail = $derived(
+		selectedJob
+			? validateCanBlacklistCompany(selectedJob.company_name, selectedJob.is_headhunter)
+			: { allowed: false, notice: '' }
+	);
+
 	// Derived: Filtered jobs
 	let filteredJobs = $derived(
 		jobs.filter((j) => {
 			const matchesStatus = currentFilter === 'all' ? true : j.status === currentFilter;
+			const matchesChannel =
+				channelFilter === 'all'
+					? true
+					: channelFilter === 'headhunter'
+						? Boolean(j.is_headhunter)
+						: !j.is_headhunter;
 			const query = searchQuery.trim().toLowerCase();
 			const matchesQuery = query
 				? (j.title || '').toLowerCase().includes(query) ||
 					(j.company_name || '').toLowerCase().includes(query) ||
-					(j.recruiter_name || '').toLowerCase().includes(query)
+					(j.recruiter_name || '').toLowerCase().includes(query) ||
+					(j.recruiter_title || '').toLowerCase().includes(query) ||
+					(j.company_scale || '').toLowerCase().includes(query) ||
+					(j.industry || '').toLowerCase().includes(query) ||
+					(j.digest || '').toLowerCase().includes(query) ||
+					(j.tags || []).some((t) => t.toLowerCase().includes(query))
 				: true;
-			return matchesStatus && matchesQuery;
+			return matchesStatus && matchesChannel && matchesQuery;
 		})
 	);
 
@@ -50,18 +74,50 @@
 	let unmatchedCount = $derived(jobs.filter((j) => j.status === 'unmatched').length);
 	let matchedCount = $derived(jobs.filter((j) => j.status === 'matched').length);
 	let appliedCount = $derived(jobs.filter((j) => j.status === 'applied').length);
+	let directCount = $derived(jobs.filter((j) => !j.is_headhunter).length);
+	let headhunterCount = $derived(jobs.filter((j) => Boolean(j.is_headhunter)).length);
+
+	function getJobTags(job: JobRecord): string[] {
+		if (job.tags && job.tags.length > 0) {
+			return job.tags;
+		}
+		if (job.jd_key_requirements && job.jd_key_requirements.length > 0) {
+			return job.jd_key_requirements.filter(
+				(t) =>
+					!t.includes('人') &&
+					t !== job.industry &&
+					t !== job.location &&
+					!t.startsWith('负责') &&
+					t.length <= 15
+			);
+		}
+		return [];
+	}
+
+	function getJobDigest(job: JobRecord): string {
+		if (job.digest && job.digest.trim()) {
+			return job.digest.trim();
+		}
+		if (job.job_description && job.job_description.trim()) {
+			return job.job_description.trim();
+		}
+		return '';
+	}
 
 	async function loadJobs() {
 		isLoading = true;
 		try {
 			const list = await getJobRecords();
-			jobs = list;
-			if (!selectedJobId && list.length > 0) {
-				const firstUnmatched = list.find((j) => j.status === 'unmatched');
+			const validList = list.filter(
+				(j) => j.company_name && j.company_name.trim() !== '' && j.company_name.trim() !== '未知公司'
+			);
+			jobs = validList;
+			if (!selectedJobId && validList.length > 0) {
+				const firstUnmatched = validList.find((j) => j.status === 'unmatched');
 				if (firstUnmatched) {
 					selectedJobId = firstUnmatched.id;
 				} else {
-					selectedJobId = list[0].id;
+					selectedJobId = validList[0].id;
 				}
 			}
 		} catch (e) {
@@ -77,6 +133,7 @@
 			evaluationError = '';
 			saveGreetingNotice = '';
 			applyNotice = '';
+			blacklistNotice = '';
 		}
 	});
 
@@ -101,12 +158,25 @@
 			pb.collection('job_records').subscribe('*', (e) => {
 				if (e.action === 'create') {
 					const newRec = e.record as unknown as JobRecord;
-					if (!jobs.some((j) => j.id === newRec.id)) {
+					if (
+						newRec.company_name &&
+						newRec.company_name.trim() !== '' &&
+						newRec.company_name.trim() !== '未知公司' &&
+						!jobs.some((j) => j.id === newRec.id)
+					) {
 						jobs = [newRec, ...jobs];
 					}
 				} else if (e.action === 'update') {
 					const updatedRec = e.record as unknown as JobRecord;
-					jobs = jobs.map((j) => (j.id === updatedRec.id ? updatedRec : j));
+					if (
+						!updatedRec.company_name ||
+						updatedRec.company_name.trim() === '' ||
+						updatedRec.company_name.trim() === '未知公司'
+					) {
+						jobs = jobs.filter((j) => j.id !== updatedRec.id);
+					} else {
+						jobs = jobs.map((j) => (j.id === updatedRec.id ? updatedRec : j));
+					}
 				} else if (e.action === 'delete') {
 					jobs = jobs.filter((j) => j.id !== e.record.id);
 					if (selectedJobId === e.record.id) {
@@ -196,6 +266,51 @@
 		}
 	}
 
+	async function handleBlacklistCompany() {
+		if (!selectedJob) return;
+		const compName = (selectedJob.company_name || '').trim();
+		const isHh = Boolean(selectedJob.is_headhunter);
+
+		const guard = validateCanBlacklistCompany(compName, isHh);
+		if (!guard.allowed) {
+			blacklistNotice = guard.notice;
+			return;
+		}
+
+		if (!confirm(`确定将直招企业「${compName}」加入公司黑名单吗？后续该公司的所有岗位将自动被初筛过滤，节省每日沟通额度。`)) {
+			return;
+		}
+
+		isBlacklisting = true;
+		blacklistNotice = '';
+		try {
+			const res = await fetch('/api/screening/blacklist', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					company_name: compName,
+					is_headhunter: isHh
+				})
+			});
+			const data = await res.json();
+			if (!res.ok || !data.success) {
+				throw new Error(data.error || data.notice || '加入黑名单失败');
+			}
+
+			// Mark current job as ignored as well
+			await updateJobRecord(selectedJob.id, { status: 'ignored' });
+			jobs = jobs.map((j) => (j.id === selectedJob.id ? { ...j, status: 'ignored' } : j));
+			blacklistNotice = `✅ ${data.notice || '已成功加入公司黑名单'}`;
+			setTimeout(() => {
+				blacklistNotice = '';
+			}, 6000);
+		} catch (err: any) {
+			blacklistNotice = `❌ ${err.message || '加入黑名单失败'}`;
+		} finally {
+			isBlacklisting = false;
+		}
+	}
+
 	async function handleDispatchApply() {
 		if (!selectedJob) return;
 		isDispatchingApply = true;
@@ -253,8 +368,12 @@
 				<span class="font-bold text-cyan-400 text-sm">{unmatchedCount}</span>
 			</div>
 			<div class="bg-slate-950/80 border border-slate-800 px-3.5 py-2 rounded-xl flex items-center space-x-2 font-mono">
-				<span class="text-slate-400">已匹配:</span>
-				<span class="font-bold text-emerald-400 text-sm">{matchedCount}</span>
+				<span class="text-slate-400">企业直招:</span>
+				<span class="font-bold text-teal-400 text-sm">{directCount}</span>
+			</div>
+			<div class="bg-slate-950/80 border border-slate-800 px-3.5 py-2 rounded-xl flex items-center space-x-2 font-mono">
+				<span class="text-slate-400">猎头代招:</span>
+				<span class="font-bold text-amber-400 text-sm">{headhunterCount}</span>
 			</div>
 			<div class="bg-slate-950/80 border border-slate-800 px-3.5 py-2 rounded-xl flex items-center space-x-2 font-mono">
 				<span class="text-slate-400">已沟通:</span>
@@ -297,13 +416,35 @@
 					</button>
 				</div>
 
+				<!-- Recruitment Channel Tabs -->
+				<div class="grid grid-cols-3 gap-1.5 p-1 bg-slate-950 border border-slate-800/80 rounded-xl text-xs font-medium">
+					<button
+						onclick={() => (channelFilter = 'all')}
+						class="py-1 rounded-lg transition text-center {channelFilter === 'all' ? 'bg-slate-800 text-cyan-300 shadow font-semibold' : 'text-slate-400 hover:text-slate-200'}"
+					>
+						全部渠道 ({jobs.length})
+					</button>
+					<button
+						onclick={() => (channelFilter = 'direct')}
+						class="py-1 rounded-lg transition text-center {channelFilter === 'direct' ? 'bg-cyan-950/70 text-cyan-400 border border-cyan-800/80 shadow font-semibold' : 'text-slate-400 hover:text-slate-200'}"
+					>
+						🏢 仅直招 ({directCount})
+					</button>
+					<button
+						onclick={() => (channelFilter = 'headhunter')}
+						class="py-1 rounded-lg transition text-center {channelFilter === 'headhunter' ? 'bg-amber-950/70 text-amber-400 border border-amber-800/80 shadow font-semibold' : 'text-slate-400 hover:text-slate-200'}"
+					>
+						🎯 仅猎头 ({headhunterCount})
+					</button>
+				</div>
+
 				<!-- Search Box -->
 				<div class="relative">
 					<span class="absolute left-3 top-2.5 text-slate-500 text-xs">🔍</span>
 					<input
 						type="text"
 						bind:value={searchQuery}
-						placeholder="搜索职位名、公司或招聘者..."
+						placeholder="搜索职位、公司、规模、行业、标签或摘要..."
 						class="w-full bg-slate-950 border border-slate-800 rounded-xl pl-8 pr-3 py-2 text-xs text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-cyan-500 transition"
 					/>
 				</div>
@@ -320,10 +461,12 @@
 					<div class="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-10 text-center text-xs text-slate-500 space-y-2">
 						<span class="text-3xl">📭</span>
 						<p class="font-medium text-slate-400">当前筛选下暂无职位记录</p>
-						<p class="text-[11px] text-slate-600">可以在控制台发起自动化爬取或切换分类标签查看</p>
+						<p class="text-[11px] text-slate-600">可以在控制台发起自动化爬取或切换渠道/状态标签查看</p>
 					</div>
 				{:else}
 					{#each filteredJobs as job (job.id)}
+						{@const cardTags = getJobTags(job)}
+						{@const cardDigest = getJobDigest(job)}
 						<div
 							role="button"
 							tabindex="0"
@@ -341,33 +484,79 @@
 								<div class="absolute left-0 top-0 bottom-0 w-1 bg-cyan-500"></div>
 							{/if}
 
-							<div class="space-y-2">
+							<div class="space-y-2.5">
+								<!-- Row 1: Title + [直招]/[猎头] badge + Salary -->
 								<div class="flex items-start justify-between gap-2">
-									<h3 class="font-semibold text-xs text-slate-100 group-hover:text-cyan-300 transition line-clamp-1">
-										{job.title}
-									</h3>
+									<div class="flex items-center space-x-1.5 min-w-0 flex-1">
+										{#if job.is_headhunter}
+											<span class="px-1.5 py-0.5 rounded text-[10px] bg-amber-950/70 text-amber-400 border border-amber-800/80 font-medium shrink-0">
+												🎯 猎头代招
+											</span>
+										{:else}
+											<span class="px-1.5 py-0.5 rounded text-[10px] bg-cyan-950/70 text-cyan-400 border border-cyan-800/80 font-medium shrink-0">
+												🏢 企业直招
+											</span>
+										{/if}
+										<h3 class="font-semibold text-xs text-slate-100 group-hover:text-cyan-300 transition truncate">
+											{job.title}
+										</h3>
+									</div>
 									<span class="font-bold text-xs text-cyan-400 font-mono shrink-0">
 										{job.salary_range || '薪资面议'}
 									</span>
 								</div>
 
-								<div class="flex items-center justify-between text-[11px] text-slate-400">
-									<div class="flex items-center space-x-1.5 truncate">
-										<span class="text-slate-500">🏢</span>
-										<span class="truncate font-medium text-slate-300">{job.company_name}</span>
-									</div>
-									{#if job.location}
-										<span class="text-slate-500 shrink-0">{job.location}</span>
+								<!-- Row 2: Company name · Scale · Industry -->
+								<div class="flex items-center space-x-1.5 text-[11px] text-slate-400 truncate">
+									<span class="text-slate-500">🏢</span>
+									<span class="font-medium text-slate-300 truncate">{job.company_name}</span>
+									{#if job.company_scale}
+										<span class="text-slate-600">·</span>
+										<span class="text-slate-400 shrink-0">{job.company_scale}</span>
+									{/if}
+									{#if job.industry}
+										<span class="text-slate-600">·</span>
+										<span class="text-slate-400 shrink-0">{job.industry}</span>
 									{/if}
 								</div>
 
-								<div class="flex items-center justify-between pt-1 border-t border-slate-800/60 text-[11px]">
-									<div class="flex items-center space-x-1.5 text-slate-400">
+								<!-- Row 3: Requirement / Skill Tags (Always rendered) -->
+								<div class="flex flex-wrap gap-1 items-center min-h-[20px]">
+									{#if cardTags.length > 0}
+										{#each cardTags as tag}
+											<span class="px-1.5 py-0.5 rounded bg-slate-800/70 text-slate-300 text-[10px] border border-slate-700/50">
+												{tag}
+											</span>
+										{/each}
+									{:else}
+										<span class="text-[10px] text-slate-600 italic">暂无标签</span>
+									{/if}
+								</div>
+
+								<!-- Row 4: Multi-line Full Digest with icon (Always rendered, no truncation) -->
+								<div class="flex items-start space-x-2 text-[11px] bg-slate-950/70 rounded-lg px-2.5 py-1.5 border border-slate-800/60">
+									<span class="text-cyan-400 text-xs shrink-0 mt-0.5">📝</span>
+									{#if cardDigest}
+										<p class="text-slate-300 leading-relaxed break-words whitespace-pre-line flex-1">{cardDigest}</p>
+									{:else}
+										<span class="text-slate-600 italic">暂无职位摘要</span>
+									{/if}
+								</div>
+
+								<!-- Row 5: Recruiter name · Recruiter title + Location + Status -->
+								<div class="flex items-center justify-between pt-1.5 border-t border-slate-800/60 text-[11px]">
+									<div class="flex items-center space-x-1.5 text-slate-400 truncate">
 										<span class="text-slate-500">👤</span>
-										<span class="text-slate-300 truncate max-w-[130px]">{job.recruiter_name}</span>
+										<span class="text-slate-300 truncate">
+											{job.recruiter_name}{#if job.recruiter_title} · {job.recruiter_title}{/if}
+										</span>
+										{#if job.location}
+											<span class="text-slate-600">·</span>
+											<span class="text-slate-500 truncate">{job.location}</span>
+										{/if}
 									</div>
 
-									<div class="flex items-center space-x-1.5">
+									<div class="flex items-center space-x-1.5 shrink-0">
 										{#if job.status === 'unmatched'}
 											<span class="px-2 py-0.5 rounded text-[10px] bg-amber-950/50 text-amber-400 border border-amber-800/60 font-medium">
 												待评估
@@ -408,8 +597,17 @@
 				<!-- Job Header Card -->
 				<div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
 					<div class="flex flex-col sm:flex-row sm:items-start justify-between gap-4 border-b border-slate-800/80 pb-4">
-						<div class="space-y-1">
-							<div class="flex items-center space-x-2">
+						<div class="space-y-2 flex-1">
+							<div class="flex items-center space-x-2 flex-wrap gap-y-1">
+								{#if selectedJob.is_headhunter}
+									<span class="px-2 py-0.5 rounded text-[10px] bg-amber-950/70 text-amber-400 border border-amber-800/80 font-medium">
+										🎯 猎头代招
+									</span>
+								{:else}
+									<span class="px-2 py-0.5 rounded text-[10px] bg-cyan-950/70 text-cyan-400 border border-cyan-800/80 font-medium">
+										🏢 企业直招
+									</span>
+								{/if}
 								<h2 class="text-base font-bold text-slate-100">{selectedJob.title}</h2>
 								{#if selectedJob.status === 'unmatched'}
 									<span class="px-2 py-0.5 rounded text-[10px] bg-amber-950 text-amber-400 border border-amber-800 font-medium">
@@ -423,19 +621,49 @@
 									<span class="px-2 py-0.5 rounded text-[10px] bg-blue-950 text-blue-400 border border-blue-800 font-medium">
 										已下发投递
 									</span>
+								{:else}
+									<span class="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-slate-400">
+										已忽略
+									</span>
 								{/if}
 							</div>
-							<div class="flex items-center space-x-3 text-xs text-slate-400">
-								<span class="text-slate-200 font-medium">{selectedJob.company_name}</span>
-								{#if selectedJob.location}
-									<span>·</span>
-									<span>{selectedJob.location}</span>
+
+							<!-- Facets Row: Company · Scale · Industry · Recruiter · Location -->
+							<div class="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-slate-400">
+								<div class="flex items-center space-x-1.5 text-slate-200 font-medium">
+									<span class="text-slate-500">🏢</span>
+									<span>{selectedJob.company_name}</span>
+								</div>
+								{#if selectedJob.company_scale}
+									<span class="text-slate-600">·</span>
+									<span class="text-slate-300">👥 {selectedJob.company_scale}</span>
+								{/if}
+								{#if selectedJob.industry}
+									<span class="text-slate-600">·</span>
+									<span class="text-slate-300">🌐 {selectedJob.industry}</span>
 								{/if}
 								{#if selectedJob.recruiter_name}
-									<span>·</span>
-									<span class="text-slate-300">招聘者: {selectedJob.recruiter_name}</span>
+									<span class="text-slate-600">·</span>
+									<span class="text-slate-300">
+										👤 {selectedJob.recruiter_name}{#if selectedJob.recruiter_title} · {selectedJob.recruiter_title}{/if}
+									</span>
+								{/if}
+								{#if selectedJob.location}
+									<span class="text-slate-600">·</span>
+									<span class="text-slate-400">📍 {selectedJob.location}</span>
 								{/if}
 							</div>
+
+							<!-- Skill & Requirement Tags -->
+							{#if selectedJob.tags && selectedJob.tags.length > 0}
+								<div class="flex flex-wrap gap-1.5 pt-1">
+									{#each selectedJob.tags as tag}
+										<span class="px-2 py-0.5 rounded-lg bg-slate-800/80 text-slate-300 text-xs border border-slate-700/60 font-medium">
+											🏷️ {tag}
+										</span>
+									{/each}
+								</div>
+							{/if}
 						</div>
 
 						<div class="text-right sm:shrink-0">
@@ -449,6 +677,17 @@
 							{/if}
 						</div>
 					</div>
+
+					<!-- Mobile App Job Digest (if extracted) -->
+					{#if selectedJob.digest}
+						<div class="bg-slate-950/80 border border-slate-800/80 rounded-xl p-3.5 space-y-1">
+							<span class="text-[11px] font-semibold text-cyan-400 uppercase tracking-wider flex items-center space-x-1.5">
+								<span>📝</span>
+								<span>移动端岗位摘要 (Digest)</span>
+							</span>
+							<p class="text-xs text-slate-300 leading-relaxed font-sans">{selectedJob.digest}</p>
+						</div>
+					{/if}
 
 					<!-- Job Description Details -->
 					<div>
@@ -561,31 +800,64 @@
 								</div>
 							</div>
 
-							<!-- Bottom Action Bar (Apply & Ignore) -->
-							<div class="flex flex-col sm:flex-row items-center justify-between gap-3 pt-3 border-t border-slate-800/80">
-								<div class="flex items-center space-x-3 w-full sm:w-auto">
-									<button
-										onclick={handleDispatchApply}
-										disabled={isDispatchingApply}
-										class="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold px-4 py-2 rounded-xl text-xs shadow-lg shadow-emerald-600/20 transition flex items-center space-x-1.5 disabled:opacity-50"
-									>
-										{#if isDispatchingApply}
-											<span class="animate-spin">🌀</span>
-											<span>派发投递中...</span>
+							<!-- Bottom Action Bar (Apply, Ignore & Guardrail Blacklist) -->
+							<div class="space-y-3 pt-3 border-t border-slate-800/80">
+								<div class="flex flex-col sm:flex-row items-center justify-between gap-3">
+									<div class="flex flex-wrap items-center gap-2.5 w-full sm:w-auto">
+										<button
+											onclick={handleDispatchApply}
+											disabled={isDispatchingApply}
+											class="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold px-4 py-2 rounded-xl text-xs shadow-lg shadow-emerald-600/20 transition flex items-center space-x-1.5 disabled:opacity-50"
+										>
+											{#if isDispatchingApply}
+												<span class="animate-spin">🌀</span>
+												<span>派发投递中...</span>
+											{:else}
+												<span>🚀 立即发起移动端打招呼</span>
+											{/if}
+										</button>
+										<button
+											onclick={handleIgnoreJob}
+											class="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-400 hover:text-slate-200 px-3.5 py-2 rounded-xl text-xs transition"
+										>
+											❌ 仅忽略此职位
+										</button>
+
+										{#if blacklistGuardrail.allowed}
+											<button
+												onclick={handleBlacklistCompany}
+												disabled={isBlacklisting}
+												class="bg-rose-950/50 hover:bg-rose-900/70 border border-rose-800/80 text-rose-300 hover:text-rose-100 px-3.5 py-2 rounded-xl text-xs transition flex items-center space-x-1.5 disabled:opacity-50"
+												title="直招企业支持加入公司黑名单，自动跳过其全部岗位"
+											>
+												{#if isBlacklisting}
+													<span class="animate-spin">🌀</span>
+													<span>屏蔽中...</span>
+												{:else}
+													<span>🚫 屏蔽该公司 (加入黑名单)</span>
+												{/if}
+											</button>
 										{:else}
-											<span>🚀 立即发起移动端打招呼</span>
+											<span
+												class="text-[11px] text-slate-400 px-3 py-2 rounded-xl bg-slate-950 border border-slate-800/80 flex items-center space-x-1.5 cursor-help"
+												title={blacklistGuardrail.notice}
+											>
+												<span class="text-amber-400">🛡️</span>
+												<span>{selectedJob.is_headhunter ? '猎头代招免屏蔽' : '保密公司免屏蔽'}</span>
+											</span>
 										{/if}
-									</button>
-									<button
-										onclick={handleIgnoreJob}
-										class="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-400 hover:text-slate-200 px-3.5 py-2 rounded-xl text-xs transition"
-									>
-										❌ 忽略此职位
-									</button>
+									</div>
+
+									{#if applyNotice}
+										<p class="text-xs text-emerald-400 font-medium">{applyNotice}</p>
+									{/if}
 								</div>
 
-								{#if applyNotice}
-									<p class="text-xs text-emerald-400 font-medium">{applyNotice}</p>
+								{#if blacklistNotice}
+									<div class="p-2.5 bg-slate-950/90 border {blacklistNotice.startsWith('✅') ? 'border-emerald-800 text-emerald-300' : 'border-rose-800 text-rose-300'} rounded-xl text-xs flex items-center justify-between">
+										<span>{blacklistNotice}</span>
+										<button onclick={() => (blacklistNotice = '')} class="text-slate-500 hover:text-slate-300 ml-2">✕</button>
+									</div>
 								{/if}
 							</div>
 						</div>

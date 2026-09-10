@@ -49,6 +49,10 @@ export const GET: RequestHandler = async ({ url }) => {
 		}
 	}
 
+	items = items.filter(
+		(it: any) => it.company_name && it.company_name.trim() !== '' && it.company_name.trim() !== '未知公司'
+	);
+
 	items.sort((a: any, b: any) => {
 		const da = a.created || a.last_seen_at || '';
 		const db = b.created || b.last_seen_at || '';
@@ -61,7 +65,13 @@ export const GET: RequestHandler = async ({ url }) => {
 export const POST: RequestHandler = async ({ request }) => {
 	try {
 		const body = await request.json();
-		const companyName = body.company_name || '';
+		const companyName = (body.company_name || '').trim();
+		if (!companyName || companyName === '未知公司') {
+			return json(
+				{ success: false, error: 'Incomplete card: company_name is required and cannot be 未知公司' },
+				{ status: 400 }
+			);
+		}
 		const title = body.title || '';
 		const recruiterName = body.recruiter_name || '';
 		const fingerprint = body.fingerprint || computeFingerprint(companyName, title, recruiterName);
@@ -82,21 +92,29 @@ export const POST: RequestHandler = async ({ request }) => {
 					const newKw = body.search_keywords || [];
 					const mergedKw = Array.from(new Set([...(existing.search_keywords || []), ...newKw]));
 					const targetStatus = body.status || existing.status || 'unmatched';
+					const patchPayload: Record<string, any> = {
+						status: targetStatus,
+						last_seen_at: now,
+						search_keywords: mergedKw
+					};
+					if (body.company_scale !== undefined) patchPayload.company_scale = body.company_scale;
+					if (body.industry !== undefined) patchPayload.industry = body.industry;
+					if (body.tags !== undefined) patchPayload.tags = body.tags;
+					if (body.recruiter_title !== undefined) patchPayload.recruiter_title = body.recruiter_title;
+					if (body.is_headhunter !== undefined) patchPayload.is_headhunter = body.is_headhunter;
+					if (body.digest !== undefined) patchPayload.digest = body.digest;
+
 					const patchResp = await fetch(`${pbBase}/api/collections/job_records/records/${existing.id}`, {
 						method: 'PATCH',
 						headers: { 'Content-Type': 'application/json' },
-						body: JSON.stringify({
-							status: targetStatus,
-							last_seen_at: now,
-							search_keywords: mergedKw
-						})
+						body: JSON.stringify(patchPayload)
 					});
 					if (patchResp.ok) {
 						const updated = await patchResp.json();
 						writeFallbackJob(updated);
 						return json({ success: true, record: updated, is_new: false });
 					}
-					const fallbackUpdated = { ...existing, status: targetStatus, last_seen_at: now, search_keywords: mergedKw };
+					const fallbackUpdated = { ...existing, ...patchPayload };
 					writeFallbackJob(fallbackUpdated);
 					return json({ success: true, record: fallbackUpdated, is_new: false });
 				}
@@ -110,6 +128,12 @@ export const POST: RequestHandler = async ({ request }) => {
 			title,
 			company_name: companyName,
 			recruiter_name: recruiterName,
+			recruiter_title: body.recruiter_title || '',
+			is_headhunter: Boolean(body.is_headhunter),
+			company_scale: body.company_scale || '',
+			industry: body.industry || '',
+			tags: body.tags || [],
+			digest: body.digest || '',
 			salary_range: body.salary_range || '',
 			location: body.location || '',
 			job_description: body.job_description || '',

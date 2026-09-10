@@ -246,9 +246,17 @@ class InMemoryTaskBroker(BaseTaskBroker):
             return fingerprint in self._job_fingerprints
 
     async def upsert_job_record(self, record_data: dict[str, Any]) -> dict[str, Any]:
+        comp_name = (record_data.get("company_name") or "").strip()
+        if not comp_name or comp_name == "未知公司":
+            logger.warning(
+                "Rejected upsert of incomplete job record without valid company_name: '%s'",
+                record_data.get("title", ""),
+            )
+            return {}
+
         async with self._lock:
             fingerprint = record_data.get("fingerprint") or compute_job_fingerprint(
-                company_name=record_data.get("company_name", ""),
+                company_name=comp_name,
                 title=record_data.get("title", ""),
                 recruiter_name=record_data.get("recruiter_name", ""),
             )
@@ -264,6 +272,16 @@ class InMemoryTaskBroker(BaseTaskBroker):
                     rec["digest"] = record_data["digest"]
                 if record_data.get("job_description") and not rec.get("job_description"):
                     rec["job_description"] = record_data["job_description"]
+                if record_data.get("company_scale") and not rec.get("company_scale"):
+                    rec["company_scale"] = record_data["company_scale"]
+                if record_data.get("industry") and not rec.get("industry"):
+                    rec["industry"] = record_data["industry"]
+                if record_data.get("tags") and not rec.get("tags"):
+                    rec["tags"] = record_data["tags"]
+                if record_data.get("recruiter_title") and not rec.get("recruiter_title"):
+                    rec["recruiter_title"] = record_data["recruiter_title"]
+                if "is_headhunter" in record_data and rec.get("is_headhunter") is None:
+                    rec["is_headhunter"] = record_data["is_headhunter"]
                 if record_data.get("salary_range") and not rec.get("salary_range"):
                     rec["salary_range"] = record_data["salary_range"]
                 if record_data.get("location") and not rec.get("location"):
@@ -277,6 +295,11 @@ class InMemoryTaskBroker(BaseTaskBroker):
                 "title": record_data.get("title", ""),
                 "company_name": record_data.get("company_name", ""),
                 "recruiter_name": record_data.get("recruiter_name", ""),
+                "recruiter_title": record_data.get("recruiter_title", ""),
+                "is_headhunter": record_data.get("is_headhunter", False),
+                "company_scale": record_data.get("company_scale", ""),
+                "industry": record_data.get("industry", ""),
+                "tags": record_data.get("tags", []),
                 "salary_range": record_data.get("salary_range", ""),
                 "location": record_data.get("location", ""),
                 "digest": record_data.get("digest", "") or record_data.get("snippet", ""),
@@ -1024,13 +1047,22 @@ class PocketBaseTaskBroker(BaseTaskBroker):
             try:
                 data = json.loads(p.read_text(encoding="utf-8"))
                 if isinstance(data, dict):
-                    return data
+                    valid = {}
+                    for k, v in data.items():
+                        cname = (v.get("company_name") or "").strip()
+                        if cname and cname != "未知公司":
+                            valid[k] = v
+                    return valid
             except Exception:
                 pass
         return {}
 
     def _write_fallback_job(self, record: dict[str, Any]) -> dict[str, Any]:
         from pathlib import Path
+
+        cname = (record.get("company_name") or "").strip()
+        if not cname or cname == "未知公司":
+            return record
 
         try:
             Path(".boss_agent").mkdir(parents=True, exist_ok=True)
@@ -1069,9 +1101,17 @@ class PocketBaseTaskBroker(BaseTaskBroker):
         return fingerprint in fallback
 
     async def upsert_job_record(self, record_data: dict[str, Any]) -> dict[str, Any]:
+        comp_name = (record_data.get("company_name") or "").strip()
+        if not comp_name or comp_name == "未知公司":
+            logger.warning(
+                "Rejected upsert of incomplete job record without valid company_name: '%s'",
+                record_data.get("title", ""),
+            )
+            return {}
+
         url = self._jobs_collection_url()
         fingerprint = record_data.get("fingerprint") or compute_job_fingerprint(
-            company_name=record_data.get("company_name", ""),
+            company_name=comp_name,
             title=record_data.get("title", ""),
             recruiter_name=record_data.get("recruiter_name", ""),
         )
@@ -1102,10 +1142,24 @@ class PocketBaseTaskBroker(BaseTaskBroker):
                         "last_seen_at": now,
                         "search_keywords": merged_kw,
                     }
+                    if record_data.get("title") and record_data["title"] != existing.get("title"):
+                        patch_body["title"] = record_data["title"]
+                    if record_data.get("recruiter_name") and record_data["recruiter_name"] != existing.get("recruiter_name"):
+                        patch_body["recruiter_name"] = record_data["recruiter_name"]
                     if record_data.get("digest") and not existing.get("digest"):
                         patch_body["digest"] = record_data["digest"]
                     if record_data.get("job_description") and not existing.get("job_description"):
                         patch_body["job_description"] = record_data["job_description"]
+                    if record_data.get("company_scale") and not existing.get("company_scale"):
+                        patch_body["company_scale"] = record_data["company_scale"]
+                    if record_data.get("industry") and not existing.get("industry"):
+                        patch_body["industry"] = record_data["industry"]
+                    if record_data.get("tags") and not existing.get("tags"):
+                        patch_body["tags"] = record_data["tags"]
+                    if record_data.get("recruiter_title") and not existing.get("recruiter_title"):
+                        patch_body["recruiter_title"] = record_data["recruiter_title"]
+                    if "is_headhunter" in record_data and (record_data["is_headhunter"] or existing.get("is_headhunter") is None):
+                        patch_body["is_headhunter"] = record_data["is_headhunter"]
                     if record_data.get("salary_range") and not existing.get("salary_range"):
                         patch_body["salary_range"] = record_data["salary_range"]
                     if record_data.get("location") and not existing.get("location"):
@@ -1132,10 +1186,24 @@ class PocketBaseTaskBroker(BaseTaskBroker):
             merged_kw = list(dict.fromkeys((existing_fallback.get("search_keywords") or []) + new_kw))
             existing_fallback["last_seen_at"] = now
             existing_fallback["search_keywords"] = merged_kw
+            if record_data.get("title") and record_data["title"] != existing_fallback.get("title"):
+                existing_fallback["title"] = record_data["title"]
+            if record_data.get("recruiter_name") and record_data["recruiter_name"] != existing_fallback.get("recruiter_name"):
+                existing_fallback["recruiter_name"] = record_data["recruiter_name"]
             if record_data.get("digest") and not existing_fallback.get("digest"):
                 existing_fallback["digest"] = record_data["digest"]
             if record_data.get("job_description") and not existing_fallback.get("job_description"):
                 existing_fallback["job_description"] = record_data["job_description"]
+            if record_data.get("company_scale") and not existing_fallback.get("company_scale"):
+                existing_fallback["company_scale"] = record_data["company_scale"]
+            if record_data.get("industry") and not existing_fallback.get("industry"):
+                existing_fallback["industry"] = record_data["industry"]
+            if record_data.get("tags") and not existing_fallback.get("tags"):
+                existing_fallback["tags"] = record_data["tags"]
+            if record_data.get("recruiter_title") and not existing_fallback.get("recruiter_title"):
+                existing_fallback["recruiter_title"] = record_data["recruiter_title"]
+            if "is_headhunter" in record_data and (record_data["is_headhunter"] or existing_fallback.get("is_headhunter") is None):
+                existing_fallback["is_headhunter"] = record_data["is_headhunter"]
             if record_data.get("salary_range") and not existing_fallback.get("salary_range"):
                 existing_fallback["salary_range"] = record_data["salary_range"]
             if record_data.get("location") and not existing_fallback.get("location"):
@@ -1148,6 +1216,11 @@ class PocketBaseTaskBroker(BaseTaskBroker):
             "title": record_data.get("title", ""),
             "company_name": record_data.get("company_name", ""),
             "recruiter_name": record_data.get("recruiter_name", ""),
+            "recruiter_title": record_data.get("recruiter_title", ""),
+            "is_headhunter": record_data.get("is_headhunter", False),
+            "company_scale": record_data.get("company_scale", ""),
+            "industry": record_data.get("industry", ""),
+            "tags": record_data.get("tags", []),
             "salary_range": record_data.get("salary_range", ""),
             "location": record_data.get("location", ""),
             "digest": record_data.get("digest", "") or record_data.get("snippet", ""),
