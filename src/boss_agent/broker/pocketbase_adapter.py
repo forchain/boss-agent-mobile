@@ -260,6 +260,14 @@ class InMemoryTaskBroker(BaseTaskBroker):
                 new_kw = record_data.get("search_keywords", [])
                 merged_kw = list(dict.fromkeys((rec.get("search_keywords") or []) + new_kw))
                 rec["search_keywords"] = merged_kw
+                if record_data.get("digest") and not rec.get("digest"):
+                    rec["digest"] = record_data["digest"]
+                if record_data.get("job_description") and not rec.get("job_description"):
+                    rec["job_description"] = record_data["job_description"]
+                if record_data.get("salary_range") and not rec.get("salary_range"):
+                    rec["salary_range"] = record_data["salary_range"]
+                if record_data.get("location") and not rec.get("location"):
+                    rec["location"] = record_data["location"]
                 return dict(rec)
 
             rec_id = str(record_data.get("id") or uuid.uuid4().hex[:15])
@@ -271,6 +279,7 @@ class InMemoryTaskBroker(BaseTaskBroker):
                 "recruiter_name": record_data.get("recruiter_name", ""),
                 "salary_range": record_data.get("salary_range", ""),
                 "location": record_data.get("location", ""),
+                "digest": record_data.get("digest", "") or record_data.get("snippet", ""),
                 "job_description": record_data.get("job_description", ""),
                 "status": record_data.get("status", "unmatched"),
                 "match_score": record_data.get("match_score"),
@@ -1093,6 +1102,14 @@ class PocketBaseTaskBroker(BaseTaskBroker):
                         "last_seen_at": now,
                         "search_keywords": merged_kw,
                     }
+                    if record_data.get("digest") and not existing.get("digest"):
+                        patch_body["digest"] = record_data["digest"]
+                    if record_data.get("job_description") and not existing.get("job_description"):
+                        patch_body["job_description"] = record_data["job_description"]
+                    if record_data.get("salary_range") and not existing.get("salary_range"):
+                        patch_body["salary_range"] = record_data["salary_range"]
+                    if record_data.get("location") and not existing.get("location"):
+                        patch_body["location"] = record_data["location"]
                     resp = await loop.run_in_executor(
                         None,
                         lambda: self.session.patch(
@@ -1115,10 +1132,14 @@ class PocketBaseTaskBroker(BaseTaskBroker):
             merged_kw = list(dict.fromkeys((existing_fallback.get("search_keywords") or []) + new_kw))
             existing_fallback["last_seen_at"] = now
             existing_fallback["search_keywords"] = merged_kw
+            if record_data.get("digest") and not existing_fallback.get("digest"):
+                existing_fallback["digest"] = record_data["digest"]
             if record_data.get("job_description") and not existing_fallback.get("job_description"):
                 existing_fallback["job_description"] = record_data["job_description"]
             if record_data.get("salary_range") and not existing_fallback.get("salary_range"):
                 existing_fallback["salary_range"] = record_data["salary_range"]
+            if record_data.get("location") and not existing_fallback.get("location"):
+                existing_fallback["location"] = record_data["location"]
             return self._write_fallback_job(existing_fallback)
 
         # Create new job record
@@ -1129,6 +1150,7 @@ class PocketBaseTaskBroker(BaseTaskBroker):
             "recruiter_name": record_data.get("recruiter_name", ""),
             "salary_range": record_data.get("salary_range", ""),
             "location": record_data.get("location", ""),
+            "digest": record_data.get("digest", "") or record_data.get("snippet", ""),
             "job_description": record_data.get("job_description", ""),
             "status": record_data.get("status", "unmatched"),
             "match_score": record_data.get("match_score"),

@@ -174,7 +174,8 @@ async def test_scrape_jobs_handler_direct_ingestion_even_when_detail_fails():
     assert records[0]["recruiter_name"] == "李先生·猎头顾问"
     assert records[0]["salary_range"] == "7-10万元·16薪"
     assert records[0]["location"] == "上海"
-    assert records[0]["job_description"] == "负责基于agent的devops体系的架构"
+    assert records[0]["digest"] == "负责基于agent的devops体系的架构"
+    assert records[0]["job_description"] == ""
     assert records[0]["search_keywords"] == ["agent"]
 
 
@@ -203,7 +204,12 @@ def test_extract_visible_job_cards_parser():
         e.text = t
         sub_elems.append(e)
 
-    mock_card.find_elements.return_value = sub_elems
+    def mock_find(by, value):
+        if by == "xpath" and "@text" in value:
+            return sub_elems
+        return []
+
+    mock_card.find_elements.side_effect = mock_find
     mock_driver.find_elements.return_value = [mock_card]
 
     page = JobListPage(mock_driver)
@@ -220,3 +226,101 @@ def test_extract_visible_job_cards_parser():
     assert "本科" in b.tags
     assert b.snippet == "负责基于agent的devops体系的架构"
     assert b.fingerprint != ""
+
+
+@pytest.mark.asyncio
+async def test_scrape_jobs_handler_preliminary_card_screening_and_enrichment():
+    """Verify that cards failing preliminary screening skip detail click and are saved as ignored, while passing cards enrich full JD."""
+    broker = InMemoryTaskBroker()
+    mock_driver = MagicMock()
+    mock_driver.get_window_size.return_value = {"width": 1080, "height": 2400}
+
+    # Card 1: Disqualified by preliminary screening (blacklist in digest)
+    card1_elem = MagicMock()
+    card1 = JobCardBrief(
+        title="Python开发工程师",
+        company_name="外包服务公司",
+        recruiter_name="外包HR",
+        tags=["Python"],
+        digest="此岗位需长期在客户现场驻场办公开发",
+        element=card1_elem,
+    )
+
+    # Card 2: Passes preliminary screening
+    card2_elem = MagicMock()
+    card2 = JobCardBrief(
+        title="AI Agent研发架构师",
+        company_name="前沿智能",
+        recruiter_name="技术总监",
+        tags=["LLM", "Agent"],
+        digest="负责核心智能体工作流平台搭建",
+        element=card2_elem,
+    )
+
+    from boss_agent.worker.config import WorkerConfig
+
+    handler = ScrapeJobsHandler()
+    context = WorkerContext(config=WorkerConfig(worker_id="test-worker"), driver=mock_driver)
+    task = AutomationTask(
+        task_type=TaskType.SCRAPE_JOBS,
+        payload={
+            "keyword": "agent",
+            "max_jobs": 5,
+            "screening_policy": {
+                "title_whitelist": ["Agent", "Python"],
+                "jd_blacklist": ["驻场", "外包"],
+            },
+        },
+    )
+
+    with (
+        patch("boss_agent.worker.handlers.scrape_jobs.StartupDialogPage") as mock_startup_cls,
+        patch("boss_agent.worker.handlers.scrape_jobs.JobListPage") as mock_list_cls,
+        patch("boss_agent.worker.handlers.scrape_jobs.SearchPage") as mock_search_cls,
+        patch("boss_agent.worker.handlers.scrape_jobs.JobDetailPage") as mock_detail_cls,
+    ):
+        mock_startup = mock_startup_cls.return_value
+        mock_startup.is_dialog_present.return_value = False
+
+        mock_list = mock_list_cls.return_value
+        mock_list.extract_visible_job_cards.return_value = [card1, card2]
+
+        mock_search = mock_search_cls.return_value
+        mock_search.is_search_page.return_value = True
+
+        mock_detail = mock_detail_cls.return_value
+        mock_detail.extract_job_posting.return_value = JobPosting(
+            title="AI Agent研发架构师",
+            company_name="前沿智能",
+            salary_range="40-60K",
+            job_description="完整详细岗位职责：1. 负责LangGraph落地；2. 多智能体架构设计与实现...",
+            recruiter_name="技术总监",
+        )
+
+        result = await handler.handle(task, broker, context)
+
+    assert result.success is True
+    assert result.output["total_scanned"] == 2
+    assert result.output["skipped_count"] == 1
+    assert result.output["scraped_count"] == 1
+
+    # Card 1 must NOT have been clicked (zero UI navigation)
+    card1_elem.click.assert_not_called()
+
+    # Card 2 was clicked
+    card2_elem.click.assert_called_once()
+
+    # Verify Card 1 persisted as ignored
+    ignored_records = await broker.list_job_records(status="ignored")
+    assert len(ignored_records) == 1
+    assert ignored_records[0]["title"] == "Python开发工程师"
+    assert ignored_records[0]["digest"] == "此岗位需长期在客户现场驻场办公开发"
+    assert ignored_records[0]["job_description"] == ""
+
+    # Verify Card 2 persisted as unmatched with enriched full JD and digest
+    unmatched_records = await broker.list_job_records(status="unmatched")
+    assert len(unmatched_records) == 1
+    assert unmatched_records[0]["title"] == "AI Agent研发架构师"
+    assert unmatched_records[0]["digest"] == "负责核心智能体工作流平台搭建"
+    assert unmatched_records[0]["job_description"].startswith("完整详细岗位职责")
+

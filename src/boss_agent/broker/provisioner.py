@@ -80,6 +80,7 @@ JOB_RECORDS_FIELDS = [
     {"name": "recruiter_name", "type": "text", "required": True},
     {"name": "salary_range", "type": "text", "required": False},
     {"name": "location", "type": "text", "required": False},
+    {"name": "digest", "type": "text", "required": False},
     {"name": "job_description", "type": "text", "required": False},
     {"name": "status", "type": "text", "required": True},
     {"name": "match_score", "type": "number", "required": False},
@@ -339,6 +340,7 @@ def provision_sqlite_database(
                     recruiter_name TEXT,
                     salary_range TEXT,
                     location TEXT,
+                    digest TEXT,
                     job_description TEXT,
                     status TEXT DEFAULT 'unmatched',
                     match_score INTEGER,
@@ -362,6 +364,11 @@ def provision_sqlite_database(
                 """,
                 (job_records_json,),
             )
+            # Ensure 'digest' column exists in existing SQLite table
+            cursor.execute("PRAGMA table_info(job_records)")
+            job_cols = {row[1] for row in cursor.fetchall()}
+            if "digest" not in job_cols:
+                cursor.execute("ALTER TABLE job_records ADD COLUMN digest TEXT")
 
         if "saved_searches" not in existing:
             cursor.execute(
@@ -630,6 +637,7 @@ def provision_remote_pocketbase(
                 {"name": "recruiter_name", "type": "text", "required": True},
                 {"name": "salary_range", "type": "text", "required": False},
                 {"name": "location", "type": "text", "required": False},
+                {"name": "digest", "type": "text", "required": False},
                 {"name": "job_description", "type": "text", "required": False},
                 {"name": "status", "type": "text", "required": True},
                 {"name": "match_score", "type": "number", "required": False},

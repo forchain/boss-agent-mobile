@@ -271,3 +271,66 @@ def test_provision_sqlite_database_offline_structure(tmp_path: Path):
         assert "saved_searches" in col_names
         assert "resume_revisions" in col_names
 
+
+def test_provision_sqlite_database_adds_digest_column_if_missing(tmp_path: Path):
+    """If job_records table was created in an older version without 'digest', provisioner alters table."""
+    from boss_agent.broker.provisioner import JOB_RECORDS_FIELDS
+
+    # Verify field definition
+    field_names = [f["name"] for f in JOB_RECORDS_FIELDS]
+    assert "digest" in field_names
+
+    db_file = tmp_path / "data.db"
+    conn = sqlite3.connect(str(db_file))
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE _collections (
+            id TEXT PRIMARY KEY,
+            system BOOLEAN DEFAULT FALSE,
+            type TEXT DEFAULT "base",
+            name TEXT UNIQUE NOT NULL,
+            fields JSON DEFAULT "[]" NOT NULL,
+            indexes JSON DEFAULT "[]" NOT NULL,
+            listRule TEXT DEFAULT NULL,
+            viewRule TEXT DEFAULT NULL,
+            createRule TEXT DEFAULT NULL,
+            updateRule TEXT DEFAULT NULL,
+            deleteRule TEXT DEFAULT NULL,
+            options JSON DEFAULT "{}" NOT NULL,
+            created TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%fZ')),
+            updated TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%fZ'))
+        )
+    """)
+    # Simulate an old job_records table without digest
+    cursor.execute("""
+        INSERT INTO _collections (id, system, type, name, fields, listRule, viewRule, createRule, updateRule, deleteRule)
+        VALUES ('pbc_job_records', 0, 'base', 'job_records', '[]', '', '', '', '', '')
+    """)
+    cursor.execute("""
+        CREATE TABLE job_records (
+            id TEXT PRIMARY KEY,
+            fingerprint TEXT UNIQUE,
+            title TEXT,
+            company_name TEXT,
+            recruiter_name TEXT,
+            salary_range TEXT,
+            location TEXT,
+            job_description TEXT,
+            status TEXT DEFAULT 'unmatched'
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+    # Run provisioning
+    assert provision_sqlite_database(db_file) is True
+
+    # Verify column was added
+    conn = sqlite3.connect(str(db_file))
+    cursor = conn.cursor()
+    cursor.execute("PRAGMA table_info(job_records)")
+    columns = [row[1] for row in cursor.fetchall()]
+    conn.close()
+
+    assert "digest" in columns
+

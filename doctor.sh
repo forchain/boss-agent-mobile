@@ -183,9 +183,23 @@ else
     log_warn "未在 PATH 中找到 'adb' 命令" "请安装 Android Platform Tools: brew install android-platform-tools"
 fi
 
-if curl -s -f "http://127.0.0.1:4723/status" >/dev/null 2>&1; then
-    APPIUM_PID="$(cat .boss_agent/appium.pid 2>/dev/null || lsof -ti :4723 2>/dev/null | head -n 1 || echo '')"
-    log_pass "Appium 服务正在运行 (http://127.0.0.1:4723${APPIUM_PID:+, PID: ${APPIUM_PID}}, 日志: .boss_agent/appium.log)"
+APPIUM_URL="${APPIUM_URL:-}"
+if [[ -z "${APPIUM_URL}" && -f "config/settings.local.yaml" ]]; then
+    APPIUM_URL="$(grep -E "^[[:space:]]*(server_url|appium_url):" config/settings.local.yaml 2>/dev/null | awk '{print $2}' | tr -d '"' | tr -d "'" || true)"
+fi
+if [[ -z "${APPIUM_URL}" && -f "config/settings.yaml" ]]; then
+    APPIUM_URL="$(grep -E "^[[:space:]]*(server_url|appium_url):" config/settings.yaml 2>/dev/null | awk '{print $2}' | tr -d '"' | tr -d "'" || true)"
+fi
+APPIUM_URL="${APPIUM_URL:-http://127.0.0.1:4723}"
+
+CHECK_URL="${APPIUM_URL%/}"
+CHECK_URL="${CHECK_URL/0.0.0.0/127.0.0.1}"
+APPIUM_PORT="${APPIUM_URL##*:}"
+APPIUM_PORT="${APPIUM_PORT%%/*}"
+
+if curl -s -f "${CHECK_URL}/status" >/dev/null 2>&1; then
+    APPIUM_PID="$(cat .boss_agent/appium.pid 2>/dev/null || lsof -ti ":${APPIUM_PORT}" 2>/dev/null | head -n 1 || echo '')"
+    log_pass "Appium 服务正在运行 (${APPIUM_URL}${APPIUM_PID:+, PID: ${APPIUM_PID}}, 日志: .boss_agent/appium.log)"
 else
     log_warn "Appium 服务尚未启动" "运行: ./appium.sh 或 ./run.sh appium (或 ./appium.sh start --daemon)"
 fi

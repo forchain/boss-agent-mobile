@@ -14,6 +14,7 @@ from boss_agent.settings import (
     resolve_pocketbase_data_dir,
     resolve_pocketbase_db_path,
     resolve_pocketbase_url,
+    resolve_server_url,
 )
 from boss_agent.worker.config import WorkerConfig
 
@@ -327,4 +328,80 @@ def test_resolve_pocketbase_data_dir_with_common_root(tmp_path: Path):
         )
         expected = resolve_git_common_root() / ".boss_agent/pb_data"
         assert data_dir == expected
+
+
+def test_resolve_server_url_default():
+    """When no config files, env vars, or arguments are present, fallback to default."""
+    with patch.dict("os.environ", {}, clear=True):
+        url = resolve_server_url(config_path="/non/existent/path.yaml")
+        assert url == "http://127.0.0.1:4723"
+
+
+def test_resolve_server_url_from_custom_yaml(tmp_path: Path):
+    """Configuration file value is used when no CLI argument or env var is present."""
+    custom_yaml = tmp_path / "settings.local.yaml"
+    custom_yaml.write_text("server_url: 'http://0.0.0.0:4723'\n", encoding="utf-8")
+
+    with patch.dict("os.environ", {}, clear=True):
+        url = resolve_server_url(config_path=custom_yaml)
+        assert url == "http://0.0.0.0:4723"
+
+
+def test_resolve_server_url_from_appium_url_alias(tmp_path: Path):
+    """Configuration file key 'appium_url' is supported as an alias for 'server_url'."""
+    custom_yaml = tmp_path / "settings.local.yaml"
+    custom_yaml.write_text("appium_url: 'http://10.0.0.50:4725'\n", encoding="utf-8")
+
+    with patch.dict("os.environ", {}, clear=True):
+        url = resolve_server_url(config_path=custom_yaml)
+        assert url == "http://10.0.0.50:4725"
+
+
+def test_resolve_server_url_strips_trailing_slashes(tmp_path: Path):
+    """URLs with trailing slashes or whitespace are sanitized."""
+    custom_yaml = tmp_path / "settings.local.yaml"
+    custom_yaml.write_text("server_url: '  http://0.0.0.0:4723///  '\n", encoding="utf-8")
+
+    with patch.dict("os.environ", {}, clear=True):
+        url = resolve_server_url(config_path=custom_yaml)
+        assert url == "http://0.0.0.0:4723"
+
+
+def test_resolve_server_url_env_overrides_file(tmp_path: Path):
+    """APPIUM_SERVER_URL / APPIUM_URL environment variables take precedence over file configuration."""
+    custom_yaml = tmp_path / "settings.local.yaml"
+    custom_yaml.write_text("server_url: 'http://0.0.0.0:4723'\n", encoding="utf-8")
+
+    with patch.dict("os.environ", {"APPIUM_SERVER_URL": "http://env-host:4723/"}, clear=True):
+        url = resolve_server_url(config_path=custom_yaml)
+        assert url == "http://env-host:4723"
+
+    with patch.dict("os.environ", {"APPIUM_URL": "http://env-host2:4723/"}, clear=True):
+        url = resolve_server_url(config_path=custom_yaml)
+        assert url == "http://env-host2:4723"
+
+
+def test_resolve_server_url_explicit_arg_overrides_all(tmp_path: Path):
+    """Explicit argument overrides both environment variable and configuration file."""
+    custom_yaml = tmp_path / "settings.local.yaml"
+    custom_yaml.write_text("server_url: 'http://0.0.0.0:4723'\n", encoding="utf-8")
+
+    with patch.dict("os.environ", {"APPIUM_SERVER_URL": "http://env-host:4723"}, clear=True):
+        url = resolve_server_url(
+            explicit_url="http://cli-override:4723/", config_path=custom_yaml
+        )
+        assert url == "http://cli-override:4723"
+
+
+def test_worker_config_defaults_to_resolved_appium_url(tmp_path: Path):
+    """WorkerConfig defaults appium_url to resolved server_url."""
+    custom_yaml = tmp_path / "settings.local.yaml"
+    custom_yaml.write_text("server_url: 'http://0.0.0.0:4723'\n", encoding="utf-8")
+
+    with patch(
+        "boss_agent.settings.DEFAULT_CONFIG_SEARCH_PATHS",
+        [custom_yaml],
+    ), patch.dict("os.environ", {}, clear=True):
+        cfg = WorkerConfig()
+        assert cfg.appium_url == "http://0.0.0.0:4723"
 

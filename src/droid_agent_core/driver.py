@@ -53,7 +53,10 @@ class AppiumSession:
     def start(self) -> webdriver.Remote:
         """Initialize and connect to the Appium server."""
         options = self.config.to_options()
-        self.driver = webdriver.Remote(command_executor=self.config.server_url, options=options)
+        executor = self.config.server_url
+        if "://0.0.0.0" in executor:
+            executor = executor.replace("://0.0.0.0", "://127.0.0.1")
+        self.driver = webdriver.Remote(command_executor=executor, options=options)
         if self.config.app_package and hasattr(self.driver, "activate_app"):
             with contextlib.suppress(Exception):
                 self.driver.activate_app(self.config.app_package)

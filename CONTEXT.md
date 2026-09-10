@@ -101,7 +101,7 @@ The stateful LangGraph orchestrator governing the complete multi-tier lifecycle 
 _Avoid_: Screening pipeline, match chain, agent workflow
 
 **Keyword Screener**:
-The zero-token deterministic gatekeeper node evaluating visible job card metadata (title, tags, company) against the active Screening Policy before triggering expensive mobile navigation.
+The zero-token deterministic gatekeeper node evaluating visible job card metadata (title, tags, company, digest) against the active Screening Policy before triggering expensive mobile navigation.
 _Avoid_: Title filter, card checker, fast screener
 
 **JD Semantic Screener Agent**:
@@ -123,4 +123,18 @@ _Avoid_: raw summary string, candidate notes, unstructured bio
 **Profile Normalizer**:
 The deterministic self-healing node within the resume lifecycle ensuring core metadata (name, years of experience, target positions, skills) and structured documents are intact and properly formatted without null or missing critical sections.
 _Avoid_: Schema fixer, data cleaner, fallback parser
+
+**Job Digest (`digest`)**:
+The concise, single-line job summary or snippet extracted directly from the search result card (`tv_digest`) without navigating into the detail page.
+_Avoid_: snippet, preview text, job desc summary, card body
+
+**Job Description (`job_description`)**:
+The full, comprehensive job duties, tech stack expectations, and qualifications extracted exclusively from the Job Detail Page (`tv_description`) after navigation and expansion.
+_Avoid_: digest, snippet, short JD, brief intro
+
+**Card Preliminary Screening**:
+The zero-token deterministic gatekeeper evaluation that examines the three card-level facets (`tv_position_name`, `fl_require_info`, `tv_digest`) against the active `ScreeningPolicy` to eliminate non-viable jobs before incurring expensive mobile navigation.
+_Avoid_: card filter, quick check, preliminary pass
+
+
 

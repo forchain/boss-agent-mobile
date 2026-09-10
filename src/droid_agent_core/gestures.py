@@ -104,7 +104,7 @@ class HumanizedGestureExecutor:
             jitter
             and isinstance(rect, dict)
             and all(
-                k in rect and isinstance(rect[k], (int, float))
+                k in rect and isinstance(rect[k], int | float)
                 for k in ("x", "y", "width", "height")
             )
         ):

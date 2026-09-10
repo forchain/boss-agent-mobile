@@ -188,3 +188,79 @@ async def test_pocketbase_broker_job_records_fallback_on_404(tmp_path, monkeypat
     assert fetched is not None
     assert fetched["title"] == "Agent研发架构师"
 
+
+@pytest.mark.asyncio
+async def test_job_records_digest_and_job_description_decoupling():
+    """Verify that digest and job_description are decoupled across models and broker."""
+    from boss_agent.models import JobPosting, JobRecord
+    from boss_agent.pages import JobCardBrief
+
+    # 1. JobCardBrief supports digest with backward-compatible snippet alias
+    card = JobCardBrief(
+        title="AI Engineer",
+        company_name="Google",
+        recruiter_name="Recruiter",
+        digest="负责大模型开发",
+    )
+    assert card.digest == "负责大模型开发"
+    assert card.snippet == "负责大模型开发"
+
+    # Card initialized with snippet should populate digest
+    card2 = JobCardBrief(
+        title="AI Engineer 2",
+        company_name="Google",
+        recruiter_name="Recruiter",
+        snippet="负责智能体开发",
+    )
+    assert card2.digest == "负责智能体开发"
+    assert card2.snippet == "负责智能体开发"
+
+    # 2. JobPosting and JobRecord support digest and job_description independently
+    posting = JobPosting(
+        title="AI Engineer",
+        company_name="Google",
+        salary_range="50-70K",
+        job_description="1. 负责核心系统架构...\n2. 具备5年以上实战经验",
+        digest="负责大模型开发",
+    )
+    assert posting.digest == "负责大模型开发"
+    assert posting.job_description.startswith("1. 负责核心系统架构")
+
+    rec = JobRecord(
+        title="AI Engineer",
+        company_name="Google",
+        recruiter_name="Recruiter",
+        digest="负责大模型开发",
+        job_description="",
+    )
+    assert rec.digest == "负责大模型开发"
+    assert rec.job_description == ""
+
+    # 3. In-memory broker persistence preserves digest and updates job_description on enrichment
+    broker = InMemoryTaskBroker()
+    saved = await broker.upsert_job_record(
+        {
+            "title": "AI Engineer",
+            "company_name": "Google",
+            "recruiter_name": "Recruiter",
+            "digest": "列表卡片提取的摘要信息",
+            "job_description": "",
+            "status": "unmatched",
+        }
+    )
+    assert saved["digest"] == "列表卡片提取的摘要信息"
+    assert saved["job_description"] == ""
+
+    # Simulate detail page enrichment
+    enriched = await broker.upsert_job_record(
+        {
+            "title": "AI Engineer",
+            "company_name": "Google",
+            "recruiter_name": "Recruiter",
+            "job_description": "详情页提取的完整岗位职责与要求长文本...",
+        }
+    )
+    assert enriched["id"] == saved["id"]
+    assert enriched["digest"] == "列表卡片提取的摘要信息"
+    assert enriched["job_description"] == "详情页提取的完整岗位职责与要求长文本..."
+

@@ -66,7 +66,7 @@ def test_job_match_greeting_service_fallback_on_error():
         title="Python 后端",
         company_name="某公司",
         salary_range="20-30K",
-        job_description="Python 开发",
+        job_description="负责公司内部核心数据处理微服务与API接口研发，熟练掌握Python及异步编程框架。",
     )
 
     result = service.evaluate_and_draft_greeting(profile=profile, job=job)
@@ -96,7 +96,7 @@ def test_persistent_candidate_profile_context():
         title="移动端 Agent 架构师",
         company_name="智能终端科技",
         salary_range="40-60K",
-        job_description="负责Android端Agent通信框架与大模型系统研发",
+        job_description="负责Android端Agent通信框架与大模型系统研发，落地端侧轻量化智能体工作流。",
     )
 
     result = service.evaluate_and_draft_greeting(job=job)
@@ -182,4 +182,73 @@ def test_full_context_unabbreviated_matching():
     assert "Rust, Tokio, FastAPI" in system_prompt
     assert "[原始简历无损语料 (Ground Truth 参考)]" in system_prompt
     assert "【完整原始简历全文】" in system_prompt
+
+
+def test_job_match_greeting_service_requires_full_substantive_jd():
+    """Greeting generation must raise ValueError if JD is missing or shorter than 30 characters."""
+    import pytest
+
+    mock_llm = MagicMock()
+    service = JobMatchGreetingService(llm_client=mock_llm)
+
+    # 1. Completely empty JD
+    job_empty = JobPosting(
+        title="AI工程师",
+        company_name="某公司",
+        salary_range="30K",
+        job_description="",
+    )
+    with pytest.raises(ValueError, match="Job description is missing or too short"):
+        service.evaluate_and_draft_greeting(job=job_empty)
+
+    # 2. Too short JD (e.g. only 15 characters, like a digest)
+    job_short = JobPosting(
+        title="AI工程师",
+        company_name="某公司",
+        salary_range="30K",
+        job_description="负责大模型与移动端开发",
+    )
+    with pytest.raises(ValueError, match="Job description is missing or too short"):
+        service.evaluate_and_draft_greeting(job=job_short)
+
+    # 3. Placeholder JD
+    job_placeholder = JobPosting(
+        title="AI工程师",
+        company_name="某公司",
+        salary_range="30K",
+        job_description="无详细岗位描述",
+    )
+    with pytest.raises(ValueError, match="Job description is missing or too short"):
+        service.evaluate_and_draft_greeting(job=job_placeholder)
+
+    # Ensure LLM was never invoked with empty/short JDs
+    mock_llm.chat_completion_json.assert_not_called()
+
+
+def test_greeting_drafter_in_graph_catches_precondition_failure():
+    """Greeting drafter node in LangGraph should record failure state rather than crashing when JD is missing."""
+    from boss_agent.graph import run_job_application_graph
+    from boss_agent.models import ScreeningPolicy
+    from boss_agent.pages import JobCardBrief
+
+    policy = ScreeningPolicy(title_whitelist=["Agent"])
+    card = JobCardBrief(
+        title="AI Agent研发架构师",
+        company_name="前沿智能",
+        recruiter_name="技术总监",
+        digest="负责核心智能体工作流平台搭建",
+    )
+
+    mock_llm = MagicMock()
+    # Execute graph with empty jd_text
+    state = run_job_application_graph(card=card, policy=policy, jd_text="", llm_client=mock_llm)
+
+    assert state["keyword_pass"] is True
+    assert state["deep_screen_pass"] is True
+    assert state["status"] == "greeting_draft_failed"
+    assert state["greeting_message"] == ""
+    assert "Job description is missing or too short" in state["error_message"]
+    # LLM should not have been called for greeting
+    mock_llm.chat_completion_json.assert_not_called()
+
 

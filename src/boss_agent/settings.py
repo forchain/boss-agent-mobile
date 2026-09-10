@@ -25,6 +25,7 @@ DEFAULT_CONFIG_SEARCH_PATHS: list[Path] = [
 DEFAULT_POCKETBASE_URL: str = "http://127.0.0.1:8090"
 DEFAULT_POCKETBASE_DATA_DIR: str = ".boss_agent/pb_data"
 DEFAULT_POCKETBASE_DB_PATH: str = ".boss_agent/pb_data/data.db"
+DEFAULT_SERVER_URL: str = "http://127.0.0.1:4723"
 
 
 def normalize_url(url: str) -> str:
@@ -52,6 +53,28 @@ def resolve_pocketbase_url(
 
     settings = load_settings(config_path=config_path)
     return settings.get("pocketbase_url", DEFAULT_POCKETBASE_URL)
+
+
+def resolve_server_url(
+    explicit_url: str | None = None,
+    config_path: str | Path | None = None,
+) -> str:
+    """Resolve Appium Server URL according to precedence hierarchy:
+
+    1. Explicit programmatic/CLI argument (`explicit_url`)
+    2. `APPIUM_SERVER_URL` or `APPIUM_URL` environment variable
+    3. Configuration files (`server_url` or `appium_url` key)
+    4. Fallback default (`http://127.0.0.1:4723`)
+    """
+    if explicit_url and explicit_url.strip():
+        return normalize_url(explicit_url)
+
+    env_url = os.getenv("APPIUM_SERVER_URL") or os.getenv("APPIUM_URL")
+    if env_url and env_url.strip():
+        return normalize_url(env_url)
+
+    settings = load_settings(config_path=config_path)
+    return settings.get("server_url", DEFAULT_SERVER_URL)
 
 
 def resolve_git_common_root(cwd: str | Path | None = None) -> Path:
@@ -216,6 +239,8 @@ def load_settings(config_path: str | Path | None = None) -> dict[str, Any]:
                             merged[k] = v
                     if "pb_url" in loaded and loaded["pb_url"] is not None:
                         merged["pocketbase_url"] = loaded["pb_url"]
+                    if "appium_url" in loaded and loaded["appium_url"] is not None:
+                        merged["server_url"] = loaded["appium_url"]
                     if "pb_data_dir" in loaded and loaded["pb_data_dir"] is not None:
                         merged["pocketbase_data_dir"] = loaded["pb_data_dir"]
                     if "pb_db_path" in loaded and loaded["pb_db_path"] is not None:
@@ -226,6 +251,10 @@ def load_settings(config_path: str | Path | None = None) -> dict[str, Any]:
     env_pb_url = os.getenv("POCKETBASE_URL")
     if env_pb_url and env_pb_url.strip():
         merged["pocketbase_url"] = env_pb_url
+
+    env_server_url = os.getenv("APPIUM_SERVER_URL") or os.getenv("APPIUM_URL")
+    if env_server_url and env_server_url.strip():
+        merged["server_url"] = env_server_url.strip()
 
     env_pb_data_dir = os.getenv("PB_DATA_DIR") or os.getenv("POCKETBASE_DATA_DIR")
     if env_pb_data_dir and env_pb_data_dir.strip():
@@ -246,5 +275,8 @@ def load_settings(config_path: str | Path | None = None) -> dict[str, Any]:
 
     if "pocketbase_url" in merged and isinstance(merged["pocketbase_url"], str):
         merged["pocketbase_url"] = normalize_url(merged["pocketbase_url"])
+
+    if "server_url" in merged and isinstance(merged["server_url"], str):
+        merged["server_url"] = normalize_url(merged["server_url"])
 
     return merged
