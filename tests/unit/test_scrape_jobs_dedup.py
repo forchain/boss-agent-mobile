@@ -219,8 +219,12 @@ def test_extract_visible_job_cards_parser():
     b = briefs[0]
     assert b.title == "Agent研发架构师"
     assert b.salary_range == "7-10万元·16薪"
-    assert b.company_name == "某大型知名互联网公司 10000人... 互联网"
-    assert b.recruiter_name == "李先生·猎头顾问"
+    assert b.company_name == "某大型知名互联网公司"
+    assert b.company_scale == "10000人"
+    assert "互联网" in b.industry
+    assert b.recruiter_name == "李先生"
+    assert b.recruiter_title == "猎头顾问"
+    assert b.is_headhunter is True
     assert b.location == "上海"
     assert "3-5年" in b.tags
     assert "本科" in b.tags

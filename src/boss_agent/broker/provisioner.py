@@ -82,6 +82,11 @@ JOB_RECORDS_FIELDS = [
     {"name": "location", "type": "text", "required": False},
     {"name": "digest", "type": "text", "required": False},
     {"name": "job_description", "type": "text", "required": False},
+    {"name": "company_scale", "type": "text", "required": False},
+    {"name": "industry", "type": "text", "required": False},
+    {"name": "tags", "type": "json", "required": False},
+    {"name": "recruiter_title", "type": "text", "required": False},
+    {"name": "is_headhunter", "type": "bool", "required": False},
     {"name": "status", "type": "text", "required": True},
     {"name": "match_score", "type": "number", "required": False},
     {"name": "jd_key_requirements", "type": "json", "required": False},
@@ -342,6 +347,11 @@ def provision_sqlite_database(
                     location TEXT,
                     digest TEXT,
                     job_description TEXT,
+                    company_scale TEXT,
+                    industry TEXT,
+                    tags JSON,
+                    recruiter_title TEXT,
+                    is_headhunter BOOLEAN DEFAULT FALSE,
                     status TEXT DEFAULT 'unmatched',
                     match_score INTEGER,
                     jd_key_requirements JSON,
@@ -364,11 +374,20 @@ def provision_sqlite_database(
                 """,
                 (job_records_json,),
             )
-            # Ensure 'digest' column exists in existing SQLite table
+            # Ensure new columns exist in existing SQLite table
             cursor.execute("PRAGMA table_info(job_records)")
             job_cols = {row[1] for row in cursor.fetchall()}
-            if "digest" not in job_cols:
-                cursor.execute("ALTER TABLE job_records ADD COLUMN digest TEXT")
+            new_job_cols = [
+                ("digest", "TEXT"),
+                ("company_scale", "TEXT"),
+                ("industry", "TEXT"),
+                ("tags", "JSON"),
+                ("recruiter_title", "TEXT"),
+                ("is_headhunter", "BOOLEAN DEFAULT FALSE"),
+            ]
+            for col_name, col_type in new_job_cols:
+                if col_name not in job_cols:
+                    cursor.execute(f"ALTER TABLE job_records ADD COLUMN {col_name} {col_type}")
 
         if "saved_searches" not in existing:
             cursor.execute(

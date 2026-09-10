@@ -44,6 +44,11 @@ class JobRecord:
     location: str | None = None
     digest: str = ""
     job_description: str = ""
+    company_scale: str = ""
+    industry: str = ""
+    tags: list[str] = field(default_factory=list)
+    recruiter_title: str = ""
+    is_headhunter: bool = False
     status: str = "unmatched"
     match_score: int | None = None
     jd_key_requirements: list[str] = field(default_factory=list)
@@ -56,6 +61,10 @@ class JobRecord:
     updated: str | None = None
 
     def __post_init__(self) -> None:
+        if not self.is_headhunter and (
+            "猎头" in (self.recruiter_title or "") or "猎头" in (self.recruiter_name or "")
+        ):
+            self.is_headhunter = True
         if not self.fingerprint:
             self.fingerprint = compute_job_fingerprint(
                 company_name=self.company_name,
@@ -75,6 +84,15 @@ class JobPosting:
     tags: list[str] = field(default_factory=list)
     recruiter_name: str | None = None
     recruiter_title: str | None = None
+    company_scale: str = ""
+    industry: str = ""
+    is_headhunter: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.is_headhunter and (
+            "猎头" in (self.recruiter_title or "") or "猎头" in (self.recruiter_name or "")
+        ):
+            self.is_headhunter = True
 
 
 @dataclass
