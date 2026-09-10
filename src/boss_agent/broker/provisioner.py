@@ -743,6 +743,14 @@ def _backfill_legacy_job_records(cursor: sqlite3.Cursor) -> None:
     - Backfills digest from job_description if missing
     """
     try:
+        # Purge incomplete or partially visible cards where company is missing or 未知公司
+        cursor.execute("""
+            DELETE FROM job_records
+            WHERE company_name IS NULL
+               OR TRIM(company_name) = ''
+               OR company_name = '未知公司'
+        """)
+
         cursor.execute("""
             SELECT id, title, company_name, recruiter_name, recruiter_title, is_headhunter, 
                    location, digest, job_description, company_scale, industry, tags, 

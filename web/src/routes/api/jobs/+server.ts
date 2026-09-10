@@ -49,6 +49,10 @@ export const GET: RequestHandler = async ({ url }) => {
 		}
 	}
 
+	items = items.filter(
+		(it: any) => it.company_name && it.company_name.trim() !== '' && it.company_name.trim() !== '未知公司'
+	);
+
 	items.sort((a: any, b: any) => {
 		const da = a.created || a.last_seen_at || '';
 		const db = b.created || b.last_seen_at || '';
@@ -61,7 +65,13 @@ export const GET: RequestHandler = async ({ url }) => {
 export const POST: RequestHandler = async ({ request }) => {
 	try {
 		const body = await request.json();
-		const companyName = body.company_name || '';
+		const companyName = (body.company_name || '').trim();
+		if (!companyName || companyName === '未知公司') {
+			return json(
+				{ success: false, error: 'Incomplete card: company_name is required and cannot be 未知公司' },
+				{ status: 400 }
+			);
+		}
 		const title = body.title || '';
 		const recruiterName = body.recruiter_name || '';
 		const fingerprint = body.fingerprint || computeFingerprint(companyName, title, recruiterName);

@@ -362,3 +362,117 @@ def test_job_list_page_guards_against_recruiter_title_in_location():
     assert card.recruiter_title == "猎头顾问"
     assert card.is_headhunter is True
     assert card.location == ""  # Safeguarded: not '猎头顾问'
+
+
+def test_job_list_page_skips_cards_without_company_name_or_unknown_company():
+    """JobListPage.extract_visible_job_cards must ignore partially visible cards without company name."""
+    mock_driver = MagicMock()
+    page = JobListPage(mock_driver)
+
+    mock_card_valid = MagicMock()
+    mock_card_no_company = MagicMock()
+    mock_card_unknown_company = MagicMock()
+
+    mock_title1 = MagicMock()
+    mock_title1.text = "AI工程师"
+    mock_comp1 = MagicMock()
+    mock_comp1.text = "字节跳动"
+
+    mock_title2 = MagicMock()
+    mock_title2.text = "Agent 开发工程师"
+    # No company element returned for card 2 (partially scrolled out)
+
+    mock_title3 = MagicMock()
+    mock_title3.text = "CTO，外企AI"
+    mock_comp3 = MagicMock()
+    mock_comp3.text = "未知公司"
+
+    def mock_driver_find(by, value):
+        val_str = str(value)
+        if "view_job_card" in val_str:
+            return [mock_card_valid, mock_card_no_company, mock_card_unknown_company]
+        return []
+
+    mock_driver.find_elements.side_effect = mock_driver_find
+
+    def mock_card_find(card_instance):
+        def _find(by, value):
+            val_str = str(value)
+            if card_instance is mock_card_valid:
+                if "tv_position_name" in val_str:
+                    return [mock_title1]
+                if "tv_company_name" in val_str:
+                    return [mock_comp1]
+            elif card_instance is mock_card_no_company:
+                if "tv_position_name" in val_str:
+                    return [mock_title2]
+                if "tv_company_name" in val_str:
+                    return []  # Missing company element
+            elif card_instance is mock_card_unknown_company:
+                if "tv_position_name" in val_str:
+                    return [mock_title3]
+                if "tv_company_name" in val_str:
+                    return [mock_comp3]
+            return []
+        return _find
+
+    mock_card_valid.find_elements.side_effect = mock_card_find(mock_card_valid)
+    mock_card_no_company.find_elements.side_effect = mock_card_find(mock_card_no_company)
+    mock_card_unknown_company.find_elements.side_effect = mock_card_find(mock_card_unknown_company)
+
+    cards = page.extract_visible_job_cards(max_cards=10)
+    assert len(cards) == 1
+    assert cards[0].title == "AI工程师"
+    assert cards[0].company_name == "字节跳动"
+
+
+def test_backfill_purges_unknown_company_records(tmp_path: Path):
+    """Database provisioner backfill must delete records where company_name is missing or '未知公司'."""
+    db_file = tmp_path / "data.db"
+    conn = sqlite3.connect(str(db_file))
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE _collections (
+            id TEXT PRIMARY KEY, system BOOLEAN, type TEXT, name TEXT UNIQUE,
+            fields JSON, indexes JSON, listRule TEXT, viewRule TEXT,
+            createRule TEXT, updateRule TEXT, deleteRule TEXT, options JSON,
+            created TEXT, updated TEXT
+        )
+    """)
+    cursor.execute("""
+        INSERT INTO _collections (id, system, type, name, fields)
+        VALUES ('pbc_job_records', 0, 'base', 'job_records', '[]')
+    """)
+    cursor.execute("""
+        CREATE TABLE job_records (
+            id TEXT PRIMARY KEY,
+            fingerprint TEXT UNIQUE,
+            title TEXT,
+            company_name TEXT,
+            recruiter_name TEXT,
+            status TEXT DEFAULT 'unmatched'
+        )
+    """)
+    cursor.execute("""
+        INSERT INTO job_records (id, fingerprint, title, company_name, recruiter_name)
+        VALUES 
+            ('valid_1', 'fp_1', 'AI工程师', '真实科技公司', '张HR'),
+            ('invalid_1', 'fp_2', '残缺职位1', '未知公司', '招聘者'),
+            ('invalid_2', 'fp_3', '残缺职位2', '', '招聘者'),
+            ('invalid_3', 'fp_4', '残缺职位3', NULL, '招聘者')
+    """)
+    conn.commit()
+    conn.close()
+
+    assert provision_sqlite_database(db_file) is True
+
+    conn = sqlite3.connect(str(db_file))
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, title, company_name FROM job_records")
+    remaining = cursor.fetchall()
+    conn.close()
+
+    assert len(remaining) == 1
+    assert remaining[0][0] == "valid_1"
+    assert remaining[0][2] == "真实科技公司"
+

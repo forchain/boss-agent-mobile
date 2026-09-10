@@ -246,9 +246,17 @@ class InMemoryTaskBroker(BaseTaskBroker):
             return fingerprint in self._job_fingerprints
 
     async def upsert_job_record(self, record_data: dict[str, Any]) -> dict[str, Any]:
+        comp_name = (record_data.get("company_name") or "").strip()
+        if not comp_name or comp_name == "未知公司":
+            logger.warning(
+                "Rejected upsert of incomplete job record without valid company_name: '%s'",
+                record_data.get("title", ""),
+            )
+            return {}
+
         async with self._lock:
             fingerprint = record_data.get("fingerprint") or compute_job_fingerprint(
-                company_name=record_data.get("company_name", ""),
+                company_name=comp_name,
                 title=record_data.get("title", ""),
                 recruiter_name=record_data.get("recruiter_name", ""),
             )
@@ -1039,13 +1047,22 @@ class PocketBaseTaskBroker(BaseTaskBroker):
             try:
                 data = json.loads(p.read_text(encoding="utf-8"))
                 if isinstance(data, dict):
-                    return data
+                    valid = {}
+                    for k, v in data.items():
+                        cname = (v.get("company_name") or "").strip()
+                        if cname and cname != "未知公司":
+                            valid[k] = v
+                    return valid
             except Exception:
                 pass
         return {}
 
     def _write_fallback_job(self, record: dict[str, Any]) -> dict[str, Any]:
         from pathlib import Path
+
+        cname = (record.get("company_name") or "").strip()
+        if not cname or cname == "未知公司":
+            return record
 
         try:
             Path(".boss_agent").mkdir(parents=True, exist_ok=True)
@@ -1084,9 +1101,17 @@ class PocketBaseTaskBroker(BaseTaskBroker):
         return fingerprint in fallback
 
     async def upsert_job_record(self, record_data: dict[str, Any]) -> dict[str, Any]:
+        comp_name = (record_data.get("company_name") or "").strip()
+        if not comp_name or comp_name == "未知公司":
+            logger.warning(
+                "Rejected upsert of incomplete job record without valid company_name: '%s'",
+                record_data.get("title", ""),
+            )
+            return {}
+
         url = self._jobs_collection_url()
         fingerprint = record_data.get("fingerprint") or compute_job_fingerprint(
-            company_name=record_data.get("company_name", ""),
+            company_name=comp_name,
             title=record_data.get("title", ""),
             recruiter_name=record_data.get("recruiter_name", ""),
         )

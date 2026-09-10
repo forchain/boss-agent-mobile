@@ -117,6 +117,16 @@ class ScrapeJobsHandler(BaseTaskHandler):
                 if len(scraped_jobs) >= max_jobs:
                     break
 
+                # Skip incomplete or partially visible cards without genuine company name
+                comp_name = (card.company_name or "").strip()
+                if not comp_name or comp_name == "未知公司":
+                    skipped_count += 1
+                    await broker.append_log(
+                        task.id,
+                        f"⏭️ [Incomplete Card] Skipping partially visible card without company name: '{card.title}'",
+                    )
+                    continue
+
                 # 1. Card-level deduplication check
                 is_duplicate = await broker.has_job_fingerprint(card.fingerprint)
                 if is_duplicate:

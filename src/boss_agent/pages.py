@@ -627,11 +627,12 @@ class JobListPage(BaseBossPage):
                     elif not snippet:
                         snippet = t
 
-            if title:
+            # Skip incomplete or partially visible cards without genuine company name
+            if title and company and company.strip() not in ("", "未知公司"):
                 briefs.append(
                     JobCardBrief(
                         title=title,
-                        company_name=company or "未知公司",
+                        company_name=company.strip(),
                         recruiter_name=recruiter_name or "招聘者",
                         salary_range=salary,
                         location=location,

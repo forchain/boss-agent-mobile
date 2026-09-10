@@ -108,13 +108,16 @@
 		isLoading = true;
 		try {
 			const list = await getJobRecords();
-			jobs = list;
-			if (!selectedJobId && list.length > 0) {
-				const firstUnmatched = list.find((j) => j.status === 'unmatched');
+			const validList = list.filter(
+				(j) => j.company_name && j.company_name.trim() !== '' && j.company_name.trim() !== '未知公司'
+			);
+			jobs = validList;
+			if (!selectedJobId && validList.length > 0) {
+				const firstUnmatched = validList.find((j) => j.status === 'unmatched');
 				if (firstUnmatched) {
 					selectedJobId = firstUnmatched.id;
 				} else {
-					selectedJobId = list[0].id;
+					selectedJobId = validList[0].id;
 				}
 			}
 		} catch (e) {
@@ -155,12 +158,25 @@
 			pb.collection('job_records').subscribe('*', (e) => {
 				if (e.action === 'create') {
 					const newRec = e.record as unknown as JobRecord;
-					if (!jobs.some((j) => j.id === newRec.id)) {
+					if (
+						newRec.company_name &&
+						newRec.company_name.trim() !== '' &&
+						newRec.company_name.trim() !== '未知公司' &&
+						!jobs.some((j) => j.id === newRec.id)
+					) {
 						jobs = [newRec, ...jobs];
 					}
 				} else if (e.action === 'update') {
 					const updatedRec = e.record as unknown as JobRecord;
-					jobs = jobs.map((j) => (j.id === updatedRec.id ? updatedRec : j));
+					if (
+						!updatedRec.company_name ||
+						updatedRec.company_name.trim() === '' ||
+						updatedRec.company_name.trim() === '未知公司'
+					) {
+						jobs = jobs.filter((j) => j.id !== updatedRec.id);
+					} else {
+						jobs = jobs.map((j) => (j.id === updatedRec.id ? updatedRec : j));
+					}
 				} else if (e.action === 'delete') {
 					jobs = jobs.filter((j) => j.id !== e.record.id);
 					if (selectedJobId === e.record.id) {
@@ -517,11 +533,11 @@
 									{/if}
 								</div>
 
-								<!-- Row 4: Single-line Truncated Digest with icon (Always rendered) -->
-								<div class="flex items-center space-x-1.5 text-[11px] bg-slate-950/70 rounded-lg px-2.5 py-1 border border-slate-800/60">
-									<span class="text-cyan-400 text-xs shrink-0">📝</span>
+								<!-- Row 4: Multi-line Full Digest with icon (Always rendered, no truncation) -->
+								<div class="flex items-start space-x-2 text-[11px] bg-slate-950/70 rounded-lg px-2.5 py-1.5 border border-slate-800/60">
+									<span class="text-cyan-400 text-xs shrink-0 mt-0.5">📝</span>
 									{#if cardDigest}
-										<span class="text-slate-300 truncate">{cardDigest}</span>
+										<p class="text-slate-300 leading-relaxed break-words whitespace-pre-line flex-1">{cardDigest}</p>
 									{:else}
 										<span class="text-slate-600 italic">暂无职位摘要</span>
 									{/if}
