@@ -6,6 +6,7 @@ Domain dataclasses for Boss 直聘 entities.
 
 from dataclasses import dataclass, field
 from enum import StrEnum
+import re
 from typing import Any
 
 
@@ -15,13 +16,32 @@ class AuthStatus(StrEnum):
     CHALLENGE_REQUIRED = "CHALLENGE_REQUIRED"  # Captcha or SMS challenge
 
 
+def clean_job_title(raw_title: str) -> str:
+    """Clean job title by stripping trailing status badges, tag placeholders like '&@', and excess punctuation."""
+    if not raw_title:
+        return ""
+    t = raw_title.strip()
+    while True:
+        cleaned = re.sub(r"(?:\s*&@\s*|\s*&+\s*|\s*@+\s*)+$", "", t).strip()
+        cleaned = re.sub(r"[\s&@]+$", "", cleaned).strip()
+        if cleaned == t:
+            break
+        t = cleaned
+    return t
+
+
 def compute_job_fingerprint(company_name: str, title: str, recruiter_name: str) -> str:
     """Compute normalized SHA-256 fingerprint for a job card using the canonical 3 fields."""
     import hashlib
 
     norm_comp = (company_name or "").strip()
-    norm_title = (title or "").strip()
+    norm_title = clean_job_title(title)
     norm_recruiter = (recruiter_name or "").strip()
+    if any(sep in norm_recruiter for sep in ("·", "•", "・")):
+        parts = [p.strip() for p in re.split(r"[·•・]", norm_recruiter, maxsplit=1)]
+        norm_recruiter = parts[0].rstrip("·•・").strip()
+    else:
+        norm_recruiter = norm_recruiter.rstrip("·•・").strip()
     raw = f"{norm_comp}::{norm_title}::{norm_recruiter}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
@@ -61,6 +81,16 @@ class JobRecord:
     updated: str | None = None
 
     def __post_init__(self) -> None:
+        if self.title:
+            self.title = clean_job_title(self.title)
+        if self.recruiter_name and any(sep in self.recruiter_name for sep in ("·", "•", "・")):
+            parts = [p.strip() for p in re.split(r"[·•・]", self.recruiter_name, maxsplit=1)]
+            self.recruiter_name = parts[0].rstrip("·•・").strip()
+            if not self.recruiter_title and len(parts) > 1 and parts[1]:
+                self.recruiter_title = parts[1].strip()
+        elif self.recruiter_name:
+            self.recruiter_name = self.recruiter_name.rstrip("·•・").strip()
+
         if not self.is_headhunter and (
             "猎头" in (self.recruiter_title or "") or "猎头" in (self.recruiter_name or "")
         ):
@@ -89,6 +119,16 @@ class JobPosting:
     is_headhunter: bool = False
 
     def __post_init__(self) -> None:
+        if self.title:
+            self.title = clean_job_title(self.title)
+        if self.recruiter_name and any(sep in self.recruiter_name for sep in ("·", "•", "・")):
+            parts = [p.strip() for p in re.split(r"[·•・]", self.recruiter_name, maxsplit=1)]
+            self.recruiter_name = parts[0].rstrip("·•・").strip()
+            if not self.recruiter_title and len(parts) > 1 and parts[1]:
+                self.recruiter_title = parts[1].strip()
+        elif self.recruiter_name:
+            self.recruiter_name = self.recruiter_name.rstrip("·•・").strip()
+
         if not self.is_headhunter and (
             "猎头" in (self.recruiter_title or "") or "猎头" in (self.recruiter_name or "")
         ):

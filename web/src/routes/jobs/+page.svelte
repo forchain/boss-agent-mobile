@@ -77,6 +77,33 @@
 	let directCount = $derived(jobs.filter((j) => !j.is_headhunter).length);
 	let headhunterCount = $derived(jobs.filter((j) => Boolean(j.is_headhunter)).length);
 
+	function getJobTags(job: JobRecord): string[] {
+		if (job.tags && job.tags.length > 0) {
+			return job.tags;
+		}
+		if (job.jd_key_requirements && job.jd_key_requirements.length > 0) {
+			return job.jd_key_requirements.filter(
+				(t) =>
+					!t.includes('人') &&
+					t !== job.industry &&
+					t !== job.location &&
+					!t.startsWith('负责') &&
+					t.length <= 15
+			);
+		}
+		return [];
+	}
+
+	function getJobDigest(job: JobRecord): string {
+		if (job.digest && job.digest.trim()) {
+			return job.digest.trim();
+		}
+		if (job.job_description && job.job_description.trim()) {
+			return job.job_description.trim();
+		}
+		return '';
+	}
+
 	async function loadJobs() {
 		isLoading = true;
 		try {
@@ -422,6 +449,8 @@
 					</div>
 				{:else}
 					{#each filteredJobs as job (job.id)}
+						{@const cardTags = getJobTags(job)}
+						{@const cardDigest = getJobDigest(job)}
 						<div
 							role="button"
 							tabindex="0"
@@ -445,11 +474,11 @@
 									<div class="flex items-center space-x-1.5 min-w-0 flex-1">
 										{#if job.is_headhunter}
 											<span class="px-1.5 py-0.5 rounded text-[10px] bg-amber-950/70 text-amber-400 border border-amber-800/80 font-medium shrink-0">
-												猎头代招
+												🎯 猎头代招
 											</span>
 										{:else}
 											<span class="px-1.5 py-0.5 rounded text-[10px] bg-cyan-950/70 text-cyan-400 border border-cyan-800/80 font-medium shrink-0">
-												企业直招
+												🏢 企业直招
 											</span>
 										{/if}
 										<h3 class="font-semibold text-xs text-slate-100 group-hover:text-cyan-300 transition truncate">
@@ -475,24 +504,28 @@
 									{/if}
 								</div>
 
-								<!-- Row 3: Requirement / Skill Tags -->
-								{#if job.tags && job.tags.length > 0}
-									<div class="flex flex-wrap gap-1 items-center">
-										{#each job.tags as tag}
+								<!-- Row 3: Requirement / Skill Tags (Always rendered) -->
+								<div class="flex flex-wrap gap-1 items-center min-h-[20px]">
+									{#if cardTags.length > 0}
+										{#each cardTags as tag}
 											<span class="px-1.5 py-0.5 rounded bg-slate-800/70 text-slate-300 text-[10px] border border-slate-700/50">
 												{tag}
 											</span>
 										{/each}
-									</div>
-								{/if}
+									{:else}
+										<span class="text-[10px] text-slate-600 italic">暂无标签</span>
+									{/if}
+								</div>
 
-								<!-- Row 4: Single-line Truncated Digest with icon -->
-								{#if job.digest}
-									<div class="flex items-center space-x-1.5 text-[11px] text-slate-400 bg-slate-950/70 rounded-lg px-2.5 py-1 border border-slate-800/60">
-										<span class="text-cyan-400 text-xs shrink-0">📝</span>
-										<span class="truncate">{job.digest}</span>
-									</div>
-								{/if}
+								<!-- Row 4: Single-line Truncated Digest with icon (Always rendered) -->
+								<div class="flex items-center space-x-1.5 text-[11px] bg-slate-950/70 rounded-lg px-2.5 py-1 border border-slate-800/60">
+									<span class="text-cyan-400 text-xs shrink-0">📝</span>
+									{#if cardDigest}
+										<span class="text-slate-300 truncate">{cardDigest}</span>
+									{:else}
+										<span class="text-slate-600 italic">暂无职位摘要</span>
+									{/if}
+								</div>
 
 								<!-- Row 5: Recruiter name · Recruiter title + Location + Status -->
 								<div class="flex items-center justify-between pt-1.5 border-t border-slate-800/60 text-[11px]">

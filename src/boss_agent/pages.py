@@ -35,6 +35,16 @@ class JobCardBrief:
     is_headhunter: bool = False
 
     def __post_init__(self) -> None:
+        if self.title:
+            self.title = clean_job_title(self.title)
+        if self.recruiter_name and any(sep in self.recruiter_name for sep in ("·", "•", "・")):
+            parts = [p.strip() for p in re.split(r"[·•・]", self.recruiter_name, maxsplit=1)]
+            self.recruiter_name = parts[0].rstrip("·•・").strip()
+            if not self.recruiter_title and len(parts) > 1 and parts[1]:
+                self.recruiter_title = parts[1].strip()
+        elif self.recruiter_name:
+            self.recruiter_name = self.recruiter_name.rstrip("·•・").strip()
+
         if not self.digest and self.snippet:
             self.digest = self.snippet
         elif self.digest and not self.snippet:
@@ -44,13 +54,59 @@ class JobCardBrief:
             "猎头" in (self.recruiter_title or "") or "猎头" in (self.recruiter_name or "")
         ):
             self.is_headhunter = True
-
         if not self.fingerprint:
             self.fingerprint = compute_job_fingerprint(
                 company_name=self.company_name,
                 title=self.title,
                 recruiter_name=self.recruiter_name,
             )
+
+
+KNOWN_CITIES = (
+    "上海", "北京", "深圳", "广州", "杭州", "成都", "武汉", "南京", "苏州", "西安",
+    "重庆", "天津", "长沙", "厦门", "合肥", "青岛", "郑州", "大连", "海外", "远程",
+)
+
+RECRUITER_TITLE_KEYWORDS = (
+    "猎头", "顾问", "专员", "专家", "HR", "招聘", "经理", "主管", "总监",
+    "助理", "VP", "合伙人", "Recruiter", "Leader", "HRBP", "负责人",
+)
+
+
+def clean_job_title(raw_title: str) -> str:
+    """Clean job title by stripping trailing status badges, tag placeholders like '&@', and excess punctuation.
+
+    Examples:
+        "技术负责人-CTO级别｜pre-ipo公司｜医疗AI &@" -> "技术负责人-CTO级别｜pre-ipo公司｜医疗AI"
+        "CTO，外企AI Startup，可远程办公 &@"        -> "CTO，外企AI Startup，可远程办公"
+        "算法高级工程师-DataAgent &@  &@"             -> "算法高级工程师-DataAgent"
+    """
+    if not raw_title:
+        return ""
+    t = raw_title.strip()
+    while True:
+        cleaned = re.sub(r"(?:\s*&@\s*|\s*&+\s*|\s*@+\s*)+$", "", t).strip()
+        cleaned = re.sub(r"[\s&@]+$", "", cleaned).strip()
+        if cleaned == t:
+            break
+        t = cleaned
+    return t
+
+
+def is_likely_location(s: str) -> bool:
+    """Check if a string is likely a geographic location rather than a recruiter title or company info."""
+    if not s:
+        return False
+    t = s.strip()
+    if any(kw in t for kw in RECRUITER_TITLE_KEYWORDS):
+        return False
+    return (
+        t in KNOWN_CITIES
+        or t.endswith("市")
+        or t.endswith("区")
+        or t.endswith("县")
+        or any(c in t for c in KNOWN_CITIES)
+    )
 
 
 def parse_recruiter_info(raw_text: str) -> tuple[str, str, bool]:
@@ -62,6 +118,7 @@ def parse_recruiter_info(raw_text: str) -> tuple[str, str, bool]:
     Examples:
         "钟先生 · 猎头顾问" -> ("钟先生", "猎头顾问", True)
         "钟先生·猎头顾问"   -> ("钟先生", "猎头顾问", True)
+        "钟先生 ·"          -> ("钟先生", "", False)
         "农女士 · 高级招聘专员" -> ("农女士", "高级招聘专员", False)
         "冯女士 · 总经理助理 上海" -> ("冯女士", "总经理助理", False)
         "张先生"             -> ("张先生", "", False)
@@ -75,34 +132,28 @@ def parse_recruiter_info(raw_text: str) -> tuple[str, str, bool]:
     parts_by_space = raw.split()
     if len(parts_by_space) > 2:
         last_tok = parts_by_space[-1]
-        if (
-            last_tok in ("上海", "北京", "深圳", "广州", "杭州", "成都", "武汉", "南京", "苏州", "西安", "海外")
-            or last_tok.endswith("市")
-            or last_tok.endswith("区")
-        ):
+        if is_likely_location(last_tok):
             raw = " ".join(parts_by_space[:-1]).strip()
             trailing_city = True
 
     name = raw
     title = ""
 
-    if "·" in raw:
-        tokens = [t.strip() for t in raw.split("·", 1)]
-        name = tokens[0]
-        title = tokens[1] if len(tokens) > 1 else ""
+    if any(sep in raw for sep in ("·", "•", "・")):
+        tokens = [t.strip() for t in re.split(r"[·•・]", raw, maxsplit=1)]
+        name = tokens[0].strip().rstrip("·•・").strip()
+        title = tokens[1].strip() if len(tokens) > 1 else ""
     elif " " in raw:
         tokens = [t.strip() for t in raw.split(None, 1)]
-        name = tokens[0]
-        title = tokens[1] if len(tokens) > 1 else ""
+        name = tokens[0].strip().rstrip("·•・").strip()
+        title = tokens[1].strip() if len(tokens) > 1 else ""
+    else:
+        name = raw.rstrip("·•・").strip()
 
     # Clean any trailing city from title if not already stripped
     if not trailing_city and title and " " in title:
         sub_toks = title.rsplit(" ", 1)
-        if (
-            sub_toks[1] in ("上海", "北京", "深圳", "广州", "杭州", "成都", "武汉", "南京", "苏州", "西安", "海外")
-            or sub_toks[1].endswith("市")
-            or sub_toks[1].endswith("区")
-        ):
+        if is_likely_location(sub_toks[1]):
             title = sub_toks[0].strip()
 
     is_headhunter = "猎头" in title or "猎头" in name
@@ -450,11 +501,7 @@ class JobListPage(BaseBossPage):
         briefs: list[JobCardBrief] = []
         for card_elem in cards[:max_cards]:
             # Priority 1: Direct sub-element extraction by configured locator keys
-            title = self._extract_card_field_text(card_elem, "job_list.card_title")
-            if title:
-                # Clean trailing status badges or symbols like '&@'
-                title = re.sub(r"[\s&@]+$", "", title).strip()
-
+            title = clean_job_title(self._extract_card_field_text(card_elem, "job_list.card_title"))
             raw_company = self._extract_card_field_text(card_elem, "job_list.card_company")
             raw_scale = self._extract_card_field_text(card_elem, "job_list.card_scale")
             raw_industry = self._extract_card_field_text(card_elem, "job_list.card_industry")
@@ -467,6 +514,15 @@ class JobListPage(BaseBossPage):
                 raw_company, explicit_scale=raw_scale, explicit_industry=raw_industry
             )
             recruiter_name, recruiter_title, is_headhunter = parse_recruiter_info(raw_recruiter)
+
+            # Safeguard: if location element was extracted but contains recruiter title words
+            if location and not is_likely_location(location):
+                if any(kw in location for kw in RECRUITER_TITLE_KEYWORDS):
+                    if not recruiter_title:
+                        recruiter_title = location
+                    if "猎头" in location:
+                        is_headhunter = True
+                location = ""
 
             tags: list[str] = []
             with contextlib.suppress(Exception):
@@ -514,7 +570,7 @@ class JobListPage(BaseBossPage):
 
                     # 2. Title detection (first non-salary substantive text is always job title)
                     if not title:
-                        title = re.sub(r"[\s&@]+$", "", t).strip()
+                        title = clean_job_title(t)
                         continue
 
                     # 3. Company line detection (includes scale / industry heuristic)
@@ -529,26 +585,20 @@ class JobListPage(BaseBossPage):
 
                     # 4. Recruiter & attached location detection (e.g. "钟先生 · 猎头顾问" or "冯女士·总经理助理 上海")
                     if not recruiter_name and (
-                        "·" in t
-                        or "招聘" in t
-                        or "HR" in t
-                        or "猎头" in t
-                        or "经理" in t
-                        or "总监" in t
-                        or "专员" in t
-                        or "助理" in t
-                        or "顾问" in t
+                        any(sep in t for sep in ("·", "•", "・"))
+                        or any(kw in t for kw in RECRUITER_TITLE_KEYWORDS)
                     ):
                         r_name, r_title, r_hh = parse_recruiter_info(t)
                         recruiter_name = r_name
-                        recruiter_title = r_title
-                        is_headhunter = r_hh
+                        if r_title:
+                            recruiter_title = r_title
+                        if r_hh:
+                            is_headhunter = True
                         parts = t.rsplit(" ", 1)
                         if (
                             not location
                             and len(parts) == 2
-                            and len(parts[1]) <= 6
-                            and not any(c.isdigit() for c in parts[1])
+                            and is_likely_location(parts[1])
                         ):
                             location = parts[1].strip()
                         continue

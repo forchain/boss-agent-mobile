@@ -171,7 +171,9 @@ async def test_scrape_jobs_handler_direct_ingestion_even_when_detail_fails():
     assert len(records) == 1
     assert records[0]["title"] == "Agent研发架构师"
     assert records[0]["company_name"] == "知名互联网公司"
-    assert records[0]["recruiter_name"] == "李先生·猎头顾问"
+    assert records[0]["recruiter_name"] == "李先生"
+    assert records[0]["recruiter_title"] == "猎头顾问"
+    assert records[0]["is_headhunter"] is True
     assert records[0]["salary_range"] == "7-10万元·16薪"
     assert records[0]["location"] == "上海"
     assert records[0]["digest"] == "负责基于agent的devops体系的架构"

@@ -14,6 +14,7 @@ from boss_agent.models import JobPosting, JobRecord
 from boss_agent.pages import (
     JobCardBrief,
     JobListPage,
+    clean_job_title,
     parse_company_scale_industry,
     parse_recruiter_info,
 )
@@ -286,3 +287,78 @@ def test_job_list_page_extracts_rich_card_facets():
     assert card.is_headhunter is True
     assert card.tags == ["10年以上", "硕士", "容器技术"]
     assert card.digest.startswith("核心研发与平台建设")
+
+
+def test_clean_job_title_removes_placeholders_and_badges():
+    """clean_job_title must remove trailing '&@', '&@ &@', whitespace and tags."""
+    assert clean_job_title("技术负责人-CTO级别｜pre-ipo公司｜医疗AI &@") == "技术负责人-CTO级别｜pre-ipo公司｜医疗AI"
+    assert clean_job_title("CTO，外企AI Startup，可远程办公 &@") == "CTO，外企AI Startup，可远程办公"
+    assert clean_job_title("算法高级工程师-DataAgent &@  &@") == "算法高级工程师-DataAgent"
+    assert clean_job_title("资深架构师 &@") == "资深架构师"
+    assert clean_job_title("【MLBB】AI开发工程师 &@") == "【MLBB】AI开发工程师"
+    assert clean_job_title("") == ""
+
+
+def test_parse_recruiter_info_with_dot_delimiter_and_trailing_characters():
+    """Separates name and title cleanly on '·' and removes trailing dots."""
+    name1, title1, is_hh1 = parse_recruiter_info("王女士 · 猎头顾问")
+    assert name1 == "王女士"
+    assert title1 == "猎头顾问"
+    assert is_hh1 is True
+
+    name2, title2, is_hh2 = parse_recruiter_info("钟先生 ·")
+    assert name2 == "钟先生"
+    assert title2 == ""
+    assert is_hh2 is False
+
+    name3, title3, is_hh3 = parse_recruiter_info("买先生·产品研发")
+    assert name3 == "买先生"
+    assert title3 == "产品研发"
+    assert is_hh3 is False
+
+    name4, title4, is_hh4 = parse_recruiter_info("戴女士 · 招聘专家")
+    assert name4 == "戴女士"
+    assert title4 == "招聘专家"
+    assert is_hh4 is False
+
+
+def test_job_list_page_guards_against_recruiter_title_in_location():
+    """When location locator captures recruiter title (e.g. '猎头顾问'), it moves to recruiter_title and triggers is_headhunter."""
+    mock_driver = MagicMock()
+    page = JobListPage(mock_driver)
+
+    mock_card = MagicMock()
+    mock_title = MagicMock()
+    mock_title.text = "资深架构师 &@"
+    mock_comp = MagicMock()
+    mock_comp.text = "成都某中型人工智能公司 100-499人 人工智能"
+    mock_rec = MagicMock()
+    mock_rec.text = "林先生 ·"
+    mock_loc = MagicMock()
+    mock_loc.text = "猎头顾问"  # Misrouted by locator
+
+    def mock_find_elements(by, value):
+        val_str = str(value)
+        if "view_job_card" in val_str:
+            return [mock_card]
+        if "tv_position_name" in val_str:
+            return [mock_title]
+        if "tv_company_name" in val_str:
+            return [mock_comp]
+        if "tv_employer" in val_str:
+            return [mock_recruiter] if "mock_recruiter" in locals() else [mock_rec]
+        if "tv_distance" in val_str:
+            return [mock_loc]
+        return []
+
+    mock_driver.find_elements.side_effect = mock_find_elements
+    mock_card.find_elements.side_effect = mock_find_elements
+
+    cards = page.extract_visible_job_cards(max_cards=1)
+    assert len(cards) == 1
+    card = cards[0]
+    assert card.title == "资深架构师"
+    assert card.recruiter_name == "林先生"
+    assert card.recruiter_title == "猎头顾问"
+    assert card.is_headhunter is True
+    assert card.location == ""  # Safeguarded: not '猎头顾问'

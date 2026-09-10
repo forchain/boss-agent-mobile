@@ -1117,6 +1117,10 @@ class PocketBaseTaskBroker(BaseTaskBroker):
                         "last_seen_at": now,
                         "search_keywords": merged_kw,
                     }
+                    if record_data.get("title") and record_data["title"] != existing.get("title"):
+                        patch_body["title"] = record_data["title"]
+                    if record_data.get("recruiter_name") and record_data["recruiter_name"] != existing.get("recruiter_name"):
+                        patch_body["recruiter_name"] = record_data["recruiter_name"]
                     if record_data.get("digest") and not existing.get("digest"):
                         patch_body["digest"] = record_data["digest"]
                     if record_data.get("job_description") and not existing.get("job_description"):
@@ -1129,7 +1133,7 @@ class PocketBaseTaskBroker(BaseTaskBroker):
                         patch_body["tags"] = record_data["tags"]
                     if record_data.get("recruiter_title") and not existing.get("recruiter_title"):
                         patch_body["recruiter_title"] = record_data["recruiter_title"]
-                    if "is_headhunter" in record_data and existing.get("is_headhunter") is None:
+                    if "is_headhunter" in record_data and (record_data["is_headhunter"] or existing.get("is_headhunter") is None):
                         patch_body["is_headhunter"] = record_data["is_headhunter"]
                     if record_data.get("salary_range") and not existing.get("salary_range"):
                         patch_body["salary_range"] = record_data["salary_range"]
@@ -1157,6 +1161,10 @@ class PocketBaseTaskBroker(BaseTaskBroker):
             merged_kw = list(dict.fromkeys((existing_fallback.get("search_keywords") or []) + new_kw))
             existing_fallback["last_seen_at"] = now
             existing_fallback["search_keywords"] = merged_kw
+            if record_data.get("title") and record_data["title"] != existing_fallback.get("title"):
+                existing_fallback["title"] = record_data["title"]
+            if record_data.get("recruiter_name") and record_data["recruiter_name"] != existing_fallback.get("recruiter_name"):
+                existing_fallback["recruiter_name"] = record_data["recruiter_name"]
             if record_data.get("digest") and not existing_fallback.get("digest"):
                 existing_fallback["digest"] = record_data["digest"]
             if record_data.get("job_description") and not existing_fallback.get("job_description"):
@@ -1169,7 +1177,7 @@ class PocketBaseTaskBroker(BaseTaskBroker):
                 existing_fallback["tags"] = record_data["tags"]
             if record_data.get("recruiter_title") and not existing_fallback.get("recruiter_title"):
                 existing_fallback["recruiter_title"] = record_data["recruiter_title"]
-            if "is_headhunter" in record_data and existing_fallback.get("is_headhunter") is None:
+            if "is_headhunter" in record_data and (record_data["is_headhunter"] or existing_fallback.get("is_headhunter") is None):
                 existing_fallback["is_headhunter"] = record_data["is_headhunter"]
             if record_data.get("salary_range") and not existing_fallback.get("salary_range"):
                 existing_fallback["salary_range"] = record_data["salary_range"]
