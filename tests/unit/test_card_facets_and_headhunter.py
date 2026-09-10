@@ -296,6 +296,11 @@ def test_clean_job_title_removes_placeholders_and_badges():
     assert clean_job_title("算法高级工程师-DataAgent &@  &@") == "算法高级工程师-DataAgent"
     assert clean_job_title("资深架构师 &@") == "资深架构师"
     assert clean_job_title("【MLBB】AI开发工程师 &@") == "【MLBB】AI开发工程师"
+    assert clean_job_title("外企-全栈开发工程师-不加班1075 @%") == "外企-全栈开发工程师-不加班1075"
+    assert clean_job_title("资深前端开发 @%") == "资深前端开发"
+    assert clean_job_title("AI应用工程师 %") == "AI应用工程师"
+    assert clean_job_title("移动端架构师 @") == "移动端架构师"
+    assert clean_job_title("全栈工程师 &@%") == "全栈工程师"
     assert clean_job_title("") == ""
 
 

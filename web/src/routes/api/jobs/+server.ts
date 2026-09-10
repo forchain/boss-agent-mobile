@@ -1,11 +1,11 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { getPocketBaseUrl } from '$lib/pocketbase';
+import { cleanJobTitle } from '$lib/screening';
 import crypto from 'crypto';
-import { readFallbackJobs, writeFallbackJob } from '$lib/server/jobsFallback';
 
 function computeFingerprint(companyName: string, title: string, recruiterName: string): string {
-	const raw = `${(companyName || '').trim()}::${(title || '').trim()}::${(recruiterName || '').trim()}`;
+	const raw = `${(companyName || '').trim()}::${cleanJobTitle(title)}::${(recruiterName || '').trim()}`;
 	return crypto.createHash('sha256').update(raw).digest('hex');
 }
 
@@ -37,18 +37,6 @@ export const GET: RequestHandler = async ({ url }) => {
 		}
 	} catch (e) {}
 
-	// Fallback / merge durable local store
-	const fallbackMap = readFallbackJobs();
-	const existingFps = new Set(items.map((it: any) => it.fingerprint));
-	for (const fb of Object.values(fallbackMap)) {
-		const record = fb as any;
-		if (!existingFps.has(record.fingerprint)) {
-			if (!status || record.status === status) {
-				items.push(record);
-			}
-		}
-	}
-
 	items = items.filter(
 		(it: any) => it.company_name && it.company_name.trim() !== '' && it.company_name.trim() !== '未知公司'
 	);
@@ -58,6 +46,11 @@ export const GET: RequestHandler = async ({ url }) => {
 		const db = b.created || b.last_seen_at || '';
 		return db.localeCompare(da);
 	});
+
+	items = items.map((it: any) => ({
+		...it,
+		title: cleanJobTitle(it.title)
+	}));
 
 	return json({ success: true, records: items.slice(0, limit) });
 };
@@ -72,7 +65,7 @@ export const POST: RequestHandler = async ({ request }) => {
 				{ status: 400 }
 			);
 		}
-		const title = body.title || '';
+		const title = cleanJobTitle(body.title || '');
 		const recruiterName = body.recruiter_name || '';
 		const fingerprint = body.fingerprint || computeFingerprint(companyName, title, recruiterName);
 		const pbBase = getPocketBaseUrl();
@@ -111,12 +104,13 @@ export const POST: RequestHandler = async ({ request }) => {
 					});
 					if (patchResp.ok) {
 						const updated = await patchResp.json();
-						writeFallbackJob(updated);
 						return json({ success: true, record: updated, is_new: false });
 					}
-					const fallbackUpdated = { ...existing, ...patchPayload };
-					writeFallbackJob(fallbackUpdated);
-					return json({ success: true, record: fallbackUpdated, is_new: false });
+					const patchErr = await patchResp.json().catch(() => ({}));
+					return json(
+						{ success: false, error: patchErr.message || `Failed to update job in database (${patchResp.status})` },
+						{ status: patchResp.status || 500 }
+					);
 				}
 			}
 		} catch (e) {}
@@ -149,25 +143,23 @@ export const POST: RequestHandler = async ({ request }) => {
 			updated: now
 		};
 
-		// Save to local fallback store first
-		writeFallbackJob(newRecord);
+		const createResp = await fetch(`${pbBase}/api/collections/job_records/records`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(newRecord),
+			signal: AbortSignal.timeout(3000)
+		});
 
-		try {
-			const createResp = await fetch(`${pbBase}/api/collections/job_records/records`, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify(newRecord),
-				signal: AbortSignal.timeout(3000)
-			});
+		if (createResp.ok) {
+			const created = await createResp.json();
+			return json({ success: true, record: created, is_new: true });
+		}
 
-			if (createResp.ok) {
-				const created = await createResp.json();
-				writeFallbackJob(created);
-				return json({ success: true, record: created, is_new: true });
-			}
-		} catch (e) {}
-
-		return json({ success: true, record: newRecord, is_new: true });
+		const errData = await createResp.json().catch(() => ({}));
+		return json(
+			{ success: false, error: errData.message || `Failed to insert job in database (${createResp.status})` },
+			{ status: createResp.status || 500 }
+		);
 	} catch (err: any) {
 		return json({ success: false, error: err?.message || 'Failed to upsert job' }, { status: 500 });
 	}

@@ -212,6 +212,24 @@ describe('SvelteKit Server Endpoints', () => {
 		expect(getJson.records.some((r: any) => r.fingerprint === postJson.record.fingerprint)).toBe(true);
 	});
 
+	it('GET /api/jobs returns empty array when status has no matches and creates no fallback file', async () => {
+		const fs = await import('fs');
+		const path = await import('path');
+		const { GET: handleJobsGet } = await import('../routes/api/jobs/+server');
+
+		const getEmptyEvent: any = {
+			url: new URL('http://localhost/api/jobs?status=nonexistent_status_filter_xyz')
+		};
+		const res = await handleJobsGet(getEmptyEvent);
+		const data = await res.json();
+		expect(res.status).toBe(200);
+		expect(data.success).toBe(true);
+		expect(data.records).toEqual([]);
+
+		const fallbackPath = path.resolve(process.cwd(), '.boss_agent/job_records_fallback.json');
+		expect(fs.existsSync(fallbackPath)).toBe(false);
+	});
+
 	it('POST /api/llm/test validates input and tests API connection', async () => {
 		const { POST: handleLlmTest } = await import('../routes/api/llm/test/+server');
 
@@ -267,6 +285,79 @@ describe('SvelteKit Server Endpoints', () => {
 		expect(formatCronHuman('30 18 * * *')).toBe('每天 18:30');
 		expect(formatCronHuman('0 10 * * 1-5')).toBe('工作日 (周一至五) 10:00');
 		expect(formatCronHuman('')).toBe('未设置定时');
+	});
+
+	it('DELETE /api/jobs/:id validates record id and handles deletion responses', async () => {
+		const { DELETE: handleJobDelete } = await import('../routes/api/jobs/[id]/+server');
+
+		// 1. Missing record id
+		const missingIdEvent: any = {
+			params: { id: '' }
+		};
+		const missingRes = await handleJobDelete(missingIdEvent);
+		expect(missingRes.status).toBe(400);
+
+		// 2. Mock global fetch for successful delete
+		const origFetch = globalThis.fetch;
+		try {
+			globalThis.fetch = (async (url: any, opts: any) => {
+				if (opts?.method === 'DELETE') {
+					return {
+						ok: true,
+						status: 204,
+						json: async () => ({})
+					} as any;
+				}
+				return origFetch(url, opts);
+			}) as typeof fetch;
+
+			const delEvent: any = {
+				params: { id: 'test_rec_to_delete' }
+			};
+			const delRes = await handleJobDelete(delEvent);
+			const delJson = await delRes.json();
+			expect(delRes.status).toBe(200);
+			expect(delJson.success).toBe(true);
+
+			// 3. 404 response
+			globalThis.fetch = (async (url: any, opts: any) => {
+				if (opts?.method === 'DELETE') {
+					return {
+						ok: false,
+						status: 404,
+						json: async () => ({ message: 'Not found' })
+					} as any;
+				}
+				return origFetch(url, opts);
+			}) as typeof fetch;
+			const notFoundRes = await handleJobDelete(delEvent);
+			const notFoundJson = await notFoundRes.json();
+			expect(notFoundRes.status).toBe(404);
+			expect(notFoundJson.success).toBe(false);
+		} finally {
+			globalThis.fetch = origFetch;
+		}
+	});
+
+	it('deleteJobRecord client helper calls PocketBase or fallback proxy', async () => {
+		const { deleteJobRecord } = await import('../lib/pocketbase');
+		const origFetch = globalThis.fetch;
+		try {
+			globalThis.fetch = (async (url: any, opts: any) => {
+				if (opts?.method === 'DELETE') {
+					return {
+						ok: true,
+						json: async () => ({ success: true })
+					} as any;
+				}
+				return origFetch(url, opts);
+			}) as typeof fetch;
+
+			const success = await deleteJobRecord('job_dummy_id');
+			expect(typeof success).toBe('boolean');
+		} finally {
+			globalThis.fetch = origFetch;
+		}
 	});
 });
 

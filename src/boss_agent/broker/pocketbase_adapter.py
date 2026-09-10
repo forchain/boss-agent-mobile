@@ -146,6 +146,11 @@ class BaseTaskBroker(ABC):
         pass
 
     @abstractmethod
+    async def delete_job_record(self, record_id: str) -> bool:
+        """Delete a job record by ID. Returns True if deleted, False if not found or failed."""
+        pass
+
+    @abstractmethod
     async def list_saved_searches(self) -> list[SavedSearch]:
         """List all saved search presets from PocketBase."""
         pass
@@ -351,6 +356,16 @@ class InMemoryTaskBroker(BaseTaskBroker):
             rec["updated"] = datetime.now(UTC).isoformat()
             return dict(rec)
 
+    async def delete_job_record(self, record_id: str) -> bool:
+        async with self._lock:
+            if record_id in self._job_records:
+                rec = self._job_records.pop(record_id)
+                fp = rec.get("fingerprint")
+                if fp and fp in self._job_fingerprints:
+                    del self._job_fingerprints[fp]
+                return True
+            return False
+
     async def create_task(
         self, task_type: TaskType | str, payload: dict[str, Any] | None = None
     ) -> AutomationTask:
@@ -520,6 +535,16 @@ class PocketBaseTaskBroker(BaseTaskBroker):
         self.auth_token = auth_token or os.getenv("POCKETBASE_AUTH_TOKEN")
         self.session = session or requests.Session()
         self._subscribers: list[Callable[[str, AutomationTask], Any]] = []
+
+        # Ensure obsolete fallback cache files are removed if present
+        try:
+            from pathlib import Path
+            for f in (".boss_agent/job_records_fallback.json", ".boss_agent/job_records_fallback.json.bak"):
+                p = Path(f)
+                if p.exists():
+                    p.unlink(missing_ok=True)
+        except Exception:
+            pass
 
     def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
@@ -1049,45 +1074,6 @@ class PocketBaseTaskBroker(BaseTaskBroker):
     def _jobs_collection_url(self) -> str:
         return f"{self.base_url}/api/collections/job_records/records"
 
-    def _read_fallback_jobs(self) -> dict[str, dict[str, Any]]:
-        from pathlib import Path
-
-        p = Path(".boss_agent/job_records_fallback.json")
-        if p.exists():
-            try:
-                data = json.loads(p.read_text(encoding="utf-8"))
-                if isinstance(data, dict):
-                    valid = {}
-                    for k, v in data.items():
-                        cname = (v.get("company_name") or "").strip()
-                        if cname and cname != "未知公司":
-                            valid[k] = v
-                    return valid
-            except Exception:
-                pass
-        return {}
-
-    def _write_fallback_job(self, record: dict[str, Any]) -> dict[str, Any]:
-        from pathlib import Path
-
-        cname = (record.get("company_name") or "").strip()
-        if not cname or cname == "未知公司":
-            return record
-
-        try:
-            Path(".boss_agent").mkdir(parents=True, exist_ok=True)
-            p = Path(".boss_agent/job_records_fallback.json")
-            data = self._read_fallback_jobs()
-            key = record.get("fingerprint") or record.get("id")
-            if not record.get("id"):
-                record["id"] = uuid.uuid4().hex[:15]
-            if key:
-                data[key] = record
-            p.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-        except Exception as e:
-            logger.warning("Failed to write fallback job record: %s", e)
-        return record
-
     async def has_job_fingerprint(self, fingerprint: str) -> bool:
         url = self._jobs_collection_url()
         loop = asyncio.get_running_loop()
@@ -1102,13 +1088,10 @@ class PocketBaseTaskBroker(BaseTaskBroker):
             )
             if resp.status_code == 200:
                 items = resp.json().get("items", [])
-                if len(items) > 0:
-                    return True
+                return len(items) > 0
         except Exception as e:
             logger.warning("PocketBase has_job_fingerprint failed: %s", e)
-
-        fallback = self._read_fallback_jobs()
-        return fingerprint in fallback
+        return False
 
     async def upsert_job_record(self, record_data: dict[str, Any]) -> dict[str, Any]:
         comp_name = (record_data.get("company_name") or "").strip()
@@ -1127,9 +1110,6 @@ class PocketBaseTaskBroker(BaseTaskBroker):
         )
         now = datetime.now(UTC).isoformat()
         loop = asyncio.get_running_loop()
-
-        fallback_data = self._read_fallback_jobs()
-        existing_fallback = fallback_data.get(fingerprint)
 
         # Check existing by fingerprint in PocketBase
         try:
@@ -1183,42 +1163,10 @@ class PocketBaseTaskBroker(BaseTaskBroker):
                         ),
                     )
                     if resp.status_code == 200:
-                        res = resp.json()
-                        self._write_fallback_job(res)
-                        return res
-                    return self._write_fallback_job(existing)
+                        return resp.json()
+                    return existing
         except Exception as e:
             logger.warning("PocketBase check existing job failed: %s", e)
-
-        # If existing in fallback
-        if existing_fallback:
-            new_kw = record_data.get("search_keywords", [])
-            merged_kw = list(dict.fromkeys((existing_fallback.get("search_keywords") or []) + new_kw))
-            existing_fallback["last_seen_at"] = now
-            existing_fallback["search_keywords"] = merged_kw
-            if record_data.get("title") and record_data["title"] != existing_fallback.get("title"):
-                existing_fallback["title"] = record_data["title"]
-            if record_data.get("recruiter_name") and record_data["recruiter_name"] != existing_fallback.get("recruiter_name"):
-                existing_fallback["recruiter_name"] = record_data["recruiter_name"]
-            if record_data.get("digest") and not existing_fallback.get("digest"):
-                existing_fallback["digest"] = record_data["digest"]
-            if record_data.get("job_description") and not existing_fallback.get("job_description"):
-                existing_fallback["job_description"] = record_data["job_description"]
-            if record_data.get("company_scale") and not existing_fallback.get("company_scale"):
-                existing_fallback["company_scale"] = record_data["company_scale"]
-            if record_data.get("industry") and not existing_fallback.get("industry"):
-                existing_fallback["industry"] = record_data["industry"]
-            if record_data.get("tags") and not existing_fallback.get("tags"):
-                existing_fallback["tags"] = record_data["tags"]
-            if record_data.get("recruiter_title") and not existing_fallback.get("recruiter_title"):
-                existing_fallback["recruiter_title"] = record_data["recruiter_title"]
-            if "is_headhunter" in record_data and (record_data["is_headhunter"] or existing_fallback.get("is_headhunter") is None):
-                existing_fallback["is_headhunter"] = record_data["is_headhunter"]
-            if record_data.get("salary_range") and not existing_fallback.get("salary_range"):
-                existing_fallback["salary_range"] = record_data["salary_range"]
-            if record_data.get("location") and not existing_fallback.get("location"):
-                existing_fallback["location"] = record_data["location"]
-            return self._write_fallback_job(existing_fallback)
 
         # Create new job record
         body = {
@@ -1251,9 +1199,6 @@ class PocketBaseTaskBroker(BaseTaskBroker):
         else:
             body["id"] = uuid.uuid4().hex[:15]
 
-        # Always save to local fallback first
-        self._write_fallback_job(body)
-
         try:
             resp = await loop.run_in_executor(
                 None,
@@ -1264,18 +1209,16 @@ class PocketBaseTaskBroker(BaseTaskBroker):
                 ),
             )
             if resp.status_code in (200, 201):
-                res = resp.json()
-                self._write_fallback_job(res)
-                return res
+                return resp.json()
             logger.error(
-                "Failed to insert job record to PocketBase (%d): %s (fallback active)",
+                "Failed to insert job record to PocketBase (%d): %s",
                 resp.status_code,
                 resp.text,
             )
         except Exception as e:
-            logger.warning("PocketBase insert job record exception: %s (fallback active)", e)
+            logger.warning("PocketBase insert job record exception: %s", e)
 
-        return body
+        return {}
 
     async def get_job_record(self, record_id: str) -> dict[str, Any] | None:
         url = f"{self._jobs_collection_url()}/{record_id}"
@@ -1289,11 +1232,6 @@ class PocketBaseTaskBroker(BaseTaskBroker):
                 return resp.json()
         except Exception as e:
             logger.warning("PocketBase get_job_record failed: %s", e)
-
-        fallback_data = self._read_fallback_jobs()
-        for item in fallback_data.values():
-            if item.get("id") == record_id or item.get("fingerprint") == record_id:
-                return item
         return None
 
     async def list_job_records(
@@ -1310,19 +1248,10 @@ class PocketBaseTaskBroker(BaseTaskBroker):
                 lambda: self.session.get(url, params=params, headers=self._headers()),
             )
             if resp.status_code == 200:
-                items = resp.json().get("items", [])
-                if items:
-                    return items
+                return resp.json().get("items", [])
         except Exception as e:
             logger.warning("PocketBase list_job_records failed: %s", e)
-
-        # Fallback to local store
-        fallback_data = self._read_fallback_jobs()
-        items = list(fallback_data.values())
-        if status:
-            items = [item for item in items if item.get("status") == status]
-        items.sort(key=lambda x: str(x.get("created") or x.get("last_seen_at") or ""), reverse=True)
-        return items[:limit]
+        return []
 
     async def update_job_record_status(
         self,
@@ -1336,17 +1265,6 @@ class PocketBaseTaskBroker(BaseTaskBroker):
             for k, v in match_data.items():
                 body[k] = v
 
-        # Update fallback
-        fallback_data = self._read_fallback_jobs()
-        target_fp = None
-        for fp, item in fallback_data.items():
-            if item.get("id") == record_id or item.get("fingerprint") == record_id:
-                target_fp = fp
-                item.update(body)
-                item["updated"] = datetime.now(UTC).isoformat()
-                self._write_fallback_job(item)
-                break
-
         loop = asyncio.get_running_loop()
         try:
             resp = await loop.run_in_executor(
@@ -1354,15 +1272,29 @@ class PocketBaseTaskBroker(BaseTaskBroker):
                 lambda: self.session.patch(url, json=body, headers=self._headers()),
             )
             if resp.status_code == 200:
-                res = resp.json()
-                self._write_fallback_job(res)
-                return res
+                return resp.json()
         except Exception as e:
             logger.warning("PocketBase update_job_record_status failed: %s", e)
 
-        if target_fp and target_fp in fallback_data:
-            return fallback_data[target_fp]
         return {"id": record_id, **body}
+
+    async def delete_job_record(self, record_id: str) -> bool:
+        url = f"{self._jobs_collection_url()}/{record_id}"
+        loop = asyncio.get_running_loop()
+        try:
+            resp = await loop.run_in_executor(
+                None,
+                lambda: self.session.delete(url, headers=self._headers()),
+            )
+            if resp.status_code in (200, 204):
+                return True
+            if resp.status_code == 404:
+                return False
+            logger.warning("PocketBase delete_job_record returned %s: %s", resp.status_code, resp.text)
+            return False
+        except Exception as e:
+            logger.warning("PocketBase delete_job_record failed: %s", e)
+            return False
 
     def _saved_searches_collection_url(self) -> str:
         return f"{self.base_url}/api/collections/saved_searches/records"

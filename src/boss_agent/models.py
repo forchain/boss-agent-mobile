@@ -17,13 +17,14 @@ class AuthStatus(StrEnum):
 
 
 def clean_job_title(raw_title: str) -> str:
-    """Clean job title by stripping trailing status badges, tag placeholders like '&@', and excess punctuation."""
+    """Clean job title by stripping trailing status badges, tag placeholders like '&@', '@%', and excess punctuation."""
     if not raw_title:
         return ""
+    if not isinstance(raw_title, str):
+        raw_title = str(raw_title)
     t = raw_title.strip()
     while True:
-        cleaned = re.sub(r"(?:\s*&@\s*|\s*&+\s*|\s*@+\s*)+$", "", t).strip()
-        cleaned = re.sub(r"[\s&@]+$", "", cleaned).strip()
+        cleaned = re.sub(r"[\s&@%]+$", "", t).strip()
         if cleaned == t:
             break
         t = cleaned
@@ -44,6 +45,58 @@ def compute_job_fingerprint(company_name: str, title: str, recruiter_name: str) 
         norm_recruiter = norm_recruiter.rstrip("·•・").strip()
     raw = f"{norm_comp}::{norm_title}::{norm_recruiter}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def extract_digest_from_jd(jd: str, max_chars: int = 100) -> str:
+    """Extract a concise 1-2 sentence digest from raw job description text."""
+    if not jd or not jd.strip():
+        return ""
+    lines = [line.strip() for line in jd.splitlines() if line.strip()]
+    substantive: list[str] = []
+    for line in lines:
+        stripped = re.sub(r"^[0-9一二三四五六七八九十、.·•*\s\-]+", "", line).strip()
+        if (
+            not stripped
+            or len(stripped) < 5
+            or re.match(r"^(?:岗位职责|工作职责|职位描述|任职要求|任职资格|加分项|基本要求|必须要求|关于我们|公司介绍|加分条件|薪酬福利)[:：]?$", stripped)
+            or re.match(r"^【(?:岗位职责|工作职责|职位描述|任职要求|任职资格|加分项|关于我们)】$", stripped)
+        ):
+            continue
+        substantive.append(stripped)
+        if len("；".join(substantive)) >= 35:
+            break
+    res = "；".join(substantive) if substantive else (lines[0] if lines else "")
+    if len(res) > max_chars:
+        res = re.sub(r"[，；、\s]+$", "", res[:max_chars]) + "..."
+    return res
+
+
+COMMON_TECH_TAGS = (
+    "Java", "Python", "Go", "Golang", "Rust", "C++", "C#", ".NET", "PHP",
+    "React Native", "React", "Flutter", "Vue", "Angular", "Node.js", "TypeScript", "JavaScript",
+    "Android", "iOS", "鸿蒙", "HarmonyOS", "小程序", "RN",
+    "LLM", "AI", "大模型", "Agent", "Prompt", "RAG", "AIGC", "NLP", "CV", "机器学习", "深度学习",
+    "Spring", "SpringBoot", "FastAPI", "Django", "Flask",
+    "MySQL", "PostgreSQL", "Redis", "MongoDB", "Elasticsearch", "Kafka",
+    "Kubernetes", "K8s", "Docker", "DevOps", "CI/CD",
+    "全栈", "架构师", "前端", "后端", "移动端", "测开", "运维", "微服务",
+    "3-5年", "5-10年", "1-3年", "10年以上", "应届生",
+    "本科", "硕士", "博士", "大专",
+)
+
+
+def extract_tags_from_text(text: str) -> list[str]:
+    """Extract relevant skill and requirement tags from text."""
+    if not text or not text.strip():
+        return []
+    matched: list[str] = []
+    for tag in COMMON_TECH_TAGS:
+        escaped = re.escape(tag)
+        if re.search(rf"(?:^|[^a-zA-Z0-9_]){escaped}(?:$|[^a-zA-Z0-9_])", text, re.IGNORECASE):
+            matched.append(tag)
+            if len(matched) >= 5:
+                break
+    return matched
 
 
 class JobRecordStatus(StrEnum):
@@ -101,6 +154,10 @@ class JobRecord:
                 title=self.title,
                 recruiter_name=self.recruiter_name,
             )
+        if not self.digest and self.job_description:
+            self.digest = extract_digest_from_jd(self.job_description)
+        if not self.tags:
+            self.tags = extract_tags_from_text(f"{self.title} {self.job_description}")
 
 
 @dataclass
@@ -133,6 +190,8 @@ class JobPosting:
             "猎头" in (self.recruiter_title or "") or "猎头" in (self.recruiter_name or "")
         ):
             self.is_headhunter = True
+        if not self.digest and self.job_description:
+            self.digest = extract_digest_from_jd(self.job_description)
 
 
 @dataclass
