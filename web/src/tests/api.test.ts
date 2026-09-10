@@ -139,6 +139,7 @@ describe('SvelteKit Server Endpoints', () => {
 		const formData = new FormData();
 		const blob = new Blob(['周黄金 19年研发经验 精通 Python, TypeScript, Unity 与大模型 Agent 架构'], { type: 'text/plain' });
 		formData.append('file', blob, 'resume.txt');
+		formData.append('userId', 'test_user_unique');
 
 		const mockEvent: any = {
 			request: {
