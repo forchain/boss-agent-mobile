@@ -1,10 +1,11 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { getPocketBaseUrl } from '$lib/pocketbase';
+import { cleanJobTitle } from '$lib/screening';
 import crypto from 'crypto';
 
 function computeFingerprint(companyName: string, title: string, recruiterName: string): string {
-	const raw = `${(companyName || '').trim()}::${(title || '').trim()}::${(recruiterName || '').trim()}`;
+	const raw = `${(companyName || '').trim()}::${cleanJobTitle(title)}::${(recruiterName || '').trim()}`;
 	return crypto.createHash('sha256').update(raw).digest('hex');
 }
 
@@ -46,6 +47,11 @@ export const GET: RequestHandler = async ({ url }) => {
 		return db.localeCompare(da);
 	});
 
+	items = items.map((it: any) => ({
+		...it,
+		title: cleanJobTitle(it.title)
+	}));
+
 	return json({ success: true, records: items.slice(0, limit) });
 };
 
@@ -59,7 +65,7 @@ export const POST: RequestHandler = async ({ request }) => {
 				{ status: 400 }
 			);
 		}
-		const title = body.title || '';
+		const title = cleanJobTitle(body.title || '');
 		const recruiterName = body.recruiter_name || '';
 		const fingerprint = body.fingerprint || computeFingerprint(companyName, title, recruiterName);
 		const pbBase = getPocketBaseUrl();

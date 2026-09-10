@@ -9,7 +9,13 @@
 		getCandidateProfile,
 		createAutomationTask
 	} from '$lib/pocketbase';
-	import { validateCanBlacklistCompany, isMaskedCompanyName } from '$lib/screening';
+	import {
+		validateCanBlacklistCompany,
+		isMaskedCompanyName,
+		cleanJobTitle,
+		extractDigestFromJd,
+		extractTagsFromText
+	} from '$lib/screening';
 
 	// State
 	let jobs = $state<JobRecord[]>([]);
@@ -39,6 +45,8 @@
 
 	// Derived: Selected job
 	let selectedJob = $derived(jobs.find((j) => j.id === selectedJobId) || null);
+	let selectedJobTags = $derived(selectedJob ? getJobTags(selectedJob) : []);
+	let selectedJobDigest = $derived(selectedJob ? getJobDigest(selectedJob) : '');
 
 	// Derived: Blacklist guardrail status for selected job
 	let blacklistGuardrail = $derived(
@@ -84,7 +92,7 @@
 			return job.tags;
 		}
 		if (job.jd_key_requirements && job.jd_key_requirements.length > 0) {
-			return job.jd_key_requirements.filter(
+			const filtered = job.jd_key_requirements.filter(
 				(t) =>
 					!t.includes('人') &&
 					t !== job.industry &&
@@ -92,6 +100,11 @@
 					!t.startsWith('负责') &&
 					t.length <= 15
 			);
+			if (filtered.length > 0) return filtered;
+		}
+		const fallbackTags = extractTagsFromText((job.title || '') + ' ' + (job.job_description || ''));
+		if (fallbackTags.length > 0) {
+			return fallbackTags;
 		}
 		return [];
 	}
@@ -101,7 +114,7 @@
 			return job.digest.trim();
 		}
 		if (job.job_description && job.job_description.trim()) {
-			return job.job_description.trim();
+			return extractDigestFromJd(job.job_description, 90);
 		}
 		return '';
 	}
@@ -539,7 +552,7 @@
 											</span>
 										{/if}
 										<h3 class="font-semibold text-xs text-slate-100 group-hover:text-cyan-300 transition truncate">
-											{job.title}
+											{cleanJobTitle(job.title)}
 										</h3>
 									</div>
 									<span class="font-bold text-xs text-cyan-400 font-mono shrink-0">
@@ -574,11 +587,11 @@
 									{/if}
 								</div>
 
-								<!-- Row 4: Multi-line Full Digest with icon (Always rendered, no truncation) -->
+								<!-- Row 4: Digest snippet with icon -->
 								<div class="flex items-start space-x-2 text-[11px] bg-slate-950/70 rounded-lg px-2.5 py-1.5 border border-slate-800/60">
 									<span class="text-cyan-400 text-xs shrink-0 mt-0.5">📝</span>
 									{#if cardDigest}
-										<p class="text-slate-300 leading-relaxed break-words whitespace-pre-line flex-1">{cardDigest}</p>
+										<p class="text-slate-300 leading-relaxed break-words line-clamp-2 flex-1">{cardDigest}</p>
 									{:else}
 										<span class="text-slate-600 italic">暂无职位摘要</span>
 									{/if}
@@ -661,7 +674,7 @@
 										🏢 企业直招
 									</span>
 								{/if}
-								<h2 class="text-base font-bold text-slate-100">{selectedJob.title}</h2>
+								<h2 class="text-base font-bold text-slate-100">{cleanJobTitle(selectedJob.title)}</h2>
 								{#if selectedJob.status === 'unmatched'}
 									<span class="px-2 py-0.5 rounded text-[10px] bg-amber-950 text-amber-400 border border-amber-800 font-medium">
 										未评估
@@ -708,9 +721,9 @@
 							</div>
 
 							<!-- Skill & Requirement Tags -->
-							{#if selectedJob.tags && selectedJob.tags.length > 0}
+							{#if selectedJobTags.length > 0}
 								<div class="flex flex-wrap gap-1.5 pt-1">
-									{#each selectedJob.tags as tag}
+									{#each selectedJobTags as tag}
 										<span class="px-2 py-0.5 rounded-lg bg-slate-800/80 text-slate-300 text-xs border border-slate-700/60 font-medium">
 											🏷️ {tag}
 										</span>
@@ -748,14 +761,14 @@
 						</div>
 					</div>
 
-					<!-- Mobile App Job Digest (if extracted) -->
-					{#if selectedJob.digest}
+					<!-- Mobile App Job Digest (if extracted or synthesized) -->
+					{#if selectedJobDigest}
 						<div class="bg-slate-950/80 border border-slate-800/80 rounded-xl p-3.5 space-y-1">
 							<span class="text-[11px] font-semibold text-cyan-400 uppercase tracking-wider flex items-center space-x-1.5">
 								<span>📝</span>
-								<span>移动端岗位摘要 (Digest)</span>
+								<span>岗位摘要 (Digest)</span>
 							</span>
-							<p class="text-xs text-slate-300 leading-relaxed font-sans">{selectedJob.digest}</p>
+							<p class="text-xs text-slate-300 leading-relaxed font-sans">{selectedJobDigest}</p>
 						</div>
 					{/if}
 

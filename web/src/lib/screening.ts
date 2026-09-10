@@ -60,3 +60,76 @@ export function validateCanBlacklistCompany(
 		notice: `公司 "${cleaned}" 为真实直招企业，允许加入黑名单`
 	};
 }
+
+export function cleanJobTitle(rawTitle: string | null | undefined): string {
+	if (!rawTitle || typeof rawTitle !== 'string') {
+		return '';
+	}
+	let t = rawTitle.trim();
+	while (true) {
+		const cleaned = t.replace(/[\s&@%]+$/g, '').trim();
+		if (cleaned === t) {
+			break;
+		}
+		t = cleaned;
+	}
+	return t;
+}
+
+export function extractDigestFromJd(jd: string | null | undefined, maxChars = 100): string {
+	if (!jd || typeof jd !== 'string') {
+		return '';
+	}
+	const lines = jd.split('\n').map((l) => l.trim()).filter(Boolean);
+	const substantive: string[] = [];
+	for (const line of lines) {
+		const stripped = line.replace(/^[0-9一二三四五六七八九十、.·•*-\s]+/, '').trim();
+		// Skip section headers
+		if (
+			!stripped ||
+			stripped.length < 5 ||
+			/^(?:岗位职责|工作职责|职位描述|任职要求|任职资格|加分项|基本要求|必须要求|关于我们|公司介绍|加分条件|薪酬福利)[:：]?$/.test(stripped) ||
+			/^【(?:岗位职责|工作职责|职位描述|任职要求|任职资格|加分项|关于我们)】$/.test(stripped)
+		) {
+			continue;
+		}
+		substantive.push(stripped);
+		if (substantive.join('；').length >= 35) {
+			break;
+		}
+	}
+	let res = substantive.join('；') || (lines.length > 0 ? lines[0] : '');
+	if (res.length > maxChars) {
+		res = res.slice(0, maxChars).replace(/[，；、\s]+$/, '') + '...';
+	}
+	return res;
+}
+
+const COMMON_TECH_TAGS = [
+	'Java', 'Python', 'Go', 'Golang', 'Rust', 'C++', 'C#', '.NET', 'PHP',
+	'React Native', 'React', 'Flutter', 'Vue', 'Angular', 'Node.js', 'TypeScript', 'JavaScript',
+	'Android', 'iOS', '鸿蒙', 'HarmonyOS', '小程序', 'RN',
+	'LLM', 'AI', '大模型', 'Agent', 'Prompt', 'RAG', 'AIGC', 'NLP', 'CV', '机器学习', '深度学习',
+	'Spring', 'SpringBoot', 'FastAPI', 'Django', 'Flask',
+	'MySQL', 'PostgreSQL', 'Redis', 'MongoDB', 'Elasticsearch', 'Kafka',
+	'Kubernetes', 'K8s', 'Docker', 'DevOps', 'CI/CD',
+	'全栈', '架构师', '前端', '后端', '移动端', '测开', '运维', '微服务',
+	'3-5年', '5-10年', '1-3年', '10年以上', '应届生',
+	'本科', '硕士', '博士', '大专'
+];
+
+export function extractTagsFromText(text: string | null | undefined): string[] {
+	if (!text || typeof text !== 'string') {
+		return [];
+	}
+	const matched: string[] = [];
+	for (const tag of COMMON_TECH_TAGS) {
+		const escaped = tag.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
+		const regex = new RegExp(`(?:^|[^a-zA-Z0-9_])${escaped}(?:$|[^a-zA-Z0-9_])`, 'i');
+		if (regex.test(text)) {
+			matched.push(tag);
+			if (matched.length >= 5) break;
+		}
+	}
+	return matched;
+}

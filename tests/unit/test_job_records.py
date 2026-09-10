@@ -384,3 +384,43 @@ async def test_pocketbase_broker_delete_job_record():
     err_res = await broker.delete_job_record("rec_err")
     assert err_res is False
 
+
+def test_extract_digest_and_tags_from_jd():
+    """extract_digest_from_jd extracts concise summary and extract_tags_from_text matches tech tags."""
+    from boss_agent.models import JobRecord, extract_digest_from_jd, extract_tags_from_text
+
+    raw_jd = """岗位职责
+负责公司 后端与前端系统的设计、开发与迭代
+使用 Java 构建和维护核心后端服务，保障系统稳定性与扩展性
+负责混合 App（RN）相关功能开发
+
+任职要求（必须）
+扎实的 Java 后端开发经验，具备完整项目经验
+擅长Spec coding / vibe coding
+具备 前后端协同开发能力
+
+加分项（非必须）
+有 React Native、Flutter 或其他混合 App 的 production 项目经验"""
+
+    digest = extract_digest_from_jd(raw_jd)
+    assert "负责公司 后端与前端系统的设计、开发与迭代" in digest
+    assert len(digest) <= 100
+    assert "加分项" not in digest
+
+    tags = extract_tags_from_text("外企-全栈开发工程师 " + raw_jd)
+    assert "Java" in tags
+    assert "React Native" in tags or "Flutter" in tags or "全栈" in tags
+
+    # Verify auto-population on JobRecord when digest/tags missing
+    rec = JobRecord(
+        title="外企-全栈开发工程师-不加班1075 @%",
+        company_name="某公司",
+        recruiter_name="招聘者",
+        job_description=raw_jd,
+    )
+    assert rec.title == "外企-全栈开发工程师-不加班1075"
+    assert rec.digest != ""
+    assert "负责公司 后端与前端系统" in rec.digest
+    assert len(rec.tags) > 0
+    assert "Java" in rec.tags
+
