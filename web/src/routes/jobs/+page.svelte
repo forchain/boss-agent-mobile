@@ -5,6 +5,7 @@
 		pb,
 		getJobRecords,
 		updateJobRecord,
+		deleteJobRecord,
 		getCandidateProfile,
 		createAutomationTask
 	} from '$lib/pocketbase';
@@ -13,6 +14,7 @@
 	// State
 	let jobs = $state<JobRecord[]>([]);
 	let selectedJobId = $state<string | null>(null);
+	let isDeleting = $state(false);
 	let currentFilter = $state<JobRecordStatus | 'all'>('unmatched');
 	let channelFilter = $state<'all' | 'direct' | 'headhunter'>('all');
 	let searchQuery = $state('');
@@ -338,6 +340,45 @@
 			isDispatchingApply = false;
 		}
 	}
+
+	async function handleDeleteJob(job: JobRecord) {
+		const targetId = job.id;
+		const targetTitle = job.title;
+
+		if (!window.confirm(`确定要删除职位【${targetTitle}】吗？\n删除后该职位指纹将被释放，后续抓取可重新入库。`)) {
+			return;
+		}
+
+		isDeleting = true;
+
+		try {
+			const ok = await deleteJobRecord(targetId);
+			if (!ok) {
+				throw new Error('删除请求未成功');
+			}
+
+			// If the deleted job was selected, pick the next adjacent job
+			if (selectedJobId === targetId) {
+				const currentIdx = filteredJobs.findIndex((j) => j.id === targetId);
+				const remaining = filteredJobs.filter((j) => j.id !== targetId);
+				let nextSelectedId: string | null = null;
+				if (remaining.length > 0) {
+					if (currentIdx < remaining.length) {
+						nextSelectedId = remaining[currentIdx].id;
+					} else {
+						nextSelectedId = remaining[remaining.length - 1].id;
+					}
+				}
+				selectedJobId = nextSelectedId;
+			}
+
+			jobs = jobs.filter((j) => j.id !== targetId);
+		} catch (err: any) {
+			alert(`删除职位失败: ${err?.message || '网络或数据库异常'}`);
+		} finally {
+			isDeleting = false;
+		}
+	}
 </script>
 
 <svelte:head>
@@ -574,6 +615,18 @@
 												已忽略
 											</span>
 										{/if}
+										<button
+											type="button"
+											onclick={(e) => {
+												e.stopPropagation();
+												handleDeleteJob(job);
+											}}
+											disabled={isDeleting}
+											class="p-1 rounded text-slate-500 hover:text-rose-400 hover:bg-rose-950/40 border border-transparent hover:border-rose-900/30 transition text-xs"
+											title="删除此职位记录并释放指纹"
+										>
+											🗑️
+										</button>
 									</div>
 								</div>
 							</div>
@@ -666,15 +719,32 @@
 							{/if}
 						</div>
 
-						<div class="text-right sm:shrink-0">
-							<span class="text-base font-bold text-cyan-400 font-mono">
-								{selectedJob.salary_range || '薪资面议'}
-							</span>
-							{#if selectedJob.first_seen_at}
-								<p class="text-[10px] text-slate-500 font-mono mt-0.5">
-									发现于: {new Date(selectedJob.first_seen_at).toLocaleDateString()}
-								</p>
-							{/if}
+						<div class="text-right sm:shrink-0 flex flex-col items-end justify-between space-y-2">
+							<div>
+								<span class="text-base font-bold text-cyan-400 font-mono">
+									{selectedJob.salary_range || '薪资面议'}
+								</span>
+								{#if selectedJob.first_seen_at}
+									<p class="text-[10px] text-slate-500 font-mono mt-0.5">
+										发现于: {new Date(selectedJob.first_seen_at).toLocaleDateString()}
+									</p>
+								{/if}
+							</div>
+							<button
+								type="button"
+								onclick={() => selectedJob && handleDeleteJob(selectedJob)}
+								disabled={isDeleting}
+								class="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-lg text-xs font-medium text-rose-400 hover:text-rose-300 hover:bg-rose-950/40 border border-rose-900/40 transition disabled:opacity-50"
+								title="删除此职位记录并释放指纹"
+							>
+								{#if isDeleting}
+									<span class="animate-spin text-[10px]">⏳</span>
+									<span>删除中...</span>
+								{:else}
+									<span>🗑️</span>
+									<span>删除职位</span>
+								{/if}
+							</button>
 						</div>
 					</div>
 

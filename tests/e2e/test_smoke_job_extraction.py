@@ -153,6 +153,7 @@ def test_smoke_harness_with_search_disabled():
     mock_job_card = MagicMock()
     mock_job_card.rect = {"x": 50, "y": 300, "width": 980, "height": 220}
     mock_title_elem = MagicMock()
+    mock_title_elem.text = "资深架构师"
     mock_search_icon = MagicMock()
     mock_search_icon.rect = {"x": 950, "y": 100, "width": 80, "height": 80}
 

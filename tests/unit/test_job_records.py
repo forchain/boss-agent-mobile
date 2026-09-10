@@ -138,27 +138,89 @@ async def test_pocketbase_broker_job_records_mocked(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_pocketbase_broker_job_records_fallback_on_404(tmp_path, monkeypatch):
-    """When PocketBase returns 404 (missing collection), broker saves to and reads from local fallback."""
+async def test_pocketbase_broker_job_records_no_fallback_on_empty(tmp_path, monkeypatch):
+    """When PocketBase returns empty items, list_job_records returns empty list without creating fallback."""
+    from pathlib import Path
     from unittest.mock import MagicMock
 
     from boss_agent.broker.pocketbase_adapter import PocketBaseTaskBroker
 
-    # Patch working directory / fallback file to tmp_path
     monkeypatch.chdir(tmp_path)
 
     mock_session = MagicMock()
     broker = PocketBaseTaskBroker(base_url="https://remote-pb:4433", session=mock_session)
 
-    # Mock 404 on GET (collection not found)
+    # Mock 200 with empty items
+    get_empty = MagicMock(status_code=200, json=lambda: {"items": [], "totalItems": 0})
+    mock_session.get.return_value = get_empty
+
+    items = await broker.list_job_records(status="unmatched")
+    assert items == []
+    assert not Path(".boss_agent/job_records_fallback.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_pocketbase_broker_job_records_no_fallback_on_404(tmp_path, monkeypatch):
+    """When PocketBase returns 404, broker returns empty/False and does not create or read fallback file."""
+    from pathlib import Path
+    from unittest.mock import MagicMock
+
+    from boss_agent.broker.pocketbase_adapter import PocketBaseTaskBroker
+
+    monkeypatch.chdir(tmp_path)
+
+    mock_session = MagicMock()
+    broker = PocketBaseTaskBroker(base_url="https://remote-pb:4433", session=mock_session)
+
     get_404 = MagicMock(status_code=404, text='{"message":"Missing or invalid collection context."}')
     mock_session.get.return_value = get_404
 
-    # Mock 404 on POST
-    post_404 = MagicMock(status_code=404, text='{"message":"Missing or invalid collection context."}')
-    mock_session.post.return_value = post_404
+    # 1. has_job_fingerprint returns False and does not create fallback
+    has_fp = await broker.has_job_fingerprint("fp_test_123")
+    assert has_fp is False
+    assert not Path(".boss_agent/job_records_fallback.json").exists()
 
-    # 1. Upsert a new job record
+    # 2. list_job_records returns [] on 404
+    items = await broker.list_job_records(status="unmatched")
+    assert items == []
+    assert not Path(".boss_agent/job_records_fallback.json").exists()
+
+    # 3. get_job_record returns None on 404
+    fetched = await broker.get_job_record("nonexistent_id")
+    assert fetched is None
+    assert not Path(".boss_agent/job_records_fallback.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_pocketbase_broker_upsert_persists_without_fallback_file(tmp_path, monkeypatch):
+    """Upserting job records persists to PocketBase directly without creating fallback JSON file."""
+    from pathlib import Path
+    from unittest.mock import MagicMock
+
+    from boss_agent.broker.pocketbase_adapter import PocketBaseTaskBroker
+
+    monkeypatch.chdir(tmp_path)
+
+    mock_session = MagicMock()
+    broker = PocketBaseTaskBroker(base_url="https://remote-pb:4433", session=mock_session)
+
+    # 1. Mock check_resp: no existing record
+    check_resp = MagicMock(status_code=200, json=lambda: {"items": []})
+    # 2. Mock create_resp
+    post_resp = MagicMock(
+        status_code=201,
+        json=lambda: {
+            "id": "rec_pb_123",
+            "title": "Agent研发架构师",
+            "company_name": "互联网大厂",
+            "recruiter_name": "李猎头",
+            "fingerprint": "fp_test_123",
+            "status": "unmatched",
+        },
+    )
+    mock_session.get.return_value = check_resp
+    mock_session.post.return_value = post_resp
+
     rec = await broker.upsert_job_record(
         {
             "title": "Agent研发架构师",
@@ -166,27 +228,14 @@ async def test_pocketbase_broker_job_records_fallback_on_404(tmp_path, monkeypat
             "recruiter_name": "李猎头",
             "salary_range": "7-10万",
             "location": "上海",
-            "fingerprint": "fp_fallback_test_123",
+            "fingerprint": "fp_test_123",
             "status": "unmatched",
         }
     )
+    assert rec["id"] == "rec_pb_123"
     assert rec["title"] == "Agent研发架构师"
-    assert rec["id"] is not None
-
-    # 2. has_job_fingerprint returns True from fallback
-    has_fp = await broker.has_job_fingerprint("fp_fallback_test_123")
-    assert has_fp is True
-
-    # 3. list_job_records returns the record from fallback
-    items = await broker.list_job_records(status="unmatched")
-    assert len(items) == 1
-    assert items[0]["title"] == "Agent研发架构师"
-    assert items[0]["company_name"] == "互联网大厂"
-
-    # 4. get_job_record returns the record from fallback
-    fetched = await broker.get_job_record(rec["id"])
-    assert fetched is not None
-    assert fetched["title"] == "Agent研发架构师"
+    assert mock_session.post.called
+    assert not Path(".boss_agent/job_records_fallback.json").exists()
 
 
 @pytest.mark.asyncio
@@ -263,4 +312,75 @@ async def test_job_records_digest_and_job_description_decoupling():
     assert enriched["id"] == saved["id"]
     assert enriched["digest"] == "列表卡片提取的摘要信息"
     assert enriched["job_description"] == "详情页提取的完整岗位职责与要求长文本..."
+
+
+@pytest.mark.asyncio
+async def test_in_memory_broker_delete_job_record_and_release_fingerprint():
+    """Deleting a job record must remove it from listings and release its fingerprint."""
+    broker = InMemoryTaskBroker()
+    fp = compute_job_fingerprint("OpenAI", "Prompt Engineer", "Sam")
+
+    saved = await broker.upsert_job_record(
+        {
+            "title": "Prompt Engineer",
+            "company_name": "OpenAI",
+            "recruiter_name": "Sam",
+            "salary_range": "50-80K",
+            "status": "unmatched",
+        }
+    )
+    rec_id = saved["id"]
+
+    # Verify presence
+    assert await broker.has_job_fingerprint(fp) is True
+    assert (await broker.get_job_record(rec_id)) is not None
+    assert len(await broker.list_job_records()) == 1
+
+    # Delete the record
+    deleted = await broker.delete_job_record(rec_id)
+    assert deleted is True
+
+    # Fingerprint must be released, allowing re-ingestion
+    assert await broker.has_job_fingerprint(fp) is False
+    assert (await broker.get_job_record(rec_id)) is None
+    assert len(await broker.list_job_records()) == 0
+
+    # Deleting non-existent record returns False
+    assert await broker.delete_job_record("non_existent_id") is False
+
+
+@pytest.mark.asyncio
+async def test_pocketbase_broker_delete_job_record():
+    """PocketBaseTaskBroker delete_job_record handles 204, 404, and exceptions."""
+    from unittest.mock import MagicMock
+    import requests
+    from boss_agent.broker.pocketbase_adapter import PocketBaseTaskBroker
+
+    mock_session = MagicMock()
+    broker = PocketBaseTaskBroker(base_url="https://remote-pb:4433", session=mock_session)
+
+    # 1. Successful deletion (204 No Content)
+    mock_resp = MagicMock()
+    mock_resp.status_code = 204
+    mock_session.delete.return_value = mock_resp
+
+    success = await broker.delete_job_record("rec_123")
+    assert success is True
+    mock_session.delete.assert_called_with(
+        "https://remote-pb:4433/api/collections/job_records/records/rec_123",
+        headers={"Content-Type": "application/json"},
+    )
+
+    # 2. Record not found (404)
+    mock_resp_404 = MagicMock()
+    mock_resp_404.status_code = 404
+    mock_session.delete.return_value = mock_resp_404
+
+    not_found = await broker.delete_job_record("rec_404")
+    assert not_found is False
+
+    # 3. Network / RequestException
+    mock_session.delete.side_effect = requests.RequestException("Connection error")
+    err_res = await broker.delete_job_record("rec_err")
+    assert err_res is False
 

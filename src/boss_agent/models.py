@@ -20,6 +20,8 @@ def clean_job_title(raw_title: str) -> str:
     """Clean job title by stripping trailing status badges, tag placeholders like '&@', and excess punctuation."""
     if not raw_title:
         return ""
+    if not isinstance(raw_title, str):
+        raw_title = str(raw_title)
     t = raw_title.strip()
     while True:
         cleaned = re.sub(r"(?:\s*&@\s*|\s*&+\s*|\s*@+\s*)+$", "", t).strip()

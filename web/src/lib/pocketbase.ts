@@ -397,9 +397,6 @@ export async function cancelTask(taskId: string): Promise<boolean> {
 	}
 }
 
-// Fallback in-memory job records when PocketBase is offline
-let localJobRecords: JobRecord[] = [];
-
 export async function getJobRecords(status?: string, limit = 50): Promise<JobRecord[]> {
 	try {
 		const filter = status ? `status='${status}'` : '';
@@ -407,7 +404,7 @@ export async function getJobRecords(status?: string, limit = 50): Promise<JobRec
 			filter,
 			sort: '-created'
 		});
-		const list = result.items.map((item: any) => ({
+		return result.items.map((item: any) => ({
 			id: item.id,
 			fingerprint: item.fingerprint,
 			title: item.title,
@@ -427,10 +424,8 @@ export async function getJobRecords(status?: string, limit = 50): Promise<JobRec
 			created: item.created,
 			updated: item.updated
 		})) as JobRecord[];
-		localJobRecords = list;
-		return list;
 	} catch (err) {
-		// Fallback to local memory / API proxy
+		// If browser direct PocketBase query fails (e.g. CORS/network), try backend proxy /api/jobs
 		try {
 			const res = await fetch(`/api/jobs${status ? `?status=${status}` : ''}`);
 			if (res.ok) {
@@ -438,10 +433,7 @@ export async function getJobRecords(status?: string, limit = 50): Promise<JobRec
 				return data.records || [];
 			}
 		} catch (e) {}
-		if (status) {
-			return localJobRecords.filter((r) => r.status === status);
-		}
-		return localJobRecords;
+		return [];
 	}
 }
 
@@ -464,12 +456,25 @@ export async function updateJobRecord(
 				return resData.record;
 			}
 		} catch (e) {}
-		const idx = localJobRecords.findIndex((r) => r.id === recordId);
-		if (idx !== -1) {
-			localJobRecords[idx] = { ...localJobRecords[idx], ...data };
-			return localJobRecords[idx];
-		}
 		return null;
+	}
+}
+
+export async function deleteJobRecord(recordId: string): Promise<boolean> {
+	try {
+		await pb.collection('job_records').delete(recordId);
+		return true;
+	} catch (err) {
+		try {
+			const res = await fetch(`/api/jobs/${recordId}`, {
+				method: 'DELETE'
+			});
+			if (res.ok) {
+				const resData = await res.json();
+				return Boolean(resData.success);
+			}
+		} catch (e) {}
+		return false;
 	}
 }
 
