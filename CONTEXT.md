@@ -148,5 +148,10 @@ _Avoid_: digest, snippet, short JD, brief intro
 The zero-token deterministic gatekeeper evaluation that examines the three card-level facets (`tv_position_name`, `fl_require_info`, `tv_digest`) against the active `ScreeningPolicy` to eliminate non-viable jobs before incurring expensive mobile navigation.
 _Avoid_: card filter, quick check, preliminary pass
 
+**Inline Description Expansion (Bottom-Right Hotspot Tap)**:
+The coordinate targeting mechanism that taps the fixed inline ClickableSpan touch hotspot located in the bottom-right area of the job description text module (`tv_description`) to trigger full description expansion, bypassing Android accessibility node limitations without external coordinate configuration.
+_Avoid_: blind tap, ocr clicker, hardcoded absolute coordinates
+
+
 
 

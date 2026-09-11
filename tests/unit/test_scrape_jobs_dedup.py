@@ -445,3 +445,56 @@ async def test_scrape_jobs_handler_facet_persistence_and_recruitment_type_teleme
     assert any("[直招]" in line for line in logs)
 
 
+@pytest.mark.asyncio
+async def test_scrape_jobs_handler_logs_error_when_jd_contains_view_more():
+    """Verify that when JD still contains '查看更多', an explicit error log is recorded in task logs."""
+    from boss_agent.worker.config import WorkerConfig
+
+    broker = InMemoryTaskBroker()
+    mock_driver = MagicMock()
+    mock_driver.get_window_size.return_value = {"width": 1080, "height": 2400}
+
+    card_elem = MagicMock()
+    card = JobCardBrief(
+        title="Agent开发专家",
+        company_name="某大厂",
+        recruiter_name="张总监",
+        element=card_elem,
+    )
+
+    handler = ScrapeJobsHandler()
+    context = WorkerContext(config=WorkerConfig(worker_id="test-worker"), driver=mock_driver)
+    task = await broker.create_task(
+        task_type=TaskType.SCRAPE_JOBS,
+        payload={"keyword": "agent", "max_jobs": 1},
+    )
+
+    with (
+        patch("boss_agent.worker.handlers.scrape_jobs.StartupDialogPage") as mock_startup_cls,
+        patch("boss_agent.worker.handlers.scrape_jobs.JobListPage") as mock_list_cls,
+        patch("boss_agent.worker.handlers.scrape_jobs.SearchPage") as mock_search_cls,
+        patch("boss_agent.worker.handlers.scrape_jobs.JobDetailPage") as mock_detail_cls,
+    ):
+        mock_startup_cls.return_value.is_dialog_present.return_value = False
+        mock_list_cls.return_value.extract_visible_job_cards.return_value = [card]
+        mock_search_cls.return_value.is_search_page.return_value = True
+
+        mock_detail = mock_detail_cls.return_value
+        mock_detail.extract_job_posting.return_value = JobPosting(
+            title="Agent开发专家",
+            company_name="某大厂",
+            salary_range="50-80K",
+            job_description="岗位职责: 1. 核心智能体研发... 查看更多",
+            recruiter_name="张总监",
+        )
+
+        result = await handler.handle(task, broker, context)
+
+    assert result.success is True
+    updated_task = await broker.get_task(task.id)
+    assert updated_task is not None
+    logs = updated_task.logs
+    assert any("Incomplete JD Error" in line and "查看更多" in line for line in logs)
+
+
+

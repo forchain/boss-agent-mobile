@@ -41,6 +41,53 @@ def calculate_bounding_box_jitter(
     return round(float(final_x), 1), round(float(final_y), 1)
 
 
+def calculate_probe_coordinate(
+    rect: dict[str, float | int],
+    probe: tuple[float, float] | list[float],
+    origin: str = "bottom-left",
+) -> tuple[float, float]:
+    """Calculate absolute screen coordinates for a relative probe point.
+
+    Supported unit rules:
+      - x <= 1.0: width ratio (0.0 to 1.0)
+      - x > 1.0: pixels from origin X
+      - y <= 1.0: height ratio (0.0 to 1.0)
+      - y > 1.0: pixels from origin Y
+
+    Origin convention (bottom-left):
+      - X extends rightwards: left + dx
+      - Y extends upwards into element: (top + height) - dy
+    """
+    left = float(rect["x"])
+    top = float(rect["y"])
+    width = float(rect["width"])
+    height = float(rect["height"])
+
+    probe_x, probe_y = float(probe[0]), float(probe[1])
+
+    dx = probe_x * width if probe_x <= 1.0 else probe_x
+    dy = probe_y * height if probe_y <= 1.0 else probe_y
+
+    if origin == "bottom-left":
+        target_x = left + dx
+        target_y = (top + height) - dy
+    elif origin == "top-left":
+        target_x = left + dx
+        target_y = top + dy
+    elif origin == "bottom-right":
+        target_x = (left + width) - dx
+        target_y = (top + height) - dy
+    else:
+        target_x = left + dx
+        target_y = (top + height) - dy
+
+    # Clamp safely inside element boundary
+    clamped_x = max(left + 2, min(left + width - 2, target_x))
+    clamped_y = max(top + 2, min(top + height - 2, target_y))
+
+    return round(float(clamped_x), 1), round(float(clamped_y), 1)
+
+
 class BézierTouchSynthesizer:
     """Generates cubic/quadratic Bézier curves to simulate human finger swipe gestures."""
 
@@ -121,6 +168,27 @@ class HumanizedGestureExecutor:
         else:
             element.click()
 
+        self.random_sleep(0.1, 0.3)
+
+    def human_click_at_point(
+        self,
+        x: float,
+        y: float,
+        jitter_px: float = 3.0,
+        duration_ms: tuple[int, int] = (60, 120),
+    ) -> None:
+        """Perform a humanized tap at an absolute screen coordinate with gaussian micro-jitter."""
+        if not self.driver:
+            return
+
+        offset_x = random.gauss(0, max(0.1, jitter_px / 2.0))
+        offset_y = random.gauss(0, max(0.1, jitter_px / 2.0))
+        target_x = round(float(x + offset_x), 1)
+        target_y = round(float(y + offset_y), 1)
+
+        dur = random.randint(duration_ms[0], duration_ms[1])
+        if hasattr(self.driver, "tap"):
+            self.driver.tap([(target_x, target_y)], duration=dur)
         self.random_sleep(0.1, 0.3)
 
     def human_type(self, element, text: str, clear_first: bool = False) -> None:
