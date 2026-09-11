@@ -1037,24 +1037,14 @@ class JobDetailPage(BaseBossPage):
                 ):
                     return
 
-        # Load probe configurations from locator registry
-        probe_cfg = self.locators.get_raw("job_detail.inline_expand_probes") or {}
-        origin = probe_cfg.get("origin", "bottom-left") if isinstance(probe_cfg, dict) else "bottom-left"
-        default_points = [
-            [0.90, 20],
-            [0.90, 60],
-            [0.70, 20],
-            [0.25, 20],
-            [0.50, 60],
-        ]
-        points = (
-            probe_cfg.get("points", default_points)
-            if isinstance(probe_cfg, dict)
-            else default_points
-        )
-
-        for pt in points:
-            target_x, target_y = calculate_probe_coordinate(rect, pt, origin=origin)
+        # In Boss App, the expand hotspot is fixed at the bottom-right corner of tv_description
+        # regardless of where the truncated text wraps.
+        # Primary tap at ~90% width, ~25px above bottom edge; fallback tap at ~80% width.
+        tap_offsets = [(0.90, 25.0), (0.80, 25.0)]
+        for ratio_x, offset_y in tap_offsets:
+            target_x, target_y = calculate_probe_coordinate(
+                rect, [ratio_x, offset_y], origin="bottom-left"
+            )
             self.gestures.human_click_at_point(target_x, target_y, jitter_px=3.0)
 
             # Re-read text to verify early stopping condition
