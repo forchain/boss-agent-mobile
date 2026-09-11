@@ -1006,6 +1006,10 @@ class IndustryFilterDialogPage(BaseBossPage):
 class JobDetailPage(BaseBossPage):
     """Extracts job posting details and interacts with the job detail screen."""
 
+    def __init__(self, driver: Any, locator_registry: LocatorRegistry | None = None):
+        super().__init__(driver, locator_registry)
+        self._current_description: str = ""
+
     def _scroll_page_up(self, scroll_px: int) -> None:
         """Swipe up on screen to scroll the detail page content downwards."""
         win_size = self._get_window_size()
@@ -1040,6 +1044,9 @@ class JobDetailPage(BaseBossPage):
             _log_info("👆 Found standard explicit expand button ('查看全部' / '展开全文'), clicking it...")
             self.gestures.human_click(elem)
             time.sleep(0.3)
+            desc_elem = self.find_by_key("job_detail.desc", timeout_sec=1.0)
+            if desc_elem and getattr(desc_elem, "text", None):
+                self._current_description = desc_elem.text.strip()
             return True
 
         # 2. Locate the job description TextView (com.hpbr.bosszhipin:id/tv_description)
@@ -1055,6 +1062,8 @@ class JobDetailPage(BaseBossPage):
             return False
 
         initial_text = getattr(desc_elem, "text", "") or ""
+        self._current_description = initial_text.strip()
+
         is_truncated = ("查看更多" in initial_text or "展开" in initial_text or initial_text.endswith("..."))
         if not is_truncated:
             _log_info(f"✅ Job description is already fully expanded (length: {len(initial_text)} chars, no '查看更多' found).")
@@ -1139,21 +1148,19 @@ class JobDetailPage(BaseBossPage):
             )
             self.gestures.human_click_at_point(target_x, target_y, jitter_px=3.0)
 
-            # Wait for layout update and inspect text
+            # Wait for layout update and inspect fresh element
             time.sleep(0.5)
-            try:
-                curr_text = getattr(desc_elem, "text", "") or ""
-            except Exception:
-                refreshed = self.find_by_key("job_detail.desc", timeout_sec=1.0)
-                curr_text = getattr(refreshed, "text", "") if refreshed else ""
-                if refreshed:
-                    desc_elem = refreshed
+            refreshed = self.find_by_key("job_detail.desc", timeout_sec=1.0)
+            if refreshed:
+                desc_elem = refreshed
+            curr_text = getattr(desc_elem, "text", "") or ""
 
             if "查看更多" not in curr_text or len(curr_text) >= len(initial_text) + 10:
                 _log_info(
                     f"✨ [Expansion Success] Job description expanded successfully! "
                     f"Length: {len(initial_text)} -> {len(curr_text)} chars."
                 )
+                self._current_description = curr_text.strip()
                 expanded = True
                 break
             else:
@@ -1164,6 +1171,7 @@ class JobDetailPage(BaseBossPage):
 
         if not expanded:
             curr_text = getattr(desc_elem, "text", "") or ""
+            self._current_description = curr_text.strip() or initial_text.strip()
             if "查看更多" in curr_text:
                 _log_error(
                     f"❌ FAILED TO EXPAND JOB DESCRIPTION: '查看更多' is STILL present after scrolling and {len(tap_offsets)} tap attempts! "
@@ -1188,12 +1196,11 @@ class JobDetailPage(BaseBossPage):
                     "Ensure job card was clicked and navigation to detail screen completed."
                 ) from None
 
-        self.expand_description_if_collapsed()
-
+        # 1. Capture header elements FIRST while at top of viewport before scrolling down.
+        # Scrolling down to expand the description can recycle/remove off-screen headers from accessibility node tree.
         title_elem = self.find_by_key("job_detail.title")
         company_elem = self.find_by_key("job_detail.company")
         salary_elem = self.find_by_key("job_detail.salary")
-        desc_elem = self.find_by_key("job_detail.desc")
 
         title = title_elem.text.strip() if title_elem and getattr(title_elem, "text", None) else ""
         company = (
@@ -1204,7 +1211,32 @@ class JobDetailPage(BaseBossPage):
         salary = (
             salary_elem.text.strip() if salary_elem and getattr(salary_elem, "text", None) else ""
         )
-        desc = desc_elem.text.strip() if desc_elem and getattr(desc_elem, "text", None) else ""
+
+        # 2. Expand job description if truncated (may scroll the page down)
+        self.expand_description_if_collapsed()
+
+        # 3. Retrieve full job description from cached property or current element
+        desc = (self._current_description or "").strip()
+        if not desc:
+            desc_elem = self.find_by_key("job_detail.desc")
+            desc = desc_elem.text.strip() if desc_elem and getattr(desc_elem, "text", None) else ""
+
+        # 4. Fallback lookups in case header elements were somehow missed before scroll
+        if not title:
+            title_elem = self.find_by_key("job_detail.title")
+            title = title_elem.text.strip() if title_elem and getattr(title_elem, "text", None) else ""
+        if not company:
+            company_elem = self.find_by_key("job_detail.company")
+            company = (
+                company_elem.text.strip()
+                if company_elem and getattr(company_elem, "text", None)
+                else ""
+            )
+        if not salary:
+            salary_elem = self.find_by_key("job_detail.salary")
+            salary = (
+                salary_elem.text.strip() if salary_elem and getattr(salary_elem, "text", None) else ""
+            )
 
         if "查看更多" in desc:
             _log_error(
@@ -1212,9 +1244,9 @@ class JobDetailPage(BaseBossPage):
                 f"'查看更多' still present in final text for '{title}'. Length: {len(desc)}"
             )
 
-        if not title and not salary:
+        if not title and not salary and not desc:
             raise RuntimeError(
-                "Failed to extract job posting: Both title and salary elements were empty or missing on the screen."
+                "Failed to extract job posting: Job detail screen elements (title, salary, description) were all empty or missing."
             )
 
         return JobPosting(

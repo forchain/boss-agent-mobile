@@ -301,3 +301,134 @@ def test_extract_job_posting_logs_error_if_desc_still_contains_expand_text(monke
         assert posting.title == "AI Agent应用开发师"
         assert mock_err_log.called
         assert any("Incomplete Job Description" in str(call_arg) for call_arg in mock_err_log.call_args_list)
+
+
+def test_extract_job_posting_preserves_headers_when_scrolled_offscreen(monkeypatch):
+    """Verify that title and salary captured before scrolling are preserved even if scrolled offscreen.
+
+    This reproduces the exact bug where scrolling down to reveal '查看更多' recycled the header elements
+    from the Android accessibility tree, causing a false-positive RuntimeError and empty JD.
+    """
+    import time
+    monkeypatch.setattr(time, "sleep", lambda s: None)
+
+    mock_driver = MagicMock()
+    page = JobDetailPage(driver=mock_driver)
+    page.wait_for_key = MagicMock(return_value=True)
+    page._get_window_size = MagicMock(return_value={"width": 1080, "height": 2400})
+
+    mock_title = MagicMock()
+    mock_title.text = "AI Agent (Tech Lead) - 外企 90M0150561"
+    mock_comp = MagicMock()
+    mock_comp.text = "某大型互联网公司"
+    mock_sal = MagicMock()
+    mock_sal.text = "3.5-5万元·15薪"
+
+    mock_desc = MagicMock()
+    mock_desc.text = "岗位职责: 1. 负责AI应用落地架构设计... 查看更多"
+    # Initially bottom exceeds safe threshold (height=1400, top=900 -> bottom=2300 > 2140)
+    mock_desc.rect = {"x": 50, "y": 900, "width": 900, "height": 1400}
+
+    # State flag: after scrolling, headers are offscreen (None)
+    has_scrolled = [False]
+
+    def fake_swipe(*args, **kwargs):
+        has_scrolled[0] = True
+        # After scroll, element bottom is in safe view
+        mock_desc.rect = {"x": 50, "y": 200, "width": 900, "height": 1400}
+
+    page.gestures.human_swipe = MagicMock(side_effect=fake_swipe)
+
+    def custom_find(key, **kwargs):
+        if key == "job_detail.expand_btn":
+            return None
+        # If page has scrolled down, header elements scrolled off the top of screen!
+        if key == "job_detail.title":
+            return None if has_scrolled[0] else mock_title
+        if key == "job_detail.company":
+            return None if has_scrolled[0] else mock_comp
+        if key == "job_detail.salary":
+            return None if has_scrolled[0] else mock_sal
+        if key == "job_detail.desc":
+            return mock_desc
+        return None
+
+    page.find_by_key = MagicMock(side_effect=custom_find)
+
+    def fake_click(x, y, **kw):
+        mock_desc.text = "岗位职责: 1. 负责AI应用落地架构设计。2. 全文已完整展开并获取！"
+
+    page.gestures.human_click_at_point = MagicMock(side_effect=fake_click)
+
+    posting = page.extract_job_posting(timeout_sec=2.0)
+
+    # Verifications:
+    # 1. Swiping happened to expose the hotspot
+    assert page.gestures.human_swipe.called
+    # 2. Hotspot was tapped
+    assert page.gestures.human_click_at_point.called
+    # 3. Header fields captured before scrolling are successfully preserved
+    assert posting.title == "AI Agent (Tech Lead) - 外企 90M0150561"
+    assert posting.company_name == "某大型互联网公司"
+    assert posting.salary_range == "3.5-5万元·15薪"
+    # 4. Expanded job description is fully captured
+    assert "全文已完整展开并获取" in posting.job_description
+    assert "查看更多" not in posting.job_description
+
+
+def test_extract_job_posting_tolerates_missing_headers_if_desc_present(monkeypatch):
+    """Test that extract_job_posting does not raise if headers are missing but desc is present."""
+    import time
+    monkeypatch.setattr(time, "sleep", lambda s: None)
+
+    mock_driver = MagicMock()
+    page = JobDetailPage(driver=mock_driver)
+    page.wait_for_key = MagicMock(return_value=True)
+
+    mock_desc = MagicMock()
+    mock_desc.text = "岗位职责: 1. 独立全栈开发。任职要求: 1. 具备多年Python实战。"
+    mock_desc.rect = {"x": 50, "y": 100, "width": 900, "height": 600}
+
+    def custom_find(key, **kwargs):
+        if key == "job_detail.desc":
+            return mock_desc
+        return None
+
+    page.find_by_key = MagicMock(side_effect=custom_find)
+
+    posting = page.extract_job_posting(timeout_sec=1.0)
+    assert posting.title == "未注明职位"
+    assert posting.salary_range == "面议"
+    assert "独立全栈开发" in posting.job_description
+
+
+def test_expand_description_explicit_btn_updates_current_description(monkeypatch):
+    """Test that clicking standard explicit expand button updates _current_description."""
+    import time
+    monkeypatch.setattr(time, "sleep", lambda s: None)
+
+    mock_driver = MagicMock()
+    page = JobDetailPage(driver=mock_driver)
+
+    mock_btn = MagicMock()
+    mock_desc = MagicMock()
+    mock_desc.text = "初始内容"
+
+    def fake_btn_click(*a, **kw):
+        mock_desc.text = "点击展开按钮后的完整岗位描述"
+
+    page.gestures.human_click = MagicMock(side_effect=fake_btn_click)
+
+    def custom_find(key, **kwargs):
+        if key == "job_detail.expand_btn":
+            return mock_btn
+        if key == "job_detail.desc":
+            return mock_desc
+        return None
+
+    page.find_by_key = MagicMock(side_effect=custom_find)
+
+    res = page.expand_description_if_collapsed()
+    assert res is True
+    assert page._current_description == "点击展开按钮后的完整岗位描述"
+
