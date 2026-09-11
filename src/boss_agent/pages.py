@@ -4,7 +4,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from droid_agent_core.gestures import BézierTouchSynthesizer, HumanizedGestureExecutor, Point
+from droid_agent_core.gestures import HumanizedGestureExecutor, Point
 from droid_agent_core.locators import (
     LocatorRegistry,
     UISelector,
@@ -439,6 +439,28 @@ class JobListPage(BaseBossPage):
         except TimeoutError:
             return False
 
+    def is_feed_bottom_reached(self, timeout_sec: float = 0.5) -> bool:
+        """Check if the search feed bottom boundary banner ('暂无符合职位，为你推荐') is visible."""
+        if not self.driver:
+            return False
+        # 1. Try finding bottom_tips via configured locator registry
+        try:
+            elem = self.find_by_key("job_list.bottom_tips", timeout_sec=timeout_sec)
+            if elem:
+                txt = getattr(elem, "text", "") or ""
+                if "暂无符合职位" in txt or not txt:
+                    return True
+        except Exception:
+            pass
+        # 2. Heuristic xpath fallback for text
+        try:
+            elems = self.driver.find_elements(by="xpath", value="//*[contains(@text, '暂无符合职位')]")
+            if elems:
+                return True
+        except Exception:
+            pass
+        return False
+
     def scroll_job_list(self) -> None:
         """Perform a humanized scroll downwards on the job list."""
         if not self.driver:
@@ -448,9 +470,8 @@ class JobListPage(BaseBossPage):
 
         start = Point(w * 0.5, h * 0.75)
         end = Point(w * 0.5, h * 0.25)
-        _ = BézierTouchSynthesizer.generate_curve(start, end, steps=15)
-
-        self.gestures.random_sleep(0.1, 0.3)
+        self.gestures.human_swipe(start, end, duration_ms=500)
+        self.gestures.random_sleep(0.3, 0.6)
 
     def select_first_job(self, timeout_sec: float = 10.0) -> bool:
         """Click on the primary visible job card."""

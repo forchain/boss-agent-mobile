@@ -7,14 +7,11 @@ Unit tests for resume extraction, structured candidate memory, and idempotent ca
 import json
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from boss_agent.memory import (
     ResumeMemoryManager,
     ResumeTextExtractor,
     StructuredCandidateProfile,
 )
-
 
 
 def test_structured_candidate_profile_serialization():

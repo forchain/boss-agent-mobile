@@ -8,7 +8,14 @@ from typing import Any
 
 from boss_agent.broker.models import AutomationTask, TaskType
 from boss_agent.broker.pocketbase_adapter import BaseTaskBroker
-from boss_agent.models import FilterConfig, ScreeningPolicy
+from boss_agent.models import (
+    STATE_RANK,
+    TARGET_ACTION_RANK,
+    FilterConfig,
+    JobRecordStatus,
+    ScreeningPolicy,
+    TargetAction,
+)
 from boss_agent.pages import (
     FilterDialogPage,
     IndustryFilterDialogPage,
@@ -43,8 +50,19 @@ class ScrapeJobsHandler(BaseTaskHandler):
         keyword = payload.get("keyword")
         max_jobs = int(payload.get("max_jobs", 3))
 
+        target_action_val = payload.get("target_action") or payload.get("action")
+        if target_action_val:
+            try:
+                target_action = TargetAction(str(target_action_val).lower())
+            except ValueError:
+                target_action = TargetAction.SAVE_JD
+        else:
+            enrich_jd = bool(payload.get("enrich_jd", True))
+            target_action = TargetAction.SAVE_JD if enrich_jd else TargetAction.DIGEST_ONLY
+        required_rank = TARGET_ACTION_RANK.get(target_action, 2)
+
         await broker.append_log(
-            task.id, f"Starting SCRAPE_JOBS (keyword='{keyword}', max_jobs={max_jobs})"
+            task.id, f"Starting SCRAPE_JOBS (keyword='{keyword}', target_action='{target_action.value}', max_jobs={max_jobs})"
         )
 
         startup_page = StartupDialogPage(driver)
@@ -104,18 +122,37 @@ class ScrapeJobsHandler(BaseTaskHandler):
 
         scraped_jobs: list[dict[str, Any]] = []
         skipped_count = 0
+        scanned_fingerprints: set[str] = set()
+        consecutive_empty_scrolls = 0
         detail_page = JobDetailPage(driver)
 
         policy_raw = payload.get("screening_policy")
         policy = ScreeningPolicy.from_dict(policy_raw) if policy_raw else ScreeningPolicy()
 
-        visible_cards = list_page.extract_visible_job_cards(max_cards=max_jobs * 2)
-        total_scanned = len(visible_cards)
+        while len(scanned_fingerprints) < max_jobs:
+            # 1. Boundary check: Check if feed bottom banner is reached
+            if list_page.is_feed_bottom_reached() is True:
+                await broker.append_log(
+                    task.id,
+                    "🛑 [Feed Boundary] Detected '暂无符合职位' end-of-feed marker. Terminating search pagination.",
+                )
+                break
 
-        if visible_cards:
+            # 2. Extract visible cards in current viewport
+            visible_cards = list_page.extract_visible_job_cards(max_cards=10)
+            if not visible_cards:
+                break
+
+            new_cards_in_view = 0
             for card in visible_cards:
-                if len(scraped_jobs) >= max_jobs:
+                if len(scanned_fingerprints) >= max_jobs:
                     break
+
+                if card.fingerprint in scanned_fingerprints:
+                    continue
+
+                scanned_fingerprints.add(card.fingerprint)
+                new_cards_in_view += 1
 
                 # Skip incomplete or partially visible cards without genuine company name
                 comp_name = (card.company_name or "").strip()
@@ -127,20 +164,38 @@ class ScrapeJobsHandler(BaseTaskHandler):
                     )
                     continue
 
-                # 1. Card-level deduplication check
-                is_duplicate = await broker.has_job_fingerprint(card.fingerprint)
-                if is_duplicate:
-                    skipped_count += 1
-                    await broker.append_log(
-                        task.id,
-                        f"⏭️ [Dedup] Skipping duplicate job: '{card.title}' @ '{card.company_name}' ({card.recruiter_name})",
-                    )
-                    continue
+                # 3. State Machine Check against existing database record
+                existing_record = await broker.get_job_record_by_fingerprint(card.fingerprint)
+                if existing_record:
+                    existing_status = existing_record.get("status", "unmatched")
+                    if existing_status == JobRecordStatus.IGNORED:
+                        skipped_count += 1
+                        await broker.append_log(
+                            task.id,
+                            f"⏭️ [Ignored Job] Skipping previously rejected job: '{card.title}' @ '{card.company_name}'",
+                        )
+                        continue
 
+                    cur_rank = STATE_RANK.get(existing_status, 1)
+                    if cur_rank >= required_rank:
+                        skipped_count += 1
+                        await broker.append_log(
+                            task.id,
+                            f"⏭️ [State Machine] '{card.title}' already at '{existing_status}' (>= target '{target_action.value}'). Skipping detail opening.",
+                        )
+                        await broker.upsert_job_record({
+                            "fingerprint": card.fingerprint,
+                            "company_name": card.company_name,
+                            "title": card.title,
+                            "recruiter_name": card.recruiter_name,
+                            "search_keywords": [keyword] if keyword else [],
+                        })
+                        continue
+
+                # 4. Preliminary screening (zero-token gatekeeper)
                 digest_text = getattr(card, "digest", "") or getattr(card, "snippet", "") or ""
                 card_tags = getattr(card, "tags", []) or []
 
-                # 2. Card-level preliminary screening (zero-token gatekeeper)
                 passed, reason = policy.matches_card_keywords(
                     title=card.title,
                     company_name=card.company_name,
@@ -164,7 +219,7 @@ class ScrapeJobsHandler(BaseTaskHandler):
                         "digest": digest_text,
                         "job_description": "",
                         "jd_key_requirements": card_tags,
-                        "status": "ignored",
+                        "status": JobRecordStatus.IGNORED.value,
                         "search_keywords": [keyword] if keyword else [],
                         "source_task_id": task.id,
                     }
@@ -175,7 +230,7 @@ class ScrapeJobsHandler(BaseTaskHandler):
                     )
                     continue
 
-                # 3. Immediate card-level ingestion: persist visible job card with rich facets
+                # 5. Execute Action based on target_action
                 rec_type = "[猎头]" if getattr(card, "is_headhunter", False) else "[直招]"
                 card_record = {
                     "fingerprint": card.fingerprint,
@@ -190,23 +245,29 @@ class ScrapeJobsHandler(BaseTaskHandler):
                     "salary_range": getattr(card, "salary_range", "") or "",
                     "location": getattr(card, "location", "") or "",
                     "digest": digest_text,
-                    "job_description": "",
+                    "job_description": existing_record.get("job_description", "") if existing_record else "",
                     "jd_key_requirements": card_tags,
-                    "status": "unmatched",
+                    "status": JobRecordStatus.DIGEST_ONLY.value,
                     "search_keywords": [keyword] if keyword else [],
                     "source_task_id": task.id,
                 }
+
+                if target_action == TargetAction.DIGEST_ONLY:
+                    persisted = await broker.upsert_job_record(card_record)
+                    scraped_jobs.append(persisted)
+                    await broker.append_log(
+                        task.id,
+                        f"✅ [Direct Ingestion] Recorded {rec_type} job from search list: '{card.title}' @ '{card.company_name}' ({card_record.get('salary_range', '')})",
+                    )
+                    continue
+
+                # For SAVE_JD (or AUTO_APPLY): Ingest card digest first, then inspect detail
                 persisted = await broker.upsert_job_record(card_record)
                 scraped_jobs.append(persisted)
-                await broker.append_log(
-                    task.id,
-                    f"✅ [Direct Ingestion] Recorded {rec_type} job from search list: '{card.title}' @ '{card.company_name}' ({card_record.get('salary_range', '')})",
-                )
 
-                # 4. Detail page inspection to enrich with full JD
                 await broker.append_log(
                     task.id,
-                    f"🔍 [Detail Inspection] Inspecting '{card.title}' @ '{card.company_name}'",
+                    f"🔍 [Detail Inspection] Inspecting {rec_type} '{card.title}' @ '{card.company_name}'",
                 )
                 clicked = False
                 if card.element and hasattr(card.element, "click"):
@@ -235,21 +296,52 @@ class ScrapeJobsHandler(BaseTaskHandler):
                             "location": job_posting.location or card_record.get("location", ""),
                             "digest": digest_text,
                             "job_description": job_posting.job_description or card_record.get("job_description", ""),
-                            "status": "unmatched",
+                            "status": JobRecordStatus.JD_SAVED.value,
                             "search_keywords": [keyword] if keyword else [],
                             "source_task_id": task.id,
                         }
                         persisted = await broker.upsert_job_record(enriched_data)
                         scraped_jobs[-1] = persisted
+                        hh_tag = "[猎头]" if enriched_data["is_headhunter"] else "[直招]"
                         await broker.append_log(
                             task.id,
-                            f"✨ [Enriched Detail] Extracted full JD for '{persisted['title']}'",
+                            f"✨ [Enriched Detail] Extracted full JD for {hh_tag} '{persisted['title']}'",
                         )
                     except Exception as e:
                         await broker.append_log(task.id, f"Notice on detail extraction: {e}")
                     finally:
                         detail_page.navigate_back()
-        else:
+
+            # 6. Post-screen checks: Reached max_jobs or empty scrolls safeguard
+            if len(scanned_fingerprints) >= max_jobs:
+                await broker.append_log(
+                    task.id,
+                    f"🎯 [Scan Quota Reached] Completed scan of {len(scanned_fingerprints)} jobs (max_jobs={max_jobs}).",
+                )
+                break
+
+            if new_cards_in_view == 0:
+                consecutive_empty_scrolls += 1
+                if consecutive_empty_scrolls >= 3:
+                    await broker.append_log(
+                        task.id,
+                        "🛑 [Feed Safeguard] 3 consecutive scrolls produced no new cards. Terminating pagination.",
+                    )
+                    break
+            else:
+                consecutive_empty_scrolls = 0
+
+            # 7. Check bottom marker before scrolling
+            if list_page.is_feed_bottom_reached() is True:
+                await broker.append_log(
+                    task.id,
+                    "🛑 [Feed Boundary] Detected '暂无符合职位' end-of-feed marker. Terminating search pagination.",
+                )
+                break
+
+            # 8. Perform humanized scroll
+            list_page.scroll_job_list()
+        if not scanned_fingerprints:
             # Fallback for mock environments or direct detail view
             total_scanned = 1
             try:
@@ -277,7 +369,7 @@ class ScrapeJobsHandler(BaseTaskHandler):
                             "location": job_posting.location,
                             "digest": getattr(job_posting, "digest", "") or "",
                             "job_description": job_posting.job_description,
-                            "status": "unmatched",
+                            "status": JobRecordStatus.JD_SAVED.value if target_action != TargetAction.DIGEST_ONLY else JobRecordStatus.DIGEST_ONLY.value,
                             "search_keywords": [keyword] if keyword else [],
                             "source_task_id": task.id,
                         }
@@ -290,6 +382,8 @@ class ScrapeJobsHandler(BaseTaskHandler):
                     )
             except Exception as e:
                 await broker.append_log(task.id, f"Notice on job extraction: {e}")
+        else:
+            total_scanned = len(scanned_fingerprints)
 
         summary = f"Finished scraping: scanned {total_scanned}, scraped {len(scraped_jobs)} job postings, skipped {skipped_count}"
         await broker.append_log(task.id, summary)

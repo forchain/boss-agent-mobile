@@ -148,5 +148,18 @@ _Avoid_: digest, snippet, short JD, brief intro
 The zero-token deterministic gatekeeper evaluation that examines the three card-level facets (`tv_position_name`, `fl_require_info`, `tv_digest`) against the active `ScreeningPolicy` to eliminate non-viable jobs before incurring expensive mobile navigation.
 _Avoid_: card filter, quick check, preliminary pass
 
+**Target Action (`target_action`)**:
+The configured execution depth for a search task governing whether discovered jobs stop at card digest ingestion (`digest_only`), JD enrichment (`save_jd`), or automated greeting (`auto_apply`).
+_Avoid_: search mode, scrape level, crawl stage
 
+**Job Lifecycle State**:
+The monotonic progression state of a Job Record tracking its data richness and application stage across mobile automation and backend manual actions (`ignored`, `digest_only`, `jd_saved`, `matched`, `applied`).
+_Avoid_: job status flag, task progress, record phase
 
+**Search Feed Boundary**:
+The explicit platform termination marker (`tv_tips` displaying "暂无符合职位，为你推荐") signalling the end of genuine search keyword results and preventing automation pagination into unrelated recommendation feeds.
+_Avoid_: bottom banner, footer divider, scroll end
+
+**Daily Greeting Limit**:
+The system safety threshold restricting outbound mobile greeting volume per calendar day to protect user accounts from platform rate limits and anti-bot challenges, automatically degrading `auto_apply` to `save_jd` upon exhaustion.
+_Avoid_: daily quota, message cap, max chats

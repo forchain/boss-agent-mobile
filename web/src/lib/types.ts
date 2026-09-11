@@ -109,7 +109,9 @@ export interface AutomationTask {
 	updated?: string;
 }
 
-export type JobRecordStatus = 'unmatched' | 'matched' | 'applied' | 'ignored';
+export type TargetAction = 'digest_only' | 'save_jd' | 'auto_apply';
+
+export type JobRecordStatus = 'digest_only' | 'jd_saved' | 'unmatched' | 'matched' | 'applied' | 'ignored';
 
 export interface JobRecord {
 	id: string;
@@ -155,6 +157,8 @@ export interface SavedSearch {
 	enable_search?: boolean;
 	enable_filter?: boolean;
 	filter?: SavedSearchFilter;
+	target_action?: TargetAction;
+	max_jobs?: number;
 	cron_expression?: string;
 	is_enabled?: boolean;
 	last_run_at?: string | null;

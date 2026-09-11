@@ -107,6 +107,8 @@ SAVED_SEARCHES_FIELDS = [
     {"name": "enable_search", "type": "bool", "required": False},
     {"name": "enable_filter", "type": "bool", "required": False},
     {"name": "filter", "type": "json", "required": False},
+    {"name": "target_action", "type": "text", "required": False},
+    {"name": "max_jobs", "type": "number", "required": False},
     {"name": "cron_expression", "type": "text", "required": False},
     {"name": "is_enabled", "type": "bool", "required": False},
     {"name": "last_run_at", "type": "date", "required": False},

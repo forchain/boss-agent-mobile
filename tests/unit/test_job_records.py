@@ -353,7 +353,9 @@ async def test_in_memory_broker_delete_job_record_and_release_fingerprint():
 async def test_pocketbase_broker_delete_job_record():
     """PocketBaseTaskBroker delete_job_record handles 204, 404, and exceptions."""
     from unittest.mock import MagicMock
+
     import requests
+
     from boss_agent.broker.pocketbase_adapter import PocketBaseTaskBroker
 
     mock_session = MagicMock()
