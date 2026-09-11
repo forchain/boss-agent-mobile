@@ -917,14 +917,49 @@ class PocketBaseTaskBroker(BaseTaskBroker):
             with sqlite3.connect(str(db_path)) as conn:
                 cursor = conn.cursor()
                 now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] + "Z"
-                p_id = profile_data.get("id")
-                if not p_id:
-                    cursor.execute(
-                        "SELECT id FROM candidate_profiles WHERE user_id = ? ORDER BY updated DESC LIMIT 1",
-                        (user_id,),
-                    )
-                    existing_row = cursor.fetchone()
-                    p_id = existing_row[0] if existing_row else str(uuid.uuid4())[:15]
+                cursor.execute(
+                    "SELECT * FROM candidate_profiles WHERE user_id = ? ORDER BY updated DESC LIMIT 1",
+                    (user_id,),
+                )
+                existing_row = cursor.fetchone()
+                existing_dict = {}
+                if existing_row:
+                    col_names = [d[0] for d in cursor.description]
+                    existing_dict = dict(zip(col_names, existing_row))
+                    p_id = existing_dict.get("id") or profile_data.get("id") or str(uuid.uuid4())[:15]
+                else:
+                    p_id = profile_data.get("id") or str(uuid.uuid4())[:15]
+
+                # Merge fields to avoid wiping out existing rich profile with empty values
+                def resolve_field(key: str, default_val: Any) -> Any:
+                    val = profile_data.get(key)
+                    if val is not None and val != "" and val != [] and val != {}:
+                        return val
+                    ex_val = existing_dict.get(key)
+                    if ex_val:
+                        if isinstance(default_val, (list, dict)) and isinstance(ex_val, str):
+                            with contextlib.suppress(Exception):
+                                return json.loads(ex_val)
+                        return ex_val
+                    return default_val
+
+                final_name = resolve_field("name", "")
+                final_exp = resolve_field("years_of_experience", 0)
+                final_edu = resolve_field("education", [])
+                final_skills = resolve_field("core_skills", [])
+                final_highlights = resolve_field("project_highlights", [])
+                final_work = resolve_field("work_experiences", [])
+                final_projects = resolve_field("projects", [])
+                final_targets = resolve_field("target_positions", [])
+                final_doc = (
+                    profile_data.get("profile_document")
+                    or profile_data.get("raw_summary")
+                    or existing_dict.get("raw_summary", "")
+                )
+                final_resume_text = profile_data.get("raw_resume_text") or existing_dict.get(
+                    "raw_resume_text", ""
+                )
+
                 cursor.execute(
                     """
                     INSERT INTO candidate_profiles (
@@ -949,16 +984,16 @@ class PocketBaseTaskBroker(BaseTaskBroker):
                     (
                         p_id,
                         user_id,
-                        profile_data.get("name", ""),
-                        profile_data.get("years_of_experience", 0),
-                        json.dumps(profile_data.get("education", []), ensure_ascii=False),
-                        json.dumps(profile_data.get("core_skills", []), ensure_ascii=False),
-                        json.dumps(profile_data.get("project_highlights", []), ensure_ascii=False),
-                        json.dumps(profile_data.get("work_experiences", []), ensure_ascii=False),
-                        json.dumps(profile_data.get("projects", []), ensure_ascii=False),
-                        json.dumps(profile_data.get("target_positions", []), ensure_ascii=False),
-                        profile_data.get("raw_summary", ""),
-                        profile_data.get("raw_resume_text", ""),
+                        final_name,
+                        final_exp,
+                        json.dumps(final_edu, ensure_ascii=False),
+                        json.dumps(final_skills, ensure_ascii=False),
+                        json.dumps(final_highlights, ensure_ascii=False),
+                        json.dumps(final_work, ensure_ascii=False),
+                        json.dumps(final_projects, ensure_ascii=False),
+                        json.dumps(final_targets, ensure_ascii=False),
+                        final_doc,
+                        final_resume_text,
                         now,
                     ),
                 )
@@ -999,9 +1034,19 @@ class PocketBaseTaskBroker(BaseTaskBroker):
         # Attempt to save to PocketBase REST API
         try:
             existing = await self.get_candidate_profile(user_id=user_id)
-            body = {**profile_data, "user_id": user_id}
             if existing and existing.get("id"):
                 rec_id = existing["id"]
+                merged_body = dict(existing)
+                for k, v in profile_data.items():
+                    if v is not None and v != "" and v != [] and v != {}:
+                        merged_body[k] = v
+                incoming_doc = profile_data.get("profile_document") or profile_data.get("raw_summary")
+                if incoming_doc:
+                    merged_body["raw_summary"] = incoming_doc
+                elif existing.get("raw_summary"):
+                    merged_body["raw_summary"] = existing["raw_summary"]
+                merged_body["user_id"] = user_id
+                body = merged_body
                 resp = await loop.run_in_executor(
                     None,
                     lambda: self.session.patch(
@@ -1011,6 +1056,7 @@ class PocketBaseTaskBroker(BaseTaskBroker):
                     ),
                 )
             else:
+                body = {**profile_data, "user_id": user_id}
                 resp = await loop.run_in_executor(
                     None,
                     lambda: self.session.post(

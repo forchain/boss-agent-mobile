@@ -20,7 +20,15 @@ export function getPocketBaseUrl(): string {
 			(import.meta as any).env?.VITE_POCKETBASE_URL ||
 			(import.meta as any).env?.PUBLIC_POCKETBASE_URL;
 		if (custom) {
-			currentPbUrl = custom.replace(/\/+$/, '');
+			let url = custom.replace(/\/+$/, '');
+			if (
+				window.location.hostname &&
+				window.location.hostname !== 'localhost' &&
+				window.location.hostname !== '127.0.0.1'
+			) {
+				url = url.replace(/127\.0\.0\.1|localhost/, window.location.hostname);
+			}
+			currentPbUrl = url;
 			return currentPbUrl;
 		}
 		const hostname = window.location.hostname || '127.0.0.1';
@@ -147,10 +155,10 @@ export async function saveCandidateProfile(profile: Partial<CandidateProfile>, u
 
 		if (existing) {
 			const updated = await pb.collection('candidate_profiles').update(existing.id, data);
-			return { id: updated.id, ...data };
+			return { id: updated.id, ...data, profile_document: merged.profile_document };
 		} else {
 			const created = await pb.collection('candidate_profiles').create({ id: generatePbId(), ...data });
-			return { id: created.id, ...data };
+			return { id: created.id, ...data, profile_document: merged.profile_document };
 		}
 	} catch (err) {
 		console.warn('PocketBase save failed, stored in local memory fallback:', err);
@@ -178,6 +186,63 @@ export async function listResumeRevisions(userId = 'default'): Promise<ResumeRev
 	} catch (err) {
 		console.warn('Failed to list resume revisions from PocketBase:', err);
 		return [];
+	}
+}
+
+export async function getResumeRevision(revisionId: string): Promise<ResumeRevision | null> {
+	try {
+		const r = await pb.collection('resume_revisions').getOne(revisionId);
+		return {
+			id: r.id,
+			user_id: r.user_id,
+			file_name: r.file_name,
+			file_type: r.file_type || '',
+			file_size: r.file_size || 0,
+			extracted_text: r.extracted_text || '',
+			diff_summary: r.diff_summary || '',
+			created: r.created,
+			updated: r.updated
+		};
+	} catch (err) {
+		console.warn('Failed to get resume revision from PocketBase:', err);
+		return null;
+	}
+}
+
+export async function restoreResumeRevision(
+	revisionId: string,
+	userId = 'default'
+): Promise<{ success: boolean; profile?: CandidateProfile; message?: string }> {
+	try {
+		const rev = await getResumeRevision(revisionId);
+		if (!rev || !rev.extracted_text) {
+			return { success: false, message: '未找到该历史版本的简历文本内容' };
+		}
+		const blob = new Blob([rev.extracted_text], { type: 'text/plain;charset=utf-8' });
+		const file = new File(
+			[blob],
+			rev.file_name.endsWith('.txt') || rev.file_name.endsWith('.md')
+				? rev.file_name
+				: `${rev.file_name}.txt`,
+			{ type: 'text/plain' }
+		);
+		const formData = new FormData();
+		formData.append('file', file);
+		formData.append('userId', userId);
+		formData.append('mergeMode', 'overwrite');
+
+		const res = await fetch('/api/candidate/resume', {
+			method: 'POST',
+			body: formData
+		});
+		const data = await res.json().catch(() => ({}));
+		if (res.ok && data.success && data.profile) {
+			const saved = await saveCandidateProfile(data.profile, userId);
+			return { success: true, profile: saved };
+		}
+		return { success: false, message: data.message || '恢复解析失败' };
+	} catch (err: any) {
+		return { success: false, message: err?.message || '恢复解析时发生异常' };
 	}
 }
 
