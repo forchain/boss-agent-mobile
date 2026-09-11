@@ -87,7 +87,13 @@ class AutomationWorker:
         heartbeat_task = asyncio.create_task(self._heartbeat_loop(claimed_task.id))
         try:
             result = await handler.handle(claimed_task, self.broker, self.context)
-            if result.success:
+            cur = await self.broker.get_task(claimed_task.id)
+            if cur and cur.status == TaskStatus.CANCELLED:
+                logger.info(
+                    "Task %s was cancelled during execution; preserving CANCELLED status",
+                    claimed_task.id,
+                )
+            elif result.success:
                 await self.broker.update_task_status(
                     claimed_task.id,
                     status=TaskStatus.SUCCESS,
@@ -99,13 +105,17 @@ class AutomationWorker:
                     error_message=result.error_message,
                 )
         except Exception as e:
-            logger.exception("Task %s execution raised uncaught exception: %s", claimed_task.id, e)
-            await self.broker.append_log(claimed_task.id, f"Uncaught exception: {e}")
-            await self.broker.update_task_status(
-                claimed_task.id,
-                status=TaskStatus.FAILED,
-                error_message=str(e),
-            )
+            cur = await self.broker.get_task(claimed_task.id)
+            if cur and cur.status == TaskStatus.CANCELLED:
+                logger.info("Task %s was cancelled, ignoring exception: %s", claimed_task.id, e)
+            else:
+                logger.exception("Task %s execution raised uncaught exception: %s", claimed_task.id, e)
+                await self.broker.append_log(claimed_task.id, f"Uncaught exception: {e}")
+                await self.broker.update_task_status(
+                    claimed_task.id,
+                    status=TaskStatus.FAILED,
+                    error_message=str(e),
+                )
         finally:
             heartbeat_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):

@@ -6,7 +6,7 @@ Handler for SCRAPE_JOBS task: searches, filters, and extracts structured job pos
 
 from typing import Any
 
-from boss_agent.broker.models import AutomationTask, TaskType
+from boss_agent.broker.models import AutomationTask, TaskStatus, TaskType
 from boss_agent.broker.pocketbase_adapter import BaseTaskBroker
 from boss_agent.models import (
     STATE_RANK,
@@ -130,6 +130,15 @@ class ScrapeJobsHandler(BaseTaskHandler):
         policy = ScreeningPolicy.from_dict(policy_raw) if policy_raw else ScreeningPolicy()
 
         while len(scanned_fingerprints) < max_jobs:
+            # 0. Check if task was cancelled by user
+            cur_task = await broker.get_task(task.id)
+            if cur_task and cur_task.status == TaskStatus.CANCELLED:
+                await broker.append_log(
+                    task.id,
+                    "🛑 [Task Cancelled] Task was cancelled by user. Terminating scrape pagination.",
+                )
+                break
+
             # 1. Boundary check: Check if feed bottom banner is reached
             if list_page.is_feed_bottom_reached() is True:
                 await broker.append_log(

@@ -117,3 +117,38 @@ async def test_worker_idle_when_no_pending_tasks(broker, mock_driver):
 
     executed = await worker.run_once()
     assert executed is False
+
+
+@pytest.mark.asyncio
+async def test_worker_preserves_cancelled_status(broker, mock_driver):
+    """Verify worker preserves CANCELLED status if user cancelled the task mid-execution."""
+    from boss_agent.worker.handlers.base import BaseTaskHandler, HandlerResult
+
+    class FakeLongRunningHandler(BaseTaskHandler):
+        @property
+        def task_type(self) -> TaskType:
+            return TaskType.SCRAPE_JOBS
+
+        async def handle(self, task, broker, context) -> HandlerResult:
+            # Simulate cancellation happening during task execution
+            await broker.update_task_status(task.id, status=TaskStatus.CANCELLED)
+            return HandlerResult(success=True)
+
+    config = WorkerConfig(worker_id="test-worker-cancel", poll_interval_sec=0.01)
+    context = WorkerContext(config=config, driver=mock_driver)
+    worker = AutomationWorker(
+        config=config,
+        broker=broker,
+        context=context,
+        handlers=[FakeLongRunningHandler()],
+    )
+
+    task = await broker.create_task(task_type=TaskType.SCRAPE_JOBS)
+    executed = await worker.run_once()
+    assert executed is True
+
+    # Status must remain CANCELLED, not overwritten to SUCCESS
+    finished_task = await broker.get_task(task.id)
+    assert finished_task is not None
+    assert finished_task.status == TaskStatus.CANCELLED
+

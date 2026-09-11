@@ -1,6 +1,6 @@
 from typing import Any
 
-from boss_agent.broker.models import AutomationTask, TaskType
+from boss_agent.broker.models import AutomationTask, TaskStatus, TaskType
 from boss_agent.broker.pocketbase_adapter import BaseTaskBroker
 from boss_agent.graph import run_job_application_graph
 from boss_agent.memory import StructuredCandidateProfile
@@ -238,6 +238,14 @@ class AutoApplyHandler(BaseTaskHandler):
                     })
                     applied = False
                 else:
+                    cur_task = await broker.get_task(task.id)
+                    if cur_task and cur_task.status == TaskStatus.CANCELLED:
+                        await broker.append_log(
+                            task.id,
+                            "🛑 [Task Cancelled] Task was cancelled by user before chat dispatch.",
+                        )
+                        return HandlerResult(success=True, error_message="Task cancelled by user")
+
                     if detail_page.open_chat(timeout_sec=5.0):
                         chat_page.type_greeting_message(greeting_message, timeout_sec=5.0)
                         chat_page.click_send(timeout_sec=3.0)
