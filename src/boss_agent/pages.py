@@ -1,8 +1,11 @@
 import contextlib
+import logging
 import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
+
+from rich.console import Console
 
 from droid_agent_core.gestures import (
     BézierTouchSynthesizer,
@@ -18,6 +21,25 @@ from droid_agent_core.locators import (
 )
 
 from .models import AuthStatus, FilterConfig, JobPosting, compute_job_fingerprint
+
+logger = logging.getLogger("boss_agent.pages")
+console = Console()
+
+
+def _log_info(msg: str) -> None:
+    logger.info(msg)
+    console.print(f"[cyan][JobDetailPage][/cyan] {msg}")
+
+
+def _log_warn(msg: str) -> None:
+    logger.warning(msg)
+    console.print(f"[yellow][JobDetailPage ⚠️][/yellow] {msg}")
+
+
+def _log_error(msg: str) -> None:
+    logger.error(msg)
+    console.print(f"[bold red][JobDetailPage ❌][/bold red] {msg}")
+
 
 
 @dataclass
@@ -243,7 +265,11 @@ class BaseBossPage:
         if hasattr(self.driver, "get_window_size"):
             try:
                 size = self.driver.get_window_size()
-                return {"width": int(size["width"]), "height": int(size["height"])}
+                if isinstance(size, dict) and "width" in size and "height" in size:
+                    w = int(size["width"])
+                    h = int(size["height"])
+                    if w > 100 and h > 100:
+                        return {"width": w, "height": h}
             except Exception:
                 pass
         return {"width": 1080, "height": 2400}
@@ -980,23 +1006,116 @@ class IndustryFilterDialogPage(BaseBossPage):
 class JobDetailPage(BaseBossPage):
     """Extracts job posting details and interacts with the job detail screen."""
 
-    def expand_description_if_collapsed(self) -> None:
+    def _scroll_page_up(self, scroll_px: int) -> None:
+        """Swipe up on screen to scroll the detail page content downwards."""
+        win_size = self._get_window_size()
+        screen_width = win_size.get("width", 1080)
+        screen_height = win_size.get("height", 2400)
+
+        mid_x = screen_width // 2
+        start_y = int(screen_height * 0.75)
+        end_y = max(int(screen_height * 0.15), start_y - scroll_px)
+
+        _log_info(
+            f"📜 [Scroll Page Up] Swiping from ({mid_x}, {start_y}) to ({mid_x}, {end_y}) "
+            f"[distance: {start_y - end_y}px] to reveal lower content..."
+        )
+        self.gestures.human_swipe(
+            Point(mid_x, start_y),
+            Point(mid_x, end_y),
+            duration_ms=450,
+        )
+        time.sleep(0.4)
+
+    def expand_description_if_collapsed(self, max_scroll_attempts: int = 4) -> bool:
+        """Expand truncated job description by scrolling to reveal its bottom and tapping the '查看更多' hotspot.
+
+        Returns True if expanded or not truncated; False if expansion failed.
+        """
+        _log_info("🔍 Checking job description expansion status...")
+
         # 1. First attempt: standard explicit expand button if visible
         elem = self.find_by_key("job_detail.expand_btn", timeout_sec=0.5)
         if elem:
+            _log_info("👆 Found standard explicit expand button ('查看全部' / '展开全文'), clicking it...")
             self.gestures.human_click(elem)
-            return
+            time.sleep(0.3)
+            return True
 
-        # 2. Second attempt: inline ClickableSpan probe within tv_description
-        desc_elem = self.find_by_key("job_detail.desc", timeout_sec=1.0)
+        # 2. Locate the job description TextView (com.hpbr.bosszhipin:id/tv_description)
+        desc_elem = self.find_by_key("job_detail.desc", timeout_sec=1.5)
         if not desc_elem:
-            return
+            win_size = self._get_window_size()
+            _log_info("📜 Job description element not visible in initial viewport; scrolling down once to locate it...")
+            self._scroll_page_up(int(win_size.get("height", 2400) * 0.4))
+            desc_elem = self.find_by_key("job_detail.desc", timeout_sec=2.0)
+
+        if not desc_elem:
+            _log_error("Failed to locate job description element ('com.hpbr.bosszhipin:id/tv_description') on detail page!")
+            return False
 
         initial_text = getattr(desc_elem, "text", "") or ""
-        # Only probe if text indicates it is truncated/collapsed
-        if not ("查看更多" in initial_text or "展开" in initial_text or initial_text.endswith("...")):
-            return
+        is_truncated = ("查看更多" in initial_text or "展开" in initial_text or initial_text.endswith("..."))
+        if not is_truncated:
+            _log_info(f"✅ Job description is already fully expanded (length: {len(initial_text)} chars, no '查看更多' found).")
+            return True
 
+        _log_info(
+            f"📑 Truncated job description detected (length: {len(initial_text)} chars). "
+            f"Snippet: '...{initial_text[-40:].replace(chr(10), ' ')}'. Preparing to scroll and expand..."
+        )
+
+        win_size = self._get_window_size()
+        screen_height = win_size.get("height", 2400)
+        # The floating '立即沟通' bar sits at the bottom ~220-250px. Keep bottom of JD well above it.
+        safe_bottom_threshold = screen_height - 260
+        target_view_y = int(screen_height * 0.60)
+
+        # Iteratively scroll until bottom of tv_description is in the safe visible area
+        for attempt in range(1, max_scroll_attempts + 1):
+            rect = getattr(desc_elem, "rect", None)
+            if not (
+                isinstance(rect, dict)
+                and all(
+                    k in rect and isinstance(rect[k], int | float)
+                    for k in ("x", "y", "width", "height")
+                )
+            ):
+                _log_warn(f"Cannot retrieve valid element bounds on attempt {attempt}; scrolling page...")
+                self._scroll_page_up(int(screen_height * 0.35))
+                desc_elem = self.find_by_key("job_detail.desc", timeout_sec=1.0)
+                continue
+
+            elem_top = float(rect["y"])
+            elem_height = float(rect["height"])
+            elem_bottom = elem_top + elem_height
+
+            _log_info(
+                f"📏 [JD Bounds Check {attempt}/{max_scroll_attempts}] "
+                f"Top: {elem_top:.1f}, Height: {elem_height:.1f}, Bottom: {elem_bottom:.1f} "
+                f"(Safe threshold: < {safe_bottom_threshold:.1f})"
+            )
+
+            if elem_bottom > safe_bottom_threshold:
+                scroll_needed = int(elem_bottom - target_view_y)
+                scroll_distance = max(150, min(int(screen_height * 0.45), scroll_needed))
+                _log_info(
+                    f"📜 JD bottom ({elem_bottom:.1f}) is obstructed/below threshold ({safe_bottom_threshold:.1f}). "
+                    f"Scrolling page up by {scroll_distance} px (attempt {attempt}/{max_scroll_attempts})..."
+                )
+                self._scroll_page_up(scroll_distance)
+                desc_elem = self.find_by_key("job_detail.desc", timeout_sec=1.0)
+                if not desc_elem:
+                    _log_warn("Lost job description element reference after swipe; re-locating...")
+                    desc_elem = self.find_by_key("job_detail.desc", timeout_sec=2.0)
+                    if not desc_elem:
+                        _log_error("Could not find job description element after scroll!")
+                        return False
+            else:
+                _log_info(f"🎯 JD bottom ({elem_bottom:.1f}) is now safely in view (safe threshold: {safe_bottom_threshold:.1f}).")
+                break
+
+        # Re-fetch bounds after scroll settling
         rect = getattr(desc_elem, "rect", None)
         if not (
             isinstance(rect, dict)
@@ -1005,60 +1124,54 @@ class JobDetailPage(BaseBossPage):
                 for k in ("x", "y", "width", "height")
             )
         ):
-            return
+            _log_error("Cannot calculate tap coordinates: element rect is invalid after scrolling!")
+            return False
 
-        # Viewport safety check: ensure bottom edge of tv_description is not offscreen
-        win_size = self._get_window_size()
-        screen_height = win_size.get("height", 2400)
-        screen_width = win_size.get("width", 1080)
-
-        elem_bottom = float(rect["y"]) + float(rect["height"])
-        if elem_bottom > screen_height - 150:
-            scroll_dist = min(int(elem_bottom - (screen_height * 0.7)), int(screen_height * 0.3))
-            if scroll_dist > 50:
-                mid_x = screen_width // 2
-                start_y = int(screen_height * 0.7)
-                end_y = max(int(screen_height * 0.3), start_y - scroll_dist)
-                self.gestures.human_swipe(
-                    Point(mid_x, start_y),
-                    Point(mid_x, end_y),
-                    duration_ms=400,
-                )
-                desc_elem = self.find_by_key("job_detail.desc", timeout_sec=1.0)
-                if not desc_elem:
-                    return
-                rect = getattr(desc_elem, "rect", None)
-                if not (
-                    isinstance(rect, dict)
-                    and all(
-                        k in rect and isinstance(rect[k], int | float)
-                        for k in ("x", "y", "width", "height")
-                    )
-                ):
-                    return
-
-        # In Boss App, the expand hotspot is fixed at the bottom-right corner of tv_description
-        # regardless of where the truncated text wraps.
-        # Primary tap at ~90% width, ~25px above bottom edge; fallback tap at ~80% width.
+        # Tapping the '查看更多' hotspot in bottom-right corner of tv_description
         tap_offsets = [(0.90, 25.0), (0.80, 25.0)]
-        for ratio_x, offset_y in tap_offsets:
-            target_x, target_y = calculate_probe_coordinate(
-                rect, [ratio_x, offset_y], origin="bottom-left"
+        expanded = False
+
+        for idx, (ratio_x, offset_y) in enumerate(tap_offsets, 1):
+            target_x, target_y = calculate_probe_coordinate(rect, [ratio_x, offset_y], origin="bottom-left")
+            _log_info(
+                f"👆 [Tap Hotspot {idx}/{len(tap_offsets)}] Tapping '查看更多' at screen coordinate "
+                f"({target_x:.1f}, {target_y:.1f}) [ratio_x={ratio_x}, offset_y={offset_y}px from bottom]..."
             )
             self.gestures.human_click_at_point(target_x, target_y, jitter_px=3.0)
 
-            # Re-read text to verify early stopping condition
-            time.sleep(0.3)
+            # Wait for layout update and inspect text
+            time.sleep(0.5)
             try:
                 curr_text = getattr(desc_elem, "text", "") or ""
             except Exception:
-                refreshed = self.find_by_key("job_detail.desc", timeout_sec=0.5)
+                refreshed = self.find_by_key("job_detail.desc", timeout_sec=1.0)
                 curr_text = getattr(refreshed, "text", "") if refreshed else ""
                 if refreshed:
                     desc_elem = refreshed
 
             if "查看更多" not in curr_text or len(curr_text) >= len(initial_text) + 10:
+                _log_info(
+                    f"✨ [Expansion Success] Job description expanded successfully! "
+                    f"Length: {len(initial_text)} -> {len(curr_text)} chars."
+                )
+                expanded = True
                 break
+            else:
+                _log_warn(
+                    f"⚠️ Tap attempt {idx} at ({target_x:.1f}, {target_y:.1f}) did not trigger expansion. "
+                    f"(Text still contains '查看更多', current length: {len(curr_text)})"
+                )
+
+        if not expanded:
+            curr_text = getattr(desc_elem, "text", "") or ""
+            if "查看更多" in curr_text:
+                _log_error(
+                    f"❌ FAILED TO EXPAND JOB DESCRIPTION: '查看更多' is STILL present after scrolling and {len(tap_offsets)} tap attempts! "
+                    f"Tail text: '...{curr_text[-60:].replace(chr(10), ' ')}'"
+                )
+            return False
+
+        return True
 
     def extract_job_posting(self, timeout_sec: float = 10.0) -> JobPosting:
         """Extract structured JobPosting from current job detail screen.
@@ -1092,6 +1205,12 @@ class JobDetailPage(BaseBossPage):
             salary_elem.text.strip() if salary_elem and getattr(salary_elem, "text", None) else ""
         )
         desc = desc_elem.text.strip() if desc_elem and getattr(desc_elem, "text", None) else ""
+
+        if "查看更多" in desc:
+            _log_error(
+                f"❌ [JobDetailPage] Incomplete Job Description extracted! "
+                f"'查看更多' still present in final text for '{title}'. Length: {len(desc)}"
+            )
 
         if not title and not salary:
             raise RuntimeError(

@@ -241,10 +241,16 @@ class ScrapeJobsHandler(BaseTaskHandler):
                         }
                         persisted = await broker.upsert_job_record(enriched_data)
                         scraped_jobs[-1] = persisted
-                        await broker.append_log(
-                            task.id,
-                            f"✨ [Enriched Detail] Extracted full JD for '{persisted['title']}'",
-                        )
+                        if "查看更多" in (persisted.get("job_description") or ""):
+                            await broker.append_log(
+                                task.id,
+                                f"⚠️ [Incomplete JD] '查看更多' was detected in extracted JD for '{persisted['title']}'",
+                            )
+                        else:
+                            await broker.append_log(
+                                task.id,
+                                f"✨ [Enriched Detail] Extracted full JD for '{persisted['title']}'",
+                            )
                     except Exception as e:
                         await broker.append_log(task.id, f"Notice on detail extraction: {e}")
                     finally:

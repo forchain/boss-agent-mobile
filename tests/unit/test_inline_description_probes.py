@@ -1,6 +1,6 @@
 """Unit tests for multi-point inline description probing and ClickableSpan expansion."""
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from boss_agent.pages import JobDetailPage
 from droid_agent_core.gestures import (
@@ -82,7 +82,7 @@ def test_expand_description_skips_when_not_truncated():
     page.find_by_key = MagicMock(side_effect=custom_find)
     page.gestures.human_click_at_point = MagicMock()
 
-    page.expand_description_if_collapsed()
+    assert page.expand_description_if_collapsed() is True
     # No click should happen because text does not contain "查看更多"
     assert not page.gestures.human_click_at_point.called
 
@@ -112,8 +112,7 @@ def test_expand_description_early_stopping_on_first_hit(monkeypatch):
 
     page.gestures.human_click_at_point = MagicMock(side_effect=fake_click)
 
-    page.expand_description_if_collapsed()
-
+    assert page.expand_description_if_collapsed() is True
     assert page.gestures.human_click_at_point.call_count == 1
 
 
@@ -146,6 +145,159 @@ def test_expand_description_multi_point_retry_until_success(monkeypatch):
 
     page.gestures.human_click_at_point = MagicMock(side_effect=fake_click)
 
-    page.expand_description_if_collapsed()
-
+    assert page.expand_description_if_collapsed() is True
     assert page.gestures.human_click_at_point.call_count == 2
+
+
+def test_expand_description_scrolls_when_bottom_obstructed(monkeypatch):
+    """Test that if tv_description bottom exceeds safe viewport, page scrolls up until bottom is visible."""
+    import time
+    monkeypatch.setattr(time, "sleep", lambda s: None)
+
+    mock_driver = MagicMock()
+    page = JobDetailPage(driver=mock_driver)
+    page._get_window_size = MagicMock(return_value={"width": 1080, "height": 2400})
+
+    mock_desc = MagicMock()
+    mock_desc.text = "岗位职责: 1. AI研发管线搭建... 查看更多"
+
+    # Initially: top=900, height=1400 -> bottom=2300 (exceeds safe_bottom_threshold: 2400-260=2140)
+    # After 1 swipe: top=200, height=1400 -> bottom=1600 (within safe_bottom_threshold)
+    scroll_counter = [0]
+
+    def get_rect():
+        if scroll_counter[0] == 0:
+            return {"x": 50, "y": 900, "width": 900, "height": 1400}
+        return {"x": 50, "y": 200, "width": 900, "height": 1400}
+
+    type(mock_desc).rect = property(lambda self: get_rect())
+
+    def custom_find(key, **kwargs):
+        if key == "job_detail.desc":
+            return mock_desc
+        return None
+
+    page.find_by_key = MagicMock(side_effect=custom_find)
+    page.gestures.human_swipe = MagicMock()
+
+    def fake_swipe(*args, **kwargs):
+        scroll_counter[0] += 1
+
+    page.gestures.human_swipe.side_effect = fake_swipe
+
+    def fake_click(x, y, **kw):
+        mock_desc.text = "岗位职责: 1. AI研发管线搭建。任职资格: 1. 熟悉LLM。全文已展开。"
+
+    page.gestures.human_click_at_point = MagicMock(side_effect=fake_click)
+
+    assert page.expand_description_if_collapsed() is True
+    # Must have performed at least 1 swipe to bring the bottom into view!
+    assert page.gestures.human_swipe.called
+    assert page.gestures.human_click_at_point.called
+
+
+def test_expand_description_scrolls_to_locate_desc_when_below_fold(monkeypatch):
+    """Test that if tv_description is completely below fold initially, it scrolls down to locate it."""
+    import time
+    monkeypatch.setattr(time, "sleep", lambda s: None)
+
+    mock_driver = MagicMock()
+    page = JobDetailPage(driver=mock_driver)
+    page._get_window_size = MagicMock(return_value={"width": 1080, "height": 2400})
+
+    mock_desc = MagicMock()
+    mock_desc.text = "岗位职责: 1. AI研发管线搭建... 查看更多"
+    mock_desc.rect = {"x": 50, "y": 200, "width": 900, "height": 1400}
+
+    find_counter = [0]
+
+    def custom_find(key, **kwargs):
+        if key == "job_detail.desc":
+            find_counter[0] += 1
+            # First lookup returns None (below the fold)
+            if find_counter[0] == 1:
+                return None
+            return mock_desc
+        return None
+
+    page.find_by_key = MagicMock(side_effect=custom_find)
+    page.gestures.human_swipe = MagicMock()
+
+    def fake_click(x, y, **kw):
+        mock_desc.text = "岗位职责: 1. AI研发管线搭建。全文已展开。"
+
+    page.gestures.human_click_at_point = MagicMock(side_effect=fake_click)
+
+    assert page.expand_description_if_collapsed() is True
+    assert page.gestures.human_swipe.called
+    assert page.gestures.human_click_at_point.called
+
+
+def test_expand_description_logs_error_when_expansion_fails(monkeypatch):
+    """Test that an explicit error is logged when '查看更多' cannot be expanded."""
+    import time
+    monkeypatch.setattr(time, "sleep", lambda s: None)
+
+    mock_driver = MagicMock()
+    page = JobDetailPage(driver=mock_driver)
+    page._get_window_size = MagicMock(return_value={"width": 1080, "height": 2400})
+
+    mock_desc = MagicMock()
+    mock_desc.text = "岗位职责: 1. 负责AI工具链研发... 查看更多"
+    mock_desc.rect = {"x": 50, "y": 100, "width": 900, "height": 600}
+
+    def custom_find(key, **kwargs):
+        if key == "job_detail.desc":
+            return mock_desc
+        return None
+
+    page.find_by_key = MagicMock(side_effect=custom_find)
+    page.gestures.human_click_at_point = MagicMock()
+
+    with patch("boss_agent.pages.logger.error") as mock_err_log:
+        success = page.expand_description_if_collapsed()
+        assert success is False
+        assert mock_err_log.called
+        err_msg = mock_err_log.call_args[0][0]
+        assert "FAILED TO EXPAND JOB DESCRIPTION" in err_msg
+        assert "查看更多" in err_msg
+
+
+def test_extract_job_posting_logs_error_if_desc_still_contains_expand_text(monkeypatch):
+    """Test that extract_job_posting logs an error if '查看更多' is still present after expansion."""
+    import time
+    monkeypatch.setattr(time, "sleep", lambda s: None)
+
+    mock_driver = MagicMock()
+    page = JobDetailPage(driver=mock_driver)
+    page.wait_for_key = MagicMock(return_value=True)
+
+    mock_title = MagicMock()
+    mock_title.text = "AI Agent应用开发师"
+    mock_comp = MagicMock()
+    mock_comp.text = "某中型科技公司"
+    mock_sal = MagicMock()
+    mock_sal.text = "30-50K"
+    mock_desc = MagicMock()
+    mock_desc.text = "岗位职责: 1. 负责AI工具链研发... 查看更多"
+    mock_desc.rect = {"x": 50, "y": 100, "width": 900, "height": 600}
+
+    def custom_find(key, **kwargs):
+        if key == "job_detail.title":
+            return mock_title
+        if key == "job_detail.company":
+            return mock_comp
+        if key == "job_detail.salary":
+            return mock_sal
+        if key == "job_detail.desc":
+            return mock_desc
+        return None
+
+    page.find_by_key = MagicMock(side_effect=custom_find)
+    page.gestures.human_click_at_point = MagicMock()
+
+    with patch("boss_agent.pages.logger.error") as mock_err_log:
+        posting = page.extract_job_posting(timeout_sec=2.0)
+        assert posting.title == "AI Agent应用开发师"
+        assert mock_err_log.called
+        assert any("Incomplete Job Description" in str(call_arg) for call_arg in mock_err_log.call_args_list)
