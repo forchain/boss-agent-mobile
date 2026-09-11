@@ -4,6 +4,7 @@ src/boss_agent/worker/handlers/scrape_jobs.py
 Handler for SCRAPE_JOBS task: searches, filters, and extracts structured job postings.
 """
 
+import logging
 from typing import Any
 
 from boss_agent.broker.models import AutomationTask, TaskStatus, TaskType
@@ -26,6 +27,8 @@ from boss_agent.pages import (
 )
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.handlers.base import BaseTaskHandler, HandlerResult
+
+logger = logging.getLogger(__name__)
 
 
 class ScrapeJobsHandler(BaseTaskHandler):
@@ -332,12 +335,24 @@ class ScrapeJobsHandler(BaseTaskHandler):
                         persisted = await broker.upsert_job_record(enriched_data)
                         scraped_jobs[-1] = persisted
                         hh_tag = "[猎头]" if enriched_data["is_headhunter"] else "[直招]"
-                        await broker.append_log(
-                            task.id,
-                            f"✨ [Enriched Detail] Extracted full JD for {hh_tag} '{persisted['title']}'",
-                        )
+                        if "查看更多" in (persisted.get("job_description") or ""):
+                            logger.error(
+                                "Incomplete JD: '查看更多' still present in extracted JD for %s '%s'",
+                                hh_tag,
+                                persisted.get("title", ""),
+                            )
+                            await broker.append_log(
+                                task.id,
+                                f"❌ [Incomplete JD Error] '查看更多' was detected in extracted JD for {hh_tag} '{persisted['title']}'",
+                            )
+                        else:
+                            await broker.append_log(
+                                task.id,
+                                f"✨ [Enriched Detail] Extracted full JD for {hh_tag} '{persisted['title']}' ({len(persisted.get('job_description', ''))} chars)",
+                            )
                     except Exception as e:
-                        await broker.append_log(task.id, f"Notice on detail extraction: {e}")
+                        logger.error("Failed to extract detail for '%s': %s", getattr(card, "title", "job"), e)
+                        await broker.append_log(task.id, f"❌ [Detail Error] Failed to extract detail for '{getattr(card, 'title', 'job')}': {e}")
                     finally:
                         detail_page.navigate_back()
 

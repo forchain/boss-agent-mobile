@@ -152,6 +152,11 @@ _Avoid_: card filter, quick check, preliminary pass
 The configured execution depth for a search task governing whether discovered jobs stop at card digest ingestion (`digest_only`), JD enrichment (`save_jd`), or automated greeting (`auto_apply`).
 _Avoid_: search mode, scrape level, crawl stage
 
+**Inline Description Expansion (Bottom-Right Hotspot Tap)**:
+The coordinate targeting mechanism that taps the fixed inline ClickableSpan touch hotspot located in the bottom-right area of the job description text module (`tv_description`) to trigger full description expansion, bypassing Android accessibility node limitations without external coordinate configuration.
+_Avoid_: blind tap, ocr clicker, hardcoded absolute coordinates
+
+
 **Job Lifecycle State**:
 The monotonic progression state of a Job Record tracking its data richness and application stage across mobile automation and backend manual actions (`ignored`, `digest_only`, `jd_saved`, `matched`, `applied`).
 _Avoid_: job status flag, task progress, record phase
