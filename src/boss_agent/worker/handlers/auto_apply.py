@@ -1,7 +1,6 @@
-import asyncio
 from typing import Any
 
-from boss_agent.broker.models import AutomationTask, TaskType
+from boss_agent.broker.models import AutomationTask, TaskStatus, TaskType
 from boss_agent.broker.pocketbase_adapter import BaseTaskBroker
 from boss_agent.graph import run_job_application_graph
 from boss_agent.memory import StructuredCandidateProfile
@@ -46,7 +45,6 @@ class AutoApplyHandler(BaseTaskHandler):
         min_score = float(payload.get("min_score", 70))
         preview_only = bool(payload.get("preview_only", True))
         auto_send = bool(payload.get("auto_send", False))
-        preview_timeout_sec = float(payload.get("preview_timeout_sec", 3.0))
 
         # 1. Resolve Candidate Profile
         profile_data = payload.get("candidate_profile")
@@ -207,35 +205,113 @@ class AutoApplyHandler(BaseTaskHandler):
             f'Tailored Greeting Draft: "{greeting_message}"',
         )
 
-        # 6. Branch Execution: Preview vs Auto-Send
+        # 6. Branch Execution: Quota checking & Auto-Send vs Offline Draft
+        from boss_agent.models import JobRecordStatus
+        from boss_agent.settings import load_settings
+        sys_settings = load_settings()
+        daily_limit = int(payload.get("daily_greeting_limit") or sys_settings.get("daily_greeting_limit", 20))
+
         applied = False
         if auto_send and not preview_only:
             if match_score >= min_score:
-                if detail_page.open_chat(timeout_sec=5.0):
-                    chat_page.type_greeting_message(greeting_message, timeout_sec=5.0)
-                    chat_page.click_send(timeout_sec=3.0)
-                    applied = True
+                today_applied = await broker.count_today_applied_jobs()
+                if today_applied >= daily_limit:
                     await broker.append_log(
                         task.id,
-                        f"✅ [AUTO_SEND] Dispatched greeting message to {job_posting.title} @ {job_posting.company_name}",
+                        f"⚠️ [QUOTA EXCEEDED] Daily greeting quota limit reached ({today_applied}/{daily_limit}). "
+                        f"Degrading to offline draft for '{job_posting.title}' @ '{job_posting.company_name}' (status: matched).",
                     )
-                    chat_page.navigate_back()
+                    await broker.upsert_job_record({
+                        "fingerprint": card.fingerprint,
+                        "title": job_posting.title,
+                        "company_name": job_posting.company_name,
+                        "recruiter_name": job_posting.recruiter_name or "",
+                        "salary_range": job_posting.salary_range,
+                        "location": job_posting.location or "",
+                        "job_description": job_posting.job_description,
+                        "status": JobRecordStatus.MATCHED,
+                        "match_score": match_score,
+                        "greeting_message": greeting_message,
+                        "jd_key_requirements": match_reasons,
+                        "search_keywords": [keyword] if keyword else [],
+                        "source_task_id": task.id,
+                    })
+                    applied = False
+                else:
+                    cur_task = await broker.get_task(task.id)
+                    if cur_task and cur_task.status == TaskStatus.CANCELLED:
+                        await broker.append_log(
+                            task.id,
+                            "🛑 [Task Cancelled] Task was cancelled by user before chat dispatch.",
+                        )
+                        return HandlerResult(success=True, error_message="Task cancelled by user")
+
+                    if detail_page.open_chat(timeout_sec=5.0):
+                        chat_page.type_greeting_message(greeting_message, timeout_sec=5.0)
+                        chat_page.click_send(timeout_sec=3.0)
+                        applied = True
+                        await broker.append_log(
+                            task.id,
+                            f"✅ [AUTO_SEND] Dispatched greeting message to {job_posting.title} @ {job_posting.company_name} ({today_applied + 1}/{daily_limit} today)",
+                        )
+                        await broker.upsert_job_record({
+                            "fingerprint": card.fingerprint,
+                            "title": job_posting.title,
+                            "company_name": job_posting.company_name,
+                            "recruiter_name": job_posting.recruiter_name or "",
+                            "salary_range": job_posting.salary_range,
+                            "location": job_posting.location or "",
+                            "job_description": job_posting.job_description,
+                            "status": JobRecordStatus.APPLIED,
+                            "match_score": match_score,
+                            "greeting_message": greeting_message,
+                            "jd_key_requirements": match_reasons,
+                            "search_keywords": [keyword] if keyword else [],
+                            "source_task_id": task.id,
+                        })
+                        chat_page.navigate_back()
             else:
                 await broker.append_log(
                     task.id,
                     f"⏭️ [AUTO_SEND] Skipped: Match score {match_score} < threshold {min_score}",
                 )
+                await broker.upsert_job_record({
+                    "fingerprint": card.fingerprint,
+                    "title": job_posting.title,
+                    "company_name": job_posting.company_name,
+                    "recruiter_name": job_posting.recruiter_name or "",
+                    "salary_range": job_posting.salary_range,
+                    "location": job_posting.location or "",
+                    "job_description": job_posting.job_description,
+                    "status": JobRecordStatus.JD_SAVED,
+                    "match_score": match_score,
+                    "greeting_message": greeting_message,
+                    "jd_key_requirements": match_reasons,
+                    "search_keywords": [keyword] if keyword else [],
+                    "source_task_id": task.id,
+                })
         else:
-            # Preview mode (safe mode)
-            if detail_page.open_chat(timeout_sec=5.0):
-                chat_page.type_greeting_message(greeting_message, timeout_sec=5.0)
-                await broker.append_log(
-                    task.id,
-                    f"⏳ [PREVIEW MODE] Entered greeting into chat box. Pausing for {preview_timeout_sec}s (NOT SENT)...",
-                )
-                await asyncio.sleep(preview_timeout_sec)
-                chat_page.navigate_back()
-                applied = False
+            # Offline draft mode (Safe Mode - no typing in App)
+            await broker.append_log(
+                task.id,
+                f"💾 [OFFLINE DRAFT] Saved JD and drafted greeting for '{job_posting.title}' (status: matched).",
+            )
+            await broker.upsert_job_record({
+                "fingerprint": card.fingerprint,
+                "title": job_posting.title,
+                "company_name": job_posting.company_name,
+                "recruiter_name": job_posting.recruiter_name or "",
+                "salary_range": job_posting.salary_range,
+                "location": job_posting.location or "",
+                "job_description": job_posting.job_description,
+                "status": JobRecordStatus.MATCHED,
+                "match_score": match_score,
+                "greeting_message": greeting_message,
+                "jd_key_requirements": match_reasons,
+                "search_keywords": [keyword] if keyword else [],
+                "source_task_id": task.id,
+            })
+            applied = False
 
         return HandlerResult(
             success=True,

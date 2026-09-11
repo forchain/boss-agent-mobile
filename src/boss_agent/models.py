@@ -4,9 +4,9 @@ boss_agent.models
 Domain dataclasses for Boss 直聘 entities.
 """
 
+import re
 from dataclasses import dataclass, field
 from enum import StrEnum
-import re
 from typing import Any
 
 
@@ -100,10 +100,34 @@ def extract_tags_from_text(text: str) -> list[str]:
 
 
 class JobRecordStatus(StrEnum):
+    IGNORED = "ignored"
+    DIGEST_ONLY = "digest_only"
+    JD_SAVED = "jd_saved"
     UNMATCHED = "unmatched"
     MATCHED = "matched"
     APPLIED = "applied"
-    IGNORED = "ignored"
+
+
+class TargetAction(StrEnum):
+    DIGEST_ONLY = "digest_only"
+    SAVE_JD = "save_jd"
+    AUTO_APPLY = "auto_apply"
+
+
+STATE_RANK: dict[str, int] = {
+    JobRecordStatus.IGNORED: -1,
+    JobRecordStatus.DIGEST_ONLY: 1,
+    JobRecordStatus.JD_SAVED: 2,
+    JobRecordStatus.UNMATCHED: 2,
+    JobRecordStatus.MATCHED: 3,
+    JobRecordStatus.APPLIED: 4,
+}
+
+TARGET_ACTION_RANK: dict[str, int] = {
+    TargetAction.DIGEST_ONLY: 1,
+    TargetAction.SAVE_JD: 2,
+    TargetAction.AUTO_APPLY: 4,
+}
 
 
 @dataclass
@@ -461,6 +485,8 @@ class SavedSearch:
     is_enabled: bool = False
     last_run_at: str | None = None
     target_task_type: str = "AUTO_APPLY"
+    target_action: str = ""
+    max_jobs: int = 20
     enable_search: bool = True
     enable_filter: bool = True
 
@@ -470,6 +496,13 @@ class SavedSearch:
             self.search.enable_search = self.enable_search
         if hasattr(self, "filter") and self.filter is not None:
             self.filter.enable_filter = self.enable_filter
+        # Bidirectional sync between target_action and target_task_type
+        if not self.target_action:
+            self.target_action = "auto_apply" if self.target_task_type == "AUTO_APPLY" else "save_jd"
+        elif self.target_action == "auto_apply":
+            self.target_task_type = "AUTO_APPLY"
+        else:
+            self.target_task_type = "SCRAPE_JOBS"
 
     @property
     def keyword(self) -> str:
@@ -487,6 +520,8 @@ class SavedSearch:
             "keyword": self.search.keyword,
             "enable_search": self.enable_search,
             "enable_filter": self.enable_filter,
+            "target_action": self.target_action,
+            "max_jobs": self.max_jobs,
             "search": {
                 "keyword": self.search.keyword,
                 "enable_search": self.enable_search,
@@ -505,10 +540,16 @@ class SavedSearch:
             "is_enabled": self.is_enabled,
             "last_run_at": self.last_run_at,
             "target_task_type": self.target_task_type,
+            "target_action": self.target_action,
+            "max_jobs": self.max_jobs,
         }
 
     @classmethod
-    def from_dict(cls, search_id: str, data: dict[str, Any]) -> "SavedSearch":
+    def from_dict(cls, search_id: str | dict[str, Any], data: dict[str, Any] | None = None) -> "SavedSearch":
+        if isinstance(search_id, dict) and data is None:
+            data = search_id
+            search_id = str(data.get("id", ""))
+
         search_data = data.get("search", {}) or {}
         keyword = data.get("keyword")
         if keyword is None:
@@ -580,6 +621,11 @@ class SavedSearch:
 
         screening_policy = ScreeningPolicy.from_dict(policy_data)
 
+        target_task_type = data.get("target_task_type", "AUTO_APPLY")
+        target_action = data.get("target_action")
+        if not target_action:
+            target_action = "auto_apply" if target_task_type == "AUTO_APPLY" else "save_jd"
+
         return cls(
             id=search_id,
             name=data.get("name", search_id),
@@ -590,7 +636,9 @@ class SavedSearch:
             cron_expression=data.get("cron_expression", "") or "",
             is_enabled=bool(data.get("is_enabled", False)),
             last_run_at=data.get("last_run_at"),
-            target_task_type=data.get("target_task_type", "AUTO_APPLY"),
+            target_task_type=target_task_type,
+            target_action=target_action,
+            max_jobs=int(data.get("max_jobs", 20)),
             enable_search=enable_search,
             enable_filter=enable_filter,
         )

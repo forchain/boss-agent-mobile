@@ -109,7 +109,9 @@ export interface AutomationTask {
 	updated?: string;
 }
 
-export type JobRecordStatus = 'unmatched' | 'matched' | 'applied' | 'ignored';
+export type TargetAction = 'digest_only' | 'save_jd' | 'auto_apply';
+
+export type JobRecordStatus = 'digest_only' | 'jd_saved' | 'unmatched' | 'matched' | 'applied' | 'ignored';
 
 export interface JobRecord {
 	id: string;
@@ -155,10 +157,18 @@ export interface SavedSearch {
 	enable_search?: boolean;
 	enable_filter?: boolean;
 	filter?: SavedSearchFilter;
+	target_action?: TargetAction;
+	max_jobs?: number;
 	cron_expression?: string;
 	is_enabled?: boolean;
 	last_run_at?: string | null;
 	target_task_type?: 'AUTO_APPLY' | 'SCRAPE_JOBS' | string;
 	created?: string;
 	updated?: string;
+}
+
+export function resolveTargetAction(search: { target_action?: TargetAction; target_task_type?: string }): TargetAction {
+	if (search.target_action) return search.target_action;
+	if (search.target_task_type === 'AUTO_APPLY') return 'auto_apply';
+	return 'save_jd';
 }

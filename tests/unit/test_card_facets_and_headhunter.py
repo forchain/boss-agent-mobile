@@ -351,7 +351,7 @@ def test_job_list_page_guards_against_recruiter_title_in_location():
         if "tv_company_name" in val_str:
             return [mock_comp]
         if "tv_employer" in val_str:
-            return [mock_recruiter] if "mock_recruiter" in locals() else [mock_rec]
+            return [mock_rec]
         if "tv_distance" in val_str:
             return [mock_loc]
         return []

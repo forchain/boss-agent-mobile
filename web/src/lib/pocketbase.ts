@@ -268,22 +268,25 @@ export async function createAutomationTask(taskType: string, payload: Record<str
 
 export async function listAutomationTasks(options?: {
 	status?: string;
+	filter?: string;
 	page?: number;
 	limit?: number;
 }): Promise<{ items: AutomationTask[]; totalItems: number; totalPages: number }> {
 	const page = options?.page || 1;
 	const limit = options?.limit || 20;
 	const status = options?.status;
+	const customFilter = options?.filter;
 
 	try {
-		const filterParts: string[] = [];
-		if (status && status !== 'all') {
-			filterParts.push(`status='${status}'`);
+		let filter = '';
+		if (customFilter) {
+			filter = customFilter;
+		} else if (status && status !== 'all') {
+			filter = `status='${status}'`;
 		}
-		const filter = filterParts.join(' && ');
 
 		const res = await pb.collection('automation_tasks').getList(page, limit, {
-			filter,
+			filter: filter || undefined,
 			sort: '-created'
 		});
 
@@ -315,7 +318,11 @@ export async function listAutomationTasks(options?: {
 			const tB = b.created ? new Date(b.created).getTime() : 0;
 			return tB - tA;
 		});
-		if (status && status !== 'all') {
+		if (customFilter) {
+			if (customFilter.includes('running')) {
+				all = all.filter((t) => ['running', 'paused_for_takeover', 'resuming', 'pending'].includes(t.status));
+			}
+		} else if (status && status !== 'all') {
 			all = all.filter((t) => t.status === status);
 		}
 		const start = (page - 1) * limit;

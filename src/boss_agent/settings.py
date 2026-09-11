@@ -209,6 +209,7 @@ def load_settings(config_path: str | Path | None = None) -> dict[str, Any]:
         "force_refresh_memory": False,
         "preview_timeout_sec": 3.0,
         "enable_greeting": True,
+        "daily_greeting_limit": 20,
     }
 
     # Load from lowest to highest priority so higher priority files overwrite

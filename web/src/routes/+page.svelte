@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import type { AutomationTask, SavedSearch, TaskStatus } from '$lib/types';
+	import { resolveTargetAction, type AutomationTask, type SavedSearch, type TaskStatus } from '$lib/types';
 	import {
 		pb,
 		checkPocketBaseHealth,
@@ -20,6 +20,7 @@
 	// Active Running Task State
 	let activeTaskId = $state<string | null>(null);
 	let activeTask = $state<AutomationTask | null>(null);
+	let manuallySelectedTaskId = $state<string | null>(null);
 	let isPausedForTakeover = $state(false);
 	let logLines = $state<string[]>([
 		'[System] 任务控制台就绪，正在监听自动化状态流...'
@@ -45,32 +46,105 @@
 	// Polling timer fallback
 	let pollTimer: any = null;
 
+	function getTaskPriority(status: string): number {
+		switch (status) {
+			case 'running':
+				return 100; // Actively executing on device/worker
+			case 'paused_for_takeover':
+				return 90; // Requires human intervention
+			case 'resuming':
+				return 80;
+			case 'pending':
+				return 10; // Waiting in queue
+			default:
+				return 0;
+		}
+	}
+
 	async function refreshAllData() {
 		await Promise.all([loadTaskHistory(), loadScheduledSearches(), checkActiveTask()]);
 	}
 
 	async function checkActiveTask() {
 		try {
-			// Find most recent running or pending or paused task
-			const res = await listAutomationTasks({ limit: 5 });
-			const running = res.items.find((t) =>
+			// Query non-terminal tasks
+			const res = await listAutomationTasks({
+				filter: "status='running' || status='paused_for_takeover' || status='resuming' || status='pending'",
+				limit: 20
+			});
+			const activeCandidates = res.items.filter((t) =>
 				['running', 'paused_for_takeover', 'resuming', 'pending'].includes(t.status)
 			);
-			if (running) {
-				activeTaskId = running.id;
-				activeTask = running;
-				if (running.logs && running.logs.length) {
-					logLines = running.logs;
+
+			if (activeCandidates.length > 0) {
+				// Sort by status priority first, then by creation time (-created)
+				activeCandidates.sort((a, b) => {
+					const prioDiff = getTaskPriority(b.status) - getTaskPriority(a.status);
+					if (prioDiff !== 0) return prioDiff;
+					const timeA = a.created ? new Date(a.created).getTime() : 0;
+					const timeB = b.created ? new Date(b.created).getTime() : 0;
+					return timeB - timeA;
+				});
+
+				const bestCandidate = activeCandidates[0];
+
+				// If user explicitly focused on an active task, honor it
+				let chosen = bestCandidate;
+				if (manuallySelectedTaskId) {
+					const manualMatch = activeCandidates.find((t) => t.id === manuallySelectedTaskId);
+					if (manualMatch) {
+						chosen = manualMatch;
+					} else {
+						// Manually selected task is no longer active, unpin
+						manuallySelectedTaskId = null;
+					}
 				}
-				isPausedForTakeover = running.status === 'paused_for_takeover';
-			} else if (activeTask && ['success', 'failed', 'cancelled'].includes(activeTask.status)) {
-				// Keep activeTask visible until refreshed or new task started
-			} else {
+
+				activeTaskId = chosen.id;
+				activeTask = chosen;
+				if (chosen.logs && chosen.logs.length) {
+					logLines = chosen.logs;
+				}
+				isPausedForTakeover = chosen.status === 'paused_for_takeover';
+				return;
+			}
+
+			// No active candidates found
+			manuallySelectedTaskId = null;
+			if (activeTaskId) {
+				const rec = await getAutomationTask(activeTaskId);
+				if (rec) {
+					activeTask = rec;
+					if (rec.logs && rec.logs.length) {
+						logLines = rec.logs;
+					}
+					isPausedForTakeover = rec.status === 'paused_for_takeover';
+				}
+			}
+
+			if (activeTask && !['success', 'failed', 'cancelled'].includes(activeTask.status)) {
 				activeTaskId = null;
 				activeTask = null;
 				isPausedForTakeover = false;
 			}
-		} catch (e) {}
+		} catch (e) {
+			console.warn('Error checking active task:', e);
+		}
+	}
+
+	function onFocusTask(t: AutomationTask) {
+		manuallySelectedTaskId = t.id;
+		activeTaskId = t.id;
+		activeTask = t;
+		if (t.logs && t.logs.length) {
+			logLines = t.logs;
+		}
+		isPausedForTakeover = t.status === 'paused_for_takeover';
+	}
+
+	function onUnfocusManualTask() {
+		manuallySelectedTaskId = null;
+		checkActiveTask();
 	}
 
 	async function loadTaskHistory() {
@@ -110,10 +184,24 @@
 
 	async function onCancelActiveTask() {
 		if (!activeTaskId) return;
-		await cancelTask(activeTaskId);
-		isPausedForTakeover = false;
-		logLines.push(`[User Action] 任务已被人工取消 (CANCELLED)。`);
-		await loadTaskHistory();
+		await onCancelTask(activeTaskId);
+	}
+
+	async function onCancelTask(taskId: string) {
+		try {
+			await cancelTask(taskId);
+			if (activeTaskId === taskId) {
+				isPausedForTakeover = false;
+				logLines.push(`[User Action] 任务已被人工取消 (CANCELLED)。`);
+				if (manuallySelectedTaskId === taskId) {
+					manuallySelectedTaskId = null;
+				}
+			}
+			await loadTaskHistory();
+			await checkActiveTask();
+		} catch (e) {
+			console.warn('Failed to cancel task:', e);
+		}
 	}
 
 	async function onRerunTask(t: AutomationTask) {
@@ -137,19 +225,22 @@
 	}
 
 	async function onRunScheduledNow(search: SavedSearch) {
-		const type = (search.target_task_type || 'AUTO_APPLY') as any;
+		const action = resolveTargetAction(search);
+		const type = action === 'auto_apply' ? 'AUTO_APPLY' : 'SCRAPE_JOBS';
 		const payload = {
 			search_id: search.id,
 			search_name: search.name,
 			keyword: search.keyword || '',
 			filter: search.filter || {},
+			target_action: action,
+			max_jobs: search.max_jobs || 30,
 			preview_only: true,
 			triggered_manually: true
 		};
 		const task = await createAutomationTask(type, payload);
 		activeTaskId = task.id;
 		activeTask = task;
-		logLines = [`[Scheduled] 手动触发定时策略 [${search.name}] 任务下发成功 (ID: ${task.id})...`];
+		logLines = [`[Scheduled] 手动触发策略 [${search.name}] 任务下发成功 (ID: ${task.id})...`];
 		await loadTaskHistory();
 	}
 
@@ -191,6 +282,14 @@
 							}
 							isPausedForTakeover = t.status === 'paused_for_takeover';
 						}
+
+						// If an actively running task appears or current active task finished, re-evaluate
+						if (t.status === 'running' && activeTask?.status !== 'running') {
+							checkActiveTask();
+						} else if (activeTask && ['success', 'failed', 'cancelled'].includes(activeTask.status)) {
+							checkActiveTask();
+						}
+
 						// Refresh history in background
 						loadTaskHistory();
 					}
@@ -202,18 +301,7 @@
 
 		// Polling fallback every 2s
 		pollTimer = setInterval(async () => {
-			if (activeTaskId) {
-				try {
-					const rec = await getAutomationTask(activeTaskId);
-					if (rec) {
-						activeTask = rec;
-						if (rec.logs && rec.logs.length) {
-							logLines = rec.logs;
-						}
-						isPausedForTakeover = rec.status === 'paused_for_takeover';
-					}
-				} catch (e) {}
-			}
+			await checkActiveTask();
 		}, 2000);
 	});
 
@@ -366,6 +454,12 @@
 				</div>
 
 				<div class="flex items-center space-x-3 text-[11px] text-slate-400 font-mono">
+					{#if manuallySelectedTaskId}
+						<span class="px-2 py-0.5 rounded bg-cyan-950/80 border border-cyan-700 text-cyan-300 flex items-center gap-1">
+							📌 手动固定监视
+							<button onclick={onUnfocusManualTask} class="text-cyan-400 hover:text-white underline ml-1">恢复自动跟踪</button>
+						</span>
+					{/if}
 					<span>创建: {activeTask.created?.slice(11, 19) || '刚刚'}</span>
 					{#if activeTask.assigned_worker}
 						<span class="px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-slate-300">
@@ -545,16 +639,39 @@
 									<td class="py-3 font-mono text-slate-500 text-[10px]">
 										{t.created?.slice(0, 16).replace('T', ' ') || '-'}
 									</td>
-									<td class="py-3 text-right space-x-2">
+									<td class="py-3 text-right space-x-1.5 whitespace-nowrap">
+										{#if ['running', 'paused_for_takeover', 'pending', 'resuming'].includes(t.status)}
+											<button
+												onclick={() => onCancelTask(t.id)}
+												class="text-rose-400 hover:text-rose-200 font-medium transition text-[11px] px-2 py-0.5 rounded bg-rose-950/60 border border-rose-800 hover:bg-rose-900"
+												title="终止此任务"
+											>
+												⏹ 终止
+											</button>
+										{/if}
+										{#if t.id !== activeTaskId}
+											<button
+												onclick={() => onFocusTask(t)}
+												class="text-cyan-400 hover:text-cyan-300 font-medium transition text-[11px] px-2 py-0.5 rounded hover:bg-slate-800 border border-slate-800"
+												title="切换并在上方控制台实时监视此任务"
+											>
+												📡 监视
+											</button>
+										{:else}
+											<span class="text-cyan-400 font-medium text-[11px] px-2 py-0.5 bg-cyan-950/80 border border-cyan-700/80 rounded inline-flex items-center gap-1">
+												<span class="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping"></span>
+												监视中
+											</span>
+										{/if}
 										<button
 											onclick={() => handleOpenLogModal(t)}
-											class="text-cyan-400 hover:text-cyan-300 font-medium transition text-[11px]"
+											class="text-slate-400 hover:text-slate-200 transition text-[11px] px-1.5 py-0.5"
 										>
-											📜 查看日志
+											📜 日志
 										</button>
 										<button
 											onclick={() => onRerunTask(t)}
-											class="text-slate-400 hover:text-slate-200 transition text-[11px]"
+											class="text-slate-400 hover:text-slate-200 transition text-[11px] px-1.5 py-0.5"
 										>
 											🔁 重跑
 										</button>
@@ -580,14 +697,25 @@
 			{:else}
 				<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
 					{#each scheduledSearches as s}
+						{@const sAction = resolveTargetAction(s)}
 						<div class="p-4 rounded-xl bg-slate-950/70 border border-slate-800/80 space-y-3 flex flex-col justify-between">
 							<div class="space-y-2">
 								<div class="flex items-center justify-between">
 									<div class="flex items-center space-x-2">
 										<h3 class="text-xs font-bold text-slate-100">{s.name}</h3>
-										<span class="px-1.5 py-0.2 rounded font-mono text-[9px] bg-cyan-950 text-cyan-400 border border-cyan-800">
-											{s.target_task_type || 'AUTO_APPLY'}
-										</span>
+										{#if sAction === 'digest_only'}
+											<span class="px-1.5 py-0.5 rounded font-mono text-[9px] bg-amber-950 text-amber-400 border border-amber-800">
+												⚡ 仅抓摘要
+											</span>
+										{:else if sAction === 'save_jd'}
+											<span class="px-1.5 py-0.5 rounded font-mono text-[9px] bg-cyan-950 text-cyan-400 border border-cyan-800">
+												📖 深度存JD
+											</span>
+										{:else}
+											<span class="px-1.5 py-0.5 rounded font-mono text-[9px] bg-emerald-950 text-emerald-400 border border-emerald-800">
+												🚀 自动沟通
+											</span>
+										{/if}
 									</div>
 									<!-- Toggle switch -->
 									<button
@@ -658,4 +786,5 @@
 		inspectTask = null;
 	}}
 	onRerun={onRerunTask}
+	onCancel={(t) => onCancelTask(t.id)}
 />

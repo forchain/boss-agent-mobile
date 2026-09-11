@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import type { AutomationTask, SavedSearch, TaskType } from '$lib/types';
+	import { resolveTargetAction, type AutomationTask, type SavedSearch, type TaskType, type TargetAction } from '$lib/types';
 	import { listSavedSearches, createAutomationTask, getCandidateProfile } from '$lib/pocketbase';
 
 	let {
@@ -22,7 +22,8 @@
 	let selectedSearchId = $state<string>('');
 
 	// Task execution parameters
-	let taskType = $state<TaskType>('AUTO_APPLY');
+	let targetAction = $state<TargetAction>('save_jd');
+	let maxJobs = $state<number>(30);
 	let minScore = $state(75);
 	let taskMode = $state<'preview' | 'auto_send'>('preview');
 
@@ -32,9 +33,8 @@
 			searches = list;
 			if (list.length > 0 && (!selectedSearchId || !list.some((s) => s.id === selectedSearchId))) {
 				selectedSearchId = list[0].id;
-				if (list[0].target_task_type) {
-					taskType = list[0].target_task_type as TaskType;
-				}
+				targetAction = resolveTargetAction(list[0]);
+				maxJobs = list[0].max_jobs ?? 30;
 			}
 		} catch (e) {}
 	}
@@ -48,8 +48,9 @@
 	$effect(() => {
 		if (selectedSearchId) {
 			const target = searches.find((s) => s.id === selectedSearchId);
-			if (target?.target_task_type) {
-				taskType = target.target_task_type as TaskType;
+			if (target) {
+				targetAction = resolveTargetAction(target);
+				maxJobs = target.max_jobs ?? 30;
 			}
 		}
 	});
@@ -67,6 +68,7 @@
 		errorMessage = '';
 		try {
 			const profile = await getCandidateProfile();
+			const taskType = targetAction === 'auto_apply' ? 'AUTO_APPLY' : 'SCRAPE_JOBS';
 			const payload = {
 				search_id: target.id,
 				saved_search_id: target.id,
@@ -75,15 +77,16 @@
 				enable_search: target.enable_search !== false,
 				enable_filter: target.enable_filter !== false,
 				filter: target.filter || {},
+				target_action: targetAction,
+				max_jobs: Number(maxJobs) > 0 ? Number(maxJobs) : 30,
 				min_score: minScore,
-				preview_only: taskMode === 'preview',
-				auto_send: taskMode === 'auto_send',
+				preview_only: targetAction === 'auto_apply' ? taskMode === 'preview' : true,
+				auto_send: targetAction === 'auto_apply' ? taskMode === 'auto_send' : false,
 				preview_timeout_sec: 3.0,
 				candidate_profile: profile || {}
 			};
 
-			const type = taskType || (target.target_task_type as TaskType) || 'AUTO_APPLY';
-			const task = await createAutomationTask(type, payload);
+			const task = await createAutomationTask(taskType, payload);
 			onTaskCreated(task);
 			onClose();
 		} catch (e: any) {
@@ -206,8 +209,9 @@
 									class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-slate-200 focus:outline-none focus:border-cyan-500"
 								>
 									{#each searches as s}
+										{@const sAction = resolveTargetAction(s)}
 										<option value={s.id}>
-											{s.name} ({s.keyword || '无关键词'} · {s.target_task_type || 'AUTO_APPLY'})
+											{s.name} ({s.keyword || '无关键词'} · {sAction === 'digest_only' ? '仅抓摘要' : sAction === 'save_jd' ? '深度存JD' : '自动沟通'})
 										</option>
 									{/each}
 								</select>
@@ -266,50 +270,87 @@
 							{/if}
 
 							<!-- Execution Parameters -->
-							<div class="grid grid-cols-2 gap-3 pt-1">
-								<div>
-									<label for="template-task-type-select" class="block text-slate-400 mb-1 font-medium">任务类型</label>
-									<select
-										id="template-task-type-select"
-										bind:value={taskType}
-										class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-cyan-500"
-									>
-										<option value="AUTO_APPLY">🚀 AUTO_APPLY (智能筛选与打招呼)</option>
-										<option value="SCRAPE_JOBS">🔍 SCRAPE_JOBS (仅抓取职位数据)</option>
-									</select>
+							<div class="space-y-3 pt-1">
+								<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+									<div>
+										<label for="template-target-action-select" class="block text-slate-400 mb-1 font-medium">
+											目标操作级别 (Target Action)
+										</label>
+										<select
+											id="template-target-action-select"
+											bind:value={targetAction}
+											class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-cyan-500 text-xs"
+										>
+											<option value="digest_only">⚡ 仅抓取摘要 (digest_only) - 不点开卡片</option>
+											<option value="save_jd">📖 深度存JD (save_jd) - 保存岗位职责全文</option>
+											<option value="auto_apply">🚀 自动打招呼 (auto_apply) - 深度存JD并AI沟通</option>
+										</select>
+									</div>
+									<div>
+										<label for="template-max-jobs-input" class="block text-slate-400 mb-1 font-medium">
+											最大扫描岗位数 (Max Jobs)
+										</label>
+										<input
+											id="template-max-jobs-input"
+											type="number"
+											min="1"
+											max="200"
+											bind:value={maxJobs}
+											placeholder="30"
+											class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-cyan-500 font-mono text-xs"
+										/>
+									</div>
 								</div>
-								<div>
-									<label for="template-mode-select" class="block text-slate-400 mb-1 font-medium">发送模式</label>
-									<select
-										id="template-mode-select"
-										bind:value={taskMode}
-										class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-cyan-500"
-									>
-										<option value="preview">安全预览模式 (输入草稿不发送)</option>
-										<option value="auto_send">自动发送模式 (达标自动点击发送)</option>
-									</select>
-								</div>
-							</div>
 
-							<div>
-								<div class="flex justify-between items-center mb-1">
-									<label for="template-minscore-input" class="text-slate-400 font-medium">最低匹配分阈值 (0 - 100)</label>
-									<span class="text-cyan-400 font-bold font-mono">{minScore} 分</span>
-								</div>
-								<input
-									id="template-minscore-input"
-									type="range"
-									min="50"
-									max="95"
-									step="5"
-									bind:value={minScore}
-									class="w-full accent-cyan-500"
-								/>
-								<div class="flex justify-between text-[10px] text-slate-500 mt-0.5">
-									<span>宽松 (50分)</span>
-									<span>平衡 (75分)</span>
-									<span>严谨 (90+分)</span>
-								</div>
+								{#if targetAction === 'auto_apply'}
+									<div class="p-3 bg-slate-950/80 border border-slate-800/80 rounded-xl space-y-3">
+										<div>
+											<label for="template-mode-select" class="block text-slate-400 mb-1 font-medium text-xs">
+												发送模式
+											</label>
+											<select
+												id="template-mode-select"
+												bind:value={taskMode}
+												class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-cyan-500 text-xs"
+											>
+												<option value="preview">🛡️ 安全预览模式 (输入草稿不发送)</option>
+												<option value="auto_send">⚡ 自动发送模式 (达标自动点击发送)</option>
+											</select>
+										</div>
+
+										<div>
+											<div class="flex justify-between items-center mb-1">
+												<label for="template-minscore-input" class="text-slate-400 font-medium text-xs">
+													最低匹配分阈值 (0 - 100)
+												</label>
+												<span class="text-cyan-400 font-bold font-mono text-xs">{minScore} 分</span>
+											</div>
+											<input
+												id="template-minscore-input"
+												type="range"
+												min="50"
+												max="95"
+												step="5"
+												bind:value={minScore}
+												class="w-full accent-cyan-500"
+											/>
+											<div class="flex justify-between text-[10px] text-slate-500 mt-0.5">
+												<span>宽松 (50分)</span>
+												<span>平衡 (75分)</span>
+												<span>严谨 (90+分)</span>
+											</div>
+										</div>
+									</div>
+								{:else}
+									<div class="p-2.5 bg-slate-950/60 border border-slate-800/60 rounded-xl text-[11px] text-slate-400 flex items-center space-x-2">
+										<span>ℹ️</span>
+										<span>
+											{targetAction === 'digest_only'
+												? '仅抓取列表摘要模式：不点开详情，不发起沟通，仅保存列表核心摘要。'
+												: '深度存JD模式：点开卡片保存完整岗位职责，不主动发起沟通。'}
+										</span>
+									</div>
+								{/if}
 							</div>
 						{/if}
 					</div>

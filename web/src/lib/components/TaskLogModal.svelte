@@ -5,12 +5,14 @@
 		isOpen = false,
 		task = null,
 		onClose,
-		onRerun
+		onRerun,
+		onCancel
 	}: {
 		isOpen: boolean;
 		task: AutomationTask | null;
 		onClose: () => void;
 		onRerun?: (task: AutomationTask) => void;
+		onCancel?: (task: AutomationTask) => void;
 	} = $props();
 
 	let copySuccess = $state(false);
@@ -111,6 +113,18 @@
 				</button>
 
 				<div class="flex items-center space-x-2">
+					{#if onCancel && ['running', 'paused_for_takeover', 'pending', 'resuming'].includes(task.status)}
+						<button
+							type="button"
+							onclick={() => {
+								onCancel(task);
+								onClose();
+							}}
+							class="border border-rose-800 bg-rose-950/60 hover:bg-rose-900 text-rose-300 font-medium px-3.5 py-1.5 rounded-lg transition text-xs flex items-center space-x-1"
+						>
+							<span>⏹ 终止此任务</span>
+						</button>
+					{/if}
 					{#if onRerun}
 						<button
 							type="button"

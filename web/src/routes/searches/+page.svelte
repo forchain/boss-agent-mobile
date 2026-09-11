@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import type { SavedSearch } from '$lib/types';
+	import { resolveTargetAction, type SavedSearch } from '$lib/types';
 	import {
 		pb,
 		checkPocketBaseHealth,
@@ -44,6 +44,8 @@
 		enable_search: boolean;
 		enable_filter: boolean;
 		target_task_type: 'AUTO_APPLY' | 'SCRAPE_JOBS';
+		target_action: 'digest_only' | 'save_jd' | 'auto_apply';
+		max_jobs: number;
 		cron_expression: string;
 		is_enabled: boolean;
 		filter: {
@@ -62,6 +64,8 @@
 		enable_search: true,
 		enable_filter: true,
 		target_task_type: 'AUTO_APPLY',
+		target_action: 'save_jd',
+		max_jobs: 30,
 		cron_expression: '0 9 * * *',
 		is_enabled: false,
 		filter: {
@@ -213,6 +217,8 @@
 			enable_search: true,
 			enable_filter: true,
 			target_task_type: 'AUTO_APPLY',
+			target_action: 'save_jd',
+			max_jobs: 30,
 			cron_expression: '0 9 * * *',
 			is_enabled: false,
 			filter: {
@@ -239,6 +245,8 @@
 			enable_search: search.enable_search !== false,
 			enable_filter: search.enable_filter !== false,
 			target_task_type: (search.target_task_type === 'SCRAPE_JOBS' ? 'SCRAPE_JOBS' : 'AUTO_APPLY'),
+			target_action: search.target_action || (search.target_task_type === 'SCRAPE_JOBS' ? 'save_jd' : 'auto_apply'),
+			max_jobs: search.max_jobs ?? 30,
 			cron_expression: search.cron_expression || '',
 			is_enabled: !!search.is_enabled,
 			filter: {
@@ -298,13 +306,16 @@
 		isSaving = true;
 		formError = '';
 		try {
+			const derivedTaskType = modalForm.target_action === 'auto_apply' ? 'AUTO_APPLY' : 'SCRAPE_JOBS';
 			const payload: any = {
 				name: modalForm.name.trim(),
 				description: modalForm.description.trim(),
 				keyword: modalForm.keyword.trim(),
 				enable_search: modalForm.enable_search,
 				enable_filter: modalForm.enable_filter,
-				target_task_type: modalForm.target_task_type,
+				target_task_type: derivedTaskType,
+				target_action: modalForm.target_action,
+				max_jobs: Number(modalForm.max_jobs) > 0 ? Number(modalForm.max_jobs) : 30,
 				cron_expression: modalForm.cron_expression.trim(),
 				is_enabled: modalForm.is_enabled,
 				filter: {
@@ -360,22 +371,27 @@
 		}
 	}
 
-	async function onTriggerSearch(search: SavedSearch, taskType: 'AUTO_APPLY' | 'SCRAPE_JOBS') {
-		triggerStatus[search.id] = `正在下发 ${taskType} 任务...`;
+	async function onTriggerSearch(search: SavedSearch, action: 'digest_only' | 'save_jd' | 'auto_apply') {
+		const taskType = action === 'auto_apply' ? 'AUTO_APPLY' : 'SCRAPE_JOBS';
+		const label = action === 'digest_only' ? '仅抓摘要' : action === 'save_jd' ? '深度存JD' : '自动沟通';
+		triggerStatus[search.id] = `正在下发 [${label}] 任务...`;
 		const payload = {
 			saved_search_id: search.id,
+			search_id: search.id,
+			search_name: search.name,
 			keyword: search.keyword || '',
 			enable_search: search.enable_search !== false,
 			enable_filter: search.enable_filter !== false,
 			filter: search.filter || {},
+			target_action: action,
+			max_jobs: search.max_jobs || 30,
 			min_score: 70,
 			preview_only: true,
-			auto_send: false,
-			preview_timeout_sec: 3.0
+			auto_send: false
 		};
 		try {
 			const task = await createAutomationTask(taskType, payload);
-			triggerStatus[search.id] = `✅ 已派发: ${task.id}`;
+			triggerStatus[search.id] = `✅ 已派发 [${label}]: ${task.id}`;
 			setTimeout(() => {
 				delete triggerStatus[search.id];
 			}, 5000);
@@ -478,6 +494,7 @@
 	{:else}
 		<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
 			{#each searches as search (search.id)}
+				{@const currentAction = resolveTargetAction(search)}
 				<div class="bg-slate-900/80 border border-slate-800 hover:border-slate-700 rounded-2xl p-6 shadow-xl space-y-4 flex flex-col justify-between transition-all">
 					<div class="space-y-3">
 						<!-- Card Header: Title & Badges -->
@@ -493,11 +510,24 @@
 									<p class="text-xs text-slate-400 mt-1 leading-relaxed">{search.description}</p>
 								{/if}
 							</div>
-							<span
-								class="shrink-0 text-[10px] px-2.5 py-1 rounded-full font-mono font-medium {search.target_task_type === 'AUTO_APPLY' ? 'bg-cyan-950 text-cyan-400 border border-cyan-800' : 'bg-amber-950 text-amber-400 border border-amber-800'}"
-							>
-								{search.target_task_type || 'AUTO_APPLY'}
-							</span>
+							<div class="flex flex-col sm:flex-row items-end sm:items-center gap-1.5 shrink-0">
+								{#if currentAction === 'digest_only'}
+									<span class="text-[10px] px-2.5 py-1 rounded-full font-mono font-medium bg-amber-950 text-amber-300 border border-amber-800">
+										⚡ 仅抓摘要
+									</span>
+								{:else if currentAction === 'save_jd'}
+									<span class="text-[10px] px-2.5 py-1 rounded-full font-mono font-medium bg-cyan-950 text-cyan-300 border border-cyan-800">
+										📖 深度存JD
+									</span>
+								{:else}
+									<span class="text-[10px] px-2.5 py-1 rounded-full font-mono font-medium bg-emerald-950 text-emerald-300 border border-emerald-800">
+										🚀 自动沟通
+									</span>
+								{/if}
+								<span class="text-[10px] px-2.5 py-1 rounded-full font-mono font-medium bg-slate-800 text-slate-300 border border-slate-700">
+									上限 {search.max_jobs ?? 30} 岗
+								</span>
+							</div>
 						</div>
 
 						<!-- Keyword Badge & Mode Indicators -->
@@ -621,24 +651,48 @@
 							</div>
 						{/if}
 						<div class="flex items-center justify-between gap-2">
-							<div class="flex items-center space-x-2">
+							<div class="flex flex-wrap items-center gap-1.5">
 								<button
 									type="button"
-									onclick={() => onTriggerSearch(search, 'AUTO_APPLY')}
-									class="bg-cyan-600 hover:bg-cyan-500 text-white font-medium px-3 py-1.5 rounded-lg text-xs transition shadow flex items-center space-x-1"
-									title="立即将此搜索策略下发为 AUTO_APPLY 智能投递任务"
+									onclick={() => onTriggerSearch(search, 'digest_only')}
+									class="px-2.5 py-1.5 rounded-lg text-xs font-medium transition flex items-center space-x-1 {currentAction === 'digest_only'
+										? 'bg-amber-600 hover:bg-amber-500 text-white shadow ring-1 ring-amber-400/50'
+										: 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700'}"
+									title="立即执行此策略：仅抓取摘要（不点开卡片，不发起沟通）"
 								>
-									<span>🚀</span>
-									<span>立即投递</span>
+									<span>⚡</span>
+									<span>抓摘要</span>
+									{#if currentAction === 'digest_only'}
+										<span class="text-[9px] opacity-80">(默认)</span>
+									{/if}
 								</button>
 								<button
 									type="button"
-									onclick={() => onTriggerSearch(search, 'SCRAPE_JOBS')}
-									class="bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium px-3 py-1.5 rounded-lg text-xs transition border border-slate-700 flex items-center space-x-1"
-									title="立即将此搜索策略下发为 SCRAPE_JOBS 仅抓取职位任务"
+									onclick={() => onTriggerSearch(search, 'save_jd')}
+									class="px-2.5 py-1.5 rounded-lg text-xs font-medium transition flex items-center space-x-1 {currentAction === 'save_jd'
+										? 'bg-cyan-600 hover:bg-cyan-500 text-white shadow ring-1 ring-cyan-400/50'
+										: 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700'}"
+									title="立即执行此策略：深度抓取并保存 JD 全文（不发起沟通）"
 								>
-									<span>🔍</span>
-									<span>仅抓取</span>
+									<span>📖</span>
+									<span>存JD</span>
+									{#if currentAction === 'save_jd'}
+										<span class="text-[9px] opacity-80">(默认)</span>
+									{/if}
+								</button>
+								<button
+									type="button"
+									onclick={() => onTriggerSearch(search, 'auto_apply')}
+									class="px-2.5 py-1.5 rounded-lg text-xs font-medium transition flex items-center space-x-1 {currentAction === 'auto_apply'
+										? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow ring-1 ring-emerald-400/50'
+										: 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700'}"
+									title="立即执行此策略：智能匹配并自动打招呼"
+								>
+									<span>🚀</span>
+									<span>自动沟通</span>
+									{#if currentAction === 'auto_apply'}
+										<span class="text-[9px] opacity-80">(默认)</span>
+									{/if}
 								</button>
 							</div>
 
@@ -766,33 +820,60 @@
 				</div>
 
 				<!-- Execution Mode & Schedule -->
-				<div class="border-t border-slate-800/80 pt-4 space-y-3">
+				<div class="border-t border-slate-800/80 pt-4 space-y-4">
 					<h3 class="text-xs font-bold text-slate-200 flex items-center space-x-1.5">
 						<span>⚙️</span>
 						<span>任务执行与自动化调度配置</span>
 					</h3>
+
 					<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
 						<div>
-							<label for="form-task-type" class="block font-medium text-slate-400 mb-1">默认任务类型</label>
+							<label for="form-target-action" class="block font-medium text-slate-400 mb-1">
+								目标操作级别 (Target Action)
+							</label>
 							<select
-								id="form-task-type"
-								bind:value={modalForm.target_task_type}
-								class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-cyan-500"
+								id="form-target-action"
+								bind:value={modalForm.target_action}
+								class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-cyan-500 text-xs"
 							>
-								<option value="AUTO_APPLY">AUTO_APPLY (智能匹配与投递)</option>
-								<option value="SCRAPE_JOBS">SCRAPE_JOBS (仅抓取职位数据)</option>
+								<option value="digest_only">⚡ 仅抓取摘要 (digest_only) - 不点开卡片，保存列表基本信息</option>
+								<option value="save_jd">📖 深度存JD (save_jd) - 点开卡片保存详情页岗位职责全文</option>
+								<option value="auto_apply">🚀 自动打招呼 (auto_apply) - 深度存JD并进行AI匹配与发送</option>
 							</select>
+							<span class="text-[10px] text-slate-500 block mt-1">
+								{modalForm.target_action === 'auto_apply'
+									? '调度时自动派发 AUTO_APPLY 智能投递任务，生成招呼语并沟通'
+									: '调度时自动派发 SCRAPE_JOBS 职位抓取任务，不主动发起沟通'}
+							</span>
 						</div>
 						<div>
-							<label for="form-cron-expr" class="block font-medium text-slate-400 mb-1">Cron 定时表达式</label>
+							<label for="form-max-jobs" class="block font-medium text-slate-400 mb-1">
+								最大扫描岗位数 (Max Jobs)
+							</label>
 							<input
-								id="form-cron-expr"
-								type="text"
-								bind:value={modalForm.cron_expression}
-								placeholder="0 9 * * *"
-								class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-cyan-500 font-mono"
+								id="form-max-jobs"
+								type="number"
+								min="1"
+								max="200"
+								bind:value={modalForm.max_jobs}
+								placeholder="30"
+								class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-cyan-500 font-mono text-xs"
 							/>
+							<span class="text-[10px] text-slate-500 block mt-1">
+								达到此岗位数或触达“暂无符合职位，为你推荐”底部分割线时终止翻页
+							</span>
 						</div>
+					</div>
+
+					<div>
+						<label for="form-cron-expr" class="block font-medium text-slate-400 mb-1">Cron 定时表达式</label>
+						<input
+							id="form-cron-expr"
+							type="text"
+							bind:value={modalForm.cron_expression}
+							placeholder="例如：0 9 * * * (每天上午 9 点自动执行)"
+							class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-cyan-500 font-mono text-xs"
+						/>
 					</div>
 
 					<!-- Cron Presets & Enable Toggle -->
