@@ -4,7 +4,12 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from droid_agent_core.gestures import BézierTouchSynthesizer, HumanizedGestureExecutor, Point
+from droid_agent_core.gestures import (
+    BézierTouchSynthesizer,
+    HumanizedGestureExecutor,
+    Point,
+    calculate_probe_coordinate,
+)
 from droid_agent_core.locators import (
     LocatorRegistry,
     UISelector,
@@ -976,9 +981,94 @@ class JobDetailPage(BaseBossPage):
     """Extracts job posting details and interacts with the job detail screen."""
 
     def expand_description_if_collapsed(self) -> None:
-        elem = self.find_by_key("job_detail.expand_btn", timeout_sec=1.0)
+        # 1. First attempt: standard explicit expand button if visible
+        elem = self.find_by_key("job_detail.expand_btn", timeout_sec=0.5)
         if elem:
             self.gestures.human_click(elem)
+            return
+
+        # 2. Second attempt: inline ClickableSpan probe within tv_description
+        desc_elem = self.find_by_key("job_detail.desc", timeout_sec=1.0)
+        if not desc_elem:
+            return
+
+        initial_text = getattr(desc_elem, "text", "") or ""
+        # Only probe if text indicates it is truncated/collapsed
+        if not ("查看更多" in initial_text or "展开" in initial_text or initial_text.endswith("...")):
+            return
+
+        rect = getattr(desc_elem, "rect", None)
+        if not (
+            isinstance(rect, dict)
+            and all(
+                k in rect and isinstance(rect[k], int | float)
+                for k in ("x", "y", "width", "height")
+            )
+        ):
+            return
+
+        # Viewport safety check: ensure bottom edge of tv_description is not offscreen
+        win_size = self._get_window_size()
+        screen_height = win_size.get("height", 2400)
+        screen_width = win_size.get("width", 1080)
+
+        elem_bottom = float(rect["y"]) + float(rect["height"])
+        if elem_bottom > screen_height - 150:
+            scroll_dist = min(int(elem_bottom - (screen_height * 0.7)), int(screen_height * 0.3))
+            if scroll_dist > 50:
+                mid_x = screen_width // 2
+                start_y = int(screen_height * 0.7)
+                end_y = max(int(screen_height * 0.3), start_y - scroll_dist)
+                self.gestures.human_swipe(
+                    Point(mid_x, start_y),
+                    Point(mid_x, end_y),
+                    duration_ms=400,
+                )
+                desc_elem = self.find_by_key("job_detail.desc", timeout_sec=1.0)
+                if not desc_elem:
+                    return
+                rect = getattr(desc_elem, "rect", None)
+                if not (
+                    isinstance(rect, dict)
+                    and all(
+                        k in rect and isinstance(rect[k], int | float)
+                        for k in ("x", "y", "width", "height")
+                    )
+                ):
+                    return
+
+        # Load probe configurations from locator registry
+        probe_cfg = self.locators.get_raw("job_detail.inline_expand_probes") or {}
+        origin = probe_cfg.get("origin", "bottom-left") if isinstance(probe_cfg, dict) else "bottom-left"
+        default_points = [
+            [0.90, 20],
+            [0.90, 60],
+            [0.70, 20],
+            [0.25, 20],
+            [0.50, 60],
+        ]
+        points = (
+            probe_cfg.get("points", default_points)
+            if isinstance(probe_cfg, dict)
+            else default_points
+        )
+
+        for pt in points:
+            target_x, target_y = calculate_probe_coordinate(rect, pt, origin=origin)
+            self.gestures.human_click_at_point(target_x, target_y, jitter_px=3.0)
+
+            # Re-read text to verify early stopping condition
+            time.sleep(0.3)
+            try:
+                curr_text = getattr(desc_elem, "text", "") or ""
+            except Exception:
+                refreshed = self.find_by_key("job_detail.desc", timeout_sec=0.5)
+                curr_text = getattr(refreshed, "text", "") if refreshed else ""
+                if refreshed:
+                    desc_elem = refreshed
+
+            if "查看更多" not in curr_text or len(curr_text) >= len(initial_text) + 10:
+                break
 
     def extract_job_posting(self, timeout_sec: float = 10.0) -> JobPosting:
         """Extract structured JobPosting from current job detail screen.

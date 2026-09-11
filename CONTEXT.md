@@ -148,5 +148,10 @@ _Avoid_: digest, snippet, short JD, brief intro
 The zero-token deterministic gatekeeper evaluation that examines the three card-level facets (`tv_position_name`, `fl_require_info`, `tv_digest`) against the active `ScreeningPolicy` to eliminate non-viable jobs before incurring expensive mobile navigation.
 _Avoid_: card filter, quick check, preliminary pass
 
+**Inline Description Probing (`inline_expand_probes`)**:
+The multi-point probabilistic coordinate probing mechanism that sequentially tests configurable relative coordinates against the job description text module to trigger inline ClickableSpan expansion across multi-line text wrapping variations.
+_Avoid_: blind tap, hardcoded click, ocr clicker
+
+
 
 

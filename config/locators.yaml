@@ -125,6 +125,14 @@ job_detail:
     - "//*[contains(@resource-id, 'tv_description') or contains(@resource-id, 'tv_job_desc') or contains(@resource-id, 'job_description')]"
   expand_btn:
     - "//*[@text='查看全部' or @text='展开全文']"
+  inline_expand_probes:
+    origin: "bottom-left"
+    points:
+      - [0.90, 20]
+      - [0.90, 60]
+      - [0.70, 20]
+      - [0.25, 20]
+      - [0.50, 60]
   back_btn:
     - "//*[@content-desc='返回' or contains(@resource-id, 'iv_back')]"
 
