@@ -439,27 +439,48 @@ class JobListPage(BaseBossPage):
         except TimeoutError:
             return False
 
-    def is_feed_bottom_reached(self, timeout_sec: float = 0.5) -> bool:
-        """Check if the search feed bottom boundary banner ('暂无符合职位，为你推荐') is visible."""
+    def get_feed_bottom_boundary(self, timeout_sec: float = 0.5) -> Any | None:
+        """Find and return the feed bottom boundary element ('暂无其他符合职位，为你推荐') if visible."""
         if not self.driver:
-            return False
+            return None
         # 1. Try finding bottom_tips via configured locator registry
         try:
             elem = self.find_by_key("job_list.bottom_tips", timeout_sec=timeout_sec)
             if elem:
                 txt = getattr(elem, "text", "") or ""
-                if "暂无符合职位" in txt or not txt:
-                    return True
+                if not txt or any(
+                    kw in txt
+                    for kw in (
+                        "为你推荐",
+                        "暂无其他符合职位",
+                        "暂无符合职位",
+                        "其他符合职位",
+                        "没有更多",
+                        "暂无更多",
+                    )
+                ):
+                    return elem
         except Exception:
             pass
         # 2. Heuristic xpath fallback for text
         try:
-            elems = self.driver.find_elements(by="xpath", value="//*[contains(@text, '暂无符合职位')]")
+            xpath_expr = (
+                "//*[contains(@text, '为你推荐') or "
+                "contains(@text, '暂无其他符合职位') or "
+                "contains(@text, '暂无符合职位') or "
+                "contains(@text, '没有更多') or "
+                "contains(@text, '暂无更多')]"
+            )
+            elems = self.driver.find_elements(by="xpath", value=xpath_expr)
             if elems:
-                return True
+                return elems[0]
         except Exception:
             pass
-        return False
+        return None
+
+    def is_feed_bottom_reached(self, timeout_sec: float = 0.5) -> bool:
+        """Check if the search feed bottom boundary banner ('暂无其他符合职位，为你推荐') is visible."""
+        return self.get_feed_bottom_boundary(timeout_sec=timeout_sec) is not None
 
     def scroll_job_list(self) -> None:
         """Perform a humanized scroll downwards on the job list."""

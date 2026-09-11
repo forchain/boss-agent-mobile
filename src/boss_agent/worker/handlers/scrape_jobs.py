@@ -140,22 +140,42 @@ class ScrapeJobsHandler(BaseTaskHandler):
                 break
 
             # 1. Boundary check: Check if feed bottom banner is reached
-            if list_page.is_feed_bottom_reached() is True:
-                await broker.append_log(
-                    task.id,
-                    "🛑 [Feed Boundary] Detected '暂无符合职位' end-of-feed marker. Terminating search pagination.",
-                )
-                break
+            bottom_elem = list_page.get_feed_bottom_boundary()
+            boundary_y: float | None = None
+            if bottom_elem is not None:
+                try:
+                    loc = getattr(bottom_elem, "location", None)
+                    if isinstance(loc, dict):
+                        boundary_y = float(loc.get("y", 0))
+                except Exception:
+                    boundary_y = None
 
             # 2. Extract visible cards in current viewport
             visible_cards = list_page.extract_visible_job_cards(max_cards=10)
             if not visible_cards:
+                if bottom_elem is not None:
+                    await broker.append_log(
+                        task.id,
+                        "🛑 [Feed Boundary] Detected '暂无其他符合职位 / 为你推荐' end-of-feed marker. Terminating search pagination.",
+                    )
                 break
 
             new_cards_in_view = 0
             for card in visible_cards:
                 if len(scanned_fingerprints) >= max_jobs:
                     break
+
+                # Exclude recommended cards that appear BELOW the feed bottom boundary marker
+                if boundary_y is not None and card.element is not None:
+                    try:
+                        card_loc = getattr(card.element, "location", None)
+                        if isinstance(card_loc, dict):
+                            card_y = float(card_loc.get("y", 0))
+                            if card_y >= boundary_y:
+                                # Card is below boundary marker: it is a recommended job, not search result
+                                continue
+                    except Exception:
+                        pass
 
                 if card.fingerprint in scanned_fingerprints:
                     continue
@@ -341,10 +361,10 @@ class ScrapeJobsHandler(BaseTaskHandler):
                 consecutive_empty_scrolls = 0
 
             # 7. Check bottom marker before scrolling
-            if list_page.is_feed_bottom_reached() is True:
+            if bottom_elem is not None or list_page.is_feed_bottom_reached() is True:
                 await broker.append_log(
                     task.id,
-                    "🛑 [Feed Boundary] Detected '暂无符合职位' end-of-feed marker. Terminating search pagination.",
+                    "🛑 [Feed Boundary] Detected '暂无其他符合职位 / 为你推荐' end-of-feed marker. Terminating search pagination.",
                 )
                 break
 

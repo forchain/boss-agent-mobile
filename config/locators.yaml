@@ -65,7 +65,11 @@ job_list:
   bottom_tips:
     - "com.hpbr.bosszhipin:id/tv_tips"
     - "//*[contains(@resource-id, 'tv_tips')]"
+    - "//*[contains(@resource-id, 'recommend_tips')]"
+    - "//*[contains(@text, '为你推荐')]"
+    - "//*[contains(@text, '暂无其他符合职位')]"
     - "//*[contains(@text, '暂无符合职位')]"
+    - "//*[contains(@text, '没有更多')]"
 
 search:
   search_input:

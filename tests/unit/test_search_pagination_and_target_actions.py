@@ -33,22 +33,33 @@ from boss_agent.worker.handlers.scrape_jobs import ScrapeJobsHandler
 # ---------------------------------------------------------------------------
 
 def test_job_list_page_is_feed_bottom_reached():
-    """Verify is_feed_bottom_reached returns True when bottom_tips element exists."""
+    """Verify is_feed_bottom_reached and get_feed_bottom_boundary recognize all divider text patterns."""
     driver = MagicMock()
     page = JobListPage(driver)
 
-    # When bottom_tips is found
-    mock_bottom_tip = MagicMock()
-    mock_bottom_tip.text = "暂无符合职位，为你推荐"
-    driver.find_element.return_value = mock_bottom_tip
-    driver.find_elements.return_value = [mock_bottom_tip]
-    assert page.is_feed_bottom_reached() is True
+    # Patterns seen in Boss 直聘:
+    patterns = [
+        "暂无符合职位，为你推荐",
+        "✦暂无其他符合职位，为你推荐 ──",
+        "为你推荐",
+        "暂无其他符合职位",
+        "没有更多",
+    ]
+
+    for pattern in patterns:
+        mock_tip = MagicMock()
+        mock_tip.text = pattern
+        driver.find_element.return_value = mock_tip
+        driver.find_elements.return_value = [mock_tip]
+        assert page.is_feed_bottom_reached() is True, f"Failed on pattern: {pattern}"
+        assert page.get_feed_bottom_boundary() is mock_tip, f"Failed boundary on pattern: {pattern}"
 
     # When bottom_tips is not found
     from selenium.common.exceptions import NoSuchElementException
     driver.find_element.side_effect = NoSuchElementException("Not found")
     driver.find_elements.return_value = []
     assert page.is_feed_bottom_reached() is False
+    assert page.get_feed_bottom_boundary() is None
 
 
 def test_job_list_page_scroll_job_list_uses_human_swipe():
@@ -285,6 +296,91 @@ async def test_scrape_jobs_handler_terminates_on_feed_bottom_boundary():
     assert finished.status == TaskStatus.SUCCESS
     # Check log mentions feed bottom reached
     assert any("feed boundary" in log.lower() or "暂无符合职位" in log for log in finished.logs)
+
+
+@pytest.mark.asyncio
+async def test_scrape_jobs_handler_filters_recommended_cards_below_boundary():
+    """Verify ScrapeJobsHandler skips job cards whose vertical position is >= boundary marker Y."""
+    broker = InMemoryTaskBroker()
+    mock_driver = MagicMock()
+    mock_driver.get_window_size.return_value = {"width": 1080, "height": 2400}
+
+    # Boundary element located at y=1200
+    bottom_elem = MagicMock()
+    bottom_elem.text = "✦暂无其他符合职位，为你推荐 ──"
+    bottom_elem.location = {"x": 0, "y": 1200}
+
+    # Card 1 (above boundary): y = 600 -> authentic search result, should be scraped
+    card1_elem = MagicMock()
+    card1_elem.location = {"x": 0, "y": 600}
+    title1 = MagicMock(text="Senior Agent Researcher")
+    comp1 = MagicMock(text="AI Lab")
+    sal1 = MagicMock(text="50-70K")
+
+    # Card 2 (below boundary): y = 1400 -> recommended job, must be skipped!
+    card2_elem = MagicMock()
+    card2_elem.location = {"x": 0, "y": 1400}
+    title2 = MagicMock(text="Irrelevant Recommendation")
+    comp2 = MagicMock(text="Other Co")
+    sal2 = MagicMock(text="15-20K")
+
+    def mock_card_find(card_instance):
+        def _find(by, value):
+            if card_instance is card1_elem:
+                if "job_name" in value or "tv_job_name" in value:
+                    return [title1]
+                if "company_name" in value or "tv_company_name" in value:
+                    return [comp1]
+                if "salary" in value or "tv_job_salary" in value:
+                    return [sal1]
+            elif card_instance is card2_elem:
+                if "job_name" in value or "tv_job_name" in value:
+                    return [title2]
+                if "company_name" in value or "tv_company_name" in value:
+                    return [comp2]
+                if "salary" in value or "tv_job_salary" in value:
+                    return [sal2]
+            return []
+        return _find
+
+    card1_elem.find_elements.side_effect = mock_card_find(card1_elem)
+    card2_elem.find_elements.side_effect = mock_card_find(card2_elem)
+
+    def mock_driver_find(by, value):
+        if "job_card" in value or "view_job_card" in value:
+            return [card1_elem, card2_elem]
+        if "bottom_tips" in value or "暂无其他符合职位" in value or "为你推荐" in value:
+            return [bottom_elem]
+        return [MagicMock()]
+
+    mock_driver.find_elements.side_effect = mock_driver_find
+    mock_driver.find_element.return_value = bottom_elem
+
+    config = WorkerConfig(worker_id="test-boundary-filter-worker", poll_interval_sec=0.01)
+    context = WorkerContext(config=config, driver=mock_driver)
+    worker = AutomationWorker(
+        config=config,
+        broker=broker,
+        context=context,
+        handlers=[ScrapeJobsHandler()],
+    )
+
+    task = await broker.create_task(
+        task_type=TaskType.SCRAPE_JOBS,
+        payload={"keyword": "Agent", "target_action": "digest_only", "max_jobs": 10},
+    )
+
+    await worker.run_once()
+
+    finished = await broker.get_task(task.id)
+    assert finished.status == TaskStatus.SUCCESS
+
+    # Verify only card 1 (above boundary) was saved into broker
+    records = await broker.list_job_records()
+    assert len(records) == 1
+    assert records[0]["title"] == "Senior Agent Researcher"
+    assert records[0]["company_name"] == "AI Lab"
+    assert not any(r["title"] == "Irrelevant Recommendation" for r in records)
 
 
 # ---------------------------------------------------------------------------
