@@ -31,7 +31,9 @@ resumes/
 *.resume.*
 
 # Node / SvelteKit / Web
+node_modules
 node_modules/
+web/node_modules
 web/node_modules/
 .svelte-kit/
 web/.svelte-kit/

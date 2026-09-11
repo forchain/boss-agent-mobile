@@ -83,6 +83,27 @@ def main() -> None:
         except Exception as e:
             sys.stderr.write(f"Warning: Failed to parse candidate profile JSON ({e})\n")
 
+    # If profile is missing or is an empty/stub placeholder, fallback to loading cached memory
+    if (
+        candidate_profile is None
+        or (not candidate_profile.profile_document and not candidate_profile.work_experiences)
+        or candidate_profile.name in ("测试候选人", "求职者", "")
+    ):
+        try:
+            from boss_agent.memory import ResumeMemoryManager
+
+            mgr = ResumeMemoryManager()
+            cached = mgr.load_cached_memory()
+            if cached and (cached.profile_document or cached.work_experiences or cached.core_skills):
+                if (
+                    not candidate_profile
+                    or candidate_profile.name in ("测试候选人", "求职者", "")
+                    or not candidate_profile.profile_document
+                ):
+                    candidate_profile = cached
+        except Exception as e:
+            sys.stderr.write(f"Warning: Failed to load cached candidate memory ({e})\n")
+
     llm_client = build_llm_client(args.llm_config)
     service = JobMatchGreetingService(
         llm_client=llm_client,

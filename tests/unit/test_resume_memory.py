@@ -148,16 +148,16 @@ def test_resume_memory_manager_save_memory_profile(tmp_path):
     manager = ResumeMemoryManager(llm_client=MagicMock(), memory_file_path=memory_file)
 
     profile = StructuredCandidateProfile(
-        name="测试候选人",
+        name="测试隔离求职者",
         years_of_experience=3,
         core_skills=["Go", "Python"],
     )
     with patch("boss_agent.broker.PocketBaseBroker"):
-        manager.save_memory_profile(profile)
+        manager.save_memory_profile(profile, sync_to_db=False)
 
     assert memory_file.is_file()
     saved = json.loads(memory_file.read_text(encoding="utf-8"))
-    assert saved["name"] == "测试候选人"
+    assert saved["name"] == "测试隔离求职者"
     assert saved["years_of_experience"] == 3
 
 

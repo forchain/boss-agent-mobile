@@ -4,7 +4,8 @@
 		getCandidateProfile,
 		saveCandidateProfile,
 		listResumeRevisions,
-		createResumeRevision
+		createResumeRevision,
+		restoreResumeRevision
 	} from "$lib/pocketbase";
 	import type {
 		CandidateProfile,
@@ -18,6 +19,8 @@
 	let saving = $state(false);
 	let saveSuccess = $state(false);
 	let errorMessage = $state("");
+	let restoringRevisionId = $state<string | null>(null);
+	let restoreSuccessMessage = $state("");
 
 	// Active candidate profile state
 	let profile = $state<CandidateProfile>({
@@ -34,6 +37,13 @@
 		raw_resume_text: "",
 		profile_document: ""
 	});
+
+	let isProfileEmptyOrDummy = $derived(
+		!profile.profile_document ||
+		profile.profile_document.trim() === "" ||
+		profile.name === "测试候选人" ||
+		profile.name === "求职者"
+	);
 
 	// Revisions list
 	let revisions = $state<ResumeRevision[]>([]);
@@ -103,16 +113,49 @@
 		}
 	}
 
+	async function handleRestoreRevision(revisionId: string) {
+		if (restoringRevisionId) return;
+		restoringRevisionId = revisionId;
+		errorMessage = "";
+		restoreSuccessMessage = "";
+		try {
+			const res = await restoreResumeRevision(revisionId, "default");
+			if (res.success && res.profile) {
+				const doc = res.profile.profile_document || res.profile.raw_summary || "";
+				profile = {
+					...profile,
+					...res.profile,
+					profile_document: doc,
+					raw_summary: doc
+				};
+				coreSkillsInput = (profile.core_skills || []).join(", ");
+				targetPositionsInput = (profile.target_positions || []).join(", ");
+				restoreSuccessMessage = `已成功从历史版本恢复候选人画像（${profile.name}，${profile.years_of_experience || 0}年经验）！`;
+				setTimeout(() => {
+					restoreSuccessMessage = "";
+				}, 4000);
+				await loadData();
+			} else {
+				errorMessage = res.message || "恢复历史版本失败";
+			}
+		} catch (err: any) {
+			console.error("Failed to restore revision:", err);
+			errorMessage = err?.message || "恢复历史版本失败";
+		} finally {
+			restoringRevisionId = null;
+		}
+	}
+
 	function handleCoreSkillsChange() {
 		profile.core_skills = coreSkillsInput
-			.split(",")
+			.split(/[,，、\n]+/)
 			.map((s) => s.trim())
 			.filter(Boolean);
 	}
 
 	function handleTargetPositionsChange() {
 		profile.target_positions = targetPositionsInput
-			.split(",")
+			.split(/[,，、\n]+/)
 			.map((s) => s.trim())
 			.filter(Boolean);
 	}
@@ -480,6 +523,42 @@
 		</div>
 	{/if}
 
+	{#if restoreSuccessMessage}
+		<div class="p-4 rounded-xl bg-cyan-950/60 border border-cyan-800/80 text-cyan-200 text-xs flex items-center justify-between">
+			<div class="flex items-center space-x-2">
+				<span>⚡</span>
+				<span>{restoreSuccessMessage}</span>
+			</div>
+			<button onclick={() => (restoreSuccessMessage = "")} class="text-cyan-400 hover:text-cyan-200">✕</button>
+		</div>
+	{/if}
+
+	{#if isProfileEmptyOrDummy && revisions.length > 0}
+		<div class="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-amber-300">
+			<div class="flex items-center space-x-2.5 text-xs">
+				<span class="text-lg">⚠️</span>
+				<div>
+					<p class="font-bold text-amber-200">检测到历史简历备份（共 {revisions.length} 个版本），当前全景画像为空或待恢复</p>
+					<p class="text-amber-400/80 mt-0.5">您可以一键从最新历史上传版本自动解析并恢复完整画像，无需重新上传文件。</p>
+				</div>
+			</div>
+			<button
+				type="button"
+				onclick={() => handleRestoreRevision(revisions[0].id)}
+				disabled={!!restoringRevisionId}
+				class="shrink-0 px-3.5 py-1.5 rounded-lg bg-amber-500 text-slate-950 font-bold text-xs hover:bg-amber-400 transition-colors flex items-center space-x-1.5 disabled:opacity-50"
+			>
+				{#if restoringRevisionId === revisions[0].id}
+					<span class="animate-spin">🔄</span>
+					<span>正在恢复...</span>
+				{:else}
+					<span>⚡</span>
+					<span>一键恢复最新版 ({revisions[0].file_name})</span>
+				{/if}
+			</button>
+		</div>
+	{/if}
+
 	<!-- Revision History Drawer -->
 	{#if showRevisionHistory}
 		<div class="p-5 rounded-2xl bg-slate-900 border border-slate-700 shadow-xl space-y-4">
@@ -506,9 +585,25 @@
 										{(rev.file_size / 1024).toFixed(1)} KB
 									</span>
 								</div>
-								<span class="text-slate-500 text-[11px]">
-									{formatRevisionDate(rev.created)}
-								</span>
+								<div class="flex items-center space-x-2">
+									<span class="text-slate-500 text-[11px]">
+										{formatRevisionDate(rev.created)}
+									</span>
+									<button
+										type="button"
+										onclick={() => handleRestoreRevision(rev.id)}
+										disabled={!!restoringRevisionId}
+										class="px-2 py-0.5 rounded bg-cyan-950 text-cyan-400 hover:bg-cyan-900 border border-cyan-800/50 text-[11px] font-medium transition-colors flex items-center space-x-1 disabled:opacity-50"
+										title="从该版本提取文本并重新解析为候选人全景画像"
+									>
+										{#if restoringRevisionId === rev.id}
+											<span class="animate-spin">🔄</span>
+											<span>恢复中...</span>
+										{:else}
+											<span>⚡ 恢复此版本</span>
+										{/if}
+									</button>
+								</div>
 							</div>
 							{#if rev.diff_summary}
 								<div class="text-slate-400 bg-slate-900/60 p-2.5 rounded-lg font-mono text-[11px] whitespace-pre-line border border-slate-800/60">
