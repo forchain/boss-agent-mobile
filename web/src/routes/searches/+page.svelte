@@ -306,13 +306,14 @@
 		isSaving = true;
 		formError = '';
 		try {
+			const derivedTaskType = modalForm.target_action === 'auto_apply' ? 'AUTO_APPLY' : 'SCRAPE_JOBS';
 			const payload: any = {
 				name: modalForm.name.trim(),
 				description: modalForm.description.trim(),
 				keyword: modalForm.keyword.trim(),
 				enable_search: modalForm.enable_search,
 				enable_filter: modalForm.enable_filter,
-				target_task_type: modalForm.target_task_type,
+				target_task_type: derivedTaskType,
 				target_action: modalForm.target_action,
 				max_jobs: Number(modalForm.max_jobs) > 0 ? Number(modalForm.max_jobs) : 30,
 				cron_expression: modalForm.cron_expression.trim(),
@@ -652,24 +653,64 @@
 						{/if}
 						<div class="flex items-center justify-between gap-2">
 							<div class="flex items-center space-x-2">
-								<button
-									type="button"
-									onclick={() => onTriggerSearch(search, 'AUTO_APPLY')}
-									class="bg-cyan-600 hover:bg-cyan-500 text-white font-medium px-3 py-1.5 rounded-lg text-xs transition shadow flex items-center space-x-1"
-									title="立即将此搜索策略下发为 AUTO_APPLY 智能投递任务"
-								>
-									<span>🚀</span>
-									<span>立即投递</span>
-								</button>
-								<button
-									type="button"
-									onclick={() => onTriggerSearch(search, 'SCRAPE_JOBS')}
-									class="bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium px-3 py-1.5 rounded-lg text-xs transition border border-slate-700 flex items-center space-x-1"
-									title="立即将此搜索策略下发为 SCRAPE_JOBS 仅抓取职位任务"
-								>
-									<span>🔍</span>
-									<span>仅抓取</span>
-								</button>
+								{#if search.target_action === 'auto_apply'}
+									<button
+										type="button"
+										onclick={() => onTriggerSearch(search, 'AUTO_APPLY')}
+										class="bg-emerald-600 hover:bg-emerald-500 text-white font-medium px-3 py-1.5 rounded-lg text-xs transition shadow flex items-center space-x-1"
+										title="立即按策略执行 AUTO_APPLY 智能投递任务"
+									>
+										<span>🚀</span>
+										<span>立即投递</span>
+									</button>
+									<button
+										type="button"
+										onclick={() => onTriggerSearch(search, 'SCRAPE_JOBS')}
+										class="bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium px-2.5 py-1.5 rounded-lg text-xs transition border border-slate-700 flex items-center space-x-1"
+										title="降级为仅抓取职位数据（不发起沟通）"
+									>
+										<span>🔍</span>
+										<span>仅抓取</span>
+									</button>
+								{:else if search.target_action === 'digest_only'}
+									<button
+										type="button"
+										onclick={() => onTriggerSearch(search, 'SCRAPE_JOBS')}
+										class="bg-amber-600 hover:bg-amber-500 text-white font-medium px-3 py-1.5 rounded-lg text-xs transition shadow flex items-center space-x-1"
+										title="立即按策略抓取职位摘要（不点开详情）"
+									>
+										<span>⚡</span>
+										<span>抓取摘要</span>
+									</button>
+									<button
+										type="button"
+										onclick={() => onTriggerSearch(search, 'AUTO_APPLY')}
+										class="bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium px-2.5 py-1.5 rounded-lg text-xs transition border border-slate-700 flex items-center space-x-1"
+										title="升级为自动投递沟通"
+									>
+										<span>🚀</span>
+										<span>尝试投递</span>
+									</button>
+								{:else}
+									<button
+										type="button"
+										onclick={() => onTriggerSearch(search, 'SCRAPE_JOBS')}
+										class="bg-cyan-600 hover:bg-cyan-500 text-white font-medium px-3 py-1.5 rounded-lg text-xs transition shadow flex items-center space-x-1"
+										title="立即按策略深度抓取并保存 JD 全文"
+									>
+										<span>📖</span>
+										<span>深度存JD</span>
+									</button>
+									<button
+										type="button"
+										onclick={() => onTriggerSearch(search, 'AUTO_APPLY')}
+										class="bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium px-2.5 py-1.5 rounded-lg text-xs transition border border-slate-700 flex items-center space-x-1"
+										title="升级为自动投递沟通"
+									>
+										<span>🚀</span>
+										<span>尝试投递</span>
+									</button>
+								{/if}
 							</div>
 
 							<div class="flex items-center space-x-2 text-xs">
@@ -810,19 +851,17 @@
 							<select
 								id="form-target-action"
 								bind:value={modalForm.target_action}
-								onchange={() => {
-									if (modalForm.target_action === 'auto_apply') {
-										modalForm.target_task_type = 'AUTO_APPLY';
-									} else {
-										modalForm.target_task_type = 'SCRAPE_JOBS';
-									}
-								}}
 								class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-cyan-500 text-xs"
 							>
 								<option value="digest_only">⚡ 仅抓取摘要 (digest_only) - 不点开卡片，保存列表基本信息</option>
 								<option value="save_jd">📖 深度存JD (save_jd) - 点开卡片保存详情页岗位职责全文</option>
 								<option value="auto_apply">🚀 自动打招呼 (auto_apply) - 深度存JD并进行AI匹配与发送</option>
 							</select>
+							<span class="text-[10px] text-slate-500 block mt-1">
+								{modalForm.target_action === 'auto_apply'
+									? '调度时自动派发 AUTO_APPLY 智能投递任务，生成招呼语并沟通'
+									: '调度时自动派发 SCRAPE_JOBS 职位抓取任务，不主动发起沟通'}
+							</span>
 						</div>
 						<div>
 							<label for="form-max-jobs" class="block font-medium text-slate-400 mb-1">
@@ -843,35 +882,15 @@
 						</div>
 					</div>
 
-					<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-						<div>
-							<label for="form-task-type" class="block font-medium text-slate-400 mb-1">默认任务类型</label>
-							<select
-								id="form-task-type"
-								bind:value={modalForm.target_task_type}
-								onchange={() => {
-									if (modalForm.target_task_type === 'AUTO_APPLY') {
-										modalForm.target_action = 'auto_apply';
-									} else if (modalForm.target_action === 'auto_apply') {
-										modalForm.target_action = 'save_jd';
-									}
-								}}
-								class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-cyan-500 text-xs"
-							>
-								<option value="AUTO_APPLY">AUTO_APPLY (智能匹配与投递)</option>
-								<option value="SCRAPE_JOBS">SCRAPE_JOBS (仅抓取职位数据)</option>
-							</select>
-						</div>
-						<div>
-							<label for="form-cron-expr" class="block font-medium text-slate-400 mb-1">Cron 定时表达式</label>
-							<input
-								id="form-cron-expr"
-								type="text"
-								bind:value={modalForm.cron_expression}
-								placeholder="0 9 * * *"
-								class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-cyan-500 font-mono text-xs"
-							/>
-						</div>
+					<div>
+						<label for="form-cron-expr" class="block font-medium text-slate-400 mb-1">Cron 定时表达式</label>
+						<input
+							id="form-cron-expr"
+							type="text"
+							bind:value={modalForm.cron_expression}
+							placeholder="例如：0 9 * * * (每天上午 9 点自动执行)"
+							class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-cyan-500 font-mono text-xs"
+						/>
 					</div>
 
 					<!-- Cron Presets & Enable Toggle -->

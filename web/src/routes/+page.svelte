@@ -225,19 +225,22 @@
 	}
 
 	async function onRunScheduledNow(search: SavedSearch) {
-		const type = (search.target_task_type || 'AUTO_APPLY') as any;
+		const action = search.target_action || (search.target_task_type === 'AUTO_APPLY' ? 'auto_apply' : 'save_jd');
+		const type = action === 'auto_apply' ? 'AUTO_APPLY' : 'SCRAPE_JOBS';
 		const payload = {
 			search_id: search.id,
 			search_name: search.name,
 			keyword: search.keyword || '',
 			filter: search.filter || {},
+			target_action: action,
+			max_jobs: search.max_jobs || 30,
 			preview_only: true,
 			triggered_manually: true
 		};
 		const task = await createAutomationTask(type, payload);
 		activeTaskId = task.id;
 		activeTask = task;
-		logLines = [`[Scheduled] 手动触发定时策略 [${search.name}] 任务下发成功 (ID: ${task.id})...`];
+		logLines = [`[Scheduled] 手动触发策略 [${search.name}] 任务下发成功 (ID: ${task.id})...`];
 		await loadTaskHistory();
 	}
 
@@ -699,9 +702,19 @@
 								<div class="flex items-center justify-between">
 									<div class="flex items-center space-x-2">
 										<h3 class="text-xs font-bold text-slate-100">{s.name}</h3>
-										<span class="px-1.5 py-0.2 rounded font-mono text-[9px] bg-cyan-950 text-cyan-400 border border-cyan-800">
-											{s.target_task_type || 'AUTO_APPLY'}
-										</span>
+										{#if s.target_action === 'digest_only'}
+											<span class="px-1.5 py-0.5 rounded font-mono text-[9px] bg-amber-950 text-amber-400 border border-amber-800">
+												⚡ 仅抓摘要
+											</span>
+										{:else if s.target_action === 'save_jd'}
+											<span class="px-1.5 py-0.5 rounded font-mono text-[9px] bg-cyan-950 text-cyan-400 border border-cyan-800">
+												📖 深度存JD
+											</span>
+										{:else}
+											<span class="px-1.5 py-0.5 rounded font-mono text-[9px] bg-emerald-950 text-emerald-400 border border-emerald-800">
+												🚀 自动沟通
+											</span>
+										{/if}
 									</div>
 									<!-- Toggle switch -->
 									<button

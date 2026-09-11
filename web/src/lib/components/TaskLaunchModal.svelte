@@ -32,9 +32,8 @@
 			searches = list;
 			if (list.length > 0 && (!selectedSearchId || !list.some((s) => s.id === selectedSearchId))) {
 				selectedSearchId = list[0].id;
-				if (list[0].target_task_type) {
-					taskType = list[0].target_task_type as TaskType;
-				}
+				const action = list[0].target_action || (list[0].target_task_type === 'AUTO_APPLY' ? 'auto_apply' : 'save_jd');
+				taskType = (action === 'auto_apply' ? 'AUTO_APPLY' : 'SCRAPE_JOBS') as TaskType;
 			}
 		} catch (e) {}
 	}
@@ -48,8 +47,9 @@
 	$effect(() => {
 		if (selectedSearchId) {
 			const target = searches.find((s) => s.id === selectedSearchId);
-			if (target?.target_task_type) {
-				taskType = target.target_task_type as TaskType;
+			if (target) {
+				const action = target.target_action || (target.target_task_type === 'AUTO_APPLY' ? 'auto_apply' : 'save_jd');
+				taskType = (action === 'auto_apply' ? 'AUTO_APPLY' : 'SCRAPE_JOBS') as TaskType;
 			}
 		}
 	});
@@ -67,6 +67,12 @@
 		errorMessage = '';
 		try {
 			const profile = await getCandidateProfile();
+			const targetAction =
+				taskType === 'AUTO_APPLY'
+					? 'auto_apply'
+					: target.target_action === 'digest_only'
+						? 'digest_only'
+						: 'save_jd';
 			const payload = {
 				search_id: target.id,
 				saved_search_id: target.id,
@@ -75,6 +81,8 @@
 				enable_search: target.enable_search !== false,
 				enable_filter: target.enable_filter !== false,
 				filter: target.filter || {},
+				target_action: targetAction,
+				max_jobs: target.max_jobs || 30,
 				min_score: minScore,
 				preview_only: taskMode === 'preview',
 				auto_send: taskMode === 'auto_send',
@@ -82,7 +90,7 @@
 				candidate_profile: profile || {}
 			};
 
-			const type = taskType || (target.target_task_type as TaskType) || 'AUTO_APPLY';
+			const type = taskType || (targetAction === 'auto_apply' ? 'AUTO_APPLY' : 'SCRAPE_JOBS');
 			const task = await createAutomationTask(type, payload);
 			onTaskCreated(task);
 			onClose();
@@ -207,7 +215,7 @@
 								>
 									{#each searches as s}
 										<option value={s.id}>
-											{s.name} ({s.keyword || '无关键词'} · {s.target_task_type || 'AUTO_APPLY'})
+											{s.name} ({s.keyword || '无关键词'} · {s.target_action === 'digest_only' ? '仅抓摘要' : s.target_action === 'save_jd' ? '深度存JD' : '自动沟通'})
 										</option>
 									{/each}
 								</select>
