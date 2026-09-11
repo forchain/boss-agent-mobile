@@ -179,20 +179,23 @@ class AutomationScheduler:
                 except Exception:
                     pass
 
-            # Resolve target task type
-            task_type_str = search.target_task_type or "AUTO_APPLY"
-            try:
-                task_type = TaskType(task_type_str)
-            except ValueError:
-                task_type = TaskType.AUTO_APPLY
+            # Resolve target task type and action
+            action = search.target_action or (
+                "auto_apply" if search.target_task_type == "AUTO_APPLY" else "save_jd"
+            )
+            task_type = TaskType.AUTO_APPLY if action == "auto_apply" else TaskType.SCRAPE_JOBS
 
             search_dict = search.to_dict()
             payload: dict[str, Any] = {
                 "saved_search_id": search.id,
+                "search_id": search.id,
+                "search_name": search.name,
                 "keyword": search_dict.get("keyword") or "",
                 "enable_search": search.enable_search,
                 "enable_filter": search.enable_filter,
                 "filter": search_dict.get("filter") or {},
+                "target_action": action,
+                "max_jobs": search.max_jobs or 30,
                 "min_score": 70,
                 "preview_only": False,
                 "auto_send": False,

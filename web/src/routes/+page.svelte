@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import type { AutomationTask, SavedSearch, TaskStatus } from '$lib/types';
+	import { resolveTargetAction, type AutomationTask, type SavedSearch, type TaskStatus } from '$lib/types';
 	import {
 		pb,
 		checkPocketBaseHealth,
@@ -225,7 +225,7 @@
 	}
 
 	async function onRunScheduledNow(search: SavedSearch) {
-		const action = search.target_action || (search.target_task_type === 'AUTO_APPLY' ? 'auto_apply' : 'save_jd');
+		const action = resolveTargetAction(search);
 		const type = action === 'auto_apply' ? 'AUTO_APPLY' : 'SCRAPE_JOBS';
 		const payload = {
 			search_id: search.id,
@@ -697,16 +697,17 @@
 			{:else}
 				<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
 					{#each scheduledSearches as s}
+						{@const sAction = resolveTargetAction(s)}
 						<div class="p-4 rounded-xl bg-slate-950/70 border border-slate-800/80 space-y-3 flex flex-col justify-between">
 							<div class="space-y-2">
 								<div class="flex items-center justify-between">
 									<div class="flex items-center space-x-2">
 										<h3 class="text-xs font-bold text-slate-100">{s.name}</h3>
-										{#if s.target_action === 'digest_only'}
+										{#if sAction === 'digest_only'}
 											<span class="px-1.5 py-0.5 rounded font-mono text-[9px] bg-amber-950 text-amber-400 border border-amber-800">
 												⚡ 仅抓摘要
 											</span>
-										{:else if s.target_action === 'save_jd'}
+										{:else if sAction === 'save_jd'}
 											<span class="px-1.5 py-0.5 rounded font-mono text-[9px] bg-cyan-950 text-cyan-400 border border-cyan-800">
 												📖 深度存JD
 											</span>

@@ -485,7 +485,7 @@ class SavedSearch:
     is_enabled: bool = False
     last_run_at: str | None = None
     target_task_type: str = "AUTO_APPLY"
-    target_action: str = "save_jd"
+    target_action: str = ""
     max_jobs: int = 20
     enable_search: bool = True
     enable_filter: bool = True
@@ -496,6 +496,13 @@ class SavedSearch:
             self.search.enable_search = self.enable_search
         if hasattr(self, "filter") and self.filter is not None:
             self.filter.enable_filter = self.enable_filter
+        # Bidirectional sync between target_action and target_task_type
+        if not self.target_action:
+            self.target_action = "auto_apply" if self.target_task_type == "AUTO_APPLY" else "save_jd"
+        elif self.target_action == "auto_apply":
+            self.target_task_type = "AUTO_APPLY"
+        else:
+            self.target_task_type = "SCRAPE_JOBS"
 
     @property
     def keyword(self) -> str:
@@ -533,6 +540,8 @@ class SavedSearch:
             "is_enabled": self.is_enabled,
             "last_run_at": self.last_run_at,
             "target_task_type": self.target_task_type,
+            "target_action": self.target_action,
+            "max_jobs": self.max_jobs,
         }
 
     @classmethod
@@ -612,6 +621,11 @@ class SavedSearch:
 
         screening_policy = ScreeningPolicy.from_dict(policy_data)
 
+        target_task_type = data.get("target_task_type", "AUTO_APPLY")
+        target_action = data.get("target_action")
+        if not target_action:
+            target_action = "auto_apply" if target_task_type == "AUTO_APPLY" else "save_jd"
+
         return cls(
             id=search_id,
             name=data.get("name", search_id),
@@ -622,8 +636,8 @@ class SavedSearch:
             cron_expression=data.get("cron_expression", "") or "",
             is_enabled=bool(data.get("is_enabled", False)),
             last_run_at=data.get("last_run_at"),
-            target_task_type=data.get("target_task_type", "AUTO_APPLY"),
-            target_action=data.get("target_action", "save_jd"),
+            target_task_type=target_task_type,
+            target_action=target_action,
             max_jobs=int(data.get("max_jobs", 20)),
             enable_search=enable_search,
             enable_filter=enable_filter,

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import type { SavedSearch } from '$lib/types';
+	import { resolveTargetAction, type SavedSearch } from '$lib/types';
 	import {
 		pb,
 		checkPocketBaseHealth,
@@ -371,21 +371,19 @@
 		}
 	}
 
-	async function onTriggerSearch(search: SavedSearch, taskType: 'AUTO_APPLY' | 'SCRAPE_JOBS') {
-		triggerStatus[search.id] = `正在下发 ${taskType} 任务...`;
-		const resolvedTargetAction =
-			taskType === 'AUTO_APPLY'
-				? 'auto_apply'
-				: search.target_action === 'digest_only'
-					? 'digest_only'
-					: 'save_jd';
+	async function onTriggerSearch(search: SavedSearch, action: 'digest_only' | 'save_jd' | 'auto_apply') {
+		const taskType = action === 'auto_apply' ? 'AUTO_APPLY' : 'SCRAPE_JOBS';
+		const label = action === 'digest_only' ? '仅抓摘要' : action === 'save_jd' ? '深度存JD' : '自动沟通';
+		triggerStatus[search.id] = `正在下发 [${label}] 任务...`;
 		const payload = {
 			saved_search_id: search.id,
+			search_id: search.id,
+			search_name: search.name,
 			keyword: search.keyword || '',
 			enable_search: search.enable_search !== false,
 			enable_filter: search.enable_filter !== false,
 			filter: search.filter || {},
-			target_action: resolvedTargetAction,
+			target_action: action,
 			max_jobs: search.max_jobs || 30,
 			min_score: 70,
 			preview_only: true,
@@ -393,7 +391,7 @@
 		};
 		try {
 			const task = await createAutomationTask(taskType, payload);
-			triggerStatus[search.id] = `✅ 已派发: ${task.id}`;
+			triggerStatus[search.id] = `✅ 已派发 [${label}]: ${task.id}`;
 			setTimeout(() => {
 				delete triggerStatus[search.id];
 			}, 5000);
@@ -496,6 +494,7 @@
 	{:else}
 		<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
 			{#each searches as search (search.id)}
+				{@const currentAction = resolveTargetAction(search)}
 				<div class="bg-slate-900/80 border border-slate-800 hover:border-slate-700 rounded-2xl p-6 shadow-xl space-y-4 flex flex-col justify-between transition-all">
 					<div class="space-y-3">
 						<!-- Card Header: Title & Badges -->
@@ -512,11 +511,11 @@
 								{/if}
 							</div>
 							<div class="flex flex-col sm:flex-row items-end sm:items-center gap-1.5 shrink-0">
-								{#if search.target_action === 'digest_only'}
+								{#if currentAction === 'digest_only'}
 									<span class="text-[10px] px-2.5 py-1 rounded-full font-mono font-medium bg-amber-950 text-amber-300 border border-amber-800">
 										⚡ 仅抓摘要
 									</span>
-								{:else if search.target_action === 'save_jd'}
+								{:else if currentAction === 'save_jd'}
 									<span class="text-[10px] px-2.5 py-1 rounded-full font-mono font-medium bg-cyan-950 text-cyan-300 border border-cyan-800">
 										📖 深度存JD
 									</span>
@@ -652,65 +651,49 @@
 							</div>
 						{/if}
 						<div class="flex items-center justify-between gap-2">
-							<div class="flex items-center space-x-2">
-								{#if search.target_action === 'auto_apply'}
-									<button
-										type="button"
-										onclick={() => onTriggerSearch(search, 'AUTO_APPLY')}
-										class="bg-emerald-600 hover:bg-emerald-500 text-white font-medium px-3 py-1.5 rounded-lg text-xs transition shadow flex items-center space-x-1"
-										title="立即按策略执行 AUTO_APPLY 智能投递任务"
-									>
-										<span>🚀</span>
-										<span>立即投递</span>
-									</button>
-									<button
-										type="button"
-										onclick={() => onTriggerSearch(search, 'SCRAPE_JOBS')}
-										class="bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium px-2.5 py-1.5 rounded-lg text-xs transition border border-slate-700 flex items-center space-x-1"
-										title="降级为仅抓取职位数据（不发起沟通）"
-									>
-										<span>🔍</span>
-										<span>仅抓取</span>
-									</button>
-								{:else if search.target_action === 'digest_only'}
-									<button
-										type="button"
-										onclick={() => onTriggerSearch(search, 'SCRAPE_JOBS')}
-										class="bg-amber-600 hover:bg-amber-500 text-white font-medium px-3 py-1.5 rounded-lg text-xs transition shadow flex items-center space-x-1"
-										title="立即按策略抓取职位摘要（不点开详情）"
-									>
-										<span>⚡</span>
-										<span>抓取摘要</span>
-									</button>
-									<button
-										type="button"
-										onclick={() => onTriggerSearch(search, 'AUTO_APPLY')}
-										class="bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium px-2.5 py-1.5 rounded-lg text-xs transition border border-slate-700 flex items-center space-x-1"
-										title="升级为自动投递沟通"
-									>
-										<span>🚀</span>
-										<span>尝试投递</span>
-									</button>
-								{:else}
-									<button
-										type="button"
-										onclick={() => onTriggerSearch(search, 'SCRAPE_JOBS')}
-										class="bg-cyan-600 hover:bg-cyan-500 text-white font-medium px-3 py-1.5 rounded-lg text-xs transition shadow flex items-center space-x-1"
-										title="立即按策略深度抓取并保存 JD 全文"
-									>
-										<span>📖</span>
-										<span>深度存JD</span>
-									</button>
-									<button
-										type="button"
-										onclick={() => onTriggerSearch(search, 'AUTO_APPLY')}
-										class="bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium px-2.5 py-1.5 rounded-lg text-xs transition border border-slate-700 flex items-center space-x-1"
-										title="升级为自动投递沟通"
-									>
-										<span>🚀</span>
-										<span>尝试投递</span>
-									</button>
-								{/if}
+							<div class="flex flex-wrap items-center gap-1.5">
+								<button
+									type="button"
+									onclick={() => onTriggerSearch(search, 'digest_only')}
+									class="px-2.5 py-1.5 rounded-lg text-xs font-medium transition flex items-center space-x-1 {currentAction === 'digest_only'
+										? 'bg-amber-600 hover:bg-amber-500 text-white shadow ring-1 ring-amber-400/50'
+										: 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700'}"
+									title="立即执行此策略：仅抓取摘要（不点开卡片，不发起沟通）"
+								>
+									<span>⚡</span>
+									<span>抓摘要</span>
+									{#if currentAction === 'digest_only'}
+										<span class="text-[9px] opacity-80">(默认)</span>
+									{/if}
+								</button>
+								<button
+									type="button"
+									onclick={() => onTriggerSearch(search, 'save_jd')}
+									class="px-2.5 py-1.5 rounded-lg text-xs font-medium transition flex items-center space-x-1 {currentAction === 'save_jd'
+										? 'bg-cyan-600 hover:bg-cyan-500 text-white shadow ring-1 ring-cyan-400/50'
+										: 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700'}"
+									title="立即执行此策略：深度抓取并保存 JD 全文（不发起沟通）"
+								>
+									<span>📖</span>
+									<span>存JD</span>
+									{#if currentAction === 'save_jd'}
+										<span class="text-[9px] opacity-80">(默认)</span>
+									{/if}
+								</button>
+								<button
+									type="button"
+									onclick={() => onTriggerSearch(search, 'auto_apply')}
+									class="px-2.5 py-1.5 rounded-lg text-xs font-medium transition flex items-center space-x-1 {currentAction === 'auto_apply'
+										? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow ring-1 ring-emerald-400/50'
+										: 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700'}"
+									title="立即执行此策略：智能匹配并自动打招呼"
+								>
+									<span>🚀</span>
+									<span>自动沟通</span>
+									{#if currentAction === 'auto_apply'}
+										<span class="text-[9px] opacity-80">(默认)</span>
+									{/if}
+								</button>
 							</div>
 
 							<div class="flex items-center space-x-2 text-xs">
