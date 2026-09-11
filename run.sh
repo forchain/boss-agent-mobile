@@ -8,8 +8,8 @@
 # Usage:
 #   ./run.sh                              # Start Worker daemon (default, with PB & AVD pre-flight gates)
 #   ./run.sh worker                       # Start Worker daemon or attach to logs
-#   ./run.sh worker stop                  # Stop background Worker daemon
-#   ./run.sh worker status                # Check Worker status
+#   ./run.sh stop                         # Stop background Worker daemon (or: ./run.sh worker stop)
+#   ./run.sh status                       # Check Worker status (or: ./run.sh worker status)
 #   ./run.sh web                          # Start SvelteKit Web dashboard (./web.sh)
 #   ./run.sh pb                           # Manage/Start PocketBase (./pb.sh)
 #   ./run.sh pocketbase                   # Manage/Start PocketBase (./pb.sh)
@@ -104,10 +104,12 @@ attach_worker_logs() {
 }
 
 # Handle worker subcommands: stop / status
-if [[ "${SUBCOMMAND}" == "worker" && "${2:-}" == "stop" ]]; then
+if [[ ("${SUBCOMMAND}" == "worker" && "${2:-}" == "stop") || "${SUBCOMMAND}" == "stop" ]]; then
     PID="$(get_running_worker_pid)"
     if [[ -n "${PID}" ]]; then
         kill "${PID}" 2>/dev/null || true
+        pkill -P "${PID}" 2>/dev/null || true
+        pkill -f "scripts/worker.py" 2>/dev/null || true
         rm -f "${WORKER_PID_FILE}"
         echo "✅ Automation Worker daemon stopped (PID: ${PID})."
     else
@@ -118,7 +120,7 @@ if [[ "${SUBCOMMAND}" == "worker" && "${2:-}" == "stop" ]]; then
     exit 0
 fi
 
-if [[ "${SUBCOMMAND}" == "worker" && "${2:-}" == "status" ]]; then
+if [[ ("${SUBCOMMAND}" == "worker" && "${2:-}" == "status") || "${SUBCOMMAND}" == "status" ]]; then
     PID="$(get_running_worker_pid)"
     if [[ -n "${PID}" ]]; then
         echo "🟢 Automation Worker daemon is RUNNING (PID: ${PID})."
