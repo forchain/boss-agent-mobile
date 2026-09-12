@@ -4,18 +4,7 @@ import { loadMergedSettings, saveSettingsToLocalYaml } from '$lib/server/setting
 
 export const GET: RequestHandler = async () => {
 	const settings = loadMergedSettings();
-	return json({
-		provider: settings.provider,
-		base_url: settings.base_url,
-		api_key: settings.api_key,
-		model: settings.model,
-		temperature: settings.temperature,
-		timeout_sec: settings.timeout_sec,
-		max_tokens: settings.max_tokens,
-		langsmith_tracing: settings.langsmith_tracing,
-		langsmith_api_key: settings.langsmith_api_key,
-		langsmith_project: settings.langsmith_project
-	});
+	return json(settings);
 };
 
 export const POST: RequestHandler = async ({ request }) => {
@@ -25,7 +14,7 @@ export const POST: RequestHandler = async ({ request }) => {
 		return json(result);
 	} catch (err: any) {
 		return json(
-			{ success: false, message: err?.message || 'Failed to save LLM settings' },
+			{ success: false, message: err?.message || 'Failed to save settings' },
 			{ status: 500 }
 		);
 	}

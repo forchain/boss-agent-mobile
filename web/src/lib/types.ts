@@ -72,6 +72,35 @@ export interface LLMSettings {
 	temperature: number;
 }
 
+export interface SystemSettings {
+	// Mobile Virtual Device & Appium
+	device: string;
+	avd_name: string;
+	server_url: string;
+
+	// PocketBase State Stream Broker
+	pocketbase_url: string;
+
+	// LLM Reasoning Provider
+	provider: 'openai' | 'minimax' | 'deepseek' | string;
+	model: string;
+	base_url: string;
+	api_key?: string;
+	temperature: number;
+	timeout_sec: number;
+	max_tokens: number;
+
+	// LangSmith Observability
+	langsmith_tracing: boolean;
+	langsmith_api_key?: string;
+	langsmith_project: string;
+
+	// Automation & Safety Limits
+	daily_greeting_limit: number;
+	preview_timeout_sec: number;
+	enable_greeting: boolean;
+}
+
 export interface MatchEvaluateRequest {
 	job_title: string;
 	company_name?: string;
