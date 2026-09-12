@@ -119,9 +119,7 @@ class BaseTaskBroker(ABC):
         pass
 
     @abstractmethod
-    async def get_job_record_by_fingerprint(
-        self, fingerprint: str
-    ) -> dict[str, Any] | None:
+    async def get_job_record_by_fingerprint(self, fingerprint: str) -> dict[str, Any] | None:
         """Get a job record by its canonical fingerprint."""
         pass
 
@@ -299,6 +297,7 @@ class InMemoryTaskBroker(BaseTaskBroker):
                     status_val = status_val.value
                 if status_val:
                     from boss_agent.models import STATE_RANK
+
                     cur_rank = STATE_RANK.get(rec.get("status", ""), 0)
                     new_rank = STATE_RANK.get(status_val, 0)
                     if new_rank > cur_rank or status_val == "ignored":
@@ -323,6 +322,8 @@ class InMemoryTaskBroker(BaseTaskBroker):
                     rec["match_score"] = record_data["match_score"]
                 if record_data.get("jd_key_requirements"):
                     rec["jd_key_requirements"] = record_data["jd_key_requirements"]
+                if "screened_reason" in record_data:
+                    rec["screened_reason"] = record_data["screened_reason"]
                 rec["updated"] = now
                 return dict(rec)
 
@@ -346,6 +347,7 @@ class InMemoryTaskBroker(BaseTaskBroker):
                 "digest": record_data.get("digest", ""),
                 "job_description": record_data.get("job_description", ""),
                 "status": status_val or "unmatched",
+                "screened_reason": record_data.get("screened_reason", ""),
                 "match_score": record_data.get("match_score"),
                 "jd_key_requirements": record_data.get("jd_key_requirements", []),
                 "greeting_message": record_data.get("greeting_message", ""),
@@ -360,9 +362,7 @@ class InMemoryTaskBroker(BaseTaskBroker):
             self._job_fingerprints[fingerprint] = rec_id
             return dict(new_rec)
 
-    async def get_job_record_by_fingerprint(
-        self, fingerprint: str
-    ) -> dict[str, Any] | None:
+    async def get_job_record_by_fingerprint(self, fingerprint: str) -> dict[str, Any] | None:
         async with self._lock:
             rec_id = self._job_fingerprints.get(fingerprint)
             if rec_id and rec_id in self._job_records:
@@ -375,7 +375,9 @@ class InMemoryTaskBroker(BaseTaskBroker):
             count = 0
             for rec in self._job_records.values():
                 if rec.get("status") == "applied":
-                    up = str(rec.get("updated") or rec.get("last_seen_at") or rec.get("created") or "")
+                    up = str(
+                        rec.get("updated") or rec.get("last_seen_at") or rec.get("created") or ""
+                    )
                     if up.startswith(today_prefix):
                         count += 1
             return count
@@ -392,7 +394,11 @@ class InMemoryTaskBroker(BaseTaskBroker):
             records = list(self._job_records.values())
             if status:
                 if status == "unmatched":
-                    records = [r for r in records if r.get("status") in ("unmatched", "digest_only", "jd_saved")]
+                    records = [
+                        r
+                        for r in records
+                        if r.get("status") in ("unmatched", "digest_only", "jd_saved")
+                    ]
                 else:
                     records = [r for r in records if r.get("status") == status]
             records.sort(key=lambda x: str(x.get("created", "")), reverse=True)
@@ -598,7 +604,11 @@ class PocketBaseTaskBroker(BaseTaskBroker):
         # Ensure obsolete fallback cache files are removed if present
         try:
             from pathlib import Path
-            for f in (".boss_agent/job_records_fallback.json", ".boss_agent/job_records_fallback.json.bak"):
+
+            for f in (
+                ".boss_agent/job_records_fallback.json",
+                ".boss_agent/job_records_fallback.json.bak",
+            ):
                 p = Path(f)
                 if p.exists():
                     p.unlink(missing_ok=True)
@@ -925,8 +935,10 @@ class PocketBaseTaskBroker(BaseTaskBroker):
                 existing_dict = {}
                 if existing_row:
                     col_names = [d[0] for d in cursor.description]
-                    existing_dict = dict(zip(col_names, existing_row))
-                    p_id = existing_dict.get("id") or profile_data.get("id") or str(uuid.uuid4())[:15]
+                    existing_dict = dict(zip(col_names, existing_row, strict=False))
+                    p_id = (
+                        existing_dict.get("id") or profile_data.get("id") or str(uuid.uuid4())[:15]
+                    )
                 else:
                     p_id = profile_data.get("id") or str(uuid.uuid4())[:15]
 
@@ -1040,7 +1052,9 @@ class PocketBaseTaskBroker(BaseTaskBroker):
                 for k, v in profile_data.items():
                     if v is not None and v != "" and v != [] and v != {}:
                         merged_body[k] = v
-                incoming_doc = profile_data.get("profile_document") or profile_data.get("raw_summary")
+                incoming_doc = profile_data.get("profile_document") or profile_data.get(
+                    "raw_summary"
+                )
                 if incoming_doc:
                     merged_body["raw_summary"] = incoming_doc
                 elif existing.get("raw_summary"):
@@ -1176,9 +1190,7 @@ class PocketBaseTaskBroker(BaseTaskBroker):
     def _jobs_collection_url(self) -> str:
         return f"{self.base_url}/api/collections/job_records/records"
 
-    async def get_job_record_by_fingerprint(
-        self, fingerprint: str
-    ) -> dict[str, Any] | None:
+    async def get_job_record_by_fingerprint(self, fingerprint: str) -> dict[str, Any] | None:
         url = self._jobs_collection_url()
         safe_fp = fingerprint.replace("'", "\\'")
         loop = asyncio.get_running_loop()
@@ -1260,14 +1272,18 @@ class PocketBaseTaskBroker(BaseTaskBroker):
                     existing = items[0]
                     rec_id = existing["id"]
                     new_kw = record_data.get("search_keywords", [])
-                    merged_kw = list(dict.fromkeys((existing.get("search_keywords") or []) + new_kw))
+                    merged_kw = list(
+                        dict.fromkeys((existing.get("search_keywords") or []) + new_kw)
+                    )
                     patch_body = {
                         "last_seen_at": now,
                         "search_keywords": merged_kw,
                     }
                     if record_data.get("title") and record_data["title"] != existing.get("title"):
                         patch_body["title"] = record_data["title"]
-                    if record_data.get("recruiter_name") and record_data["recruiter_name"] != existing.get("recruiter_name"):
+                    if record_data.get("recruiter_name") and record_data[
+                        "recruiter_name"
+                    ] != existing.get("recruiter_name"):
                         patch_body["recruiter_name"] = record_data["recruiter_name"]
                     if record_data.get("digest") and not existing.get("digest"):
                         patch_body["digest"] = record_data["digest"]
@@ -1278,6 +1294,7 @@ class PocketBaseTaskBroker(BaseTaskBroker):
                         status_val = status_val.value
                     if status_val:
                         from boss_agent.models import STATE_RANK
+
                         cur_rank = STATE_RANK.get(existing.get("status", ""), 0)
                         new_rank = STATE_RANK.get(status_val, 0)
                         if new_rank > cur_rank or status_val == "ignored":
@@ -1290,7 +1307,9 @@ class PocketBaseTaskBroker(BaseTaskBroker):
                         patch_body["tags"] = record_data["tags"]
                     if record_data.get("recruiter_title") and not existing.get("recruiter_title"):
                         patch_body["recruiter_title"] = record_data["recruiter_title"]
-                    if "is_headhunter" in record_data and (record_data["is_headhunter"] or existing.get("is_headhunter") is None):
+                    if "is_headhunter" in record_data and (
+                        record_data["is_headhunter"] or existing.get("is_headhunter") is None
+                    ):
                         patch_body["is_headhunter"] = record_data["is_headhunter"]
                     if record_data.get("salary_range") and not existing.get("salary_range"):
                         patch_body["salary_range"] = record_data["salary_range"]
@@ -1302,6 +1321,8 @@ class PocketBaseTaskBroker(BaseTaskBroker):
                         patch_body["match_score"] = record_data["match_score"]
                     if record_data.get("jd_key_requirements"):
                         patch_body["jd_key_requirements"] = record_data["jd_key_requirements"]
+                    if "screened_reason" in record_data:
+                        patch_body["screened_reason"] = record_data["screened_reason"]
 
                     patch_url = f"{url}/{rec_id}"
                     patch_resp = await loop.run_in_executor(
@@ -1349,6 +1370,7 @@ class PocketBaseTaskBroker(BaseTaskBroker):
             "digest": record_data.get("digest", ""),
             "job_description": record_data.get("job_description", ""),
             "status": status_val or "unmatched",
+            "screened_reason": record_data.get("screened_reason", ""),
             "match_score": record_data.get("match_score"),
             "jd_key_requirements": record_data.get("jd_key_requirements", []),
             "greeting_message": record_data.get("greeting_message", ""),
@@ -1406,7 +1428,9 @@ class PocketBaseTaskBroker(BaseTaskBroker):
         params: dict[str, Any] = {"sort": "-created", "perPage": str(limit)}
         if status:
             if status == "unmatched":
-                params["filter"] = '(status="unmatched" || status="digest_only" || status="jd_saved")'
+                params["filter"] = (
+                    '(status="unmatched" || status="digest_only" || status="jd_saved")'
+                )
             else:
                 params["filter"] = f"status='{status}'"
         loop = asyncio.get_running_loop()
@@ -1458,7 +1482,9 @@ class PocketBaseTaskBroker(BaseTaskBroker):
                 return True
             if resp.status_code == 404:
                 return False
-            logger.warning("PocketBase delete_job_record returned %s: %s", resp.status_code, resp.text)
+            logger.warning(
+                "PocketBase delete_job_record returned %s: %s", resp.status_code, resp.text
+            )
             return False
         except Exception as e:
             logger.warning("PocketBase delete_job_record failed: %s", e)
@@ -1575,4 +1601,3 @@ class PocketBaseTaskBroker(BaseTaskBroker):
 
 
 PocketBaseBroker = PocketBaseTaskBroker
-
