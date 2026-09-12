@@ -59,8 +59,13 @@ def extract_digest_from_jd(jd: str, max_chars: int = 100) -> str:
         if (
             not stripped
             or len(stripped) < 5
-            or re.match(r"^(?:岗位职责|工作职责|职位描述|任职要求|任职资格|加分项|基本要求|必须要求|关于我们|公司介绍|加分条件|薪酬福利)[:：]?$", stripped)
-            or re.match(r"^【(?:岗位职责|工作职责|职位描述|任职要求|任职资格|加分项|关于我们)】$", stripped)
+            or re.match(
+                r"^(?:岗位职责|工作职责|职位描述|任职要求|任职资格|加分项|基本要求|必须要求|关于我们|公司介绍|加分条件|薪酬福利)[:：]?$",
+                stripped,
+            )
+            or re.match(
+                r"^【(?:岗位职责|工作职责|职位描述|任职要求|任职资格|加分项|关于我们)】$", stripped
+            )
         ):
             continue
         substantive.append(stripped)
@@ -73,16 +78,73 @@ def extract_digest_from_jd(jd: str, max_chars: int = 100) -> str:
 
 
 COMMON_TECH_TAGS = (
-    "Java", "Python", "Go", "Golang", "Rust", "C++", "C#", ".NET", "PHP",
-    "React Native", "React", "Flutter", "Vue", "Angular", "Node.js", "TypeScript", "JavaScript",
-    "Android", "iOS", "鸿蒙", "HarmonyOS", "小程序", "RN",
-    "LLM", "AI", "大模型", "Agent", "Prompt", "RAG", "AIGC", "NLP", "CV", "机器学习", "深度学习",
-    "Spring", "SpringBoot", "FastAPI", "Django", "Flask",
-    "MySQL", "PostgreSQL", "Redis", "MongoDB", "Elasticsearch", "Kafka",
-    "Kubernetes", "K8s", "Docker", "DevOps", "CI/CD",
-    "全栈", "架构师", "前端", "后端", "移动端", "测开", "运维", "微服务",
-    "3-5年", "5-10年", "1-3年", "10年以上", "应届生",
-    "本科", "硕士", "博士", "大专",
+    "Java",
+    "Python",
+    "Go",
+    "Golang",
+    "Rust",
+    "C++",
+    "C#",
+    ".NET",
+    "PHP",
+    "React Native",
+    "React",
+    "Flutter",
+    "Vue",
+    "Angular",
+    "Node.js",
+    "TypeScript",
+    "JavaScript",
+    "Android",
+    "iOS",
+    "鸿蒙",
+    "HarmonyOS",
+    "小程序",
+    "RN",
+    "LLM",
+    "AI",
+    "大模型",
+    "Agent",
+    "Prompt",
+    "RAG",
+    "AIGC",
+    "NLP",
+    "CV",
+    "机器学习",
+    "深度学习",
+    "Spring",
+    "SpringBoot",
+    "FastAPI",
+    "Django",
+    "Flask",
+    "MySQL",
+    "PostgreSQL",
+    "Redis",
+    "MongoDB",
+    "Elasticsearch",
+    "Kafka",
+    "Kubernetes",
+    "K8s",
+    "Docker",
+    "DevOps",
+    "CI/CD",
+    "全栈",
+    "架构师",
+    "前端",
+    "后端",
+    "移动端",
+    "测开",
+    "运维",
+    "微服务",
+    "3-5年",
+    "5-10年",
+    "1-3年",
+    "10年以上",
+    "应届生",
+    "本科",
+    "硕士",
+    "博士",
+    "大专",
 )
 
 
@@ -390,7 +452,10 @@ class ScreeningPolicy:
         cleaned = company_name.strip()
         if cleaned not in self.company_blacklist:
             self.company_blacklist.append(cleaned)
-            return True, f"已成功将直招企业 '{cleaned}' 加入公司黑名单，后续该企业的岗位将自动过滤以节省每日投递额度"
+            return (
+                True,
+                f"已成功将直招企业 '{cleaned}' 加入公司黑名单，后续该企业的岗位将自动过滤以节省每日投递额度",
+            )
         return True, f"企业 '{cleaned}' 已在公司黑名单中"
 
     def remove_company_from_blacklist(self, company_name: str) -> bool:
@@ -489,6 +554,7 @@ class ScreeningPolicy:
         else:
             try:
                 from .settings import resolve_git_common_root
+
                 root = resolve_git_common_root()
             except Exception:
                 root = Path.cwd()
@@ -511,11 +577,13 @@ class ScreeningPolicy:
                     if p.suffix in (".yaml", ".yml"):
                         try:
                             import yaml
+
                             data = yaml.safe_load(content)
                         except Exception:
                             data = None
                     else:
                         import json
+
                         data = json.loads(content)
                     if isinstance(data, dict):
                         return cls.from_dict(data)
@@ -531,6 +599,7 @@ class ScreeningPolicy:
         else:
             try:
                 from .settings import resolve_git_common_root
+
                 root = resolve_git_common_root()
             except Exception:
                 root = Path.cwd()
@@ -540,6 +609,7 @@ class ScreeningPolicy:
 
         try:
             import yaml
+
             content = yaml.dump(
                 self.to_dict(),
                 allow_unicode=True,
@@ -548,6 +618,7 @@ class ScreeningPolicy:
             )
         except Exception:
             import json
+
             lines = [
                 f"enable_screening: {'true' if self.enable_screening else 'false'}",
                 "title_whitelist:",
@@ -563,7 +634,6 @@ class ScreeningPolicy:
 
         target_path.write_text(content, encoding="utf-8")
         return target_path
-
 
 
 @dataclass
@@ -593,7 +663,9 @@ class SavedSearch:
             self.filter.enable_filter = self.enable_filter
         # Bidirectional sync between target_action and target_task_type
         if not self.target_action:
-            self.target_action = "auto_apply" if self.target_task_type == "AUTO_APPLY" else "save_jd"
+            self.target_action = (
+                "auto_apply" if self.target_task_type == "AUTO_APPLY" else "save_jd"
+            )
         elif self.target_action == "auto_apply":
             self.target_task_type = "AUTO_APPLY"
         else:
@@ -635,12 +707,12 @@ class SavedSearch:
             "is_enabled": self.is_enabled,
             "last_run_at": self.last_run_at,
             "target_task_type": self.target_task_type,
-            "target_action": self.target_action,
-            "max_jobs": self.max_jobs,
         }
 
     @classmethod
-    def from_dict(cls, search_id: str | dict[str, Any], data: dict[str, Any] | None = None) -> "SavedSearch":
+    def from_dict(
+        cls, search_id: str | dict[str, Any], data: dict[str, Any] | None = None
+    ) -> "SavedSearch":
         if isinstance(search_id, dict) and data is None:
             data = search_id
             search_id = str(data.get("id", ""))

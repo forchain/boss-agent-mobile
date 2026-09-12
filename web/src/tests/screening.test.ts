@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterAll } from 'vitest';
 import { isMaskedCompanyName, validateCanBlacklistCompany } from '../lib/screening';
 import { GET, POST, DELETE } from '../routes/api/screening/blacklist/+server';
 
@@ -157,5 +157,16 @@ describe('Masked Company Guardrail & Screening Utilities', () => {
 		expect(postData.policy.company_blacklist).not.toContain('某中型人工智能公司');
 		expect(postData.rejected_companies.length).toBe(1);
 		expect(postData.rejected_companies[0].name).toBe('某中型人工智能公司');
+	});
+
+	afterAll(async () => {
+		const { existsSync, unlinkSync } = await import('node:fs');
+		const { resolve } = await import('node:path');
+		const localYaml = resolve(process.cwd(), '../config/screening.local.yaml');
+		if (existsSync(localYaml)) {
+			try {
+				unlinkSync(localYaml);
+			} catch (e) {}
+		}
 	});
 });

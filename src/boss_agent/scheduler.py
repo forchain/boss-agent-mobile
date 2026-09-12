@@ -202,6 +202,8 @@ class AutomationScheduler:
                 "preview_timeout_sec": 3.0,
                 "scheduled": True,
             }
+            if search_dict.get("screening_policy"):
+                payload["screening_policy"] = search_dict.get("screening_policy")
 
             task = await self.broker.create_task(
                 task_type=task_type,

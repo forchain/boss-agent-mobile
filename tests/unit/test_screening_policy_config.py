@@ -1,6 +1,8 @@
-from pathlib import Path
 import tempfile
+from pathlib import Path
+
 import yaml
+
 from boss_agent.models import JobRecord, ScreeningPolicy
 
 
