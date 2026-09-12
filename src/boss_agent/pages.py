@@ -420,7 +420,19 @@ class JobListPage(BaseBossPage):
 
     def is_on_home_page(self) -> bool:
         """Check if currently on the main job recommendation home page."""
-        return self.find_by_key("job_list.search_icon", timeout_sec=0.5) is not None
+        if self.find_by_key("job_list.search_icon", timeout_sec=0.5) is not None:
+            return True
+        if not self.driver:
+            return False
+        try:
+            menus = self.driver.find_elements(
+                by="xpath", value="//*[@resource-id='com.hpbr.bosszhipin:id/ly_menu']"
+            )
+            if menus and not SearchPage(self.driver).is_search_page():
+                return True
+        except Exception:
+            pass
+        return False
 
     def navigate_to_home(self, max_attempts: int = 6) -> bool:
         """Ensure the app navigates back to the primary Job Recommendation Home page.
@@ -484,11 +496,36 @@ class JobListPage(BaseBossPage):
 
     def open_search(self, timeout_sec: float = 10.0) -> bool:
         """Click the search icon in the top header to enter the search page."""
+        search_page = SearchPage(self.driver)
+        if search_page.is_search_page():
+            return True
+
         elem = self.find_by_key("job_list.search_icon", timeout_sec=timeout_sec)
         if elem:
             self.gestures.human_click(elem)
-            return True
-        return False
+            if search_page.wait_for_search_page(timeout_sec=3.0):
+                return True
+
+        # Fallback: find ly_menu directly and tap on the right side (search icon)
+        try:
+            if self.driver:
+                menus = self.driver.find_elements(
+                    by="xpath", value="//*[@resource-id='com.hpbr.bosszhipin:id/ly_menu']"
+                )
+                if menus:
+                    menu_elem = menus[0]
+                    loc = getattr(menu_elem, "location", None) or getattr(menu_elem, "rect", None)
+                    size = getattr(menu_elem, "size", None) or getattr(menu_elem, "rect", None)
+                    if loc and size:
+                        target_x = (loc.get("x", 0) or 0) + (size.get("width", 0) or 0) * 0.75
+                        target_y = (loc.get("y", 0) or 0) + (size.get("height", 0) or 0) * 0.5
+                        self.gestures.human_click_at_point(target_x, target_y, jitter_px=3.0)
+                        if search_page.wait_for_search_page(timeout_sec=3.0):
+                            return True
+        except Exception:
+            pass
+
+        return search_page.is_search_page()
 
     def wait_for_jobs_loaded(self, timeout_sec: float = 15.0) -> bool:
         """Wait until at least one job card is present on the screen."""
@@ -815,6 +852,12 @@ class SearchPage(BaseBossPage):
         if elem:
             self.gestures.human_click(elem)
             return True
+        if self.driver and hasattr(self.driver, "press_keycode"):
+            try:
+                self.driver.press_keycode(66)  # KEYCODE_ENTER
+                return True
+            except Exception:
+                pass
         return False
 
     def search(self, keyword: str, timeout_sec: float = 15.0) -> bool:

@@ -26,9 +26,13 @@ job_list:
     - "com.hpbr.bosszhipin:id/tv_tab_1"
     - "//*[@text='职位']"
   search_icon:
+    - "//*[@resource-id='com.hpbr.bosszhipin:id/ly_menu']/*[2]"
+    - "//*[@resource-id='com.hpbr.bosszhipin:id/ly_menu']/*[2]//android.widget.ImageView"
+    - "//*[@resource-id='com.hpbr.bosszhipin:id/ly_menu']/android.widget.RelativeLayout[2]"
+    - "(//*[@resource-id='com.hpbr.bosszhipin:id/ly_menu']//android.widget.ImageView)[2]"
+    - "//android.widget.LinearLayout[@resource-id='com.hpbr.bosszhipin:id/ly_menu']/*[@clickable='true'][last()]"
     - "//android.widget.LinearLayout[@resource-id='com.hpbr.bosszhipin:id/ly_menu']/*[last()]"
-    - "//*[@resource-id='com.hpbr.bosszhipin:id/ly_menu']/android.widget.ImageView[2]"
-    - "//*[@content-desc='搜索' or contains(@resource-id, 'search')]"
+    - "//*[@content-desc='搜索']"
   job_card:
     - "com.hpbr.bosszhipin:id/view_job_card"
     - "//*[contains(@resource-id, 'view_job_card') or contains(@resource-id, 'cl_card_container') or contains(@resource-id, 'cl_position')]"
