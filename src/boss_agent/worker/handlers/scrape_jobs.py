@@ -60,12 +60,14 @@ class ScrapeJobsHandler(BaseTaskHandler):
             except ValueError:
                 target_action = TargetAction.SAVE_JD
         else:
-            enrich_jd = bool(payload.get("enrich_jd", True))
-            target_action = TargetAction.SAVE_JD if enrich_jd else TargetAction.DIGEST_ONLY
-        required_rank = TARGET_ACTION_RANK.get(target_action, 2)
+            target_action = TargetAction.SAVE_JD
+        required_rank = TARGET_ACTION_RANK.get(target_action, 1)
 
+        search_name = payload.get("search_name") or payload.get("saved_search_name") or ""
+        strategy_desc = f"strategy='{search_name}', " if search_name else ""
         await broker.append_log(
-            task.id, f"Starting SCRAPE_JOBS (keyword='{keyword}', target_action='{target_action.value}', max_jobs={max_jobs})"
+            task.id,
+            f"Starting SCRAPE_JOBS ({strategy_desc}keyword='{keyword}', target_action='{target_action.value}', max_jobs={max_jobs})",
         )
 
         startup_page = StartupDialogPage(driver)
@@ -130,7 +132,9 @@ class ScrapeJobsHandler(BaseTaskHandler):
         detail_page = JobDetailPage(driver)
 
         policy_raw = payload.get("screening_policy")
-        policy = ScreeningPolicy.from_dict(policy_raw) if policy_raw else ScreeningPolicy()
+        policy = (
+            ScreeningPolicy.from_dict(policy_raw) if policy_raw else ScreeningPolicy.load_default()
+        )
 
         while len(scanned_fingerprints) < max_jobs:
             # 0. Check if task was cancelled by user
@@ -215,13 +219,15 @@ class ScrapeJobsHandler(BaseTaskHandler):
                             task.id,
                             f"⏭️ [State Machine] '{card.title}' already at '{existing_status}' (>= target '{target_action.value}'). Skipping detail opening.",
                         )
-                        await broker.upsert_job_record({
-                            "fingerprint": card.fingerprint,
-                            "company_name": card.company_name,
-                            "title": card.title,
-                            "recruiter_name": card.recruiter_name,
-                            "search_keywords": [keyword] if keyword else [],
-                        })
+                        await broker.upsert_job_record(
+                            {
+                                "fingerprint": card.fingerprint,
+                                "company_name": card.company_name,
+                                "title": card.title,
+                                "recruiter_name": card.recruiter_name,
+                                "search_keywords": [keyword] if keyword else [],
+                            }
+                        )
                         continue
 
                 # 4. Preliminary screening (zero-token gatekeeper)
@@ -252,6 +258,7 @@ class ScrapeJobsHandler(BaseTaskHandler):
                         "job_description": "",
                         "jd_key_requirements": card_tags,
                         "status": JobRecordStatus.IGNORED.value,
+                        "screened_reason": reason,
                         "search_keywords": [keyword] if keyword else [],
                         "source_task_id": task.id,
                     }
@@ -277,23 +284,16 @@ class ScrapeJobsHandler(BaseTaskHandler):
                     "salary_range": getattr(card, "salary_range", "") or "",
                     "location": getattr(card, "location", "") or "",
                     "digest": digest_text,
-                    "job_description": existing_record.get("job_description", "") if existing_record else "",
+                    "job_description": existing_record.get("job_description", "")
+                    if existing_record
+                    else "",
                     "jd_key_requirements": card_tags,
-                    "status": JobRecordStatus.DIGEST_ONLY.value,
+                    "status": JobRecordStatus.JD_SAVED.value,
                     "search_keywords": [keyword] if keyword else [],
                     "source_task_id": task.id,
                 }
 
-                if target_action == TargetAction.DIGEST_ONLY:
-                    persisted = await broker.upsert_job_record(card_record)
-                    scraped_jobs.append(persisted)
-                    await broker.append_log(
-                        task.id,
-                        f"✅ [Direct Ingestion] Recorded {rec_type} job from search list: '{card.title}' @ '{card.company_name}' ({card_record.get('salary_range', '')})",
-                    )
-                    continue
-
-                # For SAVE_JD (or AUTO_APPLY): Ingest card digest first, then inspect detail
+                # Ingest card first, then inspect detail to enrich full JD
                 persisted = await broker.upsert_job_record(card_record)
                 scraped_jobs.append(persisted)
 
@@ -318,16 +318,25 @@ class ScrapeJobsHandler(BaseTaskHandler):
                             "fingerprint": card.fingerprint,
                             "title": job_posting.title or card.title,
                             "company_name": job_posting.company_name or card.company_name,
-                            "recruiter_name": card.recruiter_name or job_posting.recruiter_name or "招聘者",
-                            "recruiter_title": card.recruiter_title or getattr(job_posting, "recruiter_title", "") or "",
-                            "is_headhunter": card.is_headhunter or getattr(job_posting, "is_headhunter", False),
-                            "company_scale": card.company_scale or getattr(job_posting, "company_scale", "") or "",
+                            "recruiter_name": card.recruiter_name
+                            or job_posting.recruiter_name
+                            or "招聘者",
+                            "recruiter_title": card.recruiter_title
+                            or getattr(job_posting, "recruiter_title", "")
+                            or "",
+                            "is_headhunter": card.is_headhunter
+                            or getattr(job_posting, "is_headhunter", False),
+                            "company_scale": card.company_scale
+                            or getattr(job_posting, "company_scale", "")
+                            or "",
                             "industry": card.industry or getattr(job_posting, "industry", "") or "",
                             "tags": card_tags or getattr(job_posting, "tags", []) or [],
-                            "salary_range": job_posting.salary_range or card_record.get("salary_range", ""),
+                            "salary_range": job_posting.salary_range
+                            or card_record.get("salary_range", ""),
                             "location": job_posting.location or card_record.get("location", ""),
                             "digest": digest_text,
-                            "job_description": job_posting.job_description or card_record.get("job_description", ""),
+                            "job_description": job_posting.job_description
+                            or card_record.get("job_description", ""),
                             "status": JobRecordStatus.JD_SAVED.value,
                             "search_keywords": [keyword] if keyword else [],
                             "source_task_id": task.id,
@@ -351,8 +360,15 @@ class ScrapeJobsHandler(BaseTaskHandler):
                                 f"✨ [Enriched Detail] Extracted full JD for {hh_tag} '{persisted['title']}' ({len(persisted.get('job_description', ''))} chars)",
                             )
                     except Exception as e:
-                        logger.error("Failed to extract detail for '%s': %s", getattr(card, "title", "job"), e)
-                        await broker.append_log(task.id, f"❌ [Detail Error] Failed to extract detail for '{getattr(card, 'title', 'job')}': {e}")
+                        logger.error(
+                            "Failed to extract detail for '%s': %s",
+                            getattr(card, "title", "job"),
+                            e,
+                        )
+                        await broker.append_log(
+                            task.id,
+                            f"❌ [Detail Error] Failed to extract detail for '{getattr(card, 'title', 'job')}': {e}",
+                        )
                     finally:
                         detail_page.navigate_back()
 
@@ -393,7 +409,9 @@ class ScrapeJobsHandler(BaseTaskHandler):
                 from boss_agent.models import compute_job_fingerprint
 
                 fp = compute_job_fingerprint(
-                    job_posting.company_name, job_posting.title, job_posting.recruiter_name or "招聘者"
+                    job_posting.company_name,
+                    job_posting.title,
+                    job_posting.recruiter_name or "招聘者",
                 )
                 if await broker.has_job_fingerprint(fp):
                     skipped_count += 1
@@ -413,7 +431,7 @@ class ScrapeJobsHandler(BaseTaskHandler):
                             "location": job_posting.location,
                             "digest": getattr(job_posting, "digest", "") or "",
                             "job_description": job_posting.job_description,
-                            "status": JobRecordStatus.JD_SAVED.value if target_action != TargetAction.DIGEST_ONLY else JobRecordStatus.DIGEST_ONLY.value,
+                            "status": JobRecordStatus.JD_SAVED.value,
                             "search_keywords": [keyword] if keyword else [],
                             "source_task_id": task.id,
                         }
@@ -440,4 +458,3 @@ class ScrapeJobsHandler(BaseTaskHandler):
                 "jobs": scraped_jobs,
             },
         )
-

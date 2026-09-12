@@ -64,6 +64,14 @@ export interface ResumeRevision {
 }
 
 
+export interface ScreeningPolicy {
+	title_whitelist: string[];
+	title_blacklist: string[];
+	company_blacklist: string[];
+	jd_blacklist: string[];
+	enable_screening: boolean;
+}
+
 export interface LLMSettings {
 	provider: 'openai' | 'minimax' | 'deepseek' | string;
 	model: string;
@@ -109,9 +117,9 @@ export interface AutomationTask {
 	updated?: string;
 }
 
-export type TargetAction = 'digest_only' | 'save_jd' | 'auto_apply';
+export type TargetAction = 'save_jd' | 'auto_apply';
 
-export type JobRecordStatus = 'digest_only' | 'jd_saved' | 'unmatched' | 'matched' | 'applied' | 'ignored';
+export type JobRecordStatus = 'jd_saved' | 'unmatched' | 'matched' | 'applied' | 'ignored' | 'digest_only';
 
 export interface JobRecord {
 	id: string;
@@ -133,6 +141,7 @@ export interface JobRecord {
 	jd_key_requirements?: string[];
 	greeting_message?: string;
 	search_keywords?: string[];
+	screened_reason?: string;
 	source_task_id?: string;
 	first_seen_at?: string;
 	last_seen_at?: string;
@@ -167,8 +176,9 @@ export interface SavedSearch {
 	updated?: string;
 }
 
-export function resolveTargetAction(search: { target_action?: TargetAction; target_task_type?: string }): TargetAction {
-	if (search.target_action) return search.target_action;
+export function resolveTargetAction(search: { target_action?: TargetAction | string; target_task_type?: string }): TargetAction {
+	if (search.target_action === 'auto_apply') return 'auto_apply';
+	if (search.target_action === 'save_jd') return 'save_jd';
 	if (search.target_task_type === 'AUTO_APPLY') return 'auto_apply';
 	return 'save_jd';
 }

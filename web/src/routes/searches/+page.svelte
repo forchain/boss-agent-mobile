@@ -16,6 +16,7 @@
 	let isLoading = $state(true);
 	let isPocketBaseOnline = $state(false);
 	let triggerStatus = $state<{ [key: string]: string }>({});
+	let triggerTaskIds = $state<{ [key: string]: string }>({});
 
 	$effect(() => {
 		if (data?.searches && data.searches.length > 0 && searches.length === 0) {
@@ -44,7 +45,7 @@
 		enable_search: boolean;
 		enable_filter: boolean;
 		target_task_type: 'AUTO_APPLY' | 'SCRAPE_JOBS';
-		target_action: 'digest_only' | 'save_jd' | 'auto_apply';
+		target_action: 'save_jd' | 'auto_apply';
 		max_jobs: number;
 		cron_expression: string;
 		is_enabled: boolean;
@@ -371,9 +372,9 @@
 		}
 	}
 
-	async function onTriggerSearch(search: SavedSearch, action: 'digest_only' | 'save_jd' | 'auto_apply') {
+	async function onTriggerSearch(search: SavedSearch, action: 'save_jd' | 'auto_apply') {
 		const taskType = action === 'auto_apply' ? 'AUTO_APPLY' : 'SCRAPE_JOBS';
-		const label = action === 'digest_only' ? '仅抓摘要' : action === 'save_jd' ? '深度存JD' : '自动沟通';
+		const label = action === 'auto_apply' ? '自动沟通' : '深度存JD';
 		triggerStatus[search.id] = `正在下发 [${label}] 任务...`;
 		const payload = {
 			saved_search_id: search.id,
@@ -392,9 +393,11 @@
 		try {
 			const task = await createAutomationTask(taskType, payload);
 			triggerStatus[search.id] = `✅ 已派发 [${label}]: ${task.id}`;
+			triggerTaskIds[search.id] = task.id;
 			setTimeout(() => {
 				delete triggerStatus[search.id];
-			}, 5000);
+				delete triggerTaskIds[search.id];
+			}, 8000);
 		} catch (err: any) {
 			triggerStatus[search.id] = `❌ 派发失败: ${err?.message || err}`;
 		}
@@ -511,17 +514,13 @@
 								{/if}
 							</div>
 							<div class="flex flex-col sm:flex-row items-end sm:items-center gap-1.5 shrink-0">
-								{#if currentAction === 'digest_only'}
-									<span class="text-[10px] px-2.5 py-1 rounded-full font-mono font-medium bg-amber-950 text-amber-300 border border-amber-800">
-										⚡ 仅抓摘要
-									</span>
-								{:else if currentAction === 'save_jd'}
-									<span class="text-[10px] px-2.5 py-1 rounded-full font-mono font-medium bg-cyan-950 text-cyan-300 border border-cyan-800">
-										📖 深度存JD
-									</span>
-								{:else}
+								{#if currentAction === 'auto_apply'}
 									<span class="text-[10px] px-2.5 py-1 rounded-full font-mono font-medium bg-emerald-950 text-emerald-300 border border-emerald-800">
 										🚀 自动沟通
+									</span>
+								{:else}
+									<span class="text-[10px] px-2.5 py-1 rounded-full font-mono font-medium bg-cyan-950 text-cyan-300 border border-cyan-800">
+										📖 深度存JD
 									</span>
 								{/if}
 								<span class="text-[10px] px-2.5 py-1 rounded-full font-mono font-medium bg-slate-800 text-slate-300 border border-slate-700">
@@ -647,25 +646,16 @@
 						{#if triggerStatus[search.id]}
 							<div class="text-[11px] text-cyan-400 font-mono bg-cyan-950/40 border border-cyan-900/60 px-2.5 py-1 rounded-lg animate-pulse flex items-center justify-between">
 								<span>{triggerStatus[search.id]}</span>
-								<a href="/#task-console" class="underline hover:text-cyan-200 ml-2">查看实时日志 →</a>
+								<a
+									href={triggerTaskIds[search.id] ? `/?taskId=${triggerTaskIds[search.id]}#task-console` : '/#task-console'}
+									class="underline hover:text-cyan-200 ml-2"
+								>
+									查看实时日志 →
+								</a>
 							</div>
 						{/if}
 						<div class="flex items-center justify-between gap-2">
 							<div class="flex flex-wrap items-center gap-1.5">
-								<button
-									type="button"
-									onclick={() => onTriggerSearch(search, 'digest_only')}
-									class="px-2.5 py-1.5 rounded-lg text-xs font-medium transition flex items-center space-x-1 {currentAction === 'digest_only'
-										? 'bg-amber-600 hover:bg-amber-500 text-white shadow ring-1 ring-amber-400/50'
-										: 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700'}"
-									title="立即执行此策略：仅抓取摘要（不点开卡片，不发起沟通）"
-								>
-									<span>⚡</span>
-									<span>抓摘要</span>
-									{#if currentAction === 'digest_only'}
-										<span class="text-[9px] opacity-80">(默认)</span>
-									{/if}
-								</button>
 								<button
 									type="button"
 									onclick={() => onTriggerSearch(search, 'save_jd')}
@@ -836,7 +826,6 @@
 								bind:value={modalForm.target_action}
 								class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-cyan-500 text-xs"
 							>
-								<option value="digest_only">⚡ 仅抓取摘要 (digest_only) - 不点开卡片，保存列表基本信息</option>
 								<option value="save_jd">📖 深度存JD (save_jd) - 点开卡片保存详情页岗位职责全文</option>
 								<option value="auto_apply">🚀 自动打招呼 (auto_apply) - 深度存JD并进行AI匹配与发送</option>
 							</select>

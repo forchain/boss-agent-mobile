@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import type { LLMSettings } from '$lib/types';
+	import type { LLMSettings, ScreeningPolicy } from '$lib/types';
+	import { validateCanBlacklistCompany } from '$lib/screening';
 
 	let llmSettings = $state<LLMSettings & { timeout_sec?: number; max_tokens?: number }>({
 		provider: 'openai',
@@ -20,6 +21,25 @@
 	let isTesting = $state(false);
 	let testResult = $state<{ success: boolean; message: string; latency_ms?: number } | null>(null);
 
+	// Screening Policy State
+	let screeningPolicy = $state<ScreeningPolicy>({
+		enable_screening: true,
+		title_whitelist: [],
+		title_blacklist: [],
+		company_blacklist: [],
+		jd_blacklist: []
+	});
+
+	let newTitleWhitelist = $state('');
+	let newTitleBlacklist = $state('');
+	let newCompanyBlacklist = $state('');
+	let newJdBlacklist = $state('');
+	let companyValidationError = $state('');
+
+	let isSavingPolicy = $state(false);
+	let savePolicySuccess = $state('');
+	let savePolicyError = $state('');
+
 	onMount(async () => {
 		try {
 			const res = await fetch('/api/llm/settings');
@@ -38,7 +58,82 @@
 		} catch (e) {
 			console.warn('Failed to load LLM settings:', e);
 		}
+
+		try {
+			const pRes = await fetch('/api/screening/policy');
+			if (pRes.ok) {
+				const pData = await pRes.json();
+				if (pData.policy) {
+					screeningPolicy = {
+						enable_screening: pData.policy.enable_screening ?? true,
+						title_whitelist: Array.isArray(pData.policy.title_whitelist) ? pData.policy.title_whitelist : [],
+						title_blacklist: Array.isArray(pData.policy.title_blacklist) ? pData.policy.title_blacklist : [],
+						company_blacklist: Array.isArray(pData.policy.company_blacklist) ? pData.policy.company_blacklist : [],
+						jd_blacklist: Array.isArray(pData.policy.jd_blacklist) ? pData.policy.jd_blacklist : []
+					};
+				}
+			}
+		} catch (e) {
+			console.warn('Failed to load screening policy:', e);
+		}
 	});
+
+	function addTag(field: 'title_whitelist' | 'title_blacklist' | 'company_blacklist' | 'jd_blacklist', value: string) {
+		const val = value.trim();
+		if (!val) return;
+
+		if (field === 'company_blacklist') {
+			companyValidationError = '';
+			const guard = validateCanBlacklistCompany(val, false);
+			if (!guard.allowed) {
+				companyValidationError = guard.notice;
+				return;
+			}
+		}
+
+		if (!screeningPolicy[field].includes(val)) {
+			screeningPolicy[field] = [...screeningPolicy[field], val];
+		}
+
+		if (field === 'title_whitelist') newTitleWhitelist = '';
+		if (field === 'title_blacklist') newTitleBlacklist = '';
+		if (field === 'company_blacklist') newCompanyBlacklist = '';
+		if (field === 'jd_blacklist') newJdBlacklist = '';
+	}
+
+	function removeTag(field: 'title_whitelist' | 'title_blacklist' | 'company_blacklist' | 'jd_blacklist', index: number) {
+		screeningPolicy[field] = screeningPolicy[field].filter((_, i) => i !== index);
+	}
+
+	async function onSaveScreeningPolicy() {
+		isSavingPolicy = true;
+		savePolicySuccess = '';
+		savePolicyError = '';
+		companyValidationError = '';
+		try {
+			const res = await fetch('/api/screening/policy', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(screeningPolicy)
+			});
+			const data = await res.json();
+			if (res.ok && data.success) {
+				savePolicySuccess = data.message || '✅ 初筛策略已成功保存至 config/screening.local.yaml';
+				if (data.policy) {
+					screeningPolicy = data.policy;
+				}
+				setTimeout(() => {
+					savePolicySuccess = '';
+				}, 4000);
+			} else {
+				savePolicyError = `❌ 保存失败: ${data.error || '未知错误'}`;
+			}
+		} catch (e: any) {
+			savePolicyError = `❌ 保存异常: ${e?.message || e}`;
+		} finally {
+			isSavingPolicy = false;
+		}
+	}
 
 	async function onSaveLLMSettings() {
 		isSaving = true;
@@ -312,7 +407,272 @@
 		</form>
 	</div>
 
-	<!-- Section 2: Mobile & Device Automation (Future Extensible Slot) -->
+	<!-- Section 2: Screening Policy & Blacklist/Whitelist Card -->
+	<div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6">
+		<div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800/80 pb-4">
+			<div class="flex items-center space-x-2.5">
+				<span class="text-xl">🛡️</span>
+				<div>
+					<div class="flex items-center space-x-2">
+						<h2 class="font-semibold text-sm text-slate-200">初筛与黑白名单策略 (Screening Policy)</h2>
+						<span class="text-[10px] px-2 py-0.5 rounded-full {screeningPolicy.enable_screening ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' : 'bg-slate-800 text-slate-400 border border-slate-700'} font-mono">
+							{screeningPolicy.enable_screening ? '初筛已开启' : '初筛已停用'}
+						</span>
+					</div>
+					<p class="text-[11px] text-slate-400 mt-0.5">
+						声明式配置直存 <code class="text-cyan-400 font-mono">config/screening.local.yaml</code>。在搜索结果扫描与移动端投递时，实行零 Token 前置一票否决与准入过滤。
+					</p>
+				</div>
+			</div>
+
+			<label class="flex items-center space-x-2 cursor-pointer select-none">
+				<input
+					type="checkbox"
+					bind:checked={screeningPolicy.enable_screening}
+					class="w-4 h-4 rounded text-cyan-600 focus:ring-cyan-500 bg-slate-950 border-slate-700"
+				/>
+				<span class="text-xs text-slate-300 font-medium">启用初筛过滤</span>
+			</label>
+		</div>
+
+		<!-- Feedback notices -->
+		{#if savePolicySuccess}
+			<div class="bg-emerald-950/40 border border-emerald-800/60 rounded-xl p-3 text-xs text-emerald-300 flex items-center space-x-2">
+				<span>{savePolicySuccess}</span>
+			</div>
+		{/if}
+		{#if savePolicyError}
+			<div class="bg-rose-950/40 border border-rose-800/60 rounded-xl p-3 text-xs text-rose-300 flex items-center space-x-2">
+				<span>{savePolicyError}</span>
+			</div>
+		{/if}
+		{#if companyValidationError}
+			<div class="bg-amber-950/40 border border-amber-800/60 rounded-xl p-3 text-xs text-amber-300 flex items-center space-x-2">
+				<span>⚠️ {companyValidationError}</span>
+			</div>
+		{/if}
+
+		<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+			<!-- 1. Title Whitelist -->
+			<div class="bg-slate-950/60 border border-slate-800/80 rounded-xl p-4 space-y-3">
+				<div class="flex items-center justify-between">
+					<div class="flex items-center space-x-1.5">
+						<span class="text-xs font-semibold text-slate-200">职位标题白名单 (Title Whitelist)</span>
+						<span class="text-[10px] px-1.5 py-0.5 rounded bg-cyan-950/60 text-cyan-400 border border-cyan-800/50">可选准入</span>
+					</div>
+					<span class="text-[11px] text-slate-500">{screeningPolicy.title_whitelist.length} 项</span>
+				</div>
+				<p class="text-[11px] text-slate-400 leading-relaxed">
+					留空表示不限制；若填写，职位标题或标签必须命中其中至少一个才保留（如：<code class="text-slate-300">Agent</code>, <code class="text-slate-300">架构师</code>）。
+				</p>
+
+				<!-- Chips container -->
+				<div class="flex flex-wrap gap-1.5 min-h-[32px] p-2 bg-slate-900/60 border border-slate-800 rounded-lg">
+					{#if screeningPolicy.title_whitelist.length === 0}
+						<span class="text-[11px] text-slate-500 italic">（未配置白名单，非黑名单职位默认全量放行）</span>
+					{:else}
+						{#each screeningPolicy.title_whitelist as item, idx}
+							<span class="inline-flex items-center space-x-1 text-xs px-2 py-0.5 rounded-md bg-cyan-950 text-cyan-300 border border-cyan-800/70">
+								<span>{item}</span>
+								<button
+									type="button"
+									onclick={() => removeTag('title_whitelist', idx)}
+									class="text-cyan-400 hover:text-white font-bold ml-1 text-xs"
+									title="移除"
+								>×</button>
+							</span>
+						{/each}
+					{/if}
+				</div>
+
+				<!-- Add Input -->
+				<div class="flex items-center space-x-2">
+					<input
+						type="text"
+						placeholder="输入标题白名单词，如: Python"
+						bind:value={newTitleWhitelist}
+						onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addTag('title_whitelist', newTitleWhitelist); } }}
+						class="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-cyan-500 font-mono"
+					/>
+					<button
+						type="button"
+						onclick={() => addTag('title_whitelist', newTitleWhitelist)}
+						class="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs px-3 py-1.5 rounded-lg border border-slate-700 transition"
+					>+ 添加</button>
+				</div>
+			</div>
+
+			<!-- 2. Title Blacklist -->
+			<div class="bg-slate-950/60 border border-slate-800/80 rounded-xl p-4 space-y-3">
+				<div class="flex items-center justify-between">
+					<div class="flex items-center space-x-1.5">
+						<span class="text-xs font-semibold text-slate-200">职位标题黑名单 (Title Blacklist)</span>
+						<span class="text-[10px] px-1.5 py-0.5 rounded bg-rose-950/60 text-rose-400 border border-rose-800/50">一票否决</span>
+					</div>
+					<span class="text-[11px] text-slate-500">{screeningPolicy.title_blacklist.length} 项</span>
+				</div>
+				<p class="text-[11px] text-slate-400 leading-relaxed">
+					职位标题或标签命中任意词立即淘汰，绝不点击进入详情页（如：<code class="text-slate-300">销售</code>, <code class="text-slate-300">实习</code>, <code class="text-slate-300">管培生</code>）。
+				</p>
+
+				<!-- Chips container -->
+				<div class="flex flex-wrap gap-1.5 min-h-[32px] p-2 bg-slate-900/60 border border-slate-800 rounded-lg">
+					{#if screeningPolicy.title_blacklist.length === 0}
+						<span class="text-[11px] text-slate-500 italic">（暂无职位黑名单关键词）</span>
+					{:else}
+						{#each screeningPolicy.title_blacklist as item, idx}
+							<span class="inline-flex items-center space-x-1 text-xs px-2 py-0.5 rounded-md bg-rose-950 text-rose-300 border border-rose-800/70">
+								<span>{item}</span>
+								<button
+									type="button"
+									onclick={() => removeTag('title_blacklist', idx)}
+									class="text-rose-400 hover:text-white font-bold ml-1 text-xs"
+									title="移除"
+								>×</button>
+							</span>
+						{/each}
+					{/if}
+				</div>
+
+				<!-- Add Input -->
+				<div class="flex items-center space-x-2">
+					<input
+						type="text"
+						placeholder="输入标题黑名单词，如: 实习"
+						bind:value={newTitleBlacklist}
+						onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addTag('title_blacklist', newTitleBlacklist); } }}
+						class="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-rose-500 font-mono"
+					/>
+					<button
+						type="button"
+						onclick={() => addTag('title_blacklist', newTitleBlacklist)}
+						class="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs px-3 py-1.5 rounded-lg border border-slate-700 transition"
+					>+ 添加</button>
+				</div>
+			</div>
+
+			<!-- 3. Company Blacklist -->
+			<div class="bg-slate-950/60 border border-slate-800/80 rounded-xl p-4 space-y-3">
+				<div class="flex items-center justify-between">
+					<div class="flex items-center space-x-1.5">
+						<span class="text-xs font-semibold text-slate-200">公司黑名单 (Company Blacklist)</span>
+						<span class="text-[10px] px-1.5 py-0.5 rounded bg-rose-950/60 text-rose-400 border border-rose-800/50">一票否决</span>
+					</div>
+					<span class="text-[11px] text-slate-500">{screeningPolicy.company_blacklist.length} 家</span>
+				</div>
+				<p class="text-[11px] text-slate-400 leading-relaxed">
+					命中企业岗位全部自动过滤。受直招守卫保护：猎头代招渠道与保密占位公司禁止添加。
+				</p>
+
+				<!-- Chips container -->
+				<div class="flex flex-wrap gap-1.5 min-h-[32px] p-2 bg-slate-900/60 border border-slate-800 rounded-lg">
+					{#if screeningPolicy.company_blacklist.length === 0}
+						<span class="text-[11px] text-slate-500 italic">（暂无屏蔽企业）</span>
+					{:else}
+						{#each screeningPolicy.company_blacklist as item, idx}
+							<span class="inline-flex items-center space-x-1 text-xs px-2 py-0.5 rounded-md bg-rose-950 text-rose-300 border border-rose-800/70">
+								<span>{item}</span>
+								<button
+									type="button"
+									onclick={() => removeTag('company_blacklist', idx)}
+									class="text-rose-400 hover:text-white font-bold ml-1 text-xs"
+									title="移除"
+								>×</button>
+							</span>
+						{/each}
+					{/if}
+				</div>
+
+				<!-- Add Input -->
+				<div class="flex items-center space-x-2">
+					<input
+						type="text"
+						placeholder="输入需屏蔽的企业名称"
+						bind:value={newCompanyBlacklist}
+						onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addTag('company_blacklist', newCompanyBlacklist); } }}
+						class="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-rose-500 font-mono"
+					/>
+					<button
+						type="button"
+						onclick={() => addTag('company_blacklist', newCompanyBlacklist)}
+						class="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs px-3 py-1.5 rounded-lg border border-slate-700 transition"
+					>+ 添加</button>
+				</div>
+			</div>
+
+			<!-- 4. JD/Digest Blacklist -->
+			<div class="bg-slate-950/60 border border-slate-800/80 rounded-xl p-4 space-y-3">
+				<div class="flex items-center justify-between">
+					<div class="flex items-center space-x-1.5">
+						<span class="text-xs font-semibold text-slate-200">摘要与 JD 关键词黑名单 (JD Blacklist)</span>
+						<span class="text-[10px] px-1.5 py-0.5 rounded bg-rose-950/60 text-rose-400 border border-rose-800/50">一票否决</span>
+					</div>
+					<span class="text-[11px] text-slate-500">{screeningPolicy.jd_blacklist.length} 项</span>
+				</div>
+				<p class="text-[11px] text-slate-400 leading-relaxed">
+					卡片摘要或岗位描述命中即淘汰（如：<code class="text-slate-300">外包</code>, <code class="text-slate-300">驻场</code>, <code class="text-slate-300">电销</code>, <code class="text-slate-300">无底薪</code>）。
+				</p>
+
+				<!-- Chips container -->
+				<div class="flex flex-wrap gap-1.5 min-h-[32px] p-2 bg-slate-900/60 border border-slate-800 rounded-lg">
+					{#if screeningPolicy.jd_blacklist.length === 0}
+						<span class="text-[11px] text-slate-500 italic">（暂无摘要与 JD 黑名单词）</span>
+					{:else}
+						{#each screeningPolicy.jd_blacklist as item, idx}
+							<span class="inline-flex items-center space-x-1 text-xs px-2 py-0.5 rounded-md bg-amber-950 text-amber-300 border border-amber-800/70">
+								<span>{item}</span>
+								<button
+									type="button"
+									onclick={() => removeTag('jd_blacklist', idx)}
+									class="text-amber-400 hover:text-white font-bold ml-1 text-xs"
+									title="移除"
+								>×</button>
+							</span>
+						{/each}
+					{/if}
+				</div>
+
+				<!-- Add Input -->
+				<div class="flex items-center space-x-2">
+					<input
+						type="text"
+						placeholder="输入摘要/JD黑名单词，如: 外包"
+						bind:value={newJdBlacklist}
+						onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addTag('jd_blacklist', newJdBlacklist); } }}
+						class="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-amber-500 font-mono"
+					/>
+					<button
+						type="button"
+						onclick={() => addTag('jd_blacklist', newJdBlacklist)}
+						class="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs px-3 py-1.5 rounded-lg border border-slate-700 transition"
+					>+ 添加</button>
+				</div>
+			</div>
+		</div>
+
+		<!-- Action Footer -->
+		<div class="flex flex-col sm:flex-row items-center justify-between pt-4 border-t border-slate-800/80 gap-3">
+			<span class="text-[11px] text-slate-500 font-mono">
+				📁 规则将实时写入 config/screening.local.yaml
+			</span>
+
+			<button
+				type="button"
+				onclick={onSaveScreeningPolicy}
+				disabled={isSavingPolicy}
+				class="w-full sm:w-auto bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-semibold px-5 py-2.5 rounded-xl text-xs transition shadow-lg shadow-cyan-500/10 flex items-center justify-center space-x-1.5 disabled:opacity-60"
+			>
+				{#if isSavingPolicy}
+					<span class="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+					<span>正在保存初筛策略...</span>
+				{:else}
+					<span>💾 保存初筛策略</span>
+				{/if}
+			</button>
+		</div>
+	</div>
+
+	<!-- Section 3: Mobile & Device Automation (Future Extensible Slot) -->
 	<div class="bg-slate-900/40 border border-slate-800/70 rounded-2xl p-6 space-y-4">
 		<div class="flex items-center justify-between">
 			<div class="flex items-center space-x-2.5">
