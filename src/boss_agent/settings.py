@@ -276,10 +276,11 @@ def load_settings(config_path: str | Path | None = None) -> dict[str, Any]:
                         "langsmith_api_key",
                         "langsmith_project",
                     ):
-                        if legacy_data.get(k) is not None and (
-                            merged.get(k) is None or merged.get(k) == "your-api-key-here"
-                        ):
-                            merged[k] = legacy_data[k]
+                        val = legacy_data.get(k)
+                        if val is not None:
+                            if k == "api_key" and val == "your-api-key-here":
+                                continue
+                            merged[k] = val
             except Exception:
                 pass
 

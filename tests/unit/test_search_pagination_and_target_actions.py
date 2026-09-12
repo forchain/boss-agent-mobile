@@ -448,10 +448,10 @@ async def test_auto_apply_handler_quota_exhausted_degrades_to_matched():
 
     finished = await broker.get_task(task.id)
     assert finished.status == TaskStatus.SUCCESS
-    # Log should mention quota limit reached
-    assert any("quota limit reached" in log.lower() for log in finished.logs)
+    # Log should mention daily greeting limit reached
+    assert any("daily greeting limit reached" in log.lower() for log in finished.logs)
 
-    # Start chat button should NOT have been clicked because quota is exhausted
+    # Start chat button should NOT have been clicked because daily greeting limit is exhausted
     start_chat_btn.click.assert_not_called()
 
     # The new job record should be in status 'matched' with generated draft greeting

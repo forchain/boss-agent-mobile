@@ -449,3 +449,25 @@ def test_load_settings_includes_consolidated_defaults(tmp_path: Path):
         assert settings["enable_greeting"] is True
 
 
+def test_load_settings_legacy_llm_fallback(tmp_path: Path, monkeypatch):
+    """load_settings falls back to config/llm.local.yaml when api_key is not set in settings."""
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    legacy_file = cfg_dir / "llm.local.yaml"
+    legacy_file.write_text(
+        "api_key: 'sk-legacy-123'\nmodel: 'gpt-4o-custom'\nbase_url: 'https://api.custom.com/v1'\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.chdir(tmp_path)
+    with (
+        patch("boss_agent.settings.DEFAULT_CONFIG_SEARCH_PATHS", []),
+        patch.dict("os.environ", {}, clear=True),
+    ):
+        settings = load_settings()
+        assert settings["api_key"] == "sk-legacy-123"
+        assert settings["model"] == "gpt-4o-custom"
+        assert settings["base_url"] == "https://api.custom.com/v1"
+
+
+

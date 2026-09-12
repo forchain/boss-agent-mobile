@@ -205,7 +205,7 @@ class AutoApplyHandler(BaseTaskHandler):
             f'Tailored Greeting Draft: "{greeting_message}"',
         )
 
-        # 6. Branch Execution: Quota checking & Auto-Send vs Offline Draft
+        # 6. Branch Execution: Daily greeting limit checking & Auto-Send vs Offline Draft
         from boss_agent.models import JobRecordStatus
         from boss_agent.settings import load_settings
         sys_settings = load_settings()
@@ -218,7 +218,7 @@ class AutoApplyHandler(BaseTaskHandler):
                 if today_applied >= daily_limit:
                     await broker.append_log(
                         task.id,
-                        f"⚠️ [QUOTA EXCEEDED] Daily greeting quota limit reached ({today_applied}/{daily_limit}). "
+                        f"⚠️ [LIMIT REACHED] Daily greeting limit reached ({today_applied}/{daily_limit}). "
                         f"Degrading to offline draft for '{job_posting.title}' @ '{job_posting.company_name}' (status: matched).",
                     )
                     await broker.upsert_job_record({
