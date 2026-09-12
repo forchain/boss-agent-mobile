@@ -117,9 +117,9 @@ export interface AutomationTask {
 	updated?: string;
 }
 
-export type TargetAction = 'digest_only' | 'save_jd' | 'auto_apply';
+export type TargetAction = 'save_jd' | 'auto_apply';
 
-export type JobRecordStatus = 'digest_only' | 'jd_saved' | 'unmatched' | 'matched' | 'applied' | 'ignored';
+export type JobRecordStatus = 'jd_saved' | 'unmatched' | 'matched' | 'applied' | 'ignored' | 'digest_only';
 
 export interface JobRecord {
 	id: string;

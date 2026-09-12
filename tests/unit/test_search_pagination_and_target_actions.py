@@ -16,6 +16,7 @@ from boss_agent.broker.models import TaskStatus, TaskType
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
 from boss_agent.models import (
     STATE_RANK,
+    TARGET_ACTION_RANK,
     JobRecordStatus,
     SavedSearch,
     SearchConfig,
@@ -84,11 +85,10 @@ def test_job_list_page_scroll_job_list_uses_human_swipe():
 
 def test_models_target_actions_and_state_ranks():
     """Verify TargetAction and JobRecordStatus enum definitions and monotonic ranks."""
-    assert TargetAction.DIGEST_ONLY.value == "digest_only"
     assert TargetAction.SAVE_JD.value == "save_jd"
     assert TargetAction.AUTO_APPLY.value == "auto_apply"
+    assert not hasattr(TargetAction, "DIGEST_ONLY")
 
-    assert JobRecordStatus.DIGEST_ONLY.value == "digest_only"
     assert JobRecordStatus.JD_SAVED.value == "jd_saved"
     assert JobRecordStatus.UNMATCHED.value == "unmatched"
     assert JobRecordStatus.MATCHED.value == "matched"
@@ -96,10 +96,13 @@ def test_models_target_actions_and_state_ranks():
     assert JobRecordStatus.IGNORED.value == "ignored"
 
     # Monotonic progression ranks
-    assert STATE_RANK["digest_only"] < STATE_RANK["jd_saved"]
-    assert STATE_RANK["jd_saved"] == STATE_RANK["unmatched"]
+    assert STATE_RANK["digest_only"] == STATE_RANK["jd_saved"] == STATE_RANK["unmatched"] == 1
     assert STATE_RANK["jd_saved"] < STATE_RANK["matched"]
     assert STATE_RANK["matched"] < STATE_RANK["applied"]
+    assert STATE_RANK["ignored"] == -1
+
+    assert TARGET_ACTION_RANK[TargetAction.SAVE_JD] == 1
+    assert TARGET_ACTION_RANK[TargetAction.AUTO_APPLY] == 2
 
 
 def test_saved_search_serialization_with_target_action_and_max_jobs():
