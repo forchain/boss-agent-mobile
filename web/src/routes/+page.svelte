@@ -703,17 +703,13 @@
 								<div class="flex items-center justify-between">
 									<div class="flex items-center space-x-2">
 										<h3 class="text-xs font-bold text-slate-100">{s.name}</h3>
-										{#if sAction === 'digest_only'}
-											<span class="px-1.5 py-0.5 rounded font-mono text-[9px] bg-amber-950 text-amber-400 border border-amber-800">
-												⚡ 仅抓摘要
-											</span>
-										{:else if sAction === 'save_jd'}
-											<span class="px-1.5 py-0.5 rounded font-mono text-[9px] bg-cyan-950 text-cyan-400 border border-cyan-800">
-												📖 深度存JD
-											</span>
-										{:else}
+										{#if sAction === 'auto_apply'}
 											<span class="px-1.5 py-0.5 rounded font-mono text-[9px] bg-emerald-950 text-emerald-400 border border-emerald-800">
 												🚀 自动沟通
+											</span>
+										{:else}
+											<span class="px-1.5 py-0.5 rounded font-mono text-[9px] bg-cyan-950 text-cyan-400 border border-cyan-800">
+												📖 深度存JD
 											</span>
 										{/if}
 									</div>

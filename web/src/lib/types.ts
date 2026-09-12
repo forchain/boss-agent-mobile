@@ -176,8 +176,9 @@ export interface SavedSearch {
 	updated?: string;
 }
 
-export function resolveTargetAction(search: { target_action?: TargetAction; target_task_type?: string }): TargetAction {
-	if (search.target_action) return search.target_action;
+export function resolveTargetAction(search: { target_action?: TargetAction | string; target_task_type?: string }): TargetAction {
+	if (search.target_action === 'auto_apply') return 'auto_apply';
+	if (search.target_action === 'save_jd') return 'save_jd';
 	if (search.target_task_type === 'AUTO_APPLY') return 'auto_apply';
 	return 'save_jd';
 }
