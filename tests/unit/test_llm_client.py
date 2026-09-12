@@ -57,6 +57,39 @@ timeout_sec: 45.0
     assert config.timeout_sec == 45.0
 
 
+def test_llm_config_from_settings_yaml(tmp_path):
+    config_file = tmp_path / "settings.local.yaml"
+    config_file.write_text(
+        """
+device: "emulator-5554"
+server_url: "http://127.0.0.1:4723"
+provider: "openai"
+base_url: "https://settings-api.com/v1"
+api_key: "settings-key-789"
+model: "settings-model"
+temperature: 0.7
+timeout_sec: 90.0
+max_tokens: 8192
+langsmith_tracing: true
+langsmith_api_key: "lsv2_test"
+langsmith_project: "my-project"
+""",
+        encoding="utf-8",
+    )
+
+    with patch.dict("os.environ", {}, clear=True):
+        config = LLMConfig.from_env_or_file(config_path=config_file)
+        assert config.base_url == "https://settings-api.com/v1"
+        assert config.api_key == "settings-key-789"
+        assert config.model == "settings-model"
+        assert config.temperature == 0.7
+        assert config.timeout_sec == 90.0
+        assert config.max_tokens == 8192
+        assert config.langsmith_tracing is True
+        assert config.langsmith_api_key == "lsv2_test"
+        assert config.langsmith_project == "my-project"
+
+
 def test_openai_client_chat_completion_success():
     config = LLMConfig(
         api_key="sk-test-key",

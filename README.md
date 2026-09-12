@@ -65,7 +65,7 @@ uv run python scripts/run_live_test.py
 
 ### 1. 启用追踪
 
-通过环境变量或 `config/llm.local.yaml` 配置文件启用：
+通过环境变量或 `config/settings.local.yaml` 配置文件（或在 Web 控制台 `/settings` 界面）启用：
 
 ```bash
 export LANGSMITH_TRACING=true
@@ -73,7 +73,7 @@ export LANGSMITH_API_KEY="lsv2_pt_your_api_key_here"
 export LANGSMITH_PROJECT="boss-agent-mobile" # 默认为 boss-agent-mobile
 ```
 
-或在 `config/llm.local.yaml` 中配置：
+或在 `config/settings.local.yaml` 中配置：
 ```yaml
 langsmith_tracing: true
 langsmith_api_key: "lsv2_pt_your_api_key_here"

@@ -50,16 +50,20 @@ class LLMConfig:
         """Load LLM configuration with priority: config_path -> config/llm.local.yaml -> env vars -> defaults."""
         data: dict[str, Any] = {}
 
-        # 1. Search for local config files
+        # 1. Search for config files with priority: example defaults -> legacy llm.local -> settings.local
         search_paths: list[Path] = []
         if config_path:
             search_paths.append(Path(config_path))
         else:
             search_paths.extend(
                 [
-                    Path("config/llm.local.yaml"),
-                    Path("config/llm.local.json"),
+                    Path("config/settings.example.yaml"),
                     Path("config/llm_config.yaml"),
+                    Path("config/llm.local.json"),
+                    Path("config/llm.local.yaml"),
+                    Path("config/settings.yaml"),
+                    Path("config/settings.local.json"),
+                    Path("config/settings.local.yaml"),
                 ]
             )
 
@@ -72,8 +76,11 @@ class LLMConfig:
                     else:
                         loaded = json.loads(content) or {}
                     if isinstance(loaded, dict):
-                        data.update(loaded)
-                        break
+                        for k, v in loaded.items():
+                            if v is not None:
+                                if k == "api_key" and v == "your-api-key-here":
+                                    continue
+                                data[k] = v
                 except Exception:
                     pass
 

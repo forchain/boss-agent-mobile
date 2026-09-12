@@ -361,3 +361,77 @@ describe('SvelteKit Server Endpoints', () => {
 	});
 });
 
+describe('Unified System Settings Endpoints (/api/settings)', () => {
+	it('GET /api/settings returns merged configuration with defaults', async () => {
+		const { GET: handleSettingsGet } = await import('../routes/api/settings/+server');
+		const res = await handleSettingsGet({} as any);
+		expect(res.status).toBe(200);
+		const settings = await res.json();
+
+		expect(settings.device).toBeDefined();
+		expect(settings.server_url).toBeDefined();
+		expect(settings.pocketbase_url).toBeDefined();
+		expect(settings.provider).toBeDefined();
+		expect(settings.model).toBeDefined();
+		expect(typeof settings.daily_greeting_limit).toBe('number');
+		expect(typeof settings.preview_timeout_sec).toBe('number');
+		expect(typeof settings.enable_greeting).toBe('boolean');
+	});
+
+	it('POST /api/settings persists settings and GET reflects updates', async () => {
+		const { GET: handleSettingsGet, POST: handleSettingsPost } = await import(
+			'../routes/api/settings/+server'
+		);
+
+		// 1. Get original settings to restore later
+		const origRes = await handleSettingsGet({} as any);
+		const originalSettings = await origRes.json();
+
+		try {
+			// 2. Post updated settings
+			const testPayload = {
+				...originalSettings,
+				daily_greeting_limit: 42,
+				preview_timeout_sec: 5.5,
+				device: 'emulator-test-5554'
+			};
+			const postEvent = {
+				request: {
+					json: async () => testPayload
+				}
+			} as any;
+
+			const postRes = await handleSettingsPost(postEvent);
+			expect(postRes.status).toBe(200);
+			const postJson = await postRes.json();
+			expect(postJson.success).toBe(true);
+
+			// 3. Verify GET returns updated values
+			const verifyRes = await handleSettingsGet({} as any);
+			const updated = await verifyRes.json();
+			expect(updated.daily_greeting_limit).toBe(42);
+			expect(updated.preview_timeout_sec).toBe(5.5);
+			expect(updated.device).toBe('emulator-test-5554');
+		} finally {
+			// Restore original settings
+			const restoreEvent = {
+				request: {
+					json: async () => originalSettings
+				}
+			} as any;
+			await handleSettingsPost(restoreEvent);
+		}
+	});
+
+	it('GET /api/llm/settings backward-compatible wrapper returns LLM fields', async () => {
+		const { GET: handleLlmGet } = await import('../routes/api/llm/settings/+server');
+		const res = await handleLlmGet({} as any);
+		expect(res.status).toBe(200);
+		const llm = await res.json();
+		expect(llm.provider).toBeDefined();
+		expect(llm.model).toBeDefined();
+		expect(llm.base_url).toBeDefined();
+	});
+});
+
+
