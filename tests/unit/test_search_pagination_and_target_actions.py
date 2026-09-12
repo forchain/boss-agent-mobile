@@ -3,7 +3,7 @@ tests/unit/test_search_pagination_and_target_actions.py
 ======================================================
 Unit tests for Spec #134, Tickets #135, #136, #137, #138:
 - Feed bottom boundary detection (tv_tips: 暂无符合职位，为你推荐)
-- Multi-tier target actions (digest_only, save_jd, auto_apply)
+- Two-tier target actions (save_jd, auto_apply)
 - Monotonic state progression and state-aware deduplication
 - Daily greeting safety limit & quota degradation
 """
@@ -193,8 +193,8 @@ async def test_broker_upsert_monotonic_status_upgrade():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_scrape_jobs_handler_digest_only_skips_detail_view():
-    """Verify target_action=digest_only saves digest and never clicks card or detail."""
+async def test_scrape_jobs_handler_save_jd_enriches_full_jd():
+    """Verify target_action=save_jd clicks card, navigates to detail, and extracts full JD."""
     broker = InMemoryTaskBroker()
     mock_driver = MagicMock()
     mock_driver.get_window_size.return_value = {"width": 1080, "height": 2400}
@@ -203,6 +203,7 @@ async def test_scrape_jobs_handler_digest_only_skips_detail_view():
     mock_title = MagicMock(text="AI Agent Engineer")
     mock_company = MagicMock(text="Innovative AI")
     mock_salary = MagicMock(text="40-60K")
+    mock_desc = MagicMock(text="Detailed Job Description for AI Agent Engineer.")
     mock_nav_elem = MagicMock()
 
     def mock_find(by, value):
@@ -212,6 +213,8 @@ async def test_scrape_jobs_handler_digest_only_skips_detail_view():
             return [mock_company]
         if "salary" in value or "tv_job_salary" in value:
             return [mock_salary]
+        if "desc" in value or "tv_job_desc" in value or "tv_description" in value:
+            return [mock_desc]
         if "bottom_tips" in value or "暂无符合职位" in value:
             return []
         if "job_card" in value or "view_job_card" in value:
@@ -219,11 +222,12 @@ async def test_scrape_jobs_handler_digest_only_skips_detail_view():
         return [mock_nav_elem]
 
     mock_driver.find_elements.side_effect = mock_find
+    mock_card.find_elements.side_effect = mock_find
     # Bottom tips not found initially
     from selenium.common.exceptions import NoSuchElementException
     mock_driver.find_element.side_effect = NoSuchElementException("No bottom")
 
-    config = WorkerConfig(worker_id="test-digest-worker", poll_interval_sec=0.01)
+    config = WorkerConfig(worker_id="test-save-jd-worker", poll_interval_sec=0.01)
     context = WorkerContext(config=config, driver=mock_driver)
     worker = AutomationWorker(
         config=config,
@@ -234,7 +238,7 @@ async def test_scrape_jobs_handler_digest_only_skips_detail_view():
 
     task = await broker.create_task(
         task_type=TaskType.SCRAPE_JOBS,
-        payload={"keyword": "AI", "target_action": "digest_only", "max_jobs": 1},
+        payload={"keyword": "AI", "target_action": "save_jd", "max_jobs": 1},
     )
 
     await worker.run_once()
@@ -243,12 +247,12 @@ async def test_scrape_jobs_handler_digest_only_skips_detail_view():
     finished = await broker.get_task(task.id)
     assert finished.status == TaskStatus.SUCCESS
 
-    # Verify job record was stored with digest_only status
+    # Verify job record was stored with jd_saved status
     jobs = await broker.list_job_records()
     assert len(jobs) == 1
-    assert jobs[0]["status"] == "digest_only"
-    # Card was NOT clicked for detail view
-    mock_card.click.assert_not_called()
+    assert jobs[0]["status"] == "jd_saved"
+    # Card was clicked for detail view
+    mock_card.click.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -290,7 +294,7 @@ async def test_scrape_jobs_handler_terminates_on_feed_bottom_boundary():
 
     task = await broker.create_task(
         task_type=TaskType.SCRAPE_JOBS,
-        payload={"keyword": "Data", "target_action": "digest_only", "max_jobs": 50},
+        payload={"keyword": "Data", "target_action": "save_jd", "max_jobs": 50},
     )
 
     await worker.run_once()
@@ -354,6 +358,12 @@ async def test_scrape_jobs_handler_filters_recommended_cards_below_boundary():
             return [card1_elem, card2_elem]
         if "bottom_tips" in value or "暂无其他符合职位" in value or "为你推荐" in value:
             return [bottom_elem]
+        if "job_name" in value or "tv_job_name" in value:
+            return [title1]
+        if "company_name" in value or "tv_company_name" in value:
+            return [comp1]
+        if "salary" in value or "tv_job_salary" in value:
+            return [sal1]
         return [MagicMock()]
 
     mock_driver.find_elements.side_effect = mock_driver_find
@@ -370,7 +380,7 @@ async def test_scrape_jobs_handler_filters_recommended_cards_below_boundary():
 
     task = await broker.create_task(
         task_type=TaskType.SCRAPE_JOBS,
-        payload={"keyword": "Agent", "target_action": "digest_only", "max_jobs": 10},
+        payload={"keyword": "Agent", "target_action": "save_jd", "max_jobs": 10},
     )
 
     await worker.run_once()
