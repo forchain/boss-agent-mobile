@@ -93,6 +93,7 @@ JOB_RECORDS_FIELDS = [
     {"name": "jd_key_requirements", "type": "json", "required": False},
     {"name": "greeting_message", "type": "text", "required": False},
     {"name": "search_keywords", "type": "json", "required": False},
+    {"name": "screened_reason", "type": "text", "required": False},
     {"name": "first_seen_at", "type": "date", "required": False},
     {"name": "last_seen_at", "type": "date", "required": False},
     {"name": "source_task_id", "type": "text", "required": False},
@@ -360,6 +361,7 @@ def provision_sqlite_database(
                     jd_key_requirements JSON,
                     greeting_message TEXT,
                     search_keywords JSON,
+                    screened_reason TEXT,
                     first_seen_at TEXT,
                     last_seen_at TEXT,
                     source_task_id TEXT,
@@ -387,6 +389,7 @@ def provision_sqlite_database(
                 ("tags", "JSON"),
                 ("recruiter_title", "TEXT"),
                 ("is_headhunter", "BOOLEAN DEFAULT FALSE"),
+                ("screened_reason", "TEXT"),
             ]
             for col_name, col_type in new_job_cols:
                 if col_name not in job_cols:
