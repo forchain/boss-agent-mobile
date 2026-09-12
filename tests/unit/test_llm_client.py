@@ -77,16 +77,17 @@ langsmith_project: "my-project"
         encoding="utf-8",
     )
 
-    config = LLMConfig.from_env_or_file(config_path=config_file)
-    assert config.base_url == "https://settings-api.com/v1"
-    assert config.api_key == "settings-key-789"
-    assert config.model == "settings-model"
-    assert config.temperature == 0.7
-    assert config.timeout_sec == 90.0
-    assert config.max_tokens == 8192
-    assert config.langsmith_tracing is True
-    assert config.langsmith_api_key == "lsv2_test"
-    assert config.langsmith_project == "my-project"
+    with patch.dict("os.environ", {}, clear=True):
+        config = LLMConfig.from_env_or_file(config_path=config_file)
+        assert config.base_url == "https://settings-api.com/v1"
+        assert config.api_key == "settings-key-789"
+        assert config.model == "settings-model"
+        assert config.temperature == 0.7
+        assert config.timeout_sec == 90.0
+        assert config.max_tokens == 8192
+        assert config.langsmith_tracing is True
+        assert config.langsmith_api_key == "lsv2_test"
+        assert config.langsmith_project == "my-project"
 
 
 def test_openai_client_chat_completion_success():
