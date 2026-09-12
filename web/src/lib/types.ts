@@ -133,6 +133,7 @@ export interface JobRecord {
 	jd_key_requirements?: string[];
 	greeting_message?: string;
 	search_keywords?: string[];
+	screened_reason?: string;
 	source_task_id?: string;
 	first_seen_at?: string;
 	last_seen_at?: string;

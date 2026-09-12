@@ -7,6 +7,7 @@ Domain dataclasses for Boss 直聘 entities.
 import re
 from dataclasses import dataclass, field
 from enum import StrEnum
+from pathlib import Path
 from typing import Any
 
 
@@ -151,6 +152,7 @@ class JobRecord:
     jd_key_requirements: list[str] = field(default_factory=list)
     greeting_message: str = ""
     search_keywords: list[str] = field(default_factory=list)
+    screened_reason: str = ""
     first_seen_at: str | None = None
     last_seen_at: str | None = None
     source_task_id: str | None = None
@@ -470,6 +472,99 @@ class ScreeningPolicy:
             enable_screening=bool(data.get("enable_screening", True)),
         )
 
+    @classmethod
+    def load_default(cls, config_path: str | Path | None = None) -> "ScreeningPolicy":
+        """Load ScreeningPolicy from declarative config file with local override priority.
+
+        Hierarchy:
+        1. Explicit config_path
+        2. config/screening.local.yaml
+        3. config/screening.local.json
+        4. config/screening.yaml
+        5. config/screening.example.yaml
+        """
+        paths_to_check: list[Path] = []
+        if config_path:
+            paths_to_check.append(Path(config_path))
+        else:
+            try:
+                from .settings import resolve_git_common_root
+                root = resolve_git_common_root()
+            except Exception:
+                root = Path.cwd()
+            candidate_rel_paths = [
+                Path("config/screening.local.yaml"),
+                Path("config/screening.local.yml"),
+                Path("config/screening.local.json"),
+                Path("config/screening.yaml"),
+                Path("config/screening.example.yaml"),
+            ]
+            for p in candidate_rel_paths:
+                paths_to_check.append(root / p if not p.is_absolute() else p)
+                if not p.is_absolute():
+                    paths_to_check.append(Path.cwd() / p)
+
+        for p in paths_to_check:
+            if p.is_file():
+                try:
+                    content = p.read_text(encoding="utf-8")
+                    if p.suffix in (".yaml", ".yml"):
+                        try:
+                            import yaml
+                            data = yaml.safe_load(content)
+                        except Exception:
+                            data = None
+                    else:
+                        import json
+                        data = json.loads(content)
+                    if isinstance(data, dict):
+                        return cls.from_dict(data)
+                except Exception:
+                    pass
+
+        return cls()
+
+    def save_default(self, config_path: str | Path | None = None) -> Path:
+        """Save ScreeningPolicy to declarative local YAML configuration file."""
+        if config_path:
+            target_path = Path(config_path)
+        else:
+            try:
+                from .settings import resolve_git_common_root
+                root = resolve_git_common_root()
+            except Exception:
+                root = Path.cwd()
+            target_path = root / "config" / "screening.local.yaml"
+
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            import yaml
+            content = yaml.dump(
+                self.to_dict(),
+                allow_unicode=True,
+                sort_keys=False,
+                default_flow_style=False,
+            )
+        except Exception:
+            import json
+            lines = [
+                f"enable_screening: {'true' if self.enable_screening else 'false'}",
+                "title_whitelist:",
+                *[f"  - {json.dumps(w, ensure_ascii=False)}" for w in self.title_whitelist],
+                "title_blacklist:",
+                *[f"  - {json.dumps(b, ensure_ascii=False)}" for b in self.title_blacklist],
+                "company_blacklist:",
+                *[f"  - {json.dumps(c, ensure_ascii=False)}" for c in self.company_blacklist],
+                "jd_blacklist:",
+                *[f"  - {json.dumps(j, ensure_ascii=False)}" for j in self.jd_blacklist],
+            ]
+            content = "\n".join(lines) + "\n"
+
+        target_path.write_text(content, encoding="utf-8")
+        return target_path
+
+
 
 @dataclass
 class SavedSearch:
@@ -550,6 +645,8 @@ class SavedSearch:
             data = search_id
             search_id = str(data.get("id", ""))
 
+        data = data or {}
+        sid = str(search_id)
         search_data = data.get("search", {}) or {}
         keyword = data.get("keyword")
         if keyword is None:
@@ -627,8 +724,8 @@ class SavedSearch:
             target_action = "auto_apply" if target_task_type == "AUTO_APPLY" else "save_jd"
 
         return cls(
-            id=search_id,
-            name=data.get("name", search_id),
+            id=sid,
+            name=data.get("name", sid),
             description=data.get("description", ""),
             search=search_cfg,
             filter=filter_cfg,
