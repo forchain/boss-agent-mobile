@@ -1,25 +1,63 @@
 # ==============================================================================
-# Boss Agent Mobile - Live Runner & Automation Settings Template
+# Boss Agent Mobile - Consolidated System & LLM Configuration Template
 # ==============================================================================
 # Copy this file to `config/settings.local.yaml` (which is git-ignored) to store
-# your local device, search, and greeting preferences.
+# your local device, PocketBase, LLM API keys, and automation preferences.
 #
-# Every command-line argument in `scripts/run_live_test.py` maps to a configuration
-# key here. Specifying CLI arguments will override these configuration settings.
+# Specifying CLI arguments or environment variables will override these settings.
 # ==============================================================================
 
-# Device UDID, Dedicated AVD Name, and Appium Server URL
+# ------------------------------------------------------------------------------
+# 1. Mobile Virtual Device & Appium Server
+# ------------------------------------------------------------------------------
 device: "emulator-5554"
 avd_name: "boss_avd_arm64"          # Dedicated Android Virtual Device name (env: ANDROID_AVD)
-server_url: "http://127.0.0.1:4723"
-pocketbase_url: "http://127.0.0.1:8090" # PocketBase State Stream Broker URL (env: POCKETBASE_URL, cli: --pb-url)
-pocketbase_data_dir: ".boss_agent/pb_data" # PocketBase data directory (env: PB_DATA_DIR)
-pocketbase_db_path: ".boss_agent/pb_data/data.db" # PocketBase SQLite data.db path (env: PB_DB_PATH)
+server_url: "http://127.0.0.1:4723"  # Appium Server URL (env: APPIUM_SERVER_URL, APPIUM_URL)
 
+# ------------------------------------------------------------------------------
+# 2. PocketBase State Stream Broker
+# ------------------------------------------------------------------------------
+pocketbase_url: "http://127.0.0.1:8090" # PocketBase URL (env: POCKETBASE_URL, cli: --pb-url)
 
+# ------------------------------------------------------------------------------
+# 3. LLM Reasoning Provider
+# ------------------------------------------------------------------------------
+# Provider type (default: "openai" for all OpenAI-compatible REST endpoints)
+provider: "openai"
 
-# Candidate Resume & AI Greeting Settings
-resume_path: "resumes/my_resume.txt" # Path to candidate's local resume file (.pdf, .docx, .txt, .md)
-force_refresh_memory: false          # Force re-extracting resume and re-calling LLM to update memory
-preview_timeout_sec: 3.0             # Preview duration (seconds) inside chat box before navigating back
-enable_greeting: true                # Set to false to disable LLM match scoring and greeting drafting
+# OpenAI-compatible API base URL (e.g. MiniMax, DeepSeek, OpenAI)
+base_url: "https://api.minimaxi.com/v1"
+
+# API Key (replace with your real secret key in config/settings.local.yaml)
+api_key: "your-api-key-here"
+
+# Model name (e.g. MiniMax-M3, deepseek-chat, gpt-4o-mini)
+model: "MiniMax-M3"
+
+# Sampling temperature (0.0 to 1.0, lower means more deterministic, default: 0.2)
+temperature: 0.2
+
+# Request timeout in seconds (default: 120.0)
+timeout_sec: 120.0
+
+# Max completion tokens in response (default: 262144)
+max_tokens: 262144
+
+# ------------------------------------------------------------------------------
+# 4. LangSmith Observability & Tracing
+# ------------------------------------------------------------------------------
+langsmith_tracing: false
+langsmith_api_key: "your-langsmith-api-key-here"
+langsmith_project: "boss-agent-mobile"
+
+# ------------------------------------------------------------------------------
+# 5. Automation & Safety Rules
+# ------------------------------------------------------------------------------
+# System safety threshold restricting outbound mobile greeting volume per calendar day
+daily_greeting_limit: 20
+
+# Duration (seconds) to pause and preview greeting message in chat box before navigating back
+preview_timeout_sec: 3.0
+
+# Set to false to disable LLM match scoring and greeting drafting
+enable_greeting: true
