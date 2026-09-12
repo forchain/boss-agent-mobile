@@ -33,6 +33,7 @@ from boss_agent.worker.handlers.scrape_jobs import ScrapeJobsHandler
 # Ticket 1 (Issue #135): Feed Bottom Boundary & Pagination Tests
 # ---------------------------------------------------------------------------
 
+
 def test_job_list_page_is_feed_bottom_reached():
     """Verify is_feed_bottom_reached and get_feed_bottom_boundary recognize all divider text patterns."""
     driver = MagicMock()
@@ -57,6 +58,7 @@ def test_job_list_page_is_feed_bottom_reached():
 
     # When bottom_tips is not found
     from selenium.common.exceptions import NoSuchElementException
+
     driver.find_element.side_effect = NoSuchElementException("Not found")
     driver.find_elements.return_value = []
     assert page.is_feed_bottom_reached() is False
@@ -82,6 +84,7 @@ def test_job_list_page_scroll_job_list_uses_human_swipe():
 # ---------------------------------------------------------------------------
 # Ticket 2 (Issue #136): Target Actions & State Progression Models
 # ---------------------------------------------------------------------------
+
 
 def test_models_target_actions_and_state_ranks():
     """Verify TargetAction and JobRecordStatus enum definitions and monotonic ranks."""
@@ -127,19 +130,22 @@ def test_saved_search_serialization_with_target_action_and_max_jobs():
 # Broker Tests: get_by_fingerprint, count_today_applied, status upgrade
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_broker_get_job_record_by_fingerprint_and_count_today():
     """Verify broker fingerprint lookup and daily applied counter."""
     broker = InMemoryTaskBroker()
 
     # Record 1: digest_only
-    rec1 = await broker.upsert_job_record({
-        "fingerprint": "fp_001",
-        "title": "Python Engineer",
-        "company_name": "Tech Corp",
-        "recruiter_name": "HR Alice",
-        "status": "digest_only",
-    })
+    rec1 = await broker.upsert_job_record(
+        {
+            "fingerprint": "fp_001",
+            "title": "Python Engineer",
+            "company_name": "Tech Corp",
+            "recruiter_name": "HR Alice",
+            "status": "digest_only",
+        }
+    )
     assert rec1["id"] is not None
 
     found = await broker.get_job_record_by_fingerprint("fp_001")
@@ -154,10 +160,12 @@ async def test_broker_get_job_record_by_fingerprint_and_count_today():
     assert await broker.count_today_applied_jobs() == 0
 
     # Upgrade rec1 to applied
-    await broker.upsert_job_record({
-        "fingerprint": "fp_001",
-        "status": "applied",
-    })
+    await broker.upsert_job_record(
+        {
+            "fingerprint": "fp_001",
+            "status": "applied",
+        }
+    )
     assert await broker.count_today_applied_jobs() == 1
 
 
@@ -167,20 +175,24 @@ async def test_broker_upsert_monotonic_status_upgrade():
     broker = InMemoryTaskBroker()
 
     # Initial: applied
-    await broker.upsert_job_record({
-        "fingerprint": "fp_senior",
-        "title": "Staff Architect",
-        "company_name": "Big Tech",
-        "recruiter_name": "Bob",
-        "status": "applied",
-        "job_description": "Full JD text",
-    })
+    await broker.upsert_job_record(
+        {
+            "fingerprint": "fp_senior",
+            "title": "Staff Architect",
+            "company_name": "Big Tech",
+            "recruiter_name": "Bob",
+            "status": "applied",
+            "job_description": "Full JD text",
+        }
+    )
 
     # Attempt to upsert with digest_only
-    updated = await broker.upsert_job_record({
-        "fingerprint": "fp_senior",
-        "status": "digest_only",
-    })
+    updated = await broker.upsert_job_record(
+        {
+            "fingerprint": "fp_senior",
+            "status": "digest_only",
+        }
+    )
 
     # Status should remain applied
     assert updated["status"] == "applied"
@@ -191,6 +203,7 @@ async def test_broker_upsert_monotonic_status_upgrade():
 # ---------------------------------------------------------------------------
 # Ticket 2 & 1 Handler Tests: ScrapeJobsHandler with target_action & pagination
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_scrape_jobs_handler_save_jd_enriches_full_jd():
@@ -225,6 +238,7 @@ async def test_scrape_jobs_handler_save_jd_enriches_full_jd():
     mock_card.find_elements.side_effect = mock_find
     # Bottom tips not found initially
     from selenium.common.exceptions import NoSuchElementException
+
     mock_driver.find_element.side_effect = NoSuchElementException("No bottom")
 
     config = WorkerConfig(worker_id="test-save-jd-worker", poll_interval_sec=0.01)
@@ -348,6 +362,7 @@ async def test_scrape_jobs_handler_filters_recommended_cards_below_boundary():
                 if "salary" in value or "tv_job_salary" in value:
                     return [sal2]
             return []
+
         return _find
 
     card1_elem.find_elements.side_effect = mock_card_find(card1_elem)
@@ -400,6 +415,7 @@ async def test_scrape_jobs_handler_filters_recommended_cards_below_boundary():
 # Ticket 3 (Issue #137): Daily Greeting Safety Limit & Quota Degradation
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_auto_apply_handler_quota_exhausted_degrades_to_matched():
     """Verify AutoApplyHandler degrades to matched (draft only) when daily greeting limit is reached."""
@@ -409,13 +425,15 @@ async def test_auto_apply_handler_quota_exhausted_degrades_to_matched():
 
     # Pre-populate broker with 20 applied jobs today
     for i in range(20):
-        await broker.upsert_job_record({
-            "fingerprint": f"fp_applied_{i}",
-            "title": f"Job {i}",
-            "company_name": f"Company {i}",
-            "recruiter_name": f"Recruiter {i}",
-            "status": "applied",
-        })
+        await broker.upsert_job_record(
+            {
+                "fingerprint": f"fp_applied_{i}",
+                "title": f"Job {i}",
+                "company_name": f"Company {i}",
+                "recruiter_name": f"Recruiter {i}",
+                "status": "applied",
+            }
+        )
 
     assert await broker.count_today_applied_jobs() == 20
 
