@@ -24,6 +24,10 @@ navigation:
 job_list:
   job_tab:
     - "com.hpbr.bosszhipin:id/tv_tab_1"
+    - "//*[@resource-id='com.hpbr.bosszhipin:id/tv_tab_1']"
+    - "//*[@resource-id='com.hpbr.bosszhipin:id/cl_tab_1']"
+    - "//*[@resource-id='com.hpbr.bosszhipin:id/main_tab_layout_view']//*[@text='职位']"
+    - "//*[contains(@resource-id, 'main_tab_layout')]//*[@text='职位']"
     - "//*[@text='职位']"
   search_icon:
     - "//*[@resource-id='com.hpbr.bosszhipin:id/ly_menu']/*[2]"
@@ -88,6 +92,9 @@ search:
     - "com.hpbr.bosszhipin:id/iv_clear"
   back_btn:
     - "com.hpbr.bosszhipin:id/iv_back_ai"
+    - "com.hpbr.bosszhipin:id/iv_back"
+    - "//*[@resource-id='com.hpbr.bosszhipin:id/iv_back']"
+    - "//*[@resource-id='com.hpbr.bosszhipin:id/iv_back_ai']"
     - "//*[@content-desc='返回']"
 
 filter:
