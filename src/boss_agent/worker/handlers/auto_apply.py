@@ -4,7 +4,7 @@ from boss_agent.broker.models import AutomationTask, TaskStatus, TaskType
 from boss_agent.broker.pocketbase_adapter import BaseTaskBroker
 from boss_agent.graph import run_job_application_graph
 from boss_agent.memory import StructuredCandidateProfile
-from boss_agent.models import FilterConfig, ScreeningPolicy
+from boss_agent.models import FilterConfig, JobRecordStatus, ScreeningPolicy
 from boss_agent.pages import (
     ChatPage,
     FilterDialogPage,
@@ -60,11 +60,70 @@ class AutoApplyHandler(BaseTaskHandler):
         mode_desc = (
             "Auto-Send" if (auto_send and not preview_only) else "Preview Draft Only (Safe Mode)"
         )
+        search_name = payload.get("search_name") or payload.get("saved_search_name") or ""
+        strategy_desc = f"strategy='{search_name}', " if search_name else ""
         await broker.append_log(
             task.id,
-            f"Starting AUTO_APPLY (candidate='{profile.name}', keyword='{keyword}', "
+            f"Starting AUTO_APPLY ({strategy_desc}candidate='{profile.name}', keyword='{keyword}', "
             f"min_score={min_score}, mode='{mode_desc}')",
         )
+
+        # 1.5. Resolve Screening Policy & Pre-flight Defense
+        policy_raw = payload.get("screening_policy")
+        policy = (
+            ScreeningPolicy.from_dict(policy_raw) if policy_raw else ScreeningPolicy.load_default()
+        )
+
+        direct_job_id = payload.get("direct_job_id")
+        existing_rec: dict[str, Any] | None = None
+        if direct_job_id:
+            existing_rec = await broker.get_job_record(direct_job_id)
+            if existing_rec and existing_rec.get("status") == JobRecordStatus.IGNORED.value:
+                reason = existing_rec.get("screened_reason") or "已被标记为初筛淘汰/忽略"
+                await broker.append_log(
+                    task.id,
+                    f"🛑 [定向投递防御] 职位 '{existing_rec.get('title')}' @ '{existing_rec.get('company_name')}' 处于淘汰状态 ({reason})，已自动取消沟通以保护每日沟通额度。",
+                )
+                return HandlerResult(
+                    success=True,
+                    output={
+                        "applied": False,
+                        "status": "ignored_job_protected",
+                        "reason": reason,
+                    },
+                )
+
+        target_title = payload.get("job_title") or (
+            existing_rec.get("title") if existing_rec else None
+        )
+        target_company = payload.get("company_name") or (
+            existing_rec.get("company_name") if existing_rec else None
+        )
+        if target_title or target_company:
+            passed, reason = policy.matches_card_keywords(
+                title=target_title or "",
+                company_name=target_company or "",
+                tags=[],
+                digest="",
+            )
+            if not passed:
+                await broker.append_log(
+                    task.id,
+                    f"🛑 [定向投递防御] 职位 '{target_title}' @ '{target_company}' 命中初筛黑名单: {reason}。已自动取消沟通以保护每日沟通额度。",
+                )
+                if direct_job_id and existing_rec:
+                    updated_data = dict(existing_rec)
+                    updated_data["status"] = JobRecordStatus.IGNORED.value
+                    updated_data["screened_reason"] = reason
+                    await broker.upsert_job_record(updated_data)
+                return HandlerResult(
+                    success=True,
+                    output={
+                        "applied": False,
+                        "status": "filtered_by_keyword",
+                        "reason": reason,
+                    },
+                )
 
         # 2. Reset / Dismiss Startup Dialogs
         startup_page = StartupDialogPage(driver)
@@ -78,10 +137,30 @@ class AutoApplyHandler(BaseTaskHandler):
         enable_search = bool(payload.get("enable_search", True))
         if enable_search and keyword:
             search_page = SearchPage(driver)
-            if not search_page.is_search_page():
-                list_page.open_search(timeout_sec=5.0)
-            search_page.search(keyword)
-            await broker.append_log(task.id, f"Navigated to search results for '{keyword}'")
+            search_success = False
+            for attempt in range(2):
+                if not search_page.is_search_page():
+                    list_page.open_search(timeout_sec=5.0)
+                if search_page.search(keyword, timeout_sec=10.0):
+                    search_success = True
+                    break
+                await broker.append_log(
+                    task.id,
+                    f"⚠️ 第 {attempt + 1} 次尝试进入搜索页面并搜索 '{keyword}' 失败，正在重试...",
+                )
+                list_page.navigate_to_home()
+
+            if search_success:
+                await broker.append_log(task.id, f"Navigated to search results for '{keyword}'")
+            else:
+                await broker.append_log(
+                    task.id,
+                    f"❌ 未能进入搜索页面或执行关键词搜索: '{keyword}'，终止任务以避免误操作推荐流",
+                )
+                return HandlerResult(
+                    success=False,
+                    output={"error": f"Failed to execute search for keyword '{keyword}'"},
+                )
         elif not enable_search:
             await broker.append_log(
                 task.id,
@@ -135,9 +214,6 @@ class AutoApplyHandler(BaseTaskHandler):
             return HandlerResult(success=False, error_message=str(e))
 
         # 5. Execute Multi-Stage Screening & Greeting Pipeline via LangGraph
-        policy_raw = payload.get("screening_policy")
-        policy = ScreeningPolicy.from_dict(policy_raw) if policy_raw else ScreeningPolicy()
-
         card = JobCardBrief(
             title=job_posting.title,
             company_name=job_posting.company_name,
@@ -161,6 +237,21 @@ class AutoApplyHandler(BaseTaskHandler):
         if not keyword_pass:
             reason = graph_result.get("keyword_reason", "未通过关键字初筛")
             await broker.append_log(task.id, f"⏭️ [初筛淘汰] '{job_posting.title}': {reason}")
+            await broker.upsert_job_record(
+                {
+                    "fingerprint": card.fingerprint,
+                    "title": job_posting.title,
+                    "company_name": job_posting.company_name,
+                    "recruiter_name": job_posting.recruiter_name or "",
+                    "salary_range": job_posting.salary_range,
+                    "location": job_posting.location or "",
+                    "job_description": job_posting.job_description,
+                    "status": JobRecordStatus.IGNORED.value,
+                    "screened_reason": reason,
+                    "search_keywords": [keyword] if keyword else [],
+                    "source_task_id": task.id,
+                }
+            )
             return HandlerResult(
                 success=True,
                 output={
@@ -177,6 +268,21 @@ class AutoApplyHandler(BaseTaskHandler):
         if not deep_pass:
             reason = graph_result.get("deep_screen_reason", "未通过JD语义精筛")
             await broker.append_log(task.id, f"⏭️ [精筛淘汰] '{job_posting.title}': {reason}")
+            await broker.upsert_job_record(
+                {
+                    "fingerprint": card.fingerprint,
+                    "title": job_posting.title,
+                    "company_name": job_posting.company_name,
+                    "recruiter_name": job_posting.recruiter_name or "",
+                    "salary_range": job_posting.salary_range,
+                    "location": job_posting.location or "",
+                    "job_description": job_posting.job_description,
+                    "status": JobRecordStatus.IGNORED.value,
+                    "screened_reason": reason,
+                    "search_keywords": [keyword] if keyword else [],
+                    "source_task_id": task.id,
+                }
+            )
             return HandlerResult(
                 success=True,
                 output={
@@ -206,10 +312,12 @@ class AutoApplyHandler(BaseTaskHandler):
         )
 
         # 6. Branch Execution: Quota checking & Auto-Send vs Offline Draft
-        from boss_agent.models import JobRecordStatus
         from boss_agent.settings import load_settings
+
         sys_settings = load_settings()
-        daily_limit = int(payload.get("daily_greeting_limit") or sys_settings.get("daily_greeting_limit", 20))
+        daily_limit = int(
+            payload.get("daily_greeting_limit") or sys_settings.get("daily_greeting_limit", 20)
+        )
 
         applied = False
         if auto_send and not preview_only:
@@ -221,21 +329,23 @@ class AutoApplyHandler(BaseTaskHandler):
                         f"⚠️ [QUOTA EXCEEDED] Daily greeting quota limit reached ({today_applied}/{daily_limit}). "
                         f"Degrading to offline draft for '{job_posting.title}' @ '{job_posting.company_name}' (status: matched).",
                     )
-                    await broker.upsert_job_record({
-                        "fingerprint": card.fingerprint,
-                        "title": job_posting.title,
-                        "company_name": job_posting.company_name,
-                        "recruiter_name": job_posting.recruiter_name or "",
-                        "salary_range": job_posting.salary_range,
-                        "location": job_posting.location or "",
-                        "job_description": job_posting.job_description,
-                        "status": JobRecordStatus.MATCHED,
-                        "match_score": match_score,
-                        "greeting_message": greeting_message,
-                        "jd_key_requirements": match_reasons,
-                        "search_keywords": [keyword] if keyword else [],
-                        "source_task_id": task.id,
-                    })
+                    await broker.upsert_job_record(
+                        {
+                            "fingerprint": card.fingerprint,
+                            "title": job_posting.title,
+                            "company_name": job_posting.company_name,
+                            "recruiter_name": job_posting.recruiter_name or "",
+                            "salary_range": job_posting.salary_range,
+                            "location": job_posting.location or "",
+                            "job_description": job_posting.job_description,
+                            "status": JobRecordStatus.MATCHED,
+                            "match_score": match_score,
+                            "greeting_message": greeting_message,
+                            "jd_key_requirements": match_reasons,
+                            "search_keywords": [keyword] if keyword else [],
+                            "source_task_id": task.id,
+                        }
+                    )
                     applied = False
                 else:
                     cur_task = await broker.get_task(task.id)
@@ -254,28 +364,54 @@ class AutoApplyHandler(BaseTaskHandler):
                             task.id,
                             f"✅ [AUTO_SEND] Dispatched greeting message to {job_posting.title} @ {job_posting.company_name} ({today_applied + 1}/{daily_limit} today)",
                         )
-                        await broker.upsert_job_record({
-                            "fingerprint": card.fingerprint,
-                            "title": job_posting.title,
-                            "company_name": job_posting.company_name,
-                            "recruiter_name": job_posting.recruiter_name or "",
-                            "salary_range": job_posting.salary_range,
-                            "location": job_posting.location or "",
-                            "job_description": job_posting.job_description,
-                            "status": JobRecordStatus.APPLIED,
-                            "match_score": match_score,
-                            "greeting_message": greeting_message,
-                            "jd_key_requirements": match_reasons,
-                            "search_keywords": [keyword] if keyword else [],
-                            "source_task_id": task.id,
-                        })
+                        await broker.upsert_job_record(
+                            {
+                                "fingerprint": card.fingerprint,
+                                "title": job_posting.title,
+                                "company_name": job_posting.company_name,
+                                "recruiter_name": job_posting.recruiter_name or "",
+                                "salary_range": job_posting.salary_range,
+                                "location": job_posting.location or "",
+                                "job_description": job_posting.job_description,
+                                "status": JobRecordStatus.APPLIED,
+                                "match_score": match_score,
+                                "greeting_message": greeting_message,
+                                "jd_key_requirements": match_reasons,
+                                "search_keywords": [keyword] if keyword else [],
+                                "source_task_id": task.id,
+                            }
+                        )
                         chat_page.navigate_back()
             else:
                 await broker.append_log(
                     task.id,
                     f"⏭️ [AUTO_SEND] Skipped: Match score {match_score} < threshold {min_score}",
                 )
-                await broker.upsert_job_record({
+                await broker.upsert_job_record(
+                    {
+                        "fingerprint": card.fingerprint,
+                        "title": job_posting.title,
+                        "company_name": job_posting.company_name,
+                        "recruiter_name": job_posting.recruiter_name or "",
+                        "salary_range": job_posting.salary_range,
+                        "location": job_posting.location or "",
+                        "job_description": job_posting.job_description,
+                        "status": JobRecordStatus.JD_SAVED,
+                        "match_score": match_score,
+                        "greeting_message": greeting_message,
+                        "jd_key_requirements": match_reasons,
+                        "search_keywords": [keyword] if keyword else [],
+                        "source_task_id": task.id,
+                    }
+                )
+        else:
+            # Offline draft mode (Safe Mode - no typing in App)
+            await broker.append_log(
+                task.id,
+                f"💾 [OFFLINE DRAFT] Saved JD and drafted greeting for '{job_posting.title}' (status: matched).",
+            )
+            await broker.upsert_job_record(
+                {
                     "fingerprint": card.fingerprint,
                     "title": job_posting.title,
                     "company_name": job_posting.company_name,
@@ -283,34 +419,14 @@ class AutoApplyHandler(BaseTaskHandler):
                     "salary_range": job_posting.salary_range,
                     "location": job_posting.location or "",
                     "job_description": job_posting.job_description,
-                    "status": JobRecordStatus.JD_SAVED,
+                    "status": JobRecordStatus.MATCHED,
                     "match_score": match_score,
                     "greeting_message": greeting_message,
                     "jd_key_requirements": match_reasons,
                     "search_keywords": [keyword] if keyword else [],
                     "source_task_id": task.id,
-                })
-        else:
-            # Offline draft mode (Safe Mode - no typing in App)
-            await broker.append_log(
-                task.id,
-                f"💾 [OFFLINE DRAFT] Saved JD and drafted greeting for '{job_posting.title}' (status: matched).",
+                }
             )
-            await broker.upsert_job_record({
-                "fingerprint": card.fingerprint,
-                "title": job_posting.title,
-                "company_name": job_posting.company_name,
-                "recruiter_name": job_posting.recruiter_name or "",
-                "salary_range": job_posting.salary_range,
-                "location": job_posting.location or "",
-                "job_description": job_posting.job_description,
-                "status": JobRecordStatus.MATCHED,
-                "match_score": match_score,
-                "greeting_message": greeting_message,
-                "jd_key_requirements": match_reasons,
-                "search_keywords": [keyword] if keyword else [],
-                "source_task_id": task.id,
-            })
             applied = False
 
         return HandlerResult(

@@ -31,9 +31,22 @@
 	let historyFilter = $state<string>('all');
 	let isHistoryLoading = $state(false);
 
-	// Scheduled Tasks State
+	// Scheduled Tasks & Saved Searches State
+	let savedSearches = $state<SavedSearch[]>([]);
 	let scheduledSearches = $state<SavedSearch[]>([]);
 	let isScheduleLoading = $state(false);
+
+	function getTaskStrategyName(t?: AutomationTask | null): string {
+		if (!t?.payload) return '';
+		if (t.payload.search_name) return String(t.payload.search_name);
+		if (t.payload.saved_search_name) return String(t.payload.saved_search_name);
+		const searchId = t.payload.saved_search_id || t.payload.search_id;
+		if (searchId) {
+			const found = savedSearches.find((s) => s.id === searchId);
+			if (found?.name) return found.name;
+		}
+		return '';
+	}
 
 	// Tab Switch State (Bottom Section)
 	let bottomTab = $state<'history' | 'scheduled'>('history');
@@ -62,7 +75,8 @@
 	}
 
 	async function refreshAllData() {
-		await Promise.all([loadTaskHistory(), loadScheduledSearches(), checkActiveTask()]);
+		await loadScheduledSearches();
+		await Promise.all([loadTaskHistory(), checkActiveTask()]);
 	}
 
 	async function checkActiveTask() {
@@ -166,6 +180,7 @@
 		isScheduleLoading = true;
 		try {
 			const list = await listSavedSearches();
+			savedSearches = list;
 			// Filter to searches that have cron expressions
 			scheduledSearches = list.filter((s) => s.cron_expression && s.cron_expression.trim().length > 0);
 		} catch (e) {
@@ -256,18 +271,48 @@
 		isLogModalOpen = true;
 	}
 
-	function checkHashTrigger() {
-		if (typeof window !== 'undefined' && (window.location.hash === '#new-task' || window.location.hash === '#task-console')) {
+	async function checkUrlParamsAndHash() {
+		if (typeof window === 'undefined') return;
+
+		// 1. Check if #new-task was triggered (e.g. from sidebar / nav button)
+		if (window.location.hash === '#new-task') {
 			isLaunchModalOpen = true;
-			history.replaceState(null, '', window.location.pathname);
+			history.replaceState(null, '', window.location.pathname + window.location.search);
+			return;
+		}
+
+		// 2. Check if a specific taskId was passed in query param (e.g. from /searches "查看实时日志 →")
+		const urlParams = new URLSearchParams(window.location.search);
+		const targetTaskId = urlParams.get('taskId');
+		if (targetTaskId) {
+			try {
+				const t = await getAutomationTask(targetTaskId);
+				if (t) {
+					onFocusTask(t);
+					if (['success', 'failed', 'cancelled'].includes(t.status)) {
+						handleOpenLogModal(t);
+					}
+				}
+			} catch (e) {
+				console.warn('Failed to load target task from URL param:', e);
+			}
+		}
+
+		// 3. If hash is #task-console, smoothly scroll to active task console without opening launch modal
+		if (window.location.hash === '#task-console') {
+			setTimeout(() => {
+				const el = document.getElementById('task-console');
+				if (el) {
+					el.scrollIntoView({ behavior: 'smooth' });
+				}
+			}, 100);
 		}
 	}
 
 	onMount(async () => {
-		checkHashTrigger();
-		window.addEventListener('hashchange', checkHashTrigger);
-
 		await refreshAllData();
+		await checkUrlParamsAndHash();
+		window.addEventListener('hashchange', checkUrlParamsAndHash);
 
 		// Subscribe to Realtime SSE updates
 		if (await checkPocketBaseHealth()) {
@@ -307,7 +352,7 @@
 
 	onDestroy(() => {
 		if (typeof window !== 'undefined') {
-			window.removeEventListener('hashchange', checkHashTrigger);
+			window.removeEventListener('hashchange', checkUrlParamsAndHash);
 		}
 		try {
 			pb.collection('automation_tasks').unsubscribe('*');
@@ -381,7 +426,7 @@
 	{/if}
 
 	<!-- Section 1: Active Task Console -->
-	<div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
+	<div id="task-console" class="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
 		<div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-800/80 pb-4">
 			<div class="flex items-center space-x-2.5">
 				<span class="text-xl">⚡</span>
@@ -439,13 +484,30 @@
 						<span class="text-slate-500 text-[10px] block">任务类型</span>
 						<span class="font-semibold text-cyan-400 font-mono">{activeTask.task_type}</span>
 					</div>
+					{#if getTaskStrategyName(activeTask)}
+						<div>
+							<span class="text-slate-500 text-[10px] block">策略名</span>
+							<span class="font-bold text-slate-100 flex items-center gap-1">
+								<span class="text-cyan-400">🎯</span>
+								<span class="truncate max-w-[200px]">{getTaskStrategyName(activeTask)}</span>
+							</span>
+						</div>
+					{/if}
 					{#if activeTask.payload?.keyword}
 						<div>
 							<span class="text-slate-500 text-[10px] block">关键词</span>
 							<span class="font-mono text-slate-200">"{activeTask.payload.keyword}"</span>
 						</div>
 					{/if}
-					{#if activeTask.payload?.min_score}
+					{#if activeTask.payload?.target_action}
+						<div>
+							<span class="text-slate-500 text-[10px] block">目标操作</span>
+							<span class="font-medium text-slate-200">
+								{activeTask.payload.target_action === 'auto_apply' ? '🚀 自动打招呼' : '📖 深度存JD'}
+							</span>
+						</div>
+					{/if}
+					{#if activeTask.payload?.min_score && activeTask.task_type === 'AUTO_APPLY'}
 						<div>
 							<span class="text-slate-500 text-[10px] block">最低匹配分</span>
 							<span class="font-mono text-slate-200">{activeTask.payload.min_score}分</span>
@@ -594,13 +656,14 @@
 								<th class="pb-2.5 font-medium">任务 ID</th>
 								<th class="pb-2.5 font-medium">类型</th>
 								<th class="pb-2.5 font-medium">状态</th>
-								<th class="pb-2.5 font-medium">执行参数 / 关键词</th>
+								<th class="pb-2.5 font-medium">策略名 / 关键词</th>
 								<th class="pb-2.5 font-medium">时间</th>
 								<th class="pb-2.5 font-medium text-right">操作</th>
 							</tr>
 						</thead>
 						<tbody class="divide-y divide-slate-800/60">
 							{#each historyTasks as t}
+								{@const sName = getTaskStrategyName(t)}
 								<tr class="hover:bg-slate-800/30 transition group">
 									<td class="py-3 font-mono text-slate-300 text-[11px]">
 										{t.id.slice(0, 10)}...
@@ -625,13 +688,38 @@
 										</span>
 									</td>
 									<td class="py-3 text-slate-400 text-[11px] max-w-xs truncate">
-										{#if t.payload?.keyword}
+										{#if sName && t.payload?.keyword}
+											<div class="flex items-center gap-1.5 truncate">
+												<span class="text-cyan-400 font-mono text-[10px]">🎯</span>
+												<span class="text-slate-100 font-bold">{sName}</span>
+												<span class="text-slate-400 font-mono text-[10px]">("{t.payload.keyword}")</span>
+											</div>
+											<div class="flex items-center gap-2 text-[10px] text-slate-400 mt-0.5 font-mono">
+												{#if t.payload?.target_action}
+													<span class="text-cyan-400/90">{t.payload.target_action === 'auto_apply' ? '🚀 自动打招呼' : '📖 深度存JD'}</span>
+												{/if}
+												{#if t.payload?.min_score && t.task_type === 'AUTO_APPLY'}
+													<span>阈值: {t.payload.min_score}分</span>
+												{/if}
+											</div>
+										{:else if sName}
+											<div class="flex items-center gap-1.5 truncate">
+												<span class="text-cyan-400 font-mono text-[10px]">🎯</span>
+												<span class="text-slate-100 font-bold">{sName}</span>
+											</div>
+											<div class="flex items-center gap-2 text-[10px] text-slate-400 mt-0.5 font-mono">
+												{#if t.payload?.target_action}
+													<span class="text-cyan-400/90">{t.payload.target_action === 'auto_apply' ? '🚀 自动打招呼' : '📖 深度存JD'}</span>
+												{/if}
+												{#if t.payload?.min_score && t.task_type === 'AUTO_APPLY'}
+													<span>阈值: {t.payload.min_score}分</span>
+												{/if}
+											</div>
+										{:else if t.payload?.keyword}
 											<span class="text-slate-200 font-medium">"{t.payload.keyword}"</span>
-											{#if t.payload?.min_score}
+											{#if t.payload?.min_score && t.task_type === 'AUTO_APPLY'}
 												<span class="text-slate-500 ml-1">({t.payload.min_score}分)</span>
 											{/if}
-										{:else if t.payload?.search_name}
-											<span class="text-slate-200">{t.payload.search_name}</span>
 										{:else}
 											<span class="text-slate-500 font-mono">系统任务</span>
 										{/if}
@@ -703,17 +791,13 @@
 								<div class="flex items-center justify-between">
 									<div class="flex items-center space-x-2">
 										<h3 class="text-xs font-bold text-slate-100">{s.name}</h3>
-										{#if sAction === 'digest_only'}
-											<span class="px-1.5 py-0.5 rounded font-mono text-[9px] bg-amber-950 text-amber-400 border border-amber-800">
-												⚡ 仅抓摘要
-											</span>
-										{:else if sAction === 'save_jd'}
-											<span class="px-1.5 py-0.5 rounded font-mono text-[9px] bg-cyan-950 text-cyan-400 border border-cyan-800">
-												📖 深度存JD
-											</span>
-										{:else}
+										{#if sAction === 'auto_apply'}
 											<span class="px-1.5 py-0.5 rounded font-mono text-[9px] bg-emerald-950 text-emerald-400 border border-emerald-800">
 												🚀 自动沟通
+											</span>
+										{:else}
+											<span class="px-1.5 py-0.5 rounded font-mono text-[9px] bg-cyan-950 text-cyan-400 border border-cyan-800">
+												📖 深度存JD
 											</span>
 										{/if}
 									</div>

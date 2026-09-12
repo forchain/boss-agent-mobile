@@ -8,7 +8,6 @@ from typing import Any
 from rich.console import Console
 
 from droid_agent_core.gestures import (
-    BézierTouchSynthesizer,
     HumanizedGestureExecutor,
     Point,
     calculate_probe_coordinate,
@@ -39,7 +38,6 @@ def _log_warn(msg: str) -> None:
 def _log_error(msg: str) -> None:
     logger.error(msg)
     console.print(f"[bold red][JobDetailPage ❌][/bold red] {msg}")
-
 
 
 @dataclass
@@ -90,13 +88,45 @@ class JobCardBrief:
 
 
 KNOWN_CITIES = (
-    "上海", "北京", "深圳", "广州", "杭州", "成都", "武汉", "南京", "苏州", "西安",
-    "重庆", "天津", "长沙", "厦门", "合肥", "青岛", "郑州", "大连", "海外", "远程",
+    "上海",
+    "北京",
+    "深圳",
+    "广州",
+    "杭州",
+    "成都",
+    "武汉",
+    "南京",
+    "苏州",
+    "西安",
+    "重庆",
+    "天津",
+    "长沙",
+    "厦门",
+    "合肥",
+    "青岛",
+    "郑州",
+    "大连",
+    "海外",
+    "远程",
 )
 
 RECRUITER_TITLE_KEYWORDS = (
-    "猎头", "顾问", "专员", "专家", "HR", "招聘", "经理", "主管", "总监",
-    "助理", "VP", "合伙人", "Recruiter", "Leader", "HRBP", "负责人",
+    "猎头",
+    "顾问",
+    "专员",
+    "专家",
+    "HR",
+    "招聘",
+    "经理",
+    "主管",
+    "总监",
+    "助理",
+    "VP",
+    "合伙人",
+    "Recruiter",
+    "Leader",
+    "HRBP",
+    "负责人",
 )
 
 
@@ -392,13 +422,25 @@ class JobListPage(BaseBossPage):
         """Check if currently on the main job recommendation home page."""
         return self.find_by_key("job_list.search_icon", timeout_sec=0.5) is not None
 
+    def press_back(self) -> None:
+        """Send Android KEYCODE_BACK (keyevent 4) or driver.back() to press the hardware back button."""
+        if not self.driver:
+            return
+        if hasattr(self.driver, "press_keycode"):
+            try:
+                self.driver.press_keycode(4)  # Android KEYCODE_BACK
+                return
+            except Exception:
+                pass
+        if hasattr(self.driver, "back"):
+            with contextlib.suppress(Exception):
+                self.driver.back()
+
     def navigate_to_home(self, max_attempts: int = 6) -> bool:
         """Ensure the app navigates back to the primary Job Recommendation Home page.
 
-        Handles:
-        1. Dismissing open chat screens, job details, or dialogs if present.
-        2. Clicking back buttons or driver back from subpages.
-        3. Switching to the primary '职位' tab.
+        If not currently on the home page, repeatedly dismiss dialogs, click
+        visible back buttons, or press the Android back key until returning to the home screen.
         """
         for _ in range(max_attempts):
             if self.is_on_home_page():
@@ -409,39 +451,42 @@ class JobListPage(BaseBossPage):
             close_dialog_btn = self.find_by_key("filter.close_btn", timeout_sec=0.3)
             if close_dialog_btn:
                 self.gestures.human_click(close_dialog_btn)
-                time.sleep(0.3)
+                time.sleep(0.4)
                 continue
 
             cancel_industry_btn = self.find_by_key("industry.cancel_btn", timeout_sec=0.3)
             if cancel_industry_btn:
                 self.gestures.human_click(cancel_industry_btn)
-                time.sleep(0.3)
+                time.sleep(0.4)
                 continue
 
-            # Look for chat/search/navigation/job_detail back button
-            back_elem = self.find_by_key("chat.back_btn", timeout_sec=0.5)
-            if not back_elem:
-                back_elem = self.find_by_key("navigation.back_btn", timeout_sec=0.3)
-            if not back_elem:
-                back_elem = self.find_by_key("search.back_btn", timeout_sec=0.3)
+            # Look for explicit back button (search, job_detail, chat, navigation)
+            back_elem = self.find_by_key("search.back_btn", timeout_sec=0.3)
             if not back_elem:
                 back_elem = self.find_by_key("job_detail.back_btn", timeout_sec=0.3)
+            if not back_elem:
+                back_elem = self.find_by_key("chat.back_btn", timeout_sec=0.3)
+            if not back_elem:
+                back_elem = self.find_by_key("navigation.back_btn", timeout_sec=0.3)
 
             if back_elem:
                 self.gestures.human_click(back_elem)
                 time.sleep(0.8)
-            elif hasattr(self.driver, "back"):
-                with contextlib.suppress(Exception):
-                    self.driver.back()
-                    time.sleep(0.8)
+            else:
+                self.press_back()
+                time.sleep(0.8)
 
-            # Try clicking job tab
-            job_tab_elem = self.find_by_key("job_list.job_tab", timeout_sec=0.5)
+            # Check if back action reached home page
+            if self.is_on_home_page():
+                self.ensure_job_tab()
+                return True
+
+            # If bottom job tab is visible (e.g. switched to message/mine tab), click it
+            job_tab_elem = self.find_by_key("job_list.job_tab", timeout_sec=0.3)
             if job_tab_elem:
                 self.gestures.human_click(job_tab_elem)
                 time.sleep(0.5)
 
-        self.ensure_job_tab()
         return self.is_on_home_page()
 
     def ensure_job_tab(self) -> bool:
@@ -454,11 +499,42 @@ class JobListPage(BaseBossPage):
 
     def open_search(self, timeout_sec: float = 10.0) -> bool:
         """Click the search icon in the top header to enter the search page."""
+        search_page = SearchPage(self.driver)
+        if search_page.is_search_page():
+            return True
+
+        # If not currently on home page, press back to return to home first!
+        if not self.is_on_home_page():
+            self.navigate_to_home()
+            if search_page.is_search_page():
+                return True
+
         elem = self.find_by_key("job_list.search_icon", timeout_sec=timeout_sec)
         if elem:
             self.gestures.human_click(elem)
-            return True
-        return False
+            if search_page.wait_for_search_page(timeout_sec=3.0):
+                return True
+
+        # Fallback: find ly_menu directly and tap on the right side (search icon)
+        try:
+            if self.driver:
+                menus = self.driver.find_elements(
+                    by="xpath", value="//*[@resource-id='com.hpbr.bosszhipin:id/ly_menu']"
+                )
+                if menus:
+                    menu_elem = menus[0]
+                    loc = getattr(menu_elem, "location", None) or getattr(menu_elem, "rect", None)
+                    size = getattr(menu_elem, "size", None) or getattr(menu_elem, "rect", None)
+                    if loc and size:
+                        target_x = (loc.get("x", 0) or 0) + (size.get("width", 0) or 0) * 0.75
+                        target_y = (loc.get("y", 0) or 0) + (size.get("height", 0) or 0) * 0.5
+                        self.gestures.human_click_at_point(target_x, target_y, jitter_px=3.0)
+                        if search_page.wait_for_search_page(timeout_sec=3.0):
+                            return True
+        except Exception:
+            pass
+
+        return search_page.is_search_page()
 
     def wait_for_jobs_loaded(self, timeout_sec: float = 15.0) -> bool:
         """Wait until at least one job card is present on the screen."""
@@ -670,17 +746,26 @@ class JobListPage(BaseBossPage):
                         if r_hh:
                             is_headhunter = True
                         parts = t.rsplit(" ", 1)
-                        if (
-                            not location
-                            and len(parts) == 2
-                            and is_likely_location(parts[1])
-                        ):
+                        if not location and len(parts) == 2 and is_likely_location(parts[1]):
                             location = parts[1].strip()
                         continue
 
                     # 5. Location detection if standalone
                     if not location and (
-                        t in ("上海", "北京", "深圳", "广州", "杭州", "成都", "武汉", "南京", "苏州", "西安", "海外")
+                        t
+                        in (
+                            "上海",
+                            "北京",
+                            "深圳",
+                            "广州",
+                            "杭州",
+                            "成都",
+                            "武汉",
+                            "南京",
+                            "苏州",
+                            "西安",
+                            "海外",
+                        )
                         or t.endswith("市")
                         or t.endswith("区")
                     ):
@@ -688,12 +773,18 @@ class JobListPage(BaseBossPage):
                         continue
 
                     # 6. Standalone scale or industry detection
-                    if re.search(r"(\d+[-~至]\d+人|\d+人以上|少于\d+人|\d+人以下)", t) and not scale:
+                    if (
+                        re.search(r"(\d+[-~至]\d+人|\d+人以上|少于\d+人|\d+人以下)", t)
+                        and not scale
+                    ):
                         scale = t
                         continue
 
                     # 7. Tags vs Snippet
-                    if any(kw in t for kw in ("年", "应届", "经验", "本科", "大专", "硕士", "博士", "学历")):
+                    if any(
+                        kw in t
+                        for kw in ("年", "应届", "经验", "本科", "大专", "硕士", "博士", "学历")
+                    ):
                         tags.append(t)
                     elif len(t) > 10 and not snippet:
                         snippet = t
@@ -722,7 +813,6 @@ class JobListPage(BaseBossPage):
                     )
                 )
         return briefs
-
 
 
 class SearchPage(BaseBossPage):
@@ -771,6 +861,12 @@ class SearchPage(BaseBossPage):
         if elem:
             self.gestures.human_click(elem)
             return True
+        if self.driver and hasattr(self.driver, "press_keycode"):
+            try:
+                self.driver.press_keycode(66)  # KEYCODE_ENTER
+                return True
+            except Exception:
+                pass
         return False
 
     def search(self, keyword: str, timeout_sec: float = 15.0) -> bool:
@@ -1083,7 +1179,9 @@ class JobDetailPage(BaseBossPage):
         # 1. First attempt: standard explicit expand button if visible
         elem = self.find_by_key("job_detail.expand_btn", timeout_sec=0.5)
         if elem:
-            _log_info("👆 Found standard explicit expand button ('查看全部' / '展开全文'), clicking it...")
+            _log_info(
+                "👆 Found standard explicit expand button ('查看全部' / '展开全文'), clicking it..."
+            )
             self.gestures.human_click(elem)
             time.sleep(0.3)
             desc_elem = self.find_by_key("job_detail.desc", timeout_sec=1.0)
@@ -1095,20 +1193,28 @@ class JobDetailPage(BaseBossPage):
         desc_elem = self.find_by_key("job_detail.desc", timeout_sec=1.5)
         if not desc_elem:
             win_size = self._get_window_size()
-            _log_info("📜 Job description element not visible in initial viewport; scrolling down once to locate it...")
+            _log_info(
+                "📜 Job description element not visible in initial viewport; scrolling down once to locate it..."
+            )
             self._scroll_page_up(int(win_size.get("height", 2400) * 0.4))
             desc_elem = self.find_by_key("job_detail.desc", timeout_sec=2.0)
 
         if not desc_elem:
-            _log_error("Failed to locate job description element ('com.hpbr.bosszhipin:id/tv_description') on detail page!")
+            _log_error(
+                "Failed to locate job description element ('com.hpbr.bosszhipin:id/tv_description') on detail page!"
+            )
             return False
 
         initial_text = getattr(desc_elem, "text", "") or ""
         self._current_description = initial_text.strip()
 
-        is_truncated = ("查看更多" in initial_text or "展开" in initial_text or initial_text.endswith("..."))
+        is_truncated = (
+            "查看更多" in initial_text or "展开" in initial_text or initial_text.endswith("...")
+        )
         if not is_truncated:
-            _log_info(f"✅ Job description is already fully expanded (length: {len(initial_text)} chars, no '查看更多' found).")
+            _log_info(
+                f"✅ Job description is already fully expanded (length: {len(initial_text)} chars, no '查看更多' found)."
+            )
             return True
 
         _log_info(
@@ -1132,7 +1238,9 @@ class JobDetailPage(BaseBossPage):
                     for k in ("x", "y", "width", "height")
                 )
             ):
-                _log_warn(f"Cannot retrieve valid element bounds on attempt {attempt}; scrolling page...")
+                _log_warn(
+                    f"Cannot retrieve valid element bounds on attempt {attempt}; scrolling page..."
+                )
                 self._scroll_page_up(int(screen_height * 0.35))
                 desc_elem = self.find_by_key("job_detail.desc", timeout_sec=1.0)
                 continue
@@ -1163,7 +1271,9 @@ class JobDetailPage(BaseBossPage):
                         _log_error("Could not find job description element after scroll!")
                         return False
             else:
-                _log_info(f"🎯 JD bottom ({elem_bottom:.1f}) is now safely in view (safe threshold: {safe_bottom_threshold:.1f}).")
+                _log_info(
+                    f"🎯 JD bottom ({elem_bottom:.1f}) is now safely in view (safe threshold: {safe_bottom_threshold:.1f})."
+                )
                 break
 
         # Re-fetch bounds after scroll settling
@@ -1183,7 +1293,9 @@ class JobDetailPage(BaseBossPage):
         expanded = False
 
         for idx, (ratio_x, offset_y) in enumerate(tap_offsets, 1):
-            target_x, target_y = calculate_probe_coordinate(rect, [ratio_x, offset_y], origin="bottom-left")
+            target_x, target_y = calculate_probe_coordinate(
+                rect, [ratio_x, offset_y], origin="bottom-left"
+            )
             _log_info(
                 f"👆 [Tap Hotspot {idx}/{len(tap_offsets)}] Tapping '查看更多' at screen coordinate "
                 f"({target_x:.1f}, {target_y:.1f}) [ratio_x={ratio_x}, offset_y={offset_y}px from bottom]..."
@@ -1266,7 +1378,9 @@ class JobDetailPage(BaseBossPage):
         # 4. Fallback lookups in case header elements were somehow missed before scroll
         if not title:
             title_elem = self.find_by_key("job_detail.title")
-            title = title_elem.text.strip() if title_elem and getattr(title_elem, "text", None) else ""
+            title = (
+                title_elem.text.strip() if title_elem and getattr(title_elem, "text", None) else ""
+            )
         if not company:
             company_elem = self.find_by_key("job_detail.company")
             company = (
@@ -1277,7 +1391,9 @@ class JobDetailPage(BaseBossPage):
         if not salary:
             salary_elem = self.find_by_key("job_detail.salary")
             salary = (
-                salary_elem.text.strip() if salary_elem and getattr(salary_elem, "text", None) else ""
+                salary_elem.text.strip()
+                if salary_elem and getattr(salary_elem, "text", None)
+                else ""
             )
 
         if "查看更多" in desc:

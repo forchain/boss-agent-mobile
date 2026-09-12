@@ -7,6 +7,7 @@ Domain dataclasses for Boss 直聘 entities.
 import re
 from dataclasses import dataclass, field
 from enum import StrEnum
+from pathlib import Path
 from typing import Any
 
 
@@ -58,8 +59,13 @@ def extract_digest_from_jd(jd: str, max_chars: int = 100) -> str:
         if (
             not stripped
             or len(stripped) < 5
-            or re.match(r"^(?:岗位职责|工作职责|职位描述|任职要求|任职资格|加分项|基本要求|必须要求|关于我们|公司介绍|加分条件|薪酬福利)[:：]?$", stripped)
-            or re.match(r"^【(?:岗位职责|工作职责|职位描述|任职要求|任职资格|加分项|关于我们)】$", stripped)
+            or re.match(
+                r"^(?:岗位职责|工作职责|职位描述|任职要求|任职资格|加分项|基本要求|必须要求|关于我们|公司介绍|加分条件|薪酬福利)[:：]?$",
+                stripped,
+            )
+            or re.match(
+                r"^【(?:岗位职责|工作职责|职位描述|任职要求|任职资格|加分项|关于我们)】$", stripped
+            )
         ):
             continue
         substantive.append(stripped)
@@ -72,16 +78,73 @@ def extract_digest_from_jd(jd: str, max_chars: int = 100) -> str:
 
 
 COMMON_TECH_TAGS = (
-    "Java", "Python", "Go", "Golang", "Rust", "C++", "C#", ".NET", "PHP",
-    "React Native", "React", "Flutter", "Vue", "Angular", "Node.js", "TypeScript", "JavaScript",
-    "Android", "iOS", "鸿蒙", "HarmonyOS", "小程序", "RN",
-    "LLM", "AI", "大模型", "Agent", "Prompt", "RAG", "AIGC", "NLP", "CV", "机器学习", "深度学习",
-    "Spring", "SpringBoot", "FastAPI", "Django", "Flask",
-    "MySQL", "PostgreSQL", "Redis", "MongoDB", "Elasticsearch", "Kafka",
-    "Kubernetes", "K8s", "Docker", "DevOps", "CI/CD",
-    "全栈", "架构师", "前端", "后端", "移动端", "测开", "运维", "微服务",
-    "3-5年", "5-10年", "1-3年", "10年以上", "应届生",
-    "本科", "硕士", "博士", "大专",
+    "Java",
+    "Python",
+    "Go",
+    "Golang",
+    "Rust",
+    "C++",
+    "C#",
+    ".NET",
+    "PHP",
+    "React Native",
+    "React",
+    "Flutter",
+    "Vue",
+    "Angular",
+    "Node.js",
+    "TypeScript",
+    "JavaScript",
+    "Android",
+    "iOS",
+    "鸿蒙",
+    "HarmonyOS",
+    "小程序",
+    "RN",
+    "LLM",
+    "AI",
+    "大模型",
+    "Agent",
+    "Prompt",
+    "RAG",
+    "AIGC",
+    "NLP",
+    "CV",
+    "机器学习",
+    "深度学习",
+    "Spring",
+    "SpringBoot",
+    "FastAPI",
+    "Django",
+    "Flask",
+    "MySQL",
+    "PostgreSQL",
+    "Redis",
+    "MongoDB",
+    "Elasticsearch",
+    "Kafka",
+    "Kubernetes",
+    "K8s",
+    "Docker",
+    "DevOps",
+    "CI/CD",
+    "全栈",
+    "架构师",
+    "前端",
+    "后端",
+    "移动端",
+    "测开",
+    "运维",
+    "微服务",
+    "3-5年",
+    "5-10年",
+    "1-3年",
+    "10年以上",
+    "应届生",
+    "本科",
+    "硕士",
+    "博士",
+    "大专",
 )
 
 
@@ -101,15 +164,15 @@ def extract_tags_from_text(text: str) -> list[str]:
 
 class JobRecordStatus(StrEnum):
     IGNORED = "ignored"
-    DIGEST_ONLY = "digest_only"
     JD_SAVED = "jd_saved"
     UNMATCHED = "unmatched"
     MATCHED = "matched"
     APPLIED = "applied"
+    # Backward compatibility for legacy database records
+    DIGEST_ONLY = "digest_only"
 
 
 class TargetAction(StrEnum):
-    DIGEST_ONLY = "digest_only"
     SAVE_JD = "save_jd"
     AUTO_APPLY = "auto_apply"
 
@@ -117,16 +180,15 @@ class TargetAction(StrEnum):
 STATE_RANK: dict[str, int] = {
     JobRecordStatus.IGNORED: -1,
     JobRecordStatus.DIGEST_ONLY: 1,
-    JobRecordStatus.JD_SAVED: 2,
-    JobRecordStatus.UNMATCHED: 2,
-    JobRecordStatus.MATCHED: 3,
-    JobRecordStatus.APPLIED: 4,
+    JobRecordStatus.JD_SAVED: 1,
+    JobRecordStatus.UNMATCHED: 1,
+    JobRecordStatus.MATCHED: 2,
+    JobRecordStatus.APPLIED: 3,
 }
 
 TARGET_ACTION_RANK: dict[str, int] = {
-    TargetAction.DIGEST_ONLY: 1,
-    TargetAction.SAVE_JD: 2,
-    TargetAction.AUTO_APPLY: 4,
+    TargetAction.SAVE_JD: 1,
+    TargetAction.AUTO_APPLY: 2,
 }
 
 
@@ -151,6 +213,7 @@ class JobRecord:
     jd_key_requirements: list[str] = field(default_factory=list)
     greeting_message: str = ""
     search_keywords: list[str] = field(default_factory=list)
+    screened_reason: str = ""
     first_seen_at: str | None = None
     last_seen_at: str | None = None
     source_task_id: str | None = None
@@ -388,7 +451,10 @@ class ScreeningPolicy:
         cleaned = company_name.strip()
         if cleaned not in self.company_blacklist:
             self.company_blacklist.append(cleaned)
-            return True, f"已成功将直招企业 '{cleaned}' 加入公司黑名单，后续该企业的岗位将自动过滤以节省每日投递额度"
+            return (
+                True,
+                f"已成功将直招企业 '{cleaned}' 加入公司黑名单，后续该企业的岗位将自动过滤以节省每日投递额度",
+            )
         return True, f"企业 '{cleaned}' 已在公司黑名单中"
 
     def remove_company_from_blacklist(self, company_name: str) -> bool:
@@ -470,6 +536,104 @@ class ScreeningPolicy:
             enable_screening=bool(data.get("enable_screening", True)),
         )
 
+    @classmethod
+    def load_default(cls, config_path: str | Path | None = None) -> "ScreeningPolicy":
+        """Load ScreeningPolicy from declarative config file with local override priority.
+
+        Hierarchy:
+        1. Explicit config_path
+        2. config/screening.local.yaml
+        3. config/screening.local.json
+        4. config/screening.yaml
+        5. config/screening.example.yaml
+        """
+        paths_to_check: list[Path] = []
+        if config_path:
+            paths_to_check.append(Path(config_path))
+        else:
+            try:
+                from .settings import resolve_git_common_root
+
+                root = resolve_git_common_root()
+            except Exception:
+                root = Path.cwd()
+            candidate_rel_paths = [
+                Path("config/screening.local.yaml"),
+                Path("config/screening.local.yml"),
+                Path("config/screening.local.json"),
+                Path("config/screening.yaml"),
+                Path("config/screening.example.yaml"),
+            ]
+            for p in candidate_rel_paths:
+                paths_to_check.append(root / p if not p.is_absolute() else p)
+                if not p.is_absolute():
+                    paths_to_check.append(Path.cwd() / p)
+
+        for p in paths_to_check:
+            if p.is_file():
+                try:
+                    content = p.read_text(encoding="utf-8")
+                    if p.suffix in (".yaml", ".yml"):
+                        try:
+                            import yaml
+
+                            data = yaml.safe_load(content)
+                        except Exception:
+                            data = None
+                    else:
+                        import json
+
+                        data = json.loads(content)
+                    if isinstance(data, dict):
+                        return cls.from_dict(data)
+                except Exception:
+                    pass
+
+        return cls()
+
+    def save_default(self, config_path: str | Path | None = None) -> Path:
+        """Save ScreeningPolicy to declarative local YAML configuration file."""
+        if config_path:
+            target_path = Path(config_path)
+        else:
+            try:
+                from .settings import resolve_git_common_root
+
+                root = resolve_git_common_root()
+            except Exception:
+                root = Path.cwd()
+            target_path = root / "config" / "screening.local.yaml"
+
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            import yaml
+
+            content = yaml.dump(
+                self.to_dict(),
+                allow_unicode=True,
+                sort_keys=False,
+                default_flow_style=False,
+            )
+        except Exception:
+            import json
+
+            lines = [
+                f"enable_screening: {'true' if self.enable_screening else 'false'}",
+                "title_whitelist:",
+                *[f"  - {json.dumps(w, ensure_ascii=False)}" for w in self.title_whitelist],
+                "title_blacklist:",
+                *[f"  - {json.dumps(b, ensure_ascii=False)}" for b in self.title_blacklist],
+                "company_blacklist:",
+                *[f"  - {json.dumps(c, ensure_ascii=False)}" for c in self.company_blacklist],
+                "jd_blacklist:",
+                *[f"  - {json.dumps(j, ensure_ascii=False)}" for j in self.jd_blacklist],
+            ]
+            content = "\n".join(lines) + "\n"
+
+        target_path.write_text(content, encoding="utf-8")
+        return target_path
+
 
 @dataclass
 class SavedSearch:
@@ -497,8 +661,10 @@ class SavedSearch:
         if hasattr(self, "filter") and self.filter is not None:
             self.filter.enable_filter = self.enable_filter
         # Bidirectional sync between target_action and target_task_type
-        if not self.target_action:
-            self.target_action = "auto_apply" if self.target_task_type == "AUTO_APPLY" else "save_jd"
+        if not self.target_action or self.target_action == "digest_only":
+            self.target_action = (
+                "auto_apply" if self.target_task_type == "AUTO_APPLY" else "save_jd"
+            )
         elif self.target_action == "auto_apply":
             self.target_task_type = "AUTO_APPLY"
         else:
@@ -540,16 +706,18 @@ class SavedSearch:
             "is_enabled": self.is_enabled,
             "last_run_at": self.last_run_at,
             "target_task_type": self.target_task_type,
-            "target_action": self.target_action,
-            "max_jobs": self.max_jobs,
         }
 
     @classmethod
-    def from_dict(cls, search_id: str | dict[str, Any], data: dict[str, Any] | None = None) -> "SavedSearch":
+    def from_dict(
+        cls, search_id: str | dict[str, Any], data: dict[str, Any] | None = None
+    ) -> "SavedSearch":
         if isinstance(search_id, dict) and data is None:
             data = search_id
             search_id = str(data.get("id", ""))
 
+        data = data or {}
+        sid = str(search_id)
         search_data = data.get("search", {}) or {}
         keyword = data.get("keyword")
         if keyword is None:
@@ -627,8 +795,8 @@ class SavedSearch:
             target_action = "auto_apply" if target_task_type == "AUTO_APPLY" else "save_jd"
 
         return cls(
-            id=search_id,
-            name=data.get("name", search_id),
+            id=sid,
+            name=data.get("name", sid),
             description=data.get("description", ""),
             search=search_cfg,
             filter=filter_cfg,
