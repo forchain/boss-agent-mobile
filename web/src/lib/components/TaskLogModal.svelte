@@ -83,6 +83,12 @@
 						<span class="text-cyan-400 font-mono">{task.assigned_worker}</span>
 					</div>
 				{/if}
+				{#if task.payload?.search_name || task.payload?.saved_search_name}
+					<div>
+						<span>策略名: </span>
+						<span class="text-slate-100 font-bold">🎯 {task.payload?.search_name || task.payload?.saved_search_name}</span>
+					</div>
+				{/if}
 				{#if task.payload?.keyword}
 					<div>
 						<span>关键词: </span>

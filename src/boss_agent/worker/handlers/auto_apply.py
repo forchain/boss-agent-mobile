@@ -60,9 +60,11 @@ class AutoApplyHandler(BaseTaskHandler):
         mode_desc = (
             "Auto-Send" if (auto_send and not preview_only) else "Preview Draft Only (Safe Mode)"
         )
+        search_name = payload.get("search_name") or payload.get("saved_search_name") or ""
+        strategy_desc = f"strategy='{search_name}', " if search_name else ""
         await broker.append_log(
             task.id,
-            f"Starting AUTO_APPLY (candidate='{profile.name}', keyword='{keyword}', "
+            f"Starting AUTO_APPLY ({strategy_desc}candidate='{profile.name}', keyword='{keyword}', "
             f"min_score={min_score}, mode='{mode_desc}')",
         )
 

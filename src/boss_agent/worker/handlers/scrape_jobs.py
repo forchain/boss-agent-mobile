@@ -63,9 +63,11 @@ class ScrapeJobsHandler(BaseTaskHandler):
             target_action = TargetAction.SAVE_JD
         required_rank = TARGET_ACTION_RANK.get(target_action, 1)
 
+        search_name = payload.get("search_name") or payload.get("saved_search_name") or ""
+        strategy_desc = f"strategy='{search_name}', " if search_name else ""
         await broker.append_log(
             task.id,
-            f"Starting SCRAPE_JOBS (keyword='{keyword}', target_action='{target_action.value}', max_jobs={max_jobs})",
+            f"Starting SCRAPE_JOBS ({strategy_desc}keyword='{keyword}', target_action='{target_action.value}', max_jobs={max_jobs})",
         )
 
         startup_page = StartupDialogPage(driver)
