@@ -60,9 +60,8 @@ class ScrapeJobsHandler(BaseTaskHandler):
             except ValueError:
                 target_action = TargetAction.SAVE_JD
         else:
-            enrich_jd = bool(payload.get("enrich_jd", True))
-            target_action = TargetAction.SAVE_JD if enrich_jd else TargetAction.DIGEST_ONLY
-        required_rank = TARGET_ACTION_RANK.get(target_action, 2)
+            target_action = TargetAction.SAVE_JD
+        required_rank = TARGET_ACTION_RANK.get(target_action, 1)
 
         await broker.append_log(
             task.id,
@@ -287,21 +286,12 @@ class ScrapeJobsHandler(BaseTaskHandler):
                     if existing_record
                     else "",
                     "jd_key_requirements": card_tags,
-                    "status": JobRecordStatus.DIGEST_ONLY.value,
+                    "status": JobRecordStatus.JD_SAVED.value,
                     "search_keywords": [keyword] if keyword else [],
                     "source_task_id": task.id,
                 }
 
-                if target_action == TargetAction.DIGEST_ONLY:
-                    persisted = await broker.upsert_job_record(card_record)
-                    scraped_jobs.append(persisted)
-                    await broker.append_log(
-                        task.id,
-                        f"✅ [Direct Ingestion] Recorded {rec_type} job from search list: '{card.title}' @ '{card.company_name}' ({card_record.get('salary_range', '')})",
-                    )
-                    continue
-
-                # For SAVE_JD (or AUTO_APPLY): Ingest card digest first, then inspect detail
+                # Ingest card first, then inspect detail to enrich full JD
                 persisted = await broker.upsert_job_record(card_record)
                 scraped_jobs.append(persisted)
 
@@ -439,9 +429,7 @@ class ScrapeJobsHandler(BaseTaskHandler):
                             "location": job_posting.location,
                             "digest": getattr(job_posting, "digest", "") or "",
                             "job_description": job_posting.job_description,
-                            "status": JobRecordStatus.JD_SAVED.value
-                            if target_action != TargetAction.DIGEST_ONLY
-                            else JobRecordStatus.DIGEST_ONLY.value,
+                            "status": JobRecordStatus.JD_SAVED.value,
                             "search_keywords": [keyword] if keyword else [],
                             "source_task_id": task.id,
                         }

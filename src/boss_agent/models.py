@@ -164,15 +164,15 @@ def extract_tags_from_text(text: str) -> list[str]:
 
 class JobRecordStatus(StrEnum):
     IGNORED = "ignored"
-    DIGEST_ONLY = "digest_only"
     JD_SAVED = "jd_saved"
     UNMATCHED = "unmatched"
     MATCHED = "matched"
     APPLIED = "applied"
+    # Backward compatibility for legacy database records
+    DIGEST_ONLY = "digest_only"
 
 
 class TargetAction(StrEnum):
-    DIGEST_ONLY = "digest_only"
     SAVE_JD = "save_jd"
     AUTO_APPLY = "auto_apply"
 
@@ -180,16 +180,15 @@ class TargetAction(StrEnum):
 STATE_RANK: dict[str, int] = {
     JobRecordStatus.IGNORED: -1,
     JobRecordStatus.DIGEST_ONLY: 1,
-    JobRecordStatus.JD_SAVED: 2,
-    JobRecordStatus.UNMATCHED: 2,
-    JobRecordStatus.MATCHED: 3,
-    JobRecordStatus.APPLIED: 4,
+    JobRecordStatus.JD_SAVED: 1,
+    JobRecordStatus.UNMATCHED: 1,
+    JobRecordStatus.MATCHED: 2,
+    JobRecordStatus.APPLIED: 3,
 }
 
 TARGET_ACTION_RANK: dict[str, int] = {
-    TargetAction.DIGEST_ONLY: 1,
-    TargetAction.SAVE_JD: 2,
-    TargetAction.AUTO_APPLY: 4,
+    TargetAction.SAVE_JD: 1,
+    TargetAction.AUTO_APPLY: 2,
 }
 
 
@@ -662,7 +661,7 @@ class SavedSearch:
         if hasattr(self, "filter") and self.filter is not None:
             self.filter.enable_filter = self.enable_filter
         # Bidirectional sync between target_action and target_task_type
-        if not self.target_action:
+        if not self.target_action or self.target_action == "digest_only":
             self.target_action = (
                 "auto_apply" if self.target_task_type == "AUTO_APPLY" else "save_jd"
             )

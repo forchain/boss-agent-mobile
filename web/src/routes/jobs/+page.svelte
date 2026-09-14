@@ -64,7 +64,7 @@
 				currentFilter === 'all'
 					? j.status !== 'ignored'
 					: currentFilter === 'jd_saved'
-						? j.status === 'jd_saved' || j.status === 'unmatched'
+						? j.status === 'jd_saved' || j.status === 'unmatched' || j.status === 'digest_only'
 						: j.status === currentFilter;
 			const matchesChannel =
 				channelFilter === 'all'
@@ -90,8 +90,7 @@
 
 	// Counts
 	let activeJobsCount = $derived(jobs.filter((j) => j.status !== 'ignored').length);
-	let digestOnlyCount = $derived(jobs.filter((j) => j.status === 'digest_only').length);
-	let jdSavedCount = $derived(jobs.filter((j) => j.status === 'jd_saved' || j.status === 'unmatched').length);
+	let jdSavedCount = $derived(jobs.filter((j) => j.status === 'jd_saved' || j.status === 'unmatched' || j.status === 'digest_only').length);
 	let matchedCount = $derived(jobs.filter((j) => j.status === 'matched').length);
 	let appliedCount = $derived(jobs.filter((j) => j.status === 'applied').length);
 	let ignoredCount = $derived(jobs.filter((j) => j.status === 'ignored').length);
@@ -299,7 +298,7 @@
 		isRestoring = true;
 		restoreNotice = '';
 		try {
-			const targetStatus: JobRecordStatus = selectedJob.job_description ? 'jd_saved' : 'digest_only';
+			const targetStatus: JobRecordStatus = 'jd_saved';
 			const updated = await updateJobRecord(selectedJob.id, {
 				status: targetStatus,
 				screened_reason: ''
@@ -455,11 +454,7 @@
 
 		<div class="flex items-center space-x-3 text-xs">
 			<div class="bg-slate-950/80 border border-slate-800 px-3.5 py-2 rounded-xl flex items-center space-x-2 font-mono">
-				<span class="text-slate-400">仅摘要:</span>
-				<span class="font-bold text-amber-400 text-sm">{digestOnlyCount}</span>
-			</div>
-			<div class="bg-slate-950/80 border border-slate-800 px-3.5 py-2 rounded-xl flex items-center space-x-2 font-mono">
-				<span class="text-slate-400">已存JD:</span>
+				<span class="text-slate-400">待评估:</span>
 				<span class="font-bold text-cyan-400 text-sm">{jdSavedCount}</span>
 			</div>
 			<div class="bg-slate-950/80 border border-slate-800 px-3.5 py-2 rounded-xl flex items-center space-x-2 font-mono">
@@ -484,7 +479,7 @@
 			<!-- Filter & Search Card -->
 			<div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 shadow-xl space-y-3">
 				<!-- Status Tabs -->
-				<div class="grid grid-cols-3 sm:grid-cols-6 gap-1 p-1 bg-slate-950 border border-slate-800/80 rounded-xl text-xs font-medium">
+				<div class="grid grid-cols-2 sm:grid-cols-5 gap-1 p-1 bg-slate-950 border border-slate-800/80 rounded-xl text-xs font-medium">
 					<button
 						onclick={() => (currentFilter = 'all')}
 						class="py-1.5 rounded-lg transition text-center {currentFilter === 'all' ? 'bg-cyan-600 text-white shadow font-semibold' : 'text-slate-400 hover:text-slate-200'}"
@@ -492,16 +487,10 @@
 						全部 ({activeJobsCount})
 					</button>
 					<button
-						onclick={() => (currentFilter = 'digest_only')}
-						class="py-1.5 rounded-lg transition text-center {currentFilter === 'digest_only' ? 'bg-cyan-600 text-white shadow font-semibold' : 'text-slate-400 hover:text-slate-200'}"
-					>
-						仅摘要 ({digestOnlyCount})
-					</button>
-					<button
 						onclick={() => (currentFilter = 'jd_saved')}
 						class="py-1.5 rounded-lg transition text-center {currentFilter === 'jd_saved' ? 'bg-cyan-600 text-white shadow font-semibold' : 'text-slate-400 hover:text-slate-200'}"
 					>
-						已存JD ({jdSavedCount})
+						待评估 ({jdSavedCount})
 					</button>
 					<button
 						onclick={() => (currentFilter = 'matched')}
@@ -672,11 +661,7 @@
 									</div>
 
 									<div class="flex items-center space-x-1.5 shrink-0">
-										{#if job.status === 'digest_only'}
-											<span class="px-2 py-0.5 rounded text-[10px] bg-amber-950/50 text-amber-400 border border-amber-800/60 font-medium">
-												仅摘要
-											</span>
-										{:else if job.status === 'jd_saved' || job.status === 'unmatched'}
+										{#if job.status === 'jd_saved' || job.status === 'unmatched' || job.status === 'digest_only'}
 											<span class="px-2 py-0.5 rounded text-[10px] bg-cyan-950/50 text-cyan-400 border border-cyan-800/60 font-medium">
 												已存JD
 											</span>
@@ -767,11 +752,7 @@
 									</span>
 								{/if}
 								<h2 class="text-base font-bold text-slate-100">{cleanJobTitle(selectedJob.title)}</h2>
-								{#if selectedJob.status === 'digest_only'}
-									<span class="px-2 py-0.5 rounded text-[10px] bg-amber-950 text-amber-400 border border-amber-800 font-medium">
-										仅摘要 (未存JD)
-									</span>
-								{:else if selectedJob.status === 'jd_saved' || selectedJob.status === 'unmatched'}
+								{#if selectedJob.status === 'jd_saved' || selectedJob.status === 'unmatched' || selectedJob.status === 'digest_only'}
 									<span class="px-2 py-0.5 rounded text-[10px] bg-cyan-950 text-cyan-400 border border-cyan-800 font-medium">
 										已存JD (待评估)
 									</span>
@@ -898,9 +879,7 @@
 							{#if isEvaluating}
 								<span class="animate-spin">⚡</span>
 								<span>大模型深度评估中...</span>
-							{:else if selectedJob.status === 'digest_only'}
-								<span>⚡ 结合摘要进行 AI 评估</span>
-							{:else if selectedJob.status === 'unmatched' || selectedJob.status === 'jd_saved'}
+							{:else if selectedJob.status === 'unmatched' || selectedJob.status === 'jd_saved' || selectedJob.status === 'digest_only'}
 								<span>⚡ 开始 AI 匹配度评估</span>
 							{:else}
 								<span>🔄 重新评估契合度</span>
@@ -918,7 +897,7 @@
 						<div class="bg-slate-950/60 border border-dashed border-slate-800 rounded-xl p-8 text-center text-xs text-slate-500 space-y-2">
 							<div class="text-3xl">🤖</div>
 							<p class="text-slate-300 font-medium">
-								{selectedJob.status === 'digest_only' ? '该岗位仅抓取了列表摘要，尚未执行匹配分析' : '该岗位已入库，尚未执行匹配分析'}
+								该岗位已入库，尚未执行匹配分析
 							</p>
 							<p class="text-slate-500 text-[11px]">
 								点击右上角【⚡ 开始 AI 匹配度评估】，大模型将结合您的求职画像提炼该岗位核心技术痛点，并定制专属的高回复率破冰文案。

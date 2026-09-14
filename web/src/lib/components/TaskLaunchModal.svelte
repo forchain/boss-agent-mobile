@@ -211,7 +211,7 @@
 									{#each searches as s}
 										{@const sAction = resolveTargetAction(s)}
 										<option value={s.id}>
-											{s.name} ({s.keyword || '无关键词'} · {sAction === 'digest_only' ? '仅抓摘要' : sAction === 'save_jd' ? '深度存JD' : '自动沟通'})
+											{s.name} ({s.keyword || '无关键词'} · {sAction === 'auto_apply' ? '自动沟通' : '深度存JD'})
 										</option>
 									{/each}
 								</select>
@@ -281,7 +281,6 @@
 											bind:value={targetAction}
 											class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-cyan-500 text-xs"
 										>
-											<option value="digest_only">⚡ 仅抓取摘要 (digest_only) - 不点开卡片</option>
 											<option value="save_jd">📖 深度存JD (save_jd) - 保存岗位职责全文</option>
 											<option value="auto_apply">🚀 自动打招呼 (auto_apply) - 深度存JD并AI沟通</option>
 										</select>
@@ -344,11 +343,7 @@
 								{:else}
 									<div class="p-2.5 bg-slate-950/60 border border-slate-800/60 rounded-xl text-[11px] text-slate-400 flex items-center space-x-2">
 										<span>ℹ️</span>
-										<span>
-											{targetAction === 'digest_only'
-												? '仅抓取列表摘要模式：不点开详情，不发起沟通，仅保存列表核心摘要。'
-												: '深度存JD模式：点开卡片保存完整岗位职责，不主动发起沟通。'}
-										</span>
+										<span>深度存JD模式：点开卡片保存完整岗位职责，不主动发起沟通。</span>
 									</div>
 								{/if}
 

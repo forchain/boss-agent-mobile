@@ -158,7 +158,7 @@ The zero-token deterministic gatekeeper evaluation that examines the three card-
 _Avoid_: card filter, quick check, preliminary pass
 
 **Target Action (`target_action`)**:
-The configured execution depth for a search task governing whether discovered jobs stop at card digest ingestion (`digest_only`), JD enrichment (`save_jd`), or automated greeting (`auto_apply`).
+The configured execution depth for a search task governing whether discovered jobs undergo complete JD enrichment (`save_jd`) or automated greeting (`auto_apply`). Note: card digest only (`digest_only`) is deprecated in favor of full JD ingestion.
 _Avoid_: search mode, scrape level, crawl stage
 
 **Inline Description Expansion (Bottom-Right Hotspot Tap)**:
@@ -167,7 +167,7 @@ _Avoid_: blind tap, ocr clicker, hardcoded absolute coordinates
 
 
 **Job Lifecycle State**:
-The monotonic progression state of a Job Record tracking its data richness and application stage across mobile automation and backend manual actions (`ignored`, `digest_only`, `jd_saved`, `matched`, `applied`).
+The monotonic progression state of a Job Record tracking its data richness and application stage across mobile automation and backend manual actions (`ignored`, `jd_saved`, `matched`, `applied`; historical `digest_only` records map to `jd_saved`).
 _Avoid_: job status flag, task progress, record phase
 
 **Search Feed Boundary**:
