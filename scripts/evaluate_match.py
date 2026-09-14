@@ -29,6 +29,13 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _is_masked_key(val: str | None) -> bool:
+    if not val:
+        return True
+    s = str(val).strip()
+    return not s or "•" in s or "****" in s or s == "your-api-key-here"
+
+
 def build_llm_client(llm_config_arg: str | None) -> OpenAIChatClient:
     if llm_config_arg:
         try:
@@ -40,9 +47,9 @@ def build_llm_client(llm_config_arg: str | None) -> OpenAIChatClient:
                 temp = float(config_data.get("temperature") or 0.2)
 
                 default_cfg = LLMConfig.from_env_or_file()
-                if not api_key:
+                if _is_masked_key(api_key):
                     api_key = default_cfg.api_key
-                if (not base_url or base_url == "https://api.openai.com/v1") and not config_data.get("api_key"):
+                if (not base_url or base_url == "https://api.openai.com/v1") and _is_masked_key(config_data.get("api_key")):
                     base_url = default_cfg.base_url
                     model = default_cfg.model
 

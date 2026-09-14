@@ -61,3 +61,22 @@ preview_timeout_sec: 3.0
 
 # Set to false to disable LLM match scoring and greeting drafting
 enable_greeting: true
+
+# ------------------------------------------------------------------------------
+# 6. Preliminary Job Screening Policy & Blacklist/Whitelist Rules
+# ------------------------------------------------------------------------------
+# Master switch for deterministic rule-based preliminary screening (zero token cost)
+enable_screening: true
+
+# 职位标题白名单（可选准入凭证，留空表示不限制；非空时职位标题必须命中至少一个）
+title_whitelist: []
+
+# 职位标题黑名单（一票否决，命中即淘汰，绝不进入详情页）
+title_blacklist: ["销售", "电话销售", "电销", "管培生", "实习", "助理", "讲师", "课程顾问", "客服"]
+
+# 公司黑名单（一票否决，受直招保护守卫约束，禁止将猎头渠道与保密企业加入）
+company_blacklist: []
+
+# 岗位摘要与 JD 关键词黑名单（一票否决，卡片摘要或标签命中即淘汰）
+jd_blacklist: ["驻场", "外包", "电销", "无底薪", "纯提成"]
+

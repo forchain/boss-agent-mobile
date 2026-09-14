@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { runPythonScript, getProjectRoot } from '$lib/server/pythonRunner';
+import { sanitizeLlmSettingsForRunner } from '$lib/server/settings';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
@@ -38,7 +39,13 @@ export const POST: RequestHandler = async ({ request }) => {
 
 		const args = ['--file', tempFilePath, '--file-name', fileName, '--user-id', userId];
 		if (llmSettingsStr) {
-			args.push('--llm-config', llmSettingsStr);
+			try {
+				const parsedLlm = JSON.parse(llmSettingsStr);
+				const cleanedLlm = sanitizeLlmSettingsForRunner(parsedLlm);
+				args.push('--llm-config', JSON.stringify(cleanedLlm));
+			} catch {
+				args.push('--llm-config', llmSettingsStr);
+			}
 		}
 		if (mergeMode) {
 			args.push('--merge-mode', mergeMode);

@@ -104,6 +104,16 @@
 				};
 				isEditingApiKey = !conf.api_key;
 				isEditingLangsmithKey = !conf.langsmith_api_key;
+
+				if (conf.title_blacklist || conf.title_whitelist || conf.company_blacklist || conf.jd_blacklist || conf.enable_screening !== undefined) {
+					screeningPolicy = {
+						enable_screening: conf.enable_screening !== false,
+						title_whitelist: Array.isArray(conf.title_whitelist) ? conf.title_whitelist : [],
+						title_blacklist: Array.isArray(conf.title_blacklist) ? conf.title_blacklist : [],
+						company_blacklist: Array.isArray(conf.company_blacklist) ? conf.company_blacklist : [],
+						jd_blacklist: Array.isArray(conf.jd_blacklist) ? conf.jd_blacklist : []
+					};
+				}
 			}
 		} catch (e) {
 			console.warn('Failed to load system settings:', e);
@@ -168,7 +178,7 @@
 			});
 			const data = await res.json();
 			if (res.ok && data.success) {
-				savePolicySuccess = data.message || '✅ 初筛策略已成功保存至 config/screening.local.yaml';
+				savePolicySuccess = data.message || '✅ 初筛策略已成功保存至 config/settings.local.yaml';
 				if (data.policy) {
 					screeningPolicy = data.policy;
 				}
@@ -192,6 +202,13 @@
 		if (isEditingLangsmithKey && newLangsmithKeyInput.trim()) {
 			settings.langsmith_api_key = newLangsmithKeyInput.trim();
 		}
+
+		// Sync screening policy into system settings
+		settings.enable_screening = screeningPolicy.enable_screening;
+		settings.title_whitelist = screeningPolicy.title_whitelist;
+		settings.title_blacklist = screeningPolicy.title_blacklist;
+		settings.company_blacklist = screeningPolicy.company_blacklist;
+		settings.jd_blacklist = screeningPolicy.jd_blacklist;
 
 		isSaving = true;
 		saveSuccessMessage = '';
@@ -689,7 +706,7 @@
 							</span>
 						</div>
 						<p class="text-[11px] text-slate-400 mt-0.5">
-							声明式配置直存 <code class="text-cyan-400 font-mono">config/screening.local.yaml</code>。在搜索结果扫描与移动端投递时，实行零 Token 前置一票否决与准入过滤。
+							声明式配置直存 <code class="text-cyan-400 font-mono">config/settings.local.yaml</code>。在搜索结果扫描与移动端投递时，实行零 Token 前置一票否决与准入过滤。
 						</p>
 					</div>
 				</div>
@@ -922,7 +939,7 @@
 			<!-- Action Footer -->
 			<div class="flex flex-col sm:flex-row items-center justify-between pt-4 border-t border-slate-800/80 gap-3">
 				<span class="text-[11px] text-slate-500 font-mono">
-					📁 规则将实时写入 config/screening.local.yaml
+					📁 规则将实时写入 config/settings.local.yaml
 				</span>
 
 				<button

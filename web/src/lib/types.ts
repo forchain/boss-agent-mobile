@@ -107,6 +107,13 @@ export interface SystemSettings {
 	daily_greeting_limit: number;
 	preview_timeout_sec: number;
 	enable_greeting: boolean;
+
+	// Preliminary Screening Policy & Blacklists
+	enable_screening?: boolean;
+	title_whitelist?: string[];
+	title_blacklist?: string[];
+	company_blacklist?: string[];
+	jd_blacklist?: string[];
 }
 
 export interface MatchEvaluateRequest {

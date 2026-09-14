@@ -78,7 +78,9 @@ class LLMConfig:
                     if isinstance(loaded, dict):
                         for k, v in loaded.items():
                             if v is not None:
-                                if k == "api_key" and v == "your-api-key-here":
+                                if k == "api_key" and (
+                                    v == "your-api-key-here" or "•" in str(v) or "****" in str(v)
+                                ):
                                     continue
                                 data[k] = v
                 except Exception:
@@ -213,8 +215,11 @@ class OpenAIChatClient(LLMDecisionClient):
         headers = {
             "Content-Type": "application/json",
         }
-        if self.config.api_key:
-            headers["Authorization"] = f"Bearer {self.config.api_key}"
+        api_key = self.config.api_key
+        if api_key:
+            s_key = str(api_key).strip()
+            if s_key and "•" not in s_key and "****" not in s_key and s_key != "your-api-key-here":
+                headers["Authorization"] = f"Bearer {s_key}"
         return headers
 
     @traceable(name="OpenAIChatClient.chat_completion", run_type="llm")

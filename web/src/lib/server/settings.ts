@@ -6,15 +6,56 @@ import type { SystemSettings } from '$lib/types';
 export function parseSimpleYaml(content: string): Record<string, any> {
 	const result: Record<string, any> = {};
 	const lines = content.split('\n');
+	let currentListKey: string | null = null;
+
 	for (const line of lines) {
 		const trimmed = line.trim();
-		if (trimmed.startsWith('#') || !trimmed.includes(':')) continue;
+		if (!trimmed || trimmed.startsWith('#')) continue;
+
+		// Support multi-line list items: - "item"
+		if (trimmed.startsWith('- ') && currentListKey) {
+			const item = trimmed.slice(2).trim().replace(/^["']|["']$/g, '');
+			if (!Array.isArray(result[currentListKey])) {
+				result[currentListKey] = [];
+			}
+			result[currentListKey].push(item);
+			continue;
+		}
+
+		if (!trimmed.includes(':')) continue;
+
 		const [keyPart, ...valParts] = trimmed.split(':');
 		const key = keyPart.trim();
 		let val = valParts.join(':').trim();
+
+		// Strip trailing comments
 		if (!val.startsWith('"') && !val.startsWith("'") && (val.includes(' #') || val.includes('\t#'))) {
 			val = val.split(/\s+#/)[0].trim();
 		}
+
+		// Support inline array [...]
+		if (val.startsWith('[') && val.endsWith(']')) {
+			try {
+				result[key] = JSON.parse(val);
+			} catch {
+				const inner = val.slice(1, -1).trim();
+				if (!inner) {
+					result[key] = [];
+				} else {
+					result[key] = inner.split(',').map((s) => s.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
+				}
+			}
+			currentListKey = null;
+			continue;
+		}
+
+		if (val === '') {
+			result[key] = [];
+			currentListKey = key;
+			continue;
+		}
+
+		currentListKey = null;
 		val = val.replace(/^["']|["']$/g, '');
 
 		if (val.toLowerCase() === 'true') {
@@ -54,6 +95,27 @@ export function maskSecret(val?: string): string {
 	return `${s.slice(0, prefixLen)}••••••••••••${s.slice(-suffixLen)}`;
 }
 
+export function sanitizeLlmSettingsForRunner(settings: any): any {
+	if (!settings || typeof settings !== 'object') return settings;
+	const cleaned = { ...settings };
+	const key = cleaned.api_key;
+	if (
+		!key ||
+		typeof key !== 'string' ||
+		key.includes('•') ||
+		key.includes('****') ||
+		key === 'your-api-key-here'
+	) {
+		const serverSettings = loadMergedSettings();
+		if (serverSettings.api_key && !serverSettings.api_key.includes('•') && !serverSettings.api_key.includes('****')) {
+			cleaned.api_key = serverSettings.api_key;
+		} else {
+			delete cleaned.api_key;
+		}
+	}
+	return cleaned;
+}
+
 export function loadMergedSettings(): SystemSettings {
 	const projectRoot = getProjectRoot();
 
@@ -75,7 +137,12 @@ export function loadMergedSettings(): SystemSettings {
 		langsmith_project: 'boss-agent-mobile',
 		daily_greeting_limit: 20,
 		preview_timeout_sec: 3.0,
-		enable_greeting: true
+		enable_greeting: true,
+		enable_screening: true,
+		title_whitelist: [],
+		title_blacklist: ['销售', '电话销售', '电销', '管培生', '实习', '助理', '讲师', '课程顾问', '客服'],
+		company_blacklist: [],
+		jd_blacklist: ['驻场', '外包', '电销', '无底薪', '纯提成']
 	};
 
 	// 1. Read base example file
@@ -246,6 +313,15 @@ export function saveSettingsToLocalYaml(
 		`daily_greeting_limit: ${parseInt(String(newSettings.daily_greeting_limit ?? 20), 10) || 20}`,
 		`preview_timeout_sec: ${parseFloat(String(newSettings.preview_timeout_sec ?? 3.0)) || 3.0}`,
 		`enable_greeting: ${newSettings.enable_greeting !== false}`,
+		``,
+		`# ------------------------------------------------------------------------------`,
+		`# 6. Preliminary Job Screening Policy & Blacklist/Whitelist Rules`,
+		`# ------------------------------------------------------------------------------`,
+		`enable_screening: ${newSettings.enable_screening !== undefined ? Boolean(newSettings.enable_screening) : true}`,
+		`title_whitelist: ${JSON.stringify(newSettings.title_whitelist || [])}`,
+		`title_blacklist: ${JSON.stringify(newSettings.title_blacklist || [])}`,
+		`company_blacklist: ${JSON.stringify(newSettings.company_blacklist || [])}`,
+		`jd_blacklist: ${JSON.stringify(newSettings.jd_blacklist || [])}`,
 		``
 	].join('\n');
 

@@ -179,6 +179,33 @@ describe('SvelteKit Server Endpoints', () => {
 		expect(data.greeting_message.length).toBeGreaterThan(10);
 	});
 
+	it('POST /api/match/evaluate safely handles masked API keys without latin-1 failure', async () => {
+		const mockEvent: any = {
+			request: {
+				json: async () => ({
+					job_title: '资深 Agent 研发',
+					company_name: '智能未来',
+					salary_range: '40-60K',
+					job_description: '负责大模型 Agent 与 Android 移动端自动化架构设计，精通 Python',
+					llmSettings: {
+						provider: 'openai',
+						base_url: 'https://api.minimaxi.com/v1',
+						api_key: 'sk-cp-j••••••••••••uG8w',
+						model: 'MiniMax-M3'
+					}
+				})
+			}
+		};
+
+		const response = await handleMatchPost(mockEvent);
+		const data = await response.json();
+
+		expect(response.status).toBe(200);
+		expect(data.greeting_message).toBeDefined();
+		const reasonsStr = JSON.stringify(data.match_reasons || []);
+		expect(reasonsStr).not.toContain('latin-1');
+	});
+
 	it('POST and GET /api/jobs handles deduplication and status listing', async () => {
 		const { POST: handleJobsPost, GET: handleJobsGet } = await import('../routes/api/jobs/+server');
 		const jobData = {

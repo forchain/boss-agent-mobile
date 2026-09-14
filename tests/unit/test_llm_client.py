@@ -268,3 +268,34 @@ def test_robust_json_parsing_edge_cases():
     parsed5 = OpenAIChatClient._robust_parse_json(raw5)
     assert parsed5["name"] == "周黄金"
     assert "AI与智能体" in parsed5["core_skills"]
+
+
+def test_llm_config_ignores_masked_api_key(tmp_path):
+    config_file = tmp_path / "settings.local.yaml"
+    config_file.write_text(
+        """
+api_key: "sk-cp-j••••••••••••uG8w"
+base_url: "https://api.minimaxi.com/v1"
+model: "MiniMax-M3"
+""",
+        encoding="utf-8",
+    )
+    with patch.dict("os.environ", {}, clear=True):
+        config = LLMConfig.from_env_or_file(config_path=config_file)
+        assert config.api_key is None
+
+
+def test_openai_chat_client_headers_rejects_masked_key():
+    config = LLMConfig(api_key="sk-cp-j••••••••••••uG8w")
+    client = OpenAIChatClient(config)
+    headers = client._get_headers()
+    assert "Authorization" not in headers
+
+
+def test_evaluate_match_build_llm_client_fallback_on_masked_key():
+    from scripts.evaluate_match import build_llm_client
+
+    masked_json = '{"provider":"openai","base_url":"https://api.minimaxi.com/v1","api_key":"sk-cp-j••••••••••••uG8w","model":"MiniMax-M3"}'
+    client = build_llm_client(masked_json)
+    assert "•" not in str(client.config.api_key or "")
+
