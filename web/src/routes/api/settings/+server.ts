@@ -1,10 +1,14 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { loadMergedSettings, saveSettingsToLocalYaml } from '$lib/server/settings';
+import { loadMergedSettings, saveSettingsToLocalYaml, maskSecret } from '$lib/server/settings';
 
 export const GET: RequestHandler = async () => {
 	const settings = loadMergedSettings();
-	return json(settings);
+	return json({
+		...settings,
+		api_key: maskSecret(settings.api_key),
+		langsmith_api_key: maskSecret(settings.langsmith_api_key)
+	});
 };
 
 export const POST: RequestHandler = async ({ request }) => {

@@ -32,6 +32,28 @@ export function parseSimpleYaml(content: string): Record<string, any> {
 	return result;
 }
 
+export function maskSecret(val?: string): string {
+	if (!val) return '';
+	const s = val.trim();
+	if (s.length <= 8) {
+		return s.length <= 4 ? '••••••••' : `${s.slice(0, 2)}••••${s.slice(-2)}`;
+	}
+	if (s.length <= 16) {
+		return `${s.slice(0, 4)}••••••••${s.slice(-3)}`;
+	}
+	let prefixLen = 6;
+	if (s.startsWith('sk-proj-')) prefixLen = 11;
+	else if (s.startsWith('sk-ant-')) prefixLen = 10;
+	else if (s.startsWith('lsv2_pt_')) prefixLen = 11;
+	else if (s.startsWith('sk-')) prefixLen = 7;
+
+	if (prefixLen + 4 >= s.length) {
+		prefixLen = Math.max(3, Math.floor(s.length / 3));
+	}
+	const suffixLen = 4;
+	return `${s.slice(0, prefixLen)}••••••••••••${s.slice(-suffixLen)}`;
+}
+
 export function loadMergedSettings(): SystemSettings {
 	const projectRoot = getProjectRoot();
 

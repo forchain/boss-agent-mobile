@@ -23,19 +23,16 @@
 		enable_greeting: true
 	});
 
-	let showApiKey = $state(false);
-	let showLangsmithKey = $state(false);
 	let isEditingApiKey = $state(false);
 	let newApiKeyInput = $state('');
-	let copiedApiKey = $state(false);
 
 	let isEditingLangsmithKey = $state(false);
 	let newLangsmithKeyInput = $state('');
-	let copiedLangsmithKey = $state(false);
 
 	function maskSecret(val: string): string {
 		if (!val) return '';
 		const s = val.trim();
+		if (s.includes('••••') || s.includes('****')) return s;
 		if (s.length <= 8) {
 			return s.length <= 4 ? '••••••••' : `${s.slice(0, 2)}••••${s.slice(-2)}`;
 		}
@@ -53,22 +50,6 @@
 		}
 		const suffixLen = 4;
 		return `${s.slice(0, prefixLen)}••••••••••••${s.slice(-suffixLen)}`;
-	}
-
-	async function copyToClipboard(text: string, type: 'apiKey' | 'langsmith') {
-		if (!text) return;
-		try {
-			await navigator.clipboard.writeText(text);
-			if (type === 'apiKey') {
-				copiedApiKey = true;
-				setTimeout(() => (copiedApiKey = false), 2000);
-			} else {
-				copiedLangsmithKey = true;
-				setTimeout(() => (copiedLangsmithKey = false), 2000);
-			}
-		} catch (e) {
-			console.warn('Failed to copy to clipboard:', e);
-		}
 	}
 
 	let isSaving = $state(false);
@@ -425,36 +406,19 @@
 								</span>
 							{/if}
 						</div>
-						{#if settings.api_key && !isEditingApiKey}
-							<button
-								type="button"
-								onclick={() => (showApiKey = !showApiKey)}
-								class="text-[11px] text-slate-400 hover:text-slate-200 transition flex items-center gap-1"
-							>
-								{showApiKey ? '🙈 脱敏显示' : '👁️ 显示明文'}
-							</button>
-						{/if}
 					</div>
 
 					{#if settings.api_key && !isEditingApiKey}
 						<div
 							class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 flex items-center justify-between transition hover:border-slate-700"
 						>
-							<div class="flex items-center space-x-2 font-mono text-xs overflow-hidden select-all min-w-0 mr-3">
+							<div class="flex items-center space-x-2 font-mono text-xs overflow-hidden select-none min-w-0 mr-3">
 								<span class="text-cyan-400/90 select-none shrink-0">🔑</span>
 								<span class="text-slate-200 font-mono tracking-wider truncate">
-									{showApiKey ? settings.api_key : maskSecret(settings.api_key)}
+									{maskSecret(settings.api_key)}
 								</span>
 							</div>
-							<div class="flex items-center space-x-1.5 shrink-0">
-								<button
-									type="button"
-									onclick={() => copyToClipboard(settings.api_key || '', 'apiKey')}
-									class="px-2 py-1 text-[11px] text-slate-400 hover:text-slate-200 hover:bg-slate-800/80 rounded-lg transition"
-									title="复制完整密钥"
-								>
-									{copiedApiKey ? '✓ 已复制' : '📋 复制'}
-								</button>
+							<div class="flex items-center shrink-0">
 								<button
 									type="button"
 									onclick={() => {
@@ -472,7 +436,7 @@
 							<div class="relative flex items-center">
 								<input
 									id="api-key-input"
-									type={showApiKey ? 'text' : 'password'}
+									type="password"
 									placeholder={settings.api_key ? '输入新密钥（留空取消修改）' : '输入 API Key，例如 sk-...'}
 									bind:value={newApiKeyInput}
 									class="w-full bg-slate-950 border border-slate-800 rounded-xl pl-3.5 pr-24 py-2.5 text-xs font-mono text-slate-200 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition"
@@ -625,36 +589,19 @@
 								</span>
 							{/if}
 						</div>
-						{#if settings.langsmith_api_key && !isEditingLangsmithKey}
-							<button
-								type="button"
-								onclick={() => (showLangsmithKey = !showLangsmithKey)}
-								class="text-[11px] text-slate-400 hover:text-slate-200 transition flex items-center gap-1"
-							>
-								{showLangsmithKey ? '🙈 脱敏显示' : '👁️ 显示明文'}
-							</button>
-						{/if}
 					</div>
 
 					{#if settings.langsmith_api_key && !isEditingLangsmithKey}
 						<div
 							class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 flex items-center justify-between transition hover:border-slate-700"
 						>
-							<div class="flex items-center space-x-2 font-mono text-xs overflow-hidden select-all min-w-0 mr-3">
+							<div class="flex items-center space-x-2 font-mono text-xs overflow-hidden select-none min-w-0 mr-3">
 								<span class="text-cyan-400/90 select-none shrink-0">🔑</span>
 								<span class="text-slate-200 font-mono tracking-wider truncate">
-									{showLangsmithKey ? settings.langsmith_api_key : maskSecret(settings.langsmith_api_key)}
+									{maskSecret(settings.langsmith_api_key)}
 								</span>
 							</div>
-							<div class="flex items-center space-x-1.5 shrink-0">
-								<button
-									type="button"
-									onclick={() => copyToClipboard(settings.langsmith_api_key || '', 'langsmith')}
-									class="px-2 py-1 text-[11px] text-slate-400 hover:text-slate-200 hover:bg-slate-800/80 rounded-lg transition"
-									title="复制完整密钥"
-								>
-									{copiedLangsmithKey ? '✓ 已复制' : '📋 复制'}
-								</button>
+							<div class="flex items-center shrink-0">
 								<button
 									type="button"
 									onclick={() => {
@@ -672,7 +619,7 @@
 							<div class="relative flex items-center">
 								<input
 									id="langsmith-key-input"
-									type={showLangsmithKey ? 'text' : 'password'}
+									type="password"
 									placeholder={settings.langsmith_api_key ? '输入新密钥（留空取消修改）' : '例如 lsv2_pt_...'}
 									bind:value={newLangsmithKeyInput}
 									class="w-full bg-slate-950 border border-slate-800 rounded-xl pl-3.5 pr-24 py-2.5 text-xs font-mono text-slate-200 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition"

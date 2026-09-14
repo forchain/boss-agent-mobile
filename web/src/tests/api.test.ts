@@ -462,7 +462,13 @@ describe('Unified System Settings Endpoints (/api/settings)', () => {
 
 			const verifyRes = await handleSettingsGet({} as any);
 			const verified = await verifyRes.json();
-			expect(verified.api_key).toBe('sk-real-secret-key-12345678');
+			// Client API response is masked so even admins cannot view full secret
+			expect(verified.api_key).toMatch(/^sk-real••••.*5678$/);
+
+			// Server underlying config preserves the actual secret
+			const { loadMergedSettings } = await import('$lib/server/settings');
+			const realSettings = loadMergedSettings();
+			expect(realSettings.api_key).toBe('sk-real-secret-key-12345678');
 		} finally {
 			await handleSettingsPost({
 				request: {
