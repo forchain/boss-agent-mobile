@@ -1,47 +1,75 @@
 import type { Handle, HandleServerError } from '@sveltejs/kit';
 
+const ANSI_RESET = '\x1b[0m';
+const ANSI_RED = '\x1b[31m';
+const ANSI_YELLOW = '\x1b[33m';
+const ANSI_CYAN = '\x1b[36m';
+const ANSI_GREEN = '\x1b[32m';
+
+/**
+ * Format current timestamp as YYYY-MM-DD HH:mm:ss
+ */
+function formatTimestamp(date = new Date()): string {
+	return date.toISOString().replace('T', ' ').substring(0, 19);
+}
+
 /**
  * Format status code with ANSI color for terminal output.
  */
 function formatStatusColor(status: number): string {
-	const reset = '\x1b[0m';
 	if (status >= 500) {
-		return `\x1b[31m${status}${reset}`; // Red
+		return `${ANSI_RED}${status}${ANSI_RESET}`; // Red (5xx)
 	}
 	if (status >= 400) {
-		return `\x1b[33m${status}${reset}`; // Yellow
+		return `${ANSI_YELLOW}${status}${ANSI_RESET}`; // Yellow (4xx)
 	}
 	if (status >= 300) {
-		return `\x1b[36m${status}${reset}`; // Cyan
+		return `${ANSI_CYAN}${status}${ANSI_RESET}`; // Cyan (3xx)
 	}
-	return `\x1b[32m${status}${reset}`; // Green
+	if (status >= 200) {
+		return `${ANSI_GREEN}${status}${ANSI_RESET}`; // Green (2xx)
+	}
+	return `${status}`; // Default / 1xx
 }
 
 export const handle: Handle = async ({ event, resolve }) => {
+	const path = event.url.pathname;
+	const isApiRoute = path === '/api' || path.startsWith('/api/');
+
+	if (!isApiRoute) {
+		return resolve(event);
+	}
+
 	const start = performance.now();
 	const { method } = event.request;
-	const path = event.url.pathname;
 	const search = event.url.search;
 
-	const response = await resolve(event);
-
-	if (path.startsWith('/api')) {
+	try {
+		const response = await resolve(event);
 		const duration = Math.round(performance.now() - start);
-		const status = response.status;
-		const coloredStatus = formatStatusColor(status);
-		const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
+		const coloredStatus = formatStatusColor(response.status);
+		const timestamp = formatTimestamp();
 
 		console.log(
 			`[${timestamp}] [API] ${method.padEnd(6)} ${coloredStatus} ${path}${search} (${duration}ms)`
 		);
-	}
+		return response;
+	} catch (error) {
+		const duration = Math.round(performance.now() - start);
+		const coloredStatus = formatStatusColor(500);
+		const timestamp = formatTimestamp();
 
-	return response;
+		console.log(
+			`[${timestamp}] [API] ${method.padEnd(6)} ${coloredStatus} ${path}${search} (${duration}ms)`
+		);
+		throw error;
+	}
 };
 
-export const handleError: HandleServerError = ({ error, event, status, message }) => {
-	const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
-	console.error(`[${timestamp}] [SERVER ERROR] ${event.request.method} ${event.url.pathname}:`, error);
+export const handleError: HandleServerError = ({ error, event, message }) => {
+	const timestamp = formatTimestamp();
+	const fullPath = `${event.url.pathname}${event.url.search}`;
+	console.error(`[${timestamp}] [SERVER ERROR] ${event.request.method} ${fullPath}:`, error);
 	return {
 		message: message || 'Internal Server Error'
 	};
