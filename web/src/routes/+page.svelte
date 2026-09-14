@@ -56,9 +56,6 @@
 	let isLogModalOpen = $state(false);
 	let inspectTask = $state<AutomationTask | null>(null);
 
-	// Polling timer fallback
-	let pollTimer: any = null;
-
 	function getTaskPriority(status: string): number {
 		switch (status) {
 			case 'running':
@@ -318,7 +315,7 @@
 		if (await checkPocketBaseHealth()) {
 			try {
 				pb.collection('automation_tasks').subscribe('*', (e) => {
-					if (e.action === 'create' || e.action === 'update') {
+					if (e.action === 'create' || e.action === 'update' || e.action === 'delete') {
 						const t = e.record as unknown as AutomationTask;
 						if (activeTaskId && t.id === activeTaskId) {
 							activeTask = t;
@@ -328,8 +325,10 @@
 							isPausedForTakeover = t.status === 'paused_for_takeover';
 						}
 
-						// If an actively running task appears or current active task finished, re-evaluate
-						if (t.status === 'running' && activeTask?.status !== 'running') {
+						// If an active task appears, or current active task finished, re-evaluate
+						if (['running', 'paused_for_takeover', 'resuming', 'pending'].includes(t.status) && !activeTaskId) {
+							checkActiveTask();
+						} else if (t.status === 'running' && activeTask?.status !== 'running') {
 							checkActiveTask();
 						} else if (activeTask && ['success', 'failed', 'cancelled'].includes(activeTask.status)) {
 							checkActiveTask();
@@ -340,14 +339,9 @@
 					}
 				});
 			} catch (err) {
-				console.warn('Realtime subscription fallback:', err);
+				console.warn('Realtime subscription error:', err);
 			}
 		}
-
-		// Polling fallback every 2s
-		pollTimer = setInterval(async () => {
-			await checkActiveTask();
-		}, 2000);
 	});
 
 	onDestroy(() => {
@@ -357,7 +351,6 @@
 		try {
 			pb.collection('automation_tasks').unsubscribe('*');
 		} catch (e) {}
-		if (pollTimer) clearInterval(pollTimer);
 	});
 </script>
 
