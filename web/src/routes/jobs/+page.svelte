@@ -35,9 +35,11 @@
 	let isDispatchingApply = $state(false);
 	let applyNotice = $state('');
 
-	// Blacklist Guardrail state
+	// Blacklist Guardrail & Restore state
 	let isBlacklisting = $state(false);
 	let blacklistNotice = $state('');
+	let isRestoring = $state(false);
+	let restoreNotice = $state('');
 
 	// Candidate profile & LLM settings
 	let profile = $state<CandidateProfile | null>(null);
@@ -60,9 +62,9 @@
 		jobs.filter((j) => {
 			const matchesStatus =
 				currentFilter === 'all'
-					? true
+					? j.status !== 'ignored'
 					: currentFilter === 'jd_saved'
-						? j.status === 'jd_saved' || j.status === 'unmatched'
+						? j.status === 'jd_saved' || j.status === 'unmatched' || j.status === 'digest_only'
 						: j.status === currentFilter;
 			const matchesChannel =
 				channelFilter === 'all'
@@ -79,6 +81,7 @@
 					(j.company_scale || '').toLowerCase().includes(query) ||
 					(j.industry || '').toLowerCase().includes(query) ||
 					(j.digest || '').toLowerCase().includes(query) ||
+					(j.screened_reason || '').toLowerCase().includes(query) ||
 					(j.tags || []).some((t) => t.toLowerCase().includes(query))
 				: true;
 			return matchesStatus && matchesChannel && matchesQuery;
@@ -86,10 +89,11 @@
 	);
 
 	// Counts
-	let digestOnlyCount = $derived(jobs.filter((j) => j.status === 'digest_only').length);
-	let jdSavedCount = $derived(jobs.filter((j) => j.status === 'jd_saved' || j.status === 'unmatched').length);
+	let activeJobsCount = $derived(jobs.filter((j) => j.status !== 'ignored').length);
+	let jdSavedCount = $derived(jobs.filter((j) => j.status === 'jd_saved' || j.status === 'unmatched' || j.status === 'digest_only').length);
 	let matchedCount = $derived(jobs.filter((j) => j.status === 'matched').length);
 	let appliedCount = $derived(jobs.filter((j) => j.status === 'applied').length);
+	let ignoredCount = $derived(jobs.filter((j) => j.status === 'ignored').length);
 	let directCount = $derived(jobs.filter((j) => !j.is_headhunter).length);
 	let headhunterCount = $derived(jobs.filter((j) => Boolean(j.is_headhunter)).length);
 
@@ -289,6 +293,30 @@
 		}
 	}
 
+	async function handleRestoreJob() {
+		if (!selectedJob) return;
+		isRestoring = true;
+		restoreNotice = '';
+		try {
+			const targetStatus: JobRecordStatus = 'jd_saved';
+			const updated = await updateJobRecord(selectedJob.id, {
+				status: targetStatus,
+				screened_reason: ''
+			});
+			if (updated) {
+				jobs = jobs.map((j) => (j.id === updated.id ? { ...j, status: targetStatus, screened_reason: '' } : j));
+			}
+			restoreNotice = '✅ 已成功恢复职位，已重新纳入候选流';
+			setTimeout(() => {
+				restoreNotice = '';
+			}, 3000);
+		} catch (e: any) {
+			restoreNotice = '❌ 恢复职位失败: ' + (e?.message || e);
+		} finally {
+			isRestoring = false;
+		}
+	}
+
 	async function handleBlacklistCompany() {
 		if (!selectedJob) return;
 		const compName = (selectedJob.company_name || '').trim();
@@ -426,11 +454,7 @@
 
 		<div class="flex items-center space-x-3 text-xs">
 			<div class="bg-slate-950/80 border border-slate-800 px-3.5 py-2 rounded-xl flex items-center space-x-2 font-mono">
-				<span class="text-slate-400">仅摘要:</span>
-				<span class="font-bold text-amber-400 text-sm">{digestOnlyCount}</span>
-			</div>
-			<div class="bg-slate-950/80 border border-slate-800 px-3.5 py-2 rounded-xl flex items-center space-x-2 font-mono">
-				<span class="text-slate-400">已存JD:</span>
+				<span class="text-slate-400">待评估:</span>
 				<span class="font-bold text-cyan-400 text-sm">{jdSavedCount}</span>
 			</div>
 			<div class="bg-slate-950/80 border border-slate-800 px-3.5 py-2 rounded-xl flex items-center space-x-2 font-mono">
@@ -440,6 +464,10 @@
 			<div class="bg-slate-950/80 border border-slate-800 px-3.5 py-2 rounded-xl flex items-center space-x-2 font-mono">
 				<span class="text-slate-400">已沟通:</span>
 				<span class="font-bold text-blue-400 text-sm">{appliedCount}</span>
+			</div>
+			<div class="bg-slate-950/80 border border-slate-800 px-3.5 py-2 rounded-xl flex items-center space-x-2 font-mono">
+				<span class="text-slate-400">已淘汰:</span>
+				<span class="font-bold text-rose-400 text-sm">{ignoredCount}</span>
 			</div>
 		</div>
 	</div>
@@ -451,24 +479,18 @@
 			<!-- Filter & Search Card -->
 			<div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 shadow-xl space-y-3">
 				<!-- Status Tabs -->
-				<div class="grid grid-cols-5 gap-1 p-1 bg-slate-950 border border-slate-800/80 rounded-xl text-xs font-medium">
+				<div class="grid grid-cols-2 sm:grid-cols-5 gap-1 p-1 bg-slate-950 border border-slate-800/80 rounded-xl text-xs font-medium">
 					<button
 						onclick={() => (currentFilter = 'all')}
 						class="py-1.5 rounded-lg transition text-center {currentFilter === 'all' ? 'bg-cyan-600 text-white shadow font-semibold' : 'text-slate-400 hover:text-slate-200'}"
 					>
-						全部 ({jobs.length})
-					</button>
-					<button
-						onclick={() => (currentFilter = 'digest_only')}
-						class="py-1.5 rounded-lg transition text-center {currentFilter === 'digest_only' ? 'bg-cyan-600 text-white shadow font-semibold' : 'text-slate-400 hover:text-slate-200'}"
-					>
-						仅摘要 ({digestOnlyCount})
+						全部 ({activeJobsCount})
 					</button>
 					<button
 						onclick={() => (currentFilter = 'jd_saved')}
 						class="py-1.5 rounded-lg transition text-center {currentFilter === 'jd_saved' ? 'bg-cyan-600 text-white shadow font-semibold' : 'text-slate-400 hover:text-slate-200'}"
 					>
-						已存JD ({jdSavedCount})
+						待评估 ({jdSavedCount})
 					</button>
 					<button
 						onclick={() => (currentFilter = 'matched')}
@@ -481,6 +503,12 @@
 						class="py-1.5 rounded-lg transition text-center {currentFilter === 'applied' ? 'bg-cyan-600 text-white shadow font-semibold' : 'text-slate-400 hover:text-slate-200'}"
 					>
 						已沟通 ({appliedCount})
+					</button>
+					<button
+						onclick={() => (currentFilter = 'ignored')}
+						class="py-1.5 rounded-lg transition text-center {currentFilter === 'ignored' ? 'bg-rose-950 text-rose-300 border border-rose-800 shadow font-semibold' : 'text-slate-400 hover:text-slate-200'}"
+					>
+						已淘汰 ({ignoredCount})
 					</button>
 				</div>
 
@@ -611,6 +639,14 @@
 									{/if}
 								</div>
 
+								<!-- Elimination Reason (if screened out) -->
+								{#if job.screened_reason}
+									<div class="flex items-center space-x-1.5 text-[10px] bg-rose-950/40 border border-rose-900/50 rounded-lg px-2 py-1 text-rose-300">
+										<span class="shrink-0">🚫</span>
+										<span class="truncate"><span class="font-semibold">初筛淘汰:</span> {job.screened_reason}</span>
+									</div>
+								{/if}
+
 								<!-- Row 5: Recruiter name · Recruiter title + Location + Status -->
 								<div class="flex items-center justify-between pt-1.5 border-t border-slate-800/60 text-[11px]">
 									<div class="flex items-center space-x-1.5 text-slate-400 truncate">
@@ -625,11 +661,7 @@
 									</div>
 
 									<div class="flex items-center space-x-1.5 shrink-0">
-										{#if job.status === 'digest_only'}
-											<span class="px-2 py-0.5 rounded text-[10px] bg-amber-950/50 text-amber-400 border border-amber-800/60 font-medium">
-												仅摘要
-											</span>
-										{:else if job.status === 'jd_saved' || job.status === 'unmatched'}
+										{#if job.status === 'jd_saved' || job.status === 'unmatched' || job.status === 'digest_only'}
 											<span class="px-2 py-0.5 rounded text-[10px] bg-cyan-950/50 text-cyan-400 border border-cyan-800/60 font-medium">
 												已存JD
 											</span>
@@ -642,8 +674,8 @@
 												已打招呼
 											</span>
 										{:else}
-											<span class="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-slate-400">
-												已忽略
+											<span class="px-2 py-0.5 rounded text-[10px] bg-rose-950/50 text-rose-400 border border-rose-800/60 font-medium">
+												已淘汰
 											</span>
 										{/if}
 										<button
@@ -678,6 +710,33 @@
 					</p>
 				</div>
 			{:else}
+				<!-- Ignored/Screened Warning Banner -->
+				{#if selectedJob.status === 'ignored'}
+					<div class="bg-rose-950/40 border border-rose-800/80 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs shadow-lg">
+						<div class="space-y-1">
+							<div class="flex items-center space-x-2 text-rose-300 font-semibold">
+								<span class="text-base">🚫</span>
+								<span>此岗位已被初步筛选淘汰 / 忽略</span>
+							</div>
+							<p class="text-rose-400/90 text-[11px]">
+								淘汰原因: <span class="font-mono text-rose-200">{selectedJob.screened_reason || '手动标记为忽略'}</span>。模拟器执行批量投递与沟通任务时将自动跳过此岗位。
+							</p>
+						</div>
+						<button
+							onclick={handleRestoreJob}
+							disabled={isRestoring}
+							class="bg-rose-900/70 hover:bg-rose-800 border border-rose-700 text-rose-100 font-medium px-3.5 py-1.5 rounded-xl text-xs transition flex items-center space-x-1.5 shrink-0 disabled:opacity-50 shadow"
+						>
+							{#if isRestoring}
+								<span class="animate-spin">🔄</span>
+								<span>正在恢复...</span>
+							{:else}
+								<span>🔄 恢复此职位</span>
+							{/if}
+						</button>
+					</div>
+				{/if}
+
 				<!-- Job Header Card -->
 				<div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
 					<div class="flex flex-col sm:flex-row sm:items-start justify-between gap-4 border-b border-slate-800/80 pb-4">
@@ -693,11 +752,7 @@
 									</span>
 								{/if}
 								<h2 class="text-base font-bold text-slate-100">{cleanJobTitle(selectedJob.title)}</h2>
-								{#if selectedJob.status === 'digest_only'}
-									<span class="px-2 py-0.5 rounded text-[10px] bg-amber-950 text-amber-400 border border-amber-800 font-medium">
-										仅摘要 (未存JD)
-									</span>
-								{:else if selectedJob.status === 'jd_saved' || selectedJob.status === 'unmatched'}
+								{#if selectedJob.status === 'jd_saved' || selectedJob.status === 'unmatched' || selectedJob.status === 'digest_only'}
 									<span class="px-2 py-0.5 rounded text-[10px] bg-cyan-950 text-cyan-400 border border-cyan-800 font-medium">
 										已存JD (待评估)
 									</span>
@@ -710,8 +765,8 @@
 										已下发投递
 									</span>
 								{:else}
-									<span class="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-slate-400">
-										已忽略
+									<span class="px-2 py-0.5 rounded text-[10px] bg-rose-950 text-rose-400 border border-rose-800 font-medium">
+										已初筛淘汰 / 已忽略
 									</span>
 								{/if}
 							</div>
@@ -824,9 +879,7 @@
 							{#if isEvaluating}
 								<span class="animate-spin">⚡</span>
 								<span>大模型深度评估中...</span>
-							{:else if selectedJob.status === 'digest_only'}
-								<span>⚡ 结合摘要进行 AI 评估</span>
-							{:else if selectedJob.status === 'unmatched' || selectedJob.status === 'jd_saved'}
+							{:else if selectedJob.status === 'unmatched' || selectedJob.status === 'jd_saved' || selectedJob.status === 'digest_only'}
 								<span>⚡ 开始 AI 匹配度评估</span>
 							{:else}
 								<span>🔄 重新评估契合度</span>
@@ -844,7 +897,7 @@
 						<div class="bg-slate-950/60 border border-dashed border-slate-800 rounded-xl p-8 text-center text-xs text-slate-500 space-y-2">
 							<div class="text-3xl">🤖</div>
 							<p class="text-slate-300 font-medium">
-								{selectedJob.status === 'digest_only' ? '该岗位仅抓取了列表摘要，尚未执行匹配分析' : '该岗位已入库，尚未执行匹配分析'}
+								该岗位已入库，尚未执行匹配分析
 							</p>
 							<p class="text-slate-500 text-[11px]">
 								点击右上角【⚡ 开始 AI 匹配度评估】，大模型将结合您的求职画像提炼该岗位核心技术痛点，并定制专属的高回复率破冰文案。
@@ -913,24 +966,39 @@
 							<div class="space-y-3 pt-3 border-t border-slate-800/80">
 								<div class="flex flex-col sm:flex-row items-center justify-between gap-3">
 									<div class="flex flex-wrap items-center gap-2.5 w-full sm:w-auto">
-										<button
-											onclick={handleDispatchApply}
-											disabled={isDispatchingApply}
-											class="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold px-4 py-2 rounded-xl text-xs shadow-lg shadow-emerald-600/20 transition flex items-center space-x-1.5 disabled:opacity-50"
-										>
-											{#if isDispatchingApply}
-												<span class="animate-spin">🌀</span>
-												<span>派发投递中...</span>
-											{:else}
-												<span>🚀 立即发起移动端打招呼</span>
-											{/if}
-										</button>
-										<button
-											onclick={handleIgnoreJob}
-											class="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-400 hover:text-slate-200 px-3.5 py-2 rounded-xl text-xs transition"
-										>
-											❌ 仅忽略此职位
-										</button>
+										{#if selectedJob.status === 'ignored'}
+											<button
+												onclick={handleRestoreJob}
+												disabled={isRestoring}
+												class="bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-bold px-4 py-2 rounded-xl text-xs shadow-lg shadow-cyan-600/20 transition flex items-center space-x-1.5 disabled:opacity-50"
+											>
+												{#if isRestoring}
+													<span class="animate-spin">🔄</span>
+													<span>正在恢复...</span>
+												{:else}
+													<span>🔄 恢复此职位到候选流</span>
+												{/if}
+											</button>
+										{:else}
+											<button
+												onclick={handleDispatchApply}
+												disabled={isDispatchingApply}
+												class="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold px-4 py-2 rounded-xl text-xs shadow-lg shadow-emerald-600/20 transition flex items-center space-x-1.5 disabled:opacity-50"
+											>
+												{#if isDispatchingApply}
+													<span class="animate-spin">🌀</span>
+													<span>派发投递中...</span>
+												{:else}
+													<span>🚀 立即发起移动端打招呼</span>
+												{/if}
+											</button>
+											<button
+												onclick={handleIgnoreJob}
+												class="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-400 hover:text-slate-200 px-3.5 py-2 rounded-xl text-xs transition"
+											>
+												❌ 仅忽略此职位
+											</button>
+										{/if}
 
 										{#if blacklistGuardrail.allowed}
 											<button
@@ -959,6 +1027,9 @@
 
 									{#if applyNotice}
 										<p class="text-xs text-emerald-400 font-medium">{applyNotice}</p>
+									{/if}
+									{#if restoreNotice}
+										<p class="text-xs text-cyan-400 font-medium">{restoreNotice}</p>
 									{/if}
 								</div>
 

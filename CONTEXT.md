@@ -105,8 +105,17 @@ The LLM-driven structural diffing and human-in-the-loop review workflow that com
 _Avoid_: resume overwrite, profile replacement, auto-parse override
 
 **Screening Policy (`ScreeningPolicy`)**:
-The structured configuration encapsulating candidate negative constraints, title whitelists, title blacklists, company blacklists, and JD-level blacklists applied across screening stages.
+The structured configuration encapsulating candidate negative constraints, title whitelists, title blacklists, company blacklists, and JD-level blacklists declared in `config/screening.local.yaml`. Whitelists are optional inclusion tokens (disabled when empty, treating all non-blacklisted jobs as candidates; enforcing positive inclusion when specified), while blacklists enforce deterministic one-strike rejection.
 _Avoid_: Filter keywords, blacklist config, keyword rules
+
+**Configuration Realm (`config/*.yaml`)**:
+The declarative, human-readable single source of truth for all global system configurations (LLM, screening policies, candidate persona, settings), managed by developers, administrators, or Web UI endpoints.
+_Avoid_: runtime config, app data folder, temporary settings
+
+**Runtime State Directory (`.boss_agent/`)**:
+The system-managed directory housing runtime database state (`pb_data`), caches, execution logs, and transient artifacts. Never used as a manual configuration store.
+_Avoid_: config store, settings dir, user preference folder
+
 
 **Candidate Screener Graph (`JobApplicationState`)**:
 The stateful LangGraph orchestrator governing the complete multi-tier lifecycle from card-level keyword filtering, JD extraction, semantic screening, to targeted greeting generation.
@@ -149,7 +158,7 @@ The zero-token deterministic gatekeeper evaluation that examines the three card-
 _Avoid_: card filter, quick check, preliminary pass
 
 **Target Action (`target_action`)**:
-The configured execution depth for a search task governing whether discovered jobs stop at card digest ingestion (`digest_only`), JD enrichment (`save_jd`), or automated greeting (`auto_apply`).
+The configured execution depth for a search task governing whether discovered jobs undergo complete JD enrichment (`save_jd`) or automated greeting (`auto_apply`). Note: card digest only (`digest_only`) is deprecated in favor of full JD ingestion.
 _Avoid_: search mode, scrape level, crawl stage
 
 **Inline Description Expansion (Bottom-Right Hotspot Tap)**:
@@ -158,7 +167,7 @@ _Avoid_: blind tap, ocr clicker, hardcoded absolute coordinates
 
 
 **Job Lifecycle State**:
-The monotonic progression state of a Job Record tracking its data richness and application stage across mobile automation and backend manual actions (`ignored`, `digest_only`, `jd_saved`, `matched`, `applied`).
+The monotonic progression state of a Job Record tracking its data richness and application stage across mobile automation and backend manual actions (`ignored`, `jd_saved`, `matched`, `applied`; historical `digest_only` records map to `jd_saved`).
 _Avoid_: job status flag, task progress, record phase
 
 **Search Feed Boundary**:

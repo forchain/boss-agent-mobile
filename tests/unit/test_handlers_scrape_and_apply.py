@@ -4,12 +4,13 @@ tests/unit/test_handlers_scrape_and_apply.py
 Unit tests for SCRAPE_JOBS and AUTO_APPLY polymorphic task handlers (Issue #30).
 """
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from boss_agent.broker.models import TaskStatus, TaskType
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
+from boss_agent.pages import JobCardBrief
 from boss_agent.worker.config import WorkerConfig
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.daemon import AutomationWorker
@@ -376,3 +377,234 @@ async def test_auto_apply_handler_filtered_by_deep_screener(broker, mock_driver)
     assert finished_task is not None
     assert finished_task.status == TaskStatus.SUCCESS
     assert any("精筛淘汰" in log and "Java" in log for log in finished_task.logs)
+
+
+@pytest.mark.asyncio
+async def test_scrape_jobs_handler_eliminates_blacklisted_cards_and_persists_reason(
+    broker, mock_driver
+):
+    """Verify ScrapeJobsHandler eliminates blacklisted cards without detail page navigation and persists screened_reason."""
+    card = JobCardBrief(
+        title="高级销售经理",
+        company_name="黑名单外包科技",
+        recruiter_name="李某",
+        salary_range="15-25K",
+        digest="负责大客户拓展",
+    )
+
+    config = WorkerConfig(worker_id="test-worker-scrape-elim", poll_interval_sec=0.01)
+    context = WorkerContext(config=config, driver=mock_driver)
+
+    worker = AutomationWorker(
+        config=config,
+        broker=broker,
+        context=context,
+        handlers=[ScrapeJobsHandler()],
+    )
+
+    task = await broker.create_task(
+        task_type=TaskType.SCRAPE_JOBS,
+        payload={
+            "keyword": "销售",
+            "max_jobs": 1,
+            "screening_policy": {
+                "company_blacklist": ["黑名单外包科技"],
+            },
+        },
+    )
+
+    with (
+        patch("boss_agent.worker.handlers.scrape_jobs.StartupDialogPage") as mock_startup_cls,
+        patch("boss_agent.worker.handlers.scrape_jobs.JobListPage") as mock_list_cls,
+        patch("boss_agent.worker.handlers.scrape_jobs.SearchPage") as mock_search_cls,
+        patch("boss_agent.worker.handlers.scrape_jobs.JobDetailPage") as mock_detail_cls,
+    ):
+        mock_startup_cls.return_value.is_dialog_present.return_value = False
+        mock_list = mock_list_cls.return_value
+        mock_list.get_feed_bottom_boundary.return_value = None
+        mock_list.extract_visible_job_cards.return_value = [card]
+        mock_search_cls.return_value.is_search_page.return_value = True
+
+        executed = await worker.run_once()
+        assert executed is True
+
+        # Detail page must NEVER be navigated into or extracted!
+        mock_detail_cls.return_value.extract_job_posting.assert_not_called()
+
+    finished_task = await broker.get_task(task.id)
+    assert finished_task is not None
+    assert finished_task.status == TaskStatus.SUCCESS
+    assert any("初筛淘汰" in log and "黑名单外包科技" in log for log in finished_task.logs)
+
+    # Verify job was recorded in database as ignored with screened_reason
+    records = await broker.list_job_records()
+    assert len(records) == 1
+    assert records[0].get("status") == "ignored"
+    assert "黑名单外包科技" in records[0].get("screened_reason", "")
+
+
+@pytest.mark.asyncio
+async def test_auto_apply_handler_preflight_blocks_already_ignored_job(broker, mock_driver):
+    """Verify AutoApplyHandler aborts immediately without driver action when target job is already ignored."""
+    existing = await broker.upsert_job_record(
+        {
+            "fingerprint": "fp-already-ignored",
+            "title": "运维工程师",
+            "company_name": "某知名外包",
+            "status": "ignored",
+            "screened_reason": "命中公司黑名单: 某知名外包",
+        }
+    )
+
+    config = WorkerConfig(worker_id="test-worker-preflight-defense", poll_interval_sec=0.01)
+    context = WorkerContext(config=config, driver=mock_driver)
+
+    mock_llm = MagicMock()
+    apply_handler = AutoApplyHandler(llm_client=mock_llm)
+
+    worker = AutomationWorker(
+        config=config,
+        broker=broker,
+        context=context,
+        handlers=[apply_handler],
+    )
+
+    task = await broker.create_task(
+        task_type=TaskType.AUTO_APPLY,
+        payload={
+            "direct_job_id": existing["id"],
+            "job_title": "运维工程师",
+            "company_name": "某知名外包",
+            "preview_only": False,
+            "auto_send": True,
+        },
+    )
+
+    executed = await worker.run_once()
+    assert executed is True
+
+    finished_task = await broker.get_task(task.id)
+    assert finished_task is not None
+    assert finished_task.status == TaskStatus.SUCCESS
+    assert any("定向投递防御" in log and "淘汰状态" in log for log in finished_task.logs)
+
+    # Driver should NOT have navigated or clicked into chat
+    mock_driver.find_elements.assert_not_called()
+    mock_llm.chat_completion_json.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_auto_apply_handler_preflight_blocks_blacklisted_company(broker, mock_driver):
+    """Verify AutoApplyHandler preflight blocks direct application to a blacklisted company and updates DB."""
+    rec = await broker.upsert_job_record(
+        {
+            "fingerprint": "fp-to-be-blocked",
+            "title": "前端开发",
+            "company_name": "不良劳务派遣公司",
+            "status": "jd_saved",
+        }
+    )
+
+    config = WorkerConfig(worker_id="test-worker-preflight-blacklist", poll_interval_sec=0.01)
+    context = WorkerContext(config=config, driver=mock_driver)
+
+    mock_llm = MagicMock()
+    apply_handler = AutoApplyHandler(llm_client=mock_llm)
+
+    worker = AutomationWorker(
+        config=config,
+        broker=broker,
+        context=context,
+        handlers=[apply_handler],
+    )
+
+    task = await broker.create_task(
+        task_type=TaskType.AUTO_APPLY,
+        payload={
+            "direct_job_id": rec["id"],
+            "job_title": "前端开发",
+            "company_name": "不良劳务派遣公司",
+            "screening_policy": {
+                "company_blacklist": ["不良劳务派遣公司"],
+            },
+        },
+    )
+
+    executed = await worker.run_once()
+    assert executed is True
+
+    finished_task = await broker.get_task(task.id)
+    assert finished_task is not None
+    assert finished_task.status == TaskStatus.SUCCESS
+    assert any("定向投递防御" in log and "不良劳务派遣公司" in log for log in finished_task.logs)
+
+    # Verify record was marked as ignored
+    updated_rec = await broker.get_job_record(rec["id"])
+    assert updated_rec is not None
+    assert updated_rec.get("status") == "ignored"
+    assert "不良劳务派遣公司" in updated_rec.get("screened_reason", "")
+
+    # Zero driver clicks on chat or detail
+    mock_driver.find_elements.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_scrape_jobs_handler_aborts_when_search_fails(broker, mock_driver):
+    """Verify ScrapeJobsHandler terminates gracefully and logs failure when search fails."""
+    # Mock find_elements to return empty list so search_page.search returns False
+    mock_driver.find_elements.return_value = []
+
+    config = WorkerConfig(worker_id="test-worker-search-fail", poll_interval_sec=0.01)
+    context = WorkerContext(config=config, driver=mock_driver)
+
+    worker = AutomationWorker(
+        config=config,
+        broker=broker,
+        context=context,
+        handlers=[ScrapeJobsHandler()],
+    )
+
+    task = await broker.create_task(
+        task_type=TaskType.SCRAPE_JOBS,
+        payload={"keyword": "Agent", "enable_search": True, "max_jobs": 10},
+    )
+
+    executed = await worker.run_once()
+    assert executed is True
+
+    finished_task = await broker.get_task(task.id)
+    assert finished_task is not None
+    assert finished_task.status == TaskStatus.FAILED
+    assert any("未能进入搜索页面或执行关键词搜索" in log and "Agent" in log for log in finished_task.logs)
+    assert not any("Executed search for keyword 'Agent'" in log for log in finished_task.logs)
+
+
+@pytest.mark.asyncio
+async def test_auto_apply_handler_aborts_when_search_fails(broker, mock_driver):
+    """Verify AutoApplyHandler terminates gracefully and logs failure when search fails."""
+    mock_driver.find_elements.return_value = []
+
+    config = WorkerConfig(worker_id="test-worker-apply-search-fail", poll_interval_sec=0.01)
+    context = WorkerContext(config=config, driver=mock_driver)
+
+    worker = AutomationWorker(
+        config=config,
+        broker=broker,
+        context=context,
+        handlers=[AutoApplyHandler()],
+    )
+
+    task = await broker.create_task(
+        task_type=TaskType.AUTO_APPLY,
+        payload={"keyword": "Agent", "enable_search": True},
+    )
+
+    executed = await worker.run_once()
+    assert executed is True
+
+    finished_task = await broker.get_task(task.id)
+    assert finished_task is not None
+    assert finished_task.status == TaskStatus.FAILED
+    assert any("未能进入搜索页面或执行关键词搜索" in log and "Agent" in log for log in finished_task.logs)
+    assert not any("Navigated to search results for 'Agent'" in log for log in finished_task.logs)
+

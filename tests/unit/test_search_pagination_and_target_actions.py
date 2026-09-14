@@ -3,7 +3,7 @@ tests/unit/test_search_pagination_and_target_actions.py
 ======================================================
 Unit tests for Spec #134, Tickets #135, #136, #137, #138:
 - Feed bottom boundary detection (tv_tips: 暂无符合职位，为你推荐)
-- Multi-tier target actions (digest_only, save_jd, auto_apply)
+- Two-tier target actions (save_jd, auto_apply)
 - Monotonic state progression and state-aware deduplication
 - Daily greeting safety limit & quota degradation
 """
@@ -16,6 +16,7 @@ from boss_agent.broker.models import TaskStatus, TaskType
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
 from boss_agent.models import (
     STATE_RANK,
+    TARGET_ACTION_RANK,
     JobRecordStatus,
     SavedSearch,
     SearchConfig,
@@ -31,6 +32,7 @@ from boss_agent.worker.handlers.scrape_jobs import ScrapeJobsHandler
 # ---------------------------------------------------------------------------
 # Ticket 1 (Issue #135): Feed Bottom Boundary & Pagination Tests
 # ---------------------------------------------------------------------------
+
 
 def test_job_list_page_is_feed_bottom_reached():
     """Verify is_feed_bottom_reached and get_feed_bottom_boundary recognize all divider text patterns."""
@@ -56,6 +58,7 @@ def test_job_list_page_is_feed_bottom_reached():
 
     # When bottom_tips is not found
     from selenium.common.exceptions import NoSuchElementException
+
     driver.find_element.side_effect = NoSuchElementException("Not found")
     driver.find_elements.return_value = []
     assert page.is_feed_bottom_reached() is False
@@ -82,13 +85,13 @@ def test_job_list_page_scroll_job_list_uses_human_swipe():
 # Ticket 2 (Issue #136): Target Actions & State Progression Models
 # ---------------------------------------------------------------------------
 
+
 def test_models_target_actions_and_state_ranks():
     """Verify TargetAction and JobRecordStatus enum definitions and monotonic ranks."""
-    assert TargetAction.DIGEST_ONLY.value == "digest_only"
     assert TargetAction.SAVE_JD.value == "save_jd"
     assert TargetAction.AUTO_APPLY.value == "auto_apply"
+    assert not hasattr(TargetAction, "DIGEST_ONLY")
 
-    assert JobRecordStatus.DIGEST_ONLY.value == "digest_only"
     assert JobRecordStatus.JD_SAVED.value == "jd_saved"
     assert JobRecordStatus.UNMATCHED.value == "unmatched"
     assert JobRecordStatus.MATCHED.value == "matched"
@@ -96,10 +99,13 @@ def test_models_target_actions_and_state_ranks():
     assert JobRecordStatus.IGNORED.value == "ignored"
 
     # Monotonic progression ranks
-    assert STATE_RANK["digest_only"] < STATE_RANK["jd_saved"]
-    assert STATE_RANK["jd_saved"] == STATE_RANK["unmatched"]
+    assert STATE_RANK["digest_only"] == STATE_RANK["jd_saved"] == STATE_RANK["unmatched"] == 1
     assert STATE_RANK["jd_saved"] < STATE_RANK["matched"]
     assert STATE_RANK["matched"] < STATE_RANK["applied"]
+    assert STATE_RANK["ignored"] == -1
+
+    assert TARGET_ACTION_RANK[TargetAction.SAVE_JD] == 1
+    assert TARGET_ACTION_RANK[TargetAction.AUTO_APPLY] == 2
 
 
 def test_saved_search_serialization_with_target_action_and_max_jobs():
@@ -124,19 +130,22 @@ def test_saved_search_serialization_with_target_action_and_max_jobs():
 # Broker Tests: get_by_fingerprint, count_today_applied, status upgrade
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_broker_get_job_record_by_fingerprint_and_count_today():
     """Verify broker fingerprint lookup and daily applied counter."""
     broker = InMemoryTaskBroker()
 
     # Record 1: digest_only
-    rec1 = await broker.upsert_job_record({
-        "fingerprint": "fp_001",
-        "title": "Python Engineer",
-        "company_name": "Tech Corp",
-        "recruiter_name": "HR Alice",
-        "status": "digest_only",
-    })
+    rec1 = await broker.upsert_job_record(
+        {
+            "fingerprint": "fp_001",
+            "title": "Python Engineer",
+            "company_name": "Tech Corp",
+            "recruiter_name": "HR Alice",
+            "status": "digest_only",
+        }
+    )
     assert rec1["id"] is not None
 
     found = await broker.get_job_record_by_fingerprint("fp_001")
@@ -151,10 +160,12 @@ async def test_broker_get_job_record_by_fingerprint_and_count_today():
     assert await broker.count_today_applied_jobs() == 0
 
     # Upgrade rec1 to applied
-    await broker.upsert_job_record({
-        "fingerprint": "fp_001",
-        "status": "applied",
-    })
+    await broker.upsert_job_record(
+        {
+            "fingerprint": "fp_001",
+            "status": "applied",
+        }
+    )
     assert await broker.count_today_applied_jobs() == 1
 
 
@@ -164,20 +175,24 @@ async def test_broker_upsert_monotonic_status_upgrade():
     broker = InMemoryTaskBroker()
 
     # Initial: applied
-    await broker.upsert_job_record({
-        "fingerprint": "fp_senior",
-        "title": "Staff Architect",
-        "company_name": "Big Tech",
-        "recruiter_name": "Bob",
-        "status": "applied",
-        "job_description": "Full JD text",
-    })
+    await broker.upsert_job_record(
+        {
+            "fingerprint": "fp_senior",
+            "title": "Staff Architect",
+            "company_name": "Big Tech",
+            "recruiter_name": "Bob",
+            "status": "applied",
+            "job_description": "Full JD text",
+        }
+    )
 
     # Attempt to upsert with digest_only
-    updated = await broker.upsert_job_record({
-        "fingerprint": "fp_senior",
-        "status": "digest_only",
-    })
+    updated = await broker.upsert_job_record(
+        {
+            "fingerprint": "fp_senior",
+            "status": "digest_only",
+        }
+    )
 
     # Status should remain applied
     assert updated["status"] == "applied"
@@ -189,9 +204,10 @@ async def test_broker_upsert_monotonic_status_upgrade():
 # Ticket 2 & 1 Handler Tests: ScrapeJobsHandler with target_action & pagination
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
-async def test_scrape_jobs_handler_digest_only_skips_detail_view():
-    """Verify target_action=digest_only saves digest and never clicks card or detail."""
+async def test_scrape_jobs_handler_save_jd_enriches_full_jd():
+    """Verify target_action=save_jd clicks card, navigates to detail, and extracts full JD."""
     broker = InMemoryTaskBroker()
     mock_driver = MagicMock()
     mock_driver.get_window_size.return_value = {"width": 1080, "height": 2400}
@@ -200,6 +216,7 @@ async def test_scrape_jobs_handler_digest_only_skips_detail_view():
     mock_title = MagicMock(text="AI Agent Engineer")
     mock_company = MagicMock(text="Innovative AI")
     mock_salary = MagicMock(text="40-60K")
+    mock_desc = MagicMock(text="Detailed Job Description for AI Agent Engineer.")
     mock_nav_elem = MagicMock()
 
     def mock_find(by, value):
@@ -209,6 +226,8 @@ async def test_scrape_jobs_handler_digest_only_skips_detail_view():
             return [mock_company]
         if "salary" in value or "tv_job_salary" in value:
             return [mock_salary]
+        if "desc" in value or "tv_job_desc" in value or "tv_description" in value:
+            return [mock_desc]
         if "bottom_tips" in value or "暂无符合职位" in value:
             return []
         if "job_card" in value or "view_job_card" in value:
@@ -216,11 +235,13 @@ async def test_scrape_jobs_handler_digest_only_skips_detail_view():
         return [mock_nav_elem]
 
     mock_driver.find_elements.side_effect = mock_find
+    mock_card.find_elements.side_effect = mock_find
     # Bottom tips not found initially
     from selenium.common.exceptions import NoSuchElementException
+
     mock_driver.find_element.side_effect = NoSuchElementException("No bottom")
 
-    config = WorkerConfig(worker_id="test-digest-worker", poll_interval_sec=0.01)
+    config = WorkerConfig(worker_id="test-save-jd-worker", poll_interval_sec=0.01)
     context = WorkerContext(config=config, driver=mock_driver)
     worker = AutomationWorker(
         config=config,
@@ -231,7 +252,7 @@ async def test_scrape_jobs_handler_digest_only_skips_detail_view():
 
     task = await broker.create_task(
         task_type=TaskType.SCRAPE_JOBS,
-        payload={"keyword": "AI", "target_action": "digest_only", "max_jobs": 1},
+        payload={"keyword": "AI", "target_action": "save_jd", "max_jobs": 1},
     )
 
     await worker.run_once()
@@ -240,12 +261,12 @@ async def test_scrape_jobs_handler_digest_only_skips_detail_view():
     finished = await broker.get_task(task.id)
     assert finished.status == TaskStatus.SUCCESS
 
-    # Verify job record was stored with digest_only status
+    # Verify job record was stored with jd_saved status
     jobs = await broker.list_job_records()
     assert len(jobs) == 1
-    assert jobs[0]["status"] == "digest_only"
-    # Card was NOT clicked for detail view
-    mock_card.click.assert_not_called()
+    assert jobs[0]["status"] == "jd_saved"
+    # Card was clicked for detail view
+    mock_card.click.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -287,7 +308,7 @@ async def test_scrape_jobs_handler_terminates_on_feed_bottom_boundary():
 
     task = await broker.create_task(
         task_type=TaskType.SCRAPE_JOBS,
-        payload={"keyword": "Data", "target_action": "digest_only", "max_jobs": 50},
+        payload={"keyword": "Data", "target_action": "save_jd", "max_jobs": 50},
     )
 
     await worker.run_once()
@@ -341,6 +362,7 @@ async def test_scrape_jobs_handler_filters_recommended_cards_below_boundary():
                 if "salary" in value or "tv_job_salary" in value:
                     return [sal2]
             return []
+
         return _find
 
     card1_elem.find_elements.side_effect = mock_card_find(card1_elem)
@@ -351,6 +373,12 @@ async def test_scrape_jobs_handler_filters_recommended_cards_below_boundary():
             return [card1_elem, card2_elem]
         if "bottom_tips" in value or "暂无其他符合职位" in value or "为你推荐" in value:
             return [bottom_elem]
+        if "job_name" in value or "tv_job_name" in value:
+            return [title1]
+        if "company_name" in value or "tv_company_name" in value:
+            return [comp1]
+        if "salary" in value or "tv_job_salary" in value:
+            return [sal1]
         return [MagicMock()]
 
     mock_driver.find_elements.side_effect = mock_driver_find
@@ -367,7 +395,7 @@ async def test_scrape_jobs_handler_filters_recommended_cards_below_boundary():
 
     task = await broker.create_task(
         task_type=TaskType.SCRAPE_JOBS,
-        payload={"keyword": "Agent", "target_action": "digest_only", "max_jobs": 10},
+        payload={"keyword": "Agent", "target_action": "save_jd", "max_jobs": 10},
     )
 
     await worker.run_once()
@@ -387,6 +415,7 @@ async def test_scrape_jobs_handler_filters_recommended_cards_below_boundary():
 # Ticket 3 (Issue #137): Daily Greeting Safety Limit & Quota Degradation
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_auto_apply_handler_quota_exhausted_degrades_to_matched():
     """Verify AutoApplyHandler degrades to matched (draft only) when daily greeting limit is reached."""
@@ -396,13 +425,15 @@ async def test_auto_apply_handler_quota_exhausted_degrades_to_matched():
 
     # Pre-populate broker with 20 applied jobs today
     for i in range(20):
-        await broker.upsert_job_record({
-            "fingerprint": f"fp_applied_{i}",
-            "title": f"Job {i}",
-            "company_name": f"Company {i}",
-            "recruiter_name": f"Recruiter {i}",
-            "status": "applied",
-        })
+        await broker.upsert_job_record(
+            {
+                "fingerprint": f"fp_applied_{i}",
+                "title": f"Job {i}",
+                "company_name": f"Company {i}",
+                "recruiter_name": f"Recruiter {i}",
+                "status": "applied",
+            }
+        )
 
     assert await broker.count_today_applied_jobs() == 20
 
