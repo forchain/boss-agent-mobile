@@ -152,3 +152,102 @@ async def test_worker_preserves_cancelled_status(broker, mock_driver):
     assert finished_task is not None
     assert finished_task.status == TaskStatus.CANCELLED
 
+
+@pytest.mark.asyncio
+async def test_worker_logs_task_claiming_and_success(broker, mock_driver, caplog):
+    """Verify worker logs task claiming and successful completion."""
+    mock_home_elem = MagicMock()
+
+    def mock_find(by, value):
+        if "ly_menu" in value or "search" in value or "tv_tab" in value or "job" in value:
+            return [mock_home_elem]
+        return []
+
+    mock_driver.find_elements.side_effect = mock_find
+
+    config = WorkerConfig(worker_id="worker-log-test", device_id="emulator-5554", poll_interval_sec=0.01)
+    context = WorkerContext(config=config, driver=mock_driver)
+    worker = AutomationWorker(
+        config=config,
+        broker=broker,
+        context=context,
+        handlers=[CheckLoginHandler()],
+    )
+
+    task = await broker.create_task(
+        task_type=TaskType.CHECK_LOGIN, payload={"keyword": "python"}
+    )
+
+    import logging
+    with caplog.at_level(logging.INFO, logger="boss_agent.worker"):
+        executed = await worker.run_once()
+
+    assert executed is True
+    log_records = [r.message for r in caplog.records if r.name == "boss_agent.worker"]
+
+    # Must log claimed task with ID and type
+    assert any(task.id in msg and "CHECK_LOGIN" in msg for msg in log_records)
+    # Must log task success completion
+    assert any(task.id in msg and ("success" in msg.lower() or "completed" in msg.lower()) for msg in log_records)
+
+
+@pytest.mark.asyncio
+async def test_worker_logs_task_failure(broker, mock_driver, caplog):
+    """Verify worker logs error message when a task fails."""
+    mock_login_elem = MagicMock()
+
+    def mock_find(by, value):
+        if "登录" in value or "login" in value:
+            return [mock_login_elem]
+        return []
+
+    mock_driver.find_elements.side_effect = mock_find
+
+    config = WorkerConfig(worker_id="worker-fail-test", device_id="emulator-5554", poll_interval_sec=0.01)
+    context = WorkerContext(config=config, driver=mock_driver)
+    worker = AutomationWorker(
+        config=config,
+        broker=broker,
+        context=context,
+        handlers=[CheckLoginHandler()],
+    )
+
+    task = await broker.create_task(task_type=TaskType.CHECK_LOGIN)
+
+    import logging
+    with caplog.at_level(logging.INFO, logger="boss_agent.worker"):
+        executed = await worker.run_once()
+
+    assert executed is True
+    log_records = [r.message for r in caplog.records if r.name == "boss_agent.worker"]
+
+    # Must log task failure
+    assert any(task.id in msg and ("failed" in msg.lower() or "error" in msg.lower()) for msg in log_records)
+
+
+@pytest.mark.asyncio
+async def test_worker_start_logs_readiness(broker, mock_driver, caplog):
+    """Verify worker start() emits a readiness log before beginning the loop."""
+    import asyncio
+    config = WorkerConfig(worker_id="worker-start-test", device_id="emulator-5554", poll_interval_sec=0.01)
+    context = WorkerContext(config=config, driver=mock_driver)
+    worker = AutomationWorker(
+        config=config,
+        broker=broker,
+        context=context,
+        handlers=[CheckLoginHandler()],
+    )
+
+    import logging
+    with caplog.at_level(logging.INFO, logger="boss_agent.worker"):
+        start_task = asyncio.create_task(worker.start())
+        await asyncio.sleep(0.02)
+        worker.stop()
+        await start_task
+
+    log_records = [r.message for r in caplog.records if r.name == "boss_agent.worker"]
+    # Must log readiness
+    assert any("listening" in msg.lower() or "started" in msg.lower() or "ready" in msg.lower() for msg in log_records)
+
+
+
