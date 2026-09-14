@@ -58,41 +58,62 @@ describe('SvelteKit Server Hooks (hooks.server.ts)', () => {
 		expect(logOutput).toMatch(/\(\d+ms\)/);
 	});
 
-	it('does not log non-api requests such as pages and assets', async () => {
-		const event = createMockEvent('/settings', 'GET');
+	it('does not log non-api requests such as pages and assets or /apidocs', async () => {
+		const pageEvent = createMockEvent('/settings', 'GET');
 		const mockResponse = new Response('<html>Settings</html>', { status: 200 });
-		const resolve = vi.fn().mockResolvedValue(mockResponse);
+		await handle({ event: pageEvent, resolve: vi.fn().mockResolvedValue(mockResponse) });
 
-		const res = await handle({ event, resolve });
+		const docEvent = createMockEvent('/apidocs', 'GET');
+		await handle({ event: docEvent, resolve: vi.fn().mockResolvedValue(mockResponse) });
 
-		expect(resolve).toHaveBeenCalledWith(event);
-		expect(res).toBe(mockResponse);
 		expect(consoleLogSpy).not.toHaveBeenCalled();
 	});
 
-	it('formats 4xx and 5xx status codes with corresponding ANSI colors', async () => {
-		// Test 404
-		const notFoundEvent = createMockEvent('/api/unknown', 'POST');
-		const notFoundResponse = new Response(JSON.stringify({ error: 'Not Found' }), { status: 404 });
-		await handle({ event: notFoundEvent, resolve: vi.fn().mockResolvedValue(notFoundResponse) });
-
-		const log404 = consoleLogSpy.mock.calls[0][0] as string;
-		expect(log404).toContain('\x1b[33m404\x1b[0m'); // yellow
+	it('formats status codes with corresponding ANSI colors', async () => {
+		// Test 200 (Green)
+		const okEvent = createMockEvent('/api/ok', 'GET');
+		await handle({ event: okEvent, resolve: vi.fn().mockResolvedValue(new Response('ok', { status: 200 })) });
+		expect(consoleLogSpy.mock.calls[0][0]).toContain('\x1b[32m200\x1b[0m');
 
 		consoleLogSpy.mockClear();
 
-		// Test 500
-		const serverErrorEvent = createMockEvent('/api/failing', 'POST');
-		const serverErrorResponse = new Response(JSON.stringify({ error: 'Crash' }), { status: 500 });
-		await handle({ event: serverErrorEvent, resolve: vi.fn().mockResolvedValue(serverErrorResponse) });
+		// Test 302 (Cyan)
+		const redirectEvent = createMockEvent('/api/redirect', 'GET');
+		await handle({ event: redirectEvent, resolve: vi.fn().mockResolvedValue(new Response('', { status: 302 })) });
+		expect(consoleLogSpy.mock.calls[0][0]).toContain('\x1b[36m302\x1b[0m');
 
-		const log500 = consoleLogSpy.mock.calls[0][0] as string;
-		expect(log500).toContain('\x1b[31m500\x1b[0m'); // red
+		consoleLogSpy.mockClear();
+
+		// Test 404 (Yellow)
+		const notFoundEvent = createMockEvent('/api/unknown', 'POST');
+		await handle({ event: notFoundEvent, resolve: vi.fn().mockResolvedValue(new Response('', { status: 404 })) });
+		expect(consoleLogSpy.mock.calls[0][0]).toContain('\x1b[33m404\x1b[0m');
+
+		consoleLogSpy.mockClear();
+
+		// Test 500 (Red)
+		const serverErrorEvent = createMockEvent('/api/failing', 'POST');
+		await handle({ event: serverErrorEvent, resolve: vi.fn().mockResolvedValue(new Response('', { status: 500 })) });
+		expect(consoleLogSpy.mock.calls[0][0]).toContain('\x1b[31m500\x1b[0m');
 	});
 
-	it('captures unhandled server errors via handleError hook', async () => {
+	it('logs 500 and duration even when resolve throws an unhandled exception', async () => {
+		const crashEvent = createMockEvent('/api/crash', 'POST');
+		const error = new Error('Sudden crash');
+		const resolve = vi.fn().mockRejectedValue(error);
+
+		await expect(handle({ event: crashEvent, resolve })).rejects.toThrow('Sudden crash');
+		expect(consoleLogSpy).toHaveBeenCalledTimes(1);
+		const logOutput = consoleLogSpy.mock.calls[0][0] as string;
+		expect(logOutput).toContain('[API]');
+		expect(logOutput).toContain('POST');
+		expect(logOutput).toContain('/api/crash');
+		expect(logOutput).toContain('\x1b[31m500\x1b[0m');
+	});
+
+	it('captures unhandled server errors via handleError hook including query string', async () => {
 		const error = new Error('Database connection failed');
-		const event = createMockEvent('/api/tasks', 'POST');
+		const event = createMockEvent('/api/tasks', 'POST', '?force=true');
 
 		const result = handleError({
 			error,
@@ -104,7 +125,7 @@ describe('SvelteKit Server Hooks (hooks.server.ts)', () => {
 		expect(consoleErrorSpy).toHaveBeenCalledTimes(1);
 		const errorLog = consoleErrorSpy.mock.calls[0][0] as string;
 		expect(errorLog).toContain('[SERVER ERROR]');
-		expect(errorLog).toContain('POST /api/tasks');
+		expect(errorLog).toContain('POST /api/tasks?force=true');
 		expect(consoleErrorSpy.mock.calls[0][1]).toBe(error);
 		expect(result).toEqual({ message: 'Internal Error' });
 	});
