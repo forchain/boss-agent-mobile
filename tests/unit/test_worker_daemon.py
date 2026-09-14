@@ -290,5 +290,84 @@ async def test_worker_start_logs_readiness(broker, mock_driver, caplog):
     assert any("loop started" in msg.lower() and "emulator-5554" in msg for msg in log_records)
 
 
+def test_format_payload_for_logging_truncation():
+    """Verify _format_payload_for_logging compresses large docs, truncates long strings and lists."""
+    from boss_agent.worker.daemon import _format_payload_for_logging
+
+    huge_doc = "# Candidate Profile\n" + ("x" * 2000)
+    huge_payload = {
+        "auto_send": False,
+        "candidate_profile": {
+            "name": "周黄金",
+            "profile_document": huge_doc,
+            "core_skills": [f"Skill-{i}" for i in range(12)],
+            "long_desc": "a" * 300,
+        },
+    }
+
+    formatted = _format_payload_for_logging(huge_payload, max_str_len=50, max_list_items=3)
+
+    # Document should be summarized with char count
+    doc_val = formatted["candidate_profile"]["profile_document"]
+    assert "chars: # Candidate Profile" in doc_val
+    assert len(doc_val) < 100
+
+    # Skills list truncated to 3 + more items label
+    skills = formatted["candidate_profile"]["core_skills"]
+    assert len(skills) == 4
+    assert "+9 more items" in skills[-1]
+
+    # Long string truncated
+    long_desc = formatted["candidate_profile"]["long_desc"]
+    assert "(total 300 chars)" in long_desc
+    assert len(long_desc) < 80
+
+
+@pytest.mark.asyncio
+async def test_worker_logs_truncated_payload_on_task_claim(broker, mock_driver, caplog):
+    """Verify claimed task logs output truncated payload instead of raw massive blobs."""
+    import logging
+
+    config = WorkerConfig(worker_id="worker-trunc-test", device_id="emulator-5554", poll_interval_sec=0.01)
+    context = WorkerContext(config=config, driver=mock_driver)
+    worker = AutomationWorker(
+        config=config,
+        broker=broker,
+        context=context,
+        handlers=[CheckLoginHandler()],
+    )
+
+    huge_payload = {
+        "auto_send": False,
+        "candidate_profile": {
+            "name": "周黄金",
+            "profile_document": "# Profile Document\n" + ("y" * 3000),
+            "core_skills": [f"Skill-{i}" for i in range(15)],
+        },
+    }
+
+    await broker.create_task(
+        task_type=TaskType.CHECK_LOGIN,
+        payload=huge_payload,
+    )
+
+    with caplog.at_level(logging.INFO, logger="boss_agent.worker"):
+        await worker.run_once()
+
+    claim_logs = [
+        r.message for r in caplog.records
+        if r.name == "boss_agent.worker" and "Claimed task" in r.message
+    ]
+    assert len(claim_logs) == 1
+    log_msg = claim_logs[0]
+
+    # Full raw 3000-char text must NOT be in the log line
+    assert ("y" * 50) not in log_msg
+    # Summarized marker must be present
+    assert "chars: # Profile Document" in log_msg
+    assert "+10 more items" in log_msg
+
+
+
 
 

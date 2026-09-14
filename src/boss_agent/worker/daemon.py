@@ -20,6 +20,43 @@ from boss_agent.worker.handlers.base import BaseTaskHandler, HandlerResult
 logger = logging.getLogger("boss_agent.worker")
 
 
+def _format_payload_for_logging(
+    obj: Any,
+    max_str_len: int = 120,
+    max_list_items: int = 5,
+    large_doc_keys: tuple[str, ...] = ("profile_document", "job_description", "raw_html", "resume_text"),
+) -> Any:
+    """Recursively truncate payload structures for readable, non-bloated console logging."""
+    if isinstance(obj, dict):
+        truncated: dict[str, Any] = {}
+        for k, v in obj.items():
+            if str(k) in large_doc_keys and isinstance(v, str) and len(v) > 50:
+                truncated[k] = f"<{len(v)} chars: {v[:40].strip()}...>"
+            else:
+                truncated[k] = _format_payload_for_logging(v, max_str_len, max_list_items, large_doc_keys)
+        return truncated
+
+    if isinstance(obj, list):
+        if len(obj) > max_list_items:
+            items = [
+                _format_payload_for_logging(x, max_str_len, max_list_items, large_doc_keys)
+                for x in obj[:max_list_items]
+            ]
+            items.append(f"... (+{len(obj) - max_list_items} more items)")
+            return items
+        return [
+            _format_payload_for_logging(x, max_str_len, max_list_items, large_doc_keys)
+            for x in obj
+        ]
+
+    if isinstance(obj, str):
+        if len(obj) > max_str_len:
+            return f"{obj[:max_str_len]}... (total {len(obj)} chars)"
+        return obj
+
+    return obj
+
+
 class _TaskLoggingBrokerProxy:
     """Non-mutating proxy for BaseTaskBroker that mirrors handler progress logs to worker console."""
 
@@ -128,12 +165,13 @@ class AutomationWorker:
             return False
 
         task_type_str = claimed_task.task_type.value
+        preview_payload = _format_payload_for_logging(claimed_task.payload or {})
         logger.info(
             "📥 Claimed task %s [type=%s] for device %s (payload=%s)",
             claimed_task.id,
             task_type_str,
             self.config.device_id,
-            claimed_task.payload or {},
+            preview_payload,
         )
         start_time = time.monotonic()
 
