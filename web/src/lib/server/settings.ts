@@ -144,9 +144,16 @@ export function saveSettingsToLocalYaml(
 	}
 	const targetFile = path.join(configDir, 'settings.local.yaml');
 
-	// Preserve existing secret keys if newSettings passed empty string
+	// Preserve existing secret keys if newSettings passed empty string or masked display value
 	let finalApiKey = newSettings.api_key || '';
 	let finalLangsmithKey = newSettings.langsmith_api_key || '';
+
+	if (finalApiKey.includes('••••') || finalApiKey.includes('****')) {
+		finalApiKey = '';
+	}
+	if (finalLangsmithKey.includes('••••') || finalLangsmithKey.includes('****')) {
+		finalLangsmithKey = '';
+	}
 
 	if (fs.existsSync(targetFile)) {
 		const existingContent = fs.readFileSync(targetFile, 'utf-8');

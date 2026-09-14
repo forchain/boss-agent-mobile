@@ -432,6 +432,45 @@ describe('Unified System Settings Endpoints (/api/settings)', () => {
 		expect(llm.model).toBeDefined();
 		expect(llm.base_url).toBeDefined();
 	});
+
+	it('POST /api/settings preserves original API key when masked display string is sent', async () => {
+		const { GET: handleSettingsGet, POST: handleSettingsPost } = await import(
+			'../routes/api/settings/+server'
+		);
+
+		const origRes = await handleSettingsGet({} as any);
+		const originalSettings = await origRes.json();
+
+		try {
+			await handleSettingsPost({
+				request: {
+					json: async () => ({
+						...originalSettings,
+						api_key: 'sk-real-secret-key-12345678'
+					})
+				}
+			} as any);
+
+			await handleSettingsPost({
+				request: {
+					json: async () => ({
+						...originalSettings,
+						api_key: 'sk-real••••••••••••5678'
+					})
+				}
+			} as any);
+
+			const verifyRes = await handleSettingsGet({} as any);
+			const verified = await verifyRes.json();
+			expect(verified.api_key).toBe('sk-real-secret-key-12345678');
+		} finally {
+			await handleSettingsPost({
+				request: {
+					json: async () => originalSettings
+				}
+			} as any);
+		}
+	});
 });
 
 

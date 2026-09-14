@@ -25,6 +25,52 @@
 
 	let showApiKey = $state(false);
 	let showLangsmithKey = $state(false);
+	let isEditingApiKey = $state(false);
+	let newApiKeyInput = $state('');
+	let copiedApiKey = $state(false);
+
+	let isEditingLangsmithKey = $state(false);
+	let newLangsmithKeyInput = $state('');
+	let copiedLangsmithKey = $state(false);
+
+	function maskSecret(val: string): string {
+		if (!val) return '';
+		const s = val.trim();
+		if (s.length <= 8) {
+			return s.length <= 4 ? '••••••••' : `${s.slice(0, 2)}••••${s.slice(-2)}`;
+		}
+		if (s.length <= 16) {
+			return `${s.slice(0, 4)}••••••••${s.slice(-3)}`;
+		}
+		let prefixLen = 6;
+		if (s.startsWith('sk-proj-')) prefixLen = 11;
+		else if (s.startsWith('sk-ant-')) prefixLen = 10;
+		else if (s.startsWith('lsv2_pt_')) prefixLen = 11;
+		else if (s.startsWith('sk-')) prefixLen = 7;
+
+		if (prefixLen + 4 >= s.length) {
+			prefixLen = Math.max(3, Math.floor(s.length / 3));
+		}
+		const suffixLen = 4;
+		return `${s.slice(0, prefixLen)}••••••••••••${s.slice(-suffixLen)}`;
+	}
+
+	async function copyToClipboard(text: string, type: 'apiKey' | 'langsmith') {
+		if (!text) return;
+		try {
+			await navigator.clipboard.writeText(text);
+			if (type === 'apiKey') {
+				copiedApiKey = true;
+				setTimeout(() => (copiedApiKey = false), 2000);
+			} else {
+				copiedLangsmithKey = true;
+				setTimeout(() => (copiedLangsmithKey = false), 2000);
+			}
+		} catch (e) {
+			console.warn('Failed to copy to clipboard:', e);
+		}
+	}
+
 	let isSaving = $state(false);
 	let saveSuccessMessage = $state('');
 	let saveErrorMessage = $state('');
@@ -75,6 +121,8 @@
 					preview_timeout_sec: conf.preview_timeout_sec ?? 3.0,
 					enable_greeting: conf.enable_greeting !== false
 				};
+				isEditingApiKey = !conf.api_key;
+				isEditingLangsmithKey = !conf.langsmith_api_key;
 			}
 		} catch (e) {
 			console.warn('Failed to load system settings:', e);
@@ -157,6 +205,13 @@
 	}
 
 	async function onSaveSettings() {
+		if (isEditingApiKey && newApiKeyInput.trim()) {
+			settings.api_key = newApiKeyInput.trim();
+		}
+		if (isEditingLangsmithKey && newLangsmithKeyInput.trim()) {
+			settings.langsmith_api_key = newLangsmithKeyInput.trim();
+		}
+
 		isSaving = true;
 		saveSuccessMessage = '';
 		saveErrorMessage = '';
@@ -169,6 +224,14 @@
 			const data = await res.json();
 			if (res.ok && data.success) {
 				saveSuccessMessage = '✅ 系统配置已成功保存到本地 (config/settings.local.yaml)';
+				if (settings.api_key) {
+					isEditingApiKey = false;
+					newApiKeyInput = '';
+				}
+				if (settings.langsmith_api_key) {
+					isEditingLangsmithKey = false;
+					newLangsmithKeyInput = '';
+				}
 				setTimeout(() => {
 					saveSuccessMessage = '';
 				}, 4000);
@@ -183,6 +246,8 @@
 	}
 
 	async function onTestConnection() {
+		const activeApiKey =
+			isEditingApiKey && newApiKeyInput.trim() ? newApiKeyInput.trim() : settings.api_key;
 		isTesting = true;
 		testResult = null;
 		try {
@@ -193,7 +258,7 @@
 					provider: settings.provider,
 					model: settings.model,
 					base_url: settings.base_url,
-					api_key: settings.api_key,
+					api_key: activeApiKey,
 					temperature: settings.temperature,
 					timeout_sec: settings.timeout_sec,
 					max_tokens: settings.max_tokens
@@ -340,24 +405,113 @@
 
 				<div>
 					<div class="flex items-center justify-between mb-1.5">
-						<label for="api-key-input" class="block text-xs font-medium text-slate-300">
-							API Key 访问密钥
-						</label>
-						<button
-							type="button"
-							onclick={() => (showApiKey = !showApiKey)}
-							class="text-[11px] text-slate-400 hover:text-slate-200 transition"
-						>
-							{showApiKey ? '🙈 隐藏密钥' : '👁️ 显示明文'}
-						</button>
+						<div class="flex items-center space-x-2">
+							<label for="api-key-input" class="block text-xs font-medium text-slate-300">
+								API Key 访问密钥
+							</label>
+							{#if settings.api_key}
+								<span
+									class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium {isEditingApiKey
+										? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20'
+										: 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'}"
+								>
+									{isEditingApiKey ? '修改中' : '已配置 (首尾脱敏)'}
+								</span>
+							{:else}
+								<span
+									class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-800 text-slate-400 border border-slate-700"
+								>
+									未配置
+								</span>
+							{/if}
+						</div>
+						{#if settings.api_key && !isEditingApiKey}
+							<button
+								type="button"
+								onclick={() => (showApiKey = !showApiKey)}
+								class="text-[11px] text-slate-400 hover:text-slate-200 transition flex items-center gap-1"
+							>
+								{showApiKey ? '🙈 脱敏显示' : '👁️ 显示明文'}
+							</button>
+						{/if}
 					</div>
-					<input
-						id="api-key-input"
-						type={showApiKey ? 'text' : 'password'}
-						placeholder="输入新密钥或留空保持原值"
-						bind:value={settings.api_key}
-						class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs font-mono text-slate-200 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition"
-					/>
+
+					{#if settings.api_key && !isEditingApiKey}
+						<div
+							class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 flex items-center justify-between transition hover:border-slate-700"
+						>
+							<div class="flex items-center space-x-2 font-mono text-xs overflow-hidden select-all min-w-0 mr-3">
+								<span class="text-cyan-400/90 select-none shrink-0">🔑</span>
+								<span class="text-slate-200 font-mono tracking-wider truncate">
+									{showApiKey ? settings.api_key : maskSecret(settings.api_key)}
+								</span>
+							</div>
+							<div class="flex items-center space-x-1.5 shrink-0">
+								<button
+									type="button"
+									onclick={() => copyToClipboard(settings.api_key || '', 'apiKey')}
+									class="px-2 py-1 text-[11px] text-slate-400 hover:text-slate-200 hover:bg-slate-800/80 rounded-lg transition"
+									title="复制完整密钥"
+								>
+									{copiedApiKey ? '✓ 已复制' : '📋 复制'}
+								</button>
+								<button
+									type="button"
+									onclick={() => {
+										isEditingApiKey = true;
+										newApiKeyInput = '';
+									}}
+									class="px-2.5 py-1 text-[11px] text-cyan-400 hover:text-cyan-300 hover:bg-cyan-950/40 border border-cyan-800/60 rounded-lg transition flex items-center gap-1"
+								>
+									<span>✏️ 修改</span>
+								</button>
+							</div>
+						</div>
+					{:else}
+						<div class="space-y-1.5">
+							<div class="relative flex items-center">
+								<input
+									id="api-key-input"
+									type={showApiKey ? 'text' : 'password'}
+									placeholder={settings.api_key ? '输入新密钥（留空取消修改）' : '输入 API Key，例如 sk-...'}
+									bind:value={newApiKeyInput}
+									class="w-full bg-slate-950 border border-slate-800 rounded-xl pl-3.5 pr-24 py-2.5 text-xs font-mono text-slate-200 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition"
+								/>
+								<div class="absolute right-2 flex items-center space-x-1">
+									{#if settings.api_key}
+										<button
+											type="button"
+											onclick={() => {
+												if (newApiKeyInput.trim()) {
+													settings.api_key = newApiKeyInput.trim();
+												}
+												isEditingApiKey = false;
+												newApiKeyInput = '';
+											}}
+											class="px-2 py-1 text-[11px] bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg transition font-medium"
+										>
+											确认
+										</button>
+										<button
+											type="button"
+											onclick={() => {
+												isEditingApiKey = false;
+												newApiKeyInput = '';
+											}}
+											class="px-2 py-1 text-[11px] text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition"
+										>
+											取消
+										</button>
+									{/if}
+								</div>
+							</div>
+							{#if settings.api_key}
+								<p class="text-[11px] text-slate-400">
+									已配置密钥，当前正在录入新密钥。点击「确认」或「保存配置」更新，点击「取消」保留原值。
+								</p>
+							{/if}
+						</div>
+					{/if}
 				</div>
 
 				<div class="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-1">
@@ -451,24 +605,113 @@
 			<div class="grid grid-cols-1 md:grid-cols-2 gap-5 {settings.langsmith_tracing ? '' : 'opacity-50 pointer-events-none'}">
 				<div>
 					<div class="flex items-center justify-between mb-1.5">
-						<label for="langsmith-key-input" class="block text-xs font-medium text-slate-300">
-							LangSmith API Key
-						</label>
-						<button
-							type="button"
-							onclick={() => (showLangsmithKey = !showLangsmithKey)}
-							class="text-[11px] text-slate-400 hover:text-slate-200 transition"
-						>
-							{showLangsmithKey ? '🙈 隐藏' : '👁️ 显示'}
-						</button>
+						<div class="flex items-center space-x-2">
+							<label for="langsmith-key-input" class="block text-xs font-medium text-slate-300">
+								LangSmith API Key
+							</label>
+							{#if settings.langsmith_api_key}
+								<span
+									class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium {isEditingLangsmithKey
+										? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20'
+										: 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'}"
+								>
+									{isEditingLangsmithKey ? '修改中' : '已配置 (首尾脱敏)'}
+								</span>
+							{:else}
+								<span
+									class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-800 text-slate-400 border border-slate-700"
+								>
+									未配置
+								</span>
+							{/if}
+						</div>
+						{#if settings.langsmith_api_key && !isEditingLangsmithKey}
+							<button
+								type="button"
+								onclick={() => (showLangsmithKey = !showLangsmithKey)}
+								class="text-[11px] text-slate-400 hover:text-slate-200 transition flex items-center gap-1"
+							>
+								{showLangsmithKey ? '🙈 脱敏显示' : '👁️ 显示明文'}
+							</button>
+						{/if}
 					</div>
-					<input
-						id="langsmith-key-input"
-						type={showLangsmithKey ? 'text' : 'password'}
-						placeholder="例如 lsv2_pt_..."
-						bind:value={settings.langsmith_api_key}
-						class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs font-mono text-slate-200 focus:outline-none focus:border-cyan-500"
-					/>
+
+					{#if settings.langsmith_api_key && !isEditingLangsmithKey}
+						<div
+							class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 flex items-center justify-between transition hover:border-slate-700"
+						>
+							<div class="flex items-center space-x-2 font-mono text-xs overflow-hidden select-all min-w-0 mr-3">
+								<span class="text-cyan-400/90 select-none shrink-0">🔑</span>
+								<span class="text-slate-200 font-mono tracking-wider truncate">
+									{showLangsmithKey ? settings.langsmith_api_key : maskSecret(settings.langsmith_api_key)}
+								</span>
+							</div>
+							<div class="flex items-center space-x-1.5 shrink-0">
+								<button
+									type="button"
+									onclick={() => copyToClipboard(settings.langsmith_api_key || '', 'langsmith')}
+									class="px-2 py-1 text-[11px] text-slate-400 hover:text-slate-200 hover:bg-slate-800/80 rounded-lg transition"
+									title="复制完整密钥"
+								>
+									{copiedLangsmithKey ? '✓ 已复制' : '📋 复制'}
+								</button>
+								<button
+									type="button"
+									onclick={() => {
+										isEditingLangsmithKey = true;
+										newLangsmithKeyInput = '';
+									}}
+									class="px-2.5 py-1 text-[11px] text-cyan-400 hover:text-cyan-300 hover:bg-cyan-950/40 border border-cyan-800/60 rounded-lg transition flex items-center gap-1"
+								>
+									<span>✏️ 修改</span>
+								</button>
+							</div>
+						</div>
+					{:else}
+						<div class="space-y-1.5">
+							<div class="relative flex items-center">
+								<input
+									id="langsmith-key-input"
+									type={showLangsmithKey ? 'text' : 'password'}
+									placeholder={settings.langsmith_api_key ? '输入新密钥（留空取消修改）' : '例如 lsv2_pt_...'}
+									bind:value={newLangsmithKeyInput}
+									class="w-full bg-slate-950 border border-slate-800 rounded-xl pl-3.5 pr-24 py-2.5 text-xs font-mono text-slate-200 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition"
+								/>
+								<div class="absolute right-2 flex items-center space-x-1">
+									{#if settings.langsmith_api_key}
+										<button
+											type="button"
+											onclick={() => {
+												if (newLangsmithKeyInput.trim()) {
+													settings.langsmith_api_key = newLangsmithKeyInput.trim();
+												}
+												isEditingLangsmithKey = false;
+												newLangsmithKeyInput = '';
+											}}
+											class="px-2 py-1 text-[11px] bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg transition font-medium"
+										>
+											确认
+										</button>
+										<button
+											type="button"
+											onclick={() => {
+												isEditingLangsmithKey = false;
+												newLangsmithKeyInput = '';
+											}}
+											class="px-2 py-1 text-[11px] text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition"
+										>
+											取消
+										</button>
+									{/if}
+								</div>
+							</div>
+							{#if settings.langsmith_api_key}
+								<p class="text-[11px] text-slate-400">
+									已配置密钥，当前正在录入新密钥。点击「确认」或「保存配置」更新，点击「取消」保留原值。
+								</p>
+							{/if}
+						</div>
+					{/if}
 				</div>
 
 				<div>
