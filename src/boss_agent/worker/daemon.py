@@ -9,15 +9,29 @@ import contextlib
 import logging
 import time
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, cast
 
 from boss_agent.broker.models import AutomationTask, TaskStatus, TaskType
 from boss_agent.broker.pocketbase_adapter import BaseTaskBroker
 from boss_agent.worker.config import WorkerConfig
 from boss_agent.worker.context import WorkerContext
-from boss_agent.worker.handlers.base import BaseTaskHandler
+from boss_agent.worker.handlers.base import BaseTaskHandler, HandlerResult
 
 logger = logging.getLogger("boss_agent.worker")
+
+
+class _TaskLoggingBrokerProxy:
+    """Non-mutating proxy for BaseTaskBroker that mirrors handler progress logs to worker console."""
+
+    def __init__(self, target: BaseTaskBroker) -> None:
+        self._target = target
+
+    async def append_log(self, task_id: str, log_line: str) -> bool:
+        logger.info("📝 [Task %s] %s", task_id, log_line)
+        return await self._target.append_log(task_id, log_line)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._target, name)
 
 
 class AutomationWorker:
@@ -56,6 +70,47 @@ class AutomationWorker:
             except Exception as e:
                 logger.warning("Heartbeat update failed for task %s: %s", task_id, e)
 
+    async def _finalize_task_outcome(
+        self,
+        task: AutomationTask,
+        task_type_str: str,
+        start_time: float,
+        result: HandlerResult,
+    ) -> None:
+        """Evaluate task outcome, log completion status and update state in broker."""
+        duration = time.monotonic() - start_time
+        cur = await self.broker.get_task(task.id)
+        if cur and cur.status == TaskStatus.CANCELLED:
+            logger.info(
+                "⚠️ Task %s was cancelled during execution (%.2fs); preserving CANCELLED status",
+                task.id,
+                duration,
+            )
+        elif result.success:
+            logger.info(
+                "✅ Task %s [%s] completed successfully in %.2fs",
+                task.id,
+                task_type_str,
+                duration,
+            )
+            await self.broker.update_task_status(
+                task.id,
+                status=TaskStatus.SUCCESS,
+            )
+        else:
+            logger.error(
+                "❌ Task %s [%s] failed in %.2fs: %s",
+                task.id,
+                task_type_str,
+                duration,
+                result.error_message,
+            )
+            await self.broker.update_task_status(
+                task.id,
+                status=TaskStatus.FAILED,
+                error_message=result.error_message,
+            )
+
     async def run_once(self) -> bool:
         """Attempt to claim and process one pending task."""
         pending_tasks = await self.broker.list_pending_tasks(limit=5)
@@ -72,11 +127,7 @@ class AutomationWorker:
         if not claimed_task:
             return False
 
-        task_type_str = (
-            claimed_task.task_type.value
-            if hasattr(claimed_task.task_type, "value")
-            else str(claimed_task.task_type)
-        )
+        task_type_str = claimed_task.task_type.value
         logger.info(
             "📥 Claimed task %s [type=%s] for device %s (payload=%s)",
             claimed_task.id,
@@ -103,51 +154,14 @@ class AutomationWorker:
             )
             return True
 
-        # Intercept broker.append_log to mirror handler progress logs to console
-        original_append_log = self.broker.append_log
-
-        async def logging_append_log(tid: str, line: str) -> bool:
-            logger.info("📝 [Task %s] %s", tid, line)
-            return await original_append_log(tid, line)
-
-        self.broker.append_log = logging_append_log  # type: ignore[assignment]
+        # Non-mutating broker proxy that mirrors handler append_log calls to worker console
+        handler_broker = cast(BaseTaskBroker, _TaskLoggingBrokerProxy(self.broker))
 
         # Start heartbeat background renewal
         heartbeat_task = asyncio.create_task(self._heartbeat_loop(claimed_task.id))
         try:
-            result = await handler.handle(claimed_task, self.broker, self.context)
-            duration = time.monotonic() - start_time
-            cur = await self.broker.get_task(claimed_task.id)
-            if cur and cur.status == TaskStatus.CANCELLED:
-                logger.info(
-                    "⚠️ Task %s was cancelled during execution (%.2fs); preserving CANCELLED status",
-                    claimed_task.id,
-                    duration,
-                )
-            elif result.success:
-                logger.info(
-                    "✅ Task %s [%s] completed successfully in %.2fs",
-                    claimed_task.id,
-                    task_type_str,
-                    duration,
-                )
-                await self.broker.update_task_status(
-                    claimed_task.id,
-                    status=TaskStatus.SUCCESS,
-                )
-            else:
-                logger.error(
-                    "❌ Task %s [%s] failed in %.2fs: %s",
-                    claimed_task.id,
-                    task_type_str,
-                    duration,
-                    result.error_message,
-                )
-                await self.broker.update_task_status(
-                    claimed_task.id,
-                    status=TaskStatus.FAILED,
-                    error_message=result.error_message,
-                )
+            result = await handler.handle(claimed_task, handler_broker, self.context)
+            await self._finalize_task_outcome(claimed_task, task_type_str, start_time, result)
         except Exception as e:
             duration = time.monotonic() - start_time
             cur = await self.broker.get_task(claimed_task.id)
@@ -173,7 +187,6 @@ class AutomationWorker:
                     error_message=str(e),
                 )
         finally:
-            self.broker.append_log = original_append_log  # type: ignore[assignment]
             heartbeat_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await heartbeat_task
