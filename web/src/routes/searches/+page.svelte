@@ -80,7 +80,26 @@
 	});
 
 	const EDUCATION_OPTIONS = ['不限', '大专', '本科', '硕士', '博士'];
-	const SALARY_OPTIONS = ['不限', '3K以下', '3-5K', '5-10K', '10-20K', '20-50K', '50K以上'];
+	const SALARY_OPTIONS = [
+		{ value: '', label: '不限' },
+		{ value: '3K以下', label: '3K以下 (3000元以下)' },
+		{ value: '3-5K', label: '3-5K (3000-5000元)' },
+		{ value: '5-10K', label: '5-10K (5000-10000元)' },
+		{ value: '10-20K', label: '10-20K (1-2万元)' },
+		{ value: '20-50K', label: '20-50K (2-5万元)' },
+		{ value: '50K以上', label: '50K以上 (5万元以上)' }
+	];
+
+	function normalizeSalary(val: string | undefined | null): string {
+		if (!val || val === '不限') return '';
+		if (val === '5万元以上' || val === '5万以上') return '50K以上';
+		if (val === '2-5万元' || val === '2-5万') return '20-50K';
+		if (val === '1-2万元' || val === '1-2万') return '10-20K';
+		if (val === '5000-10000元') return '5-10K';
+		if (val === '3000-5000元') return '3-5K';
+		if (val === '3000元以下') return '3K以下';
+		return val;
+	}
 	const EXPERIENCE_OPTIONS = ['不限', '在校/应届', '1-3年', '3-5年', '5-10年', '10年以上'];
 	const ACTIVITY_OPTIONS = ['不限', '今日活跃', '3日内活跃', '本周活跃', '本月活跃'];
 	const COMPANY_SCALE_OPTIONS = [
@@ -252,7 +271,7 @@
 			is_enabled: !!search.is_enabled,
 			filter: {
 				education: search.filter?.education || '',
-				salary: search.filter?.salary || '',
+				salary: normalizeSalary(search.filter?.salary),
 				experience: search.filter?.experience || '',
 				activity: search.filter?.activity || '',
 				company_scales: [...(search.filter?.company_scales || [])],
@@ -919,7 +938,7 @@
 								class="w-full bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-cyan-500"
 							>
 								{#each SALARY_OPTIONS as opt}
-									<option value={opt}>{opt}</option>
+									<option value={opt.value}>{opt.label}</option>
 								{/each}
 							</select>
 						</div>

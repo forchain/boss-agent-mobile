@@ -886,6 +886,29 @@ class SearchPage(BaseBossPage):
         return False
 
 
+FILTER_OPTION_SYNONYMS: dict[str, list[str]] = {
+    "3k以下": ["3000元以下", "3K以下", "3k以下"],
+    "3000元以下": ["3000元以下", "3K以下", "3k以下"],
+    "3-5k": ["3000-5000元", "3-5K", "3-5k"],
+    "3000-5000元": ["3000-5000元", "3-5K", "3-5k"],
+    "5-10k": ["5000-10000元", "5-10K", "5-10k"],
+    "5000-10000元": ["5000-10000元", "5-10K", "5-10k"],
+    "10-20k": ["1-2万元", "1-2万", "10-20K", "10-20k"],
+    "1-2万": ["1-2万元", "1-2万", "10-20K", "10-20k"],
+    "1-2万元": ["1-2万元", "1-2万", "10-20K", "10-20k"],
+    "20-50k": ["2-5万元", "2-5万", "20-50K", "20-50k"],
+    "2-5万": ["2-5万元", "2-5万", "20-50K", "20-50k"],
+    "2-5万元": ["2-5万元", "2-5万", "20-50K", "20-50k"],
+    "50k以上": ["5万元以上", "5万以上", "50K以上", "50k以上"],
+    "5万以上": ["5万元以上", "5万以上", "50K以上", "50k以上"],
+    "5万元以上": ["5万元以上", "5万以上", "50K以上", "50k以上"],
+    "在校/应届": ["应届生", "在校生", "在校/应届"],
+    "在校生": ["在校生", "在校/应届"],
+    "应届生": ["应届生", "在校/应届"],
+    "1年以内": ["1年以内", "1年以下"],
+}
+
+
 class FilterDialogPage(BaseBossPage):
     """Page Object for the Boss 直聘 Job Filter Dialog (筛选)."""
 
@@ -922,19 +945,34 @@ class FilterDialogPage(BaseBossPage):
         self.gestures.human_swipe(start, end, duration_ms=400)
 
     def select_option(self, option_text: str, auto_scroll: bool = True) -> bool:
-        """Find and click a filter option tag with optional auto-scroll."""
-        if not option_text:
+        """Find and click a filter option tag with optional auto-scroll and synonym fallback."""
+        if not option_text or not option_text.strip():
             return False
 
+        trimmed = option_text.strip()
+        if trimmed == "不限":
+            return True
+
+        normalized_key = trimmed.lower()
+        synonyms = FILTER_OPTION_SYNONYMS.get(normalized_key, [])
+        candidates: list[str] = []
+        for s in synonyms:
+            if s not in candidates:
+                candidates.append(s)
+        if trimmed not in candidates:
+            candidates.insert(0, trimmed)
+
         def _try_click_option() -> bool:
-            elem = self.find_by_key(
-                "filter.option_item",
-                timeout_sec=1.5,
-                format_args={"text": option_text},
-            )
-            if elem:
-                self.gestures.human_click(elem)
-                return True
+            for cand in candidates:
+                elem = self.find_by_key(
+                    "filter.option_item",
+                    timeout_sec=1.5,
+                    format_args={"text": cand},
+                )
+                if elem:
+                    self.gestures.human_click(elem)
+                    logger.info("Selected filter option: '%s' (matched tag '%s')", trimmed, cand)
+                    return True
             return False
 
         if _try_click_option():
@@ -944,6 +982,7 @@ class FilterDialogPage(BaseBossPage):
             self.scroll_dialog_down()
             return _try_click_option()
 
+        logger.warning("Filter option '%s' (candidates=%s) not found in dialog", trimmed, candidates)
         return False
 
     def confirm_filter(self, timeout_sec: float = 5.0) -> bool:
@@ -986,22 +1025,28 @@ class FilterDialogPage(BaseBossPage):
             if not opened:
                 return False
 
+        def _is_effective(val: str | None) -> bool:
+            return bool(val and val.strip() and val.strip() != "不限")
+
         # 1. Top visible filters: Education, Salary, Experience
-        if config.education:
+        if _is_effective(config.education):
             self.select_option(config.education, auto_scroll=False)
-        if config.salary:
+        if _is_effective(config.salary):
             self.select_option(config.salary, auto_scroll=False)
-        if config.experience:
+        if _is_effective(config.experience):
             self.select_option(config.experience, auto_scroll=False)
 
         # 2. Scroll down for bottom sections: Activity and Company Scales
-        self.scroll_dialog_down()
+        needs_scroll = _is_effective(config.activity) or any(_is_effective(s) for s in config.company_scales)
+        if needs_scroll:
+            self.scroll_dialog_down()
 
-        if config.activity:
-            self.select_option(config.activity, auto_scroll=True)
+            if _is_effective(config.activity):
+                self.select_option(config.activity, auto_scroll=True)
 
-        for scale in config.company_scales:
-            self.select_option(scale, auto_scroll=True)
+            for scale in config.company_scales:
+                if _is_effective(scale):
+                    self.select_option(scale, auto_scroll=True)
 
         # 3. Confirm
         return self.confirm_filter()

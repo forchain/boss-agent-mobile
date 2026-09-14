@@ -331,10 +331,10 @@ class FilterConfig:
             return False
         return any(
             [
-                bool(self.education and self.education.strip()),
-                bool(self.salary and self.salary.strip()),
-                bool(self.experience and self.experience.strip()),
-                bool(self.activity and self.activity.strip()),
+                bool(self.education and self.education.strip() and self.education.strip() != "不限"),
+                bool(self.salary and self.salary.strip() and self.salary.strip() != "不限"),
+                bool(self.experience and self.experience.strip() and self.experience.strip() != "不限"),
+                bool(self.activity and self.activity.strip() and self.activity.strip() != "不限"),
                 bool(self.company_scales),
                 bool(self.industries),
             ]

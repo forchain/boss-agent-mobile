@@ -110,8 +110,10 @@ filter:
     - "com.hpbr.bosszhipin:id/btn_reset"
     - "//*[@text='清除']"
   close_btn:
+    - "com.hpbr.bosszhipin:id/iv_back"
     - "com.hpbr.bosszhipin:id/iv_close"
     - "//*[@content-desc='关闭']"
+    - "//*[@content-desc='返回']"
   option_item:
     - "//*[@resource-id='com.hpbr.bosszhipin:id/keywords_view_text' and (@text='{text}' or contains(@text, '{text}'))]"
     - "//*[@text='{text}']"
