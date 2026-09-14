@@ -16,6 +16,7 @@
 	let isLoading = $state(true);
 	let isPocketBaseOnline = $state(false);
 	let triggerStatus = $state<{ [key: string]: string }>({});
+	let triggerTaskIds = $state<{ [key: string]: string }>({});
 
 	$effect(() => {
 		if (data?.searches && data.searches.length > 0 && searches.length === 0) {
@@ -392,9 +393,11 @@
 		try {
 			const task = await createAutomationTask(taskType, payload);
 			triggerStatus[search.id] = `✅ 已派发 [${label}]: ${task.id}`;
+			triggerTaskIds[search.id] = task.id;
 			setTimeout(() => {
 				delete triggerStatus[search.id];
-			}, 5000);
+				delete triggerTaskIds[search.id];
+			}, 8000);
 		} catch (err: any) {
 			triggerStatus[search.id] = `❌ 派发失败: ${err?.message || err}`;
 		}
@@ -643,7 +646,12 @@
 						{#if triggerStatus[search.id]}
 							<div class="text-[11px] text-cyan-400 font-mono bg-cyan-950/40 border border-cyan-900/60 px-2.5 py-1 rounded-lg animate-pulse flex items-center justify-between">
 								<span>{triggerStatus[search.id]}</span>
-								<a href="/#task-console" class="underline hover:text-cyan-200 ml-2">查看实时日志 →</a>
+								<a
+									href={triggerTaskIds[search.id] ? `/?taskId=${triggerTaskIds[search.id]}#task-console` : '/#task-console'}
+									class="underline hover:text-cyan-200 ml-2"
+								>
+									查看实时日志 →
+								</a>
 							</div>
 						{/if}
 						<div class="flex items-center justify-between gap-2">
