@@ -80,10 +80,30 @@ class ScrapeJobsHandler(BaseTaskHandler):
         enable_search = bool(payload.get("enable_search", True))
         if enable_search and keyword:
             search_page = SearchPage(driver)
-            if not search_page.is_search_page():
-                list_page.open_search(timeout_sec=5.0)
-            search_page.search(keyword)
-            await broker.append_log(task.id, f"Executed search for keyword '{keyword}'")
+            search_success = False
+            for attempt in range(2):
+                if not search_page.is_search_page():
+                    list_page.open_search(timeout_sec=5.0)
+                if search_page.search(keyword, timeout_sec=10.0):
+                    search_success = True
+                    break
+                await broker.append_log(
+                    task.id,
+                    f"⚠️ 第 {attempt + 1} 次尝试进入搜索页面并搜索 '{keyword}' 失败，正在重试...",
+                )
+                list_page.navigate_to_home()
+
+            if search_success:
+                await broker.append_log(task.id, f"Executed search for keyword '{keyword}'")
+            else:
+                await broker.append_log(
+                    task.id,
+                    f"❌ 未能进入搜索页面或执行关键词搜索: '{keyword}'，终止任务以避免误操作推荐流",
+                )
+                return HandlerResult(
+                    success=False,
+                    output={"error": f"Failed to execute search for keyword '{keyword}'"},
+                )
         elif not enable_search:
             await broker.append_log(
                 task.id,

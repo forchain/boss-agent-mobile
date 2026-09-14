@@ -17,7 +17,7 @@ def test_filter_config_defaults_and_validation():
     assert "10000人以上" in cfg.company_scales
     assert cfg.has_filters is True
 
-    # Empty filter config
+    # Empty or all "不限" filter config
     cfg_empty = FilterConfig(
         education=None,
         salary=None,
@@ -26,6 +26,24 @@ def test_filter_config_defaults_and_validation():
         company_scales=[],
     )
     assert cfg_empty.has_filters is False
+
+    cfg_all_unlimited = FilterConfig(
+        education="不限",
+        salary="不限",
+        experience="不限",
+        activity="不限",
+        company_scales=[],
+    )
+    assert cfg_all_unlimited.has_filters is False
+
+    cfg_with_salary = FilterConfig(
+        education="不限",
+        salary="50K以上",
+        experience="不限",
+        activity="不限",
+        company_scales=[],
+    )
+    assert cfg_with_salary.has_filters is True
 
 
 def test_filter_dialog_page_interactions():
@@ -41,6 +59,9 @@ def test_filter_dialog_page_interactions():
     mock_reset_btn = MagicMock()
     mock_reset_btn.rect = {"x": 50, "y": 1750, "width": 300, "height": 80}
 
+    mock_close_btn = MagicMock()
+    mock_close_btn.rect = {"x": 30, "y": 100, "width": 80, "height": 80}
+
     mock_option_elem = MagicMock()
     mock_option_elem.rect = {"x": 300, "y": 500, "width": 200, "height": 60}
 
@@ -49,9 +70,11 @@ def test_filter_dialog_page_interactions():
             return [mock_confirm_btn]
         if "btn_reset" in value or "清除" in value:
             return [mock_reset_btn]
+        if "iv_back" in value or "iv_close" in value or "关闭" in value:
+            return [mock_close_btn]
         if "筛选" in value:
             return [mock_filter_btn]
-        if any(opt in value for opt in ["硕士", "5万元以上", "10年以上", "今日活跃", "100-499人"]):
+        if any(opt in value for opt in ["硕士", "5万元以上", "10年以上", "今日活跃", "100-499人", "应届生"]):
             return [mock_option_elem]
         return []
 
@@ -65,13 +88,25 @@ def test_filter_dialog_page_interactions():
     # Check is open
     assert page.is_dialog_open() is True
 
-    # Select single option
+    # Select single option directly
     assert page.select_option("硕士") is True
 
-    # Apply full filter configuration
+    # Select single option using synonym: "50K以上" should match "5万元以上"
+    assert page.select_option("50K以上") is True
+
+    # Select "在校/应届" should match "应届生"
+    assert page.select_option("在校/应届") is True
+
+    # Selecting "不限" is safe no-op returning True
+    assert page.select_option("不限") is True
+
+    # Close dialog
+    assert page.close_dialog() is True
+
+    # Apply full filter configuration with standard 50K以上
     cfg = FilterConfig(
         education="硕士",
-        salary="5万元以上",
+        salary="50K以上",
         experience="10年以上",
         activity="今日活跃",
         company_scales=["100-499人"],

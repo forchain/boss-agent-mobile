@@ -546,3 +546,65 @@ async def test_auto_apply_handler_preflight_blocks_blacklisted_company(broker, m
 
     # Zero driver clicks on chat or detail
     mock_driver.find_elements.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_scrape_jobs_handler_aborts_when_search_fails(broker, mock_driver):
+    """Verify ScrapeJobsHandler terminates gracefully and logs failure when search fails."""
+    # Mock find_elements to return empty list so search_page.search returns False
+    mock_driver.find_elements.return_value = []
+
+    config = WorkerConfig(worker_id="test-worker-search-fail", poll_interval_sec=0.01)
+    context = WorkerContext(config=config, driver=mock_driver)
+
+    worker = AutomationWorker(
+        config=config,
+        broker=broker,
+        context=context,
+        handlers=[ScrapeJobsHandler()],
+    )
+
+    task = await broker.create_task(
+        task_type=TaskType.SCRAPE_JOBS,
+        payload={"keyword": "Agent", "enable_search": True, "max_jobs": 10},
+    )
+
+    executed = await worker.run_once()
+    assert executed is True
+
+    finished_task = await broker.get_task(task.id)
+    assert finished_task is not None
+    assert finished_task.status == TaskStatus.FAILED
+    assert any("未能进入搜索页面或执行关键词搜索" in log and "Agent" in log for log in finished_task.logs)
+    assert not any("Executed search for keyword 'Agent'" in log for log in finished_task.logs)
+
+
+@pytest.mark.asyncio
+async def test_auto_apply_handler_aborts_when_search_fails(broker, mock_driver):
+    """Verify AutoApplyHandler terminates gracefully and logs failure when search fails."""
+    mock_driver.find_elements.return_value = []
+
+    config = WorkerConfig(worker_id="test-worker-apply-search-fail", poll_interval_sec=0.01)
+    context = WorkerContext(config=config, driver=mock_driver)
+
+    worker = AutomationWorker(
+        config=config,
+        broker=broker,
+        context=context,
+        handlers=[AutoApplyHandler()],
+    )
+
+    task = await broker.create_task(
+        task_type=TaskType.AUTO_APPLY,
+        payload={"keyword": "Agent", "enable_search": True},
+    )
+
+    executed = await worker.run_once()
+    assert executed is True
+
+    finished_task = await broker.get_task(task.id)
+    assert finished_task is not None
+    assert finished_task.status == TaskStatus.FAILED
+    assert any("未能进入搜索页面或执行关键词搜索" in log and "Agent" in log for log in finished_task.logs)
+    assert not any("Navigated to search results for 'Agent'" in log for log in finished_task.logs)
+
