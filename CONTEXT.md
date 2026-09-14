@@ -105,8 +105,17 @@ The LLM-driven structural diffing and human-in-the-loop review workflow that com
 _Avoid_: resume overwrite, profile replacement, auto-parse override
 
 **Screening Policy (`ScreeningPolicy`)**:
-The structured configuration encapsulating candidate negative constraints, title whitelists, title blacklists, company blacklists, and JD-level blacklists applied across screening stages.
+The structured configuration encapsulating candidate negative constraints, title whitelists, title blacklists, company blacklists, and JD-level blacklists declared in `config/screening.local.yaml`. Whitelists are optional inclusion tokens (disabled when empty, treating all non-blacklisted jobs as candidates; enforcing positive inclusion when specified), while blacklists enforce deterministic one-strike rejection.
 _Avoid_: Filter keywords, blacklist config, keyword rules
+
+**Configuration Realm (`config/*.yaml`)**:
+The declarative, human-readable single source of truth for all global system configurations (LLM, screening policies, candidate persona, settings), managed by developers, administrators, or Web UI endpoints.
+_Avoid_: runtime config, app data folder, temporary settings
+
+**Runtime State Directory (`.boss_agent/`)**:
+The system-managed directory housing runtime database state (`pb_data`), caches, execution logs, and transient artifacts. Never used as a manual configuration store.
+_Avoid_: config store, settings dir, user preference folder
+
 
 **Candidate Screener Graph (`JobApplicationState`)**:
 The stateful LangGraph orchestrator governing the complete multi-tier lifecycle from card-level keyword filtering, JD extraction, semantic screening, to targeted greeting generation.

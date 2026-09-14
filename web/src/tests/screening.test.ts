@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterAll } from 'vitest';
 import { isMaskedCompanyName, validateCanBlacklistCompany } from '../lib/screening';
 import { GET, POST, DELETE } from '../routes/api/screening/blacklist/+server';
 
@@ -122,11 +122,51 @@ describe('Masked Company Guardrail & Screening Utilities', () => {
 		expect(digest).not.toContain('任职要求');
 	});
 
-	it('extractTagsFromText matches relevant skill and requirement tags', async () => {
-		const { extractTagsFromText } = await import('../lib/screening');
-		const text = '外企-全栈开发工程师 Java 后端开发 React Native Flutter 混合开发 本科 3-5年';
-		const tags = extractTagsFromText(text);
-		expect(tags).toContain('Java');
-		expect(tags.some((t) => t === 'React Native' || t === 'Flutter' || t === '全栈')).toBe(true);
+	it('reads and updates screening policy via /api/screening/policy', async () => {
+		const { GET: getPolicy, POST: postPolicy } = await import('../routes/api/screening/policy/+server');
+
+		// GET policy
+		const getResp = await getPolicy({} as any);
+		expect(getResp.status).toBe(200);
+		const getData = await getResp.json();
+		expect(getData.success).toBe(true);
+		expect(getData.policy).toBeDefined();
+		expect(Array.isArray(getData.policy.title_blacklist)).toBe(true);
+
+		// POST policy with whitelist, blacklist, and mix of valid/invalid companies
+		const updateReq = new Request('http://localhost/api/screening/policy', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				policy: {
+					enable_screening: true,
+					title_whitelist: ['Python', 'Agent'],
+					title_blacklist: ['销售', '实习'],
+					company_blacklist: ['深至科技', '某中型人工智能公司'],
+					jd_blacklist: ['驻场', '外包']
+				}
+			})
+		});
+		const postResp = await postPolicy({ request: updateReq } as any);
+		expect(postResp.status).toBe(200);
+		const postData = await postResp.json();
+		expect(postData.success).toBe(true);
+		expect(postData.policy.title_whitelist).toContain('Python');
+		expect(postData.policy.company_blacklist).toContain('深至科技');
+		// Masked company should have been rejected by guardrails
+		expect(postData.policy.company_blacklist).not.toContain('某中型人工智能公司');
+		expect(postData.rejected_companies.length).toBe(1);
+		expect(postData.rejected_companies[0].name).toBe('某中型人工智能公司');
+	});
+
+	afterAll(async () => {
+		const { existsSync, unlinkSync } = await import('node:fs');
+		const { resolve } = await import('node:path');
+		const localYaml = resolve(process.cwd(), '../config/screening.local.yaml');
+		if (existsSync(localYaml)) {
+			try {
+				unlinkSync(localYaml);
+			} catch (e) {}
+		}
 	});
 });

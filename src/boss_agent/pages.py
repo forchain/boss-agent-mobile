@@ -8,7 +8,6 @@ from typing import Any
 from rich.console import Console
 
 from droid_agent_core.gestures import (
-    BézierTouchSynthesizer,
     HumanizedGestureExecutor,
     Point,
     calculate_probe_coordinate,
@@ -39,7 +38,6 @@ def _log_warn(msg: str) -> None:
 def _log_error(msg: str) -> None:
     logger.error(msg)
     console.print(f"[bold red][JobDetailPage ❌][/bold red] {msg}")
-
 
 
 @dataclass
@@ -90,13 +88,45 @@ class JobCardBrief:
 
 
 KNOWN_CITIES = (
-    "上海", "北京", "深圳", "广州", "杭州", "成都", "武汉", "南京", "苏州", "西安",
-    "重庆", "天津", "长沙", "厦门", "合肥", "青岛", "郑州", "大连", "海外", "远程",
+    "上海",
+    "北京",
+    "深圳",
+    "广州",
+    "杭州",
+    "成都",
+    "武汉",
+    "南京",
+    "苏州",
+    "西安",
+    "重庆",
+    "天津",
+    "长沙",
+    "厦门",
+    "合肥",
+    "青岛",
+    "郑州",
+    "大连",
+    "海外",
+    "远程",
 )
 
 RECRUITER_TITLE_KEYWORDS = (
-    "猎头", "顾问", "专员", "专家", "HR", "招聘", "经理", "主管", "总监",
-    "助理", "VP", "合伙人", "Recruiter", "Leader", "HRBP", "负责人",
+    "猎头",
+    "顾问",
+    "专员",
+    "专家",
+    "HR",
+    "招聘",
+    "经理",
+    "主管",
+    "总监",
+    "助理",
+    "VP",
+    "合伙人",
+    "Recruiter",
+    "Leader",
+    "HRBP",
+    "负责人",
 )
 
 
@@ -670,17 +700,26 @@ class JobListPage(BaseBossPage):
                         if r_hh:
                             is_headhunter = True
                         parts = t.rsplit(" ", 1)
-                        if (
-                            not location
-                            and len(parts) == 2
-                            and is_likely_location(parts[1])
-                        ):
+                        if not location and len(parts) == 2 and is_likely_location(parts[1]):
                             location = parts[1].strip()
                         continue
 
                     # 5. Location detection if standalone
                     if not location and (
-                        t in ("上海", "北京", "深圳", "广州", "杭州", "成都", "武汉", "南京", "苏州", "西安", "海外")
+                        t
+                        in (
+                            "上海",
+                            "北京",
+                            "深圳",
+                            "广州",
+                            "杭州",
+                            "成都",
+                            "武汉",
+                            "南京",
+                            "苏州",
+                            "西安",
+                            "海外",
+                        )
                         or t.endswith("市")
                         or t.endswith("区")
                     ):
@@ -688,12 +727,18 @@ class JobListPage(BaseBossPage):
                         continue
 
                     # 6. Standalone scale or industry detection
-                    if re.search(r"(\d+[-~至]\d+人|\d+人以上|少于\d+人|\d+人以下)", t) and not scale:
+                    if (
+                        re.search(r"(\d+[-~至]\d+人|\d+人以上|少于\d+人|\d+人以下)", t)
+                        and not scale
+                    ):
                         scale = t
                         continue
 
                     # 7. Tags vs Snippet
-                    if any(kw in t for kw in ("年", "应届", "经验", "本科", "大专", "硕士", "博士", "学历")):
+                    if any(
+                        kw in t
+                        for kw in ("年", "应届", "经验", "本科", "大专", "硕士", "博士", "学历")
+                    ):
                         tags.append(t)
                     elif len(t) > 10 and not snippet:
                         snippet = t
@@ -722,7 +767,6 @@ class JobListPage(BaseBossPage):
                     )
                 )
         return briefs
-
 
 
 class SearchPage(BaseBossPage):
@@ -1083,7 +1127,9 @@ class JobDetailPage(BaseBossPage):
         # 1. First attempt: standard explicit expand button if visible
         elem = self.find_by_key("job_detail.expand_btn", timeout_sec=0.5)
         if elem:
-            _log_info("👆 Found standard explicit expand button ('查看全部' / '展开全文'), clicking it...")
+            _log_info(
+                "👆 Found standard explicit expand button ('查看全部' / '展开全文'), clicking it..."
+            )
             self.gestures.human_click(elem)
             time.sleep(0.3)
             desc_elem = self.find_by_key("job_detail.desc", timeout_sec=1.0)
@@ -1095,20 +1141,28 @@ class JobDetailPage(BaseBossPage):
         desc_elem = self.find_by_key("job_detail.desc", timeout_sec=1.5)
         if not desc_elem:
             win_size = self._get_window_size()
-            _log_info("📜 Job description element not visible in initial viewport; scrolling down once to locate it...")
+            _log_info(
+                "📜 Job description element not visible in initial viewport; scrolling down once to locate it..."
+            )
             self._scroll_page_up(int(win_size.get("height", 2400) * 0.4))
             desc_elem = self.find_by_key("job_detail.desc", timeout_sec=2.0)
 
         if not desc_elem:
-            _log_error("Failed to locate job description element ('com.hpbr.bosszhipin:id/tv_description') on detail page!")
+            _log_error(
+                "Failed to locate job description element ('com.hpbr.bosszhipin:id/tv_description') on detail page!"
+            )
             return False
 
         initial_text = getattr(desc_elem, "text", "") or ""
         self._current_description = initial_text.strip()
 
-        is_truncated = ("查看更多" in initial_text or "展开" in initial_text or initial_text.endswith("..."))
+        is_truncated = (
+            "查看更多" in initial_text or "展开" in initial_text or initial_text.endswith("...")
+        )
         if not is_truncated:
-            _log_info(f"✅ Job description is already fully expanded (length: {len(initial_text)} chars, no '查看更多' found).")
+            _log_info(
+                f"✅ Job description is already fully expanded (length: {len(initial_text)} chars, no '查看更多' found)."
+            )
             return True
 
         _log_info(
@@ -1132,7 +1186,9 @@ class JobDetailPage(BaseBossPage):
                     for k in ("x", "y", "width", "height")
                 )
             ):
-                _log_warn(f"Cannot retrieve valid element bounds on attempt {attempt}; scrolling page...")
+                _log_warn(
+                    f"Cannot retrieve valid element bounds on attempt {attempt}; scrolling page..."
+                )
                 self._scroll_page_up(int(screen_height * 0.35))
                 desc_elem = self.find_by_key("job_detail.desc", timeout_sec=1.0)
                 continue
@@ -1163,7 +1219,9 @@ class JobDetailPage(BaseBossPage):
                         _log_error("Could not find job description element after scroll!")
                         return False
             else:
-                _log_info(f"🎯 JD bottom ({elem_bottom:.1f}) is now safely in view (safe threshold: {safe_bottom_threshold:.1f}).")
+                _log_info(
+                    f"🎯 JD bottom ({elem_bottom:.1f}) is now safely in view (safe threshold: {safe_bottom_threshold:.1f})."
+                )
                 break
 
         # Re-fetch bounds after scroll settling
@@ -1183,7 +1241,9 @@ class JobDetailPage(BaseBossPage):
         expanded = False
 
         for idx, (ratio_x, offset_y) in enumerate(tap_offsets, 1):
-            target_x, target_y = calculate_probe_coordinate(rect, [ratio_x, offset_y], origin="bottom-left")
+            target_x, target_y = calculate_probe_coordinate(
+                rect, [ratio_x, offset_y], origin="bottom-left"
+            )
             _log_info(
                 f"👆 [Tap Hotspot {idx}/{len(tap_offsets)}] Tapping '查看更多' at screen coordinate "
                 f"({target_x:.1f}, {target_y:.1f}) [ratio_x={ratio_x}, offset_y={offset_y}px from bottom]..."
@@ -1266,7 +1326,9 @@ class JobDetailPage(BaseBossPage):
         # 4. Fallback lookups in case header elements were somehow missed before scroll
         if not title:
             title_elem = self.find_by_key("job_detail.title")
-            title = title_elem.text.strip() if title_elem and getattr(title_elem, "text", None) else ""
+            title = (
+                title_elem.text.strip() if title_elem and getattr(title_elem, "text", None) else ""
+            )
         if not company:
             company_elem = self.find_by_key("job_detail.company")
             company = (
@@ -1277,7 +1339,9 @@ class JobDetailPage(BaseBossPage):
         if not salary:
             salary_elem = self.find_by_key("job_detail.salary")
             salary = (
-                salary_elem.text.strip() if salary_elem and getattr(salary_elem, "text", None) else ""
+                salary_elem.text.strip()
+                if salary_elem and getattr(salary_elem, "text", None)
+                else ""
             )
 
         if "查看更多" in desc:

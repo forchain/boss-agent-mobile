@@ -64,6 +64,14 @@ export interface ResumeRevision {
 }
 
 
+export interface ScreeningPolicy {
+	title_whitelist: string[];
+	title_blacklist: string[];
+	company_blacklist: string[];
+	jd_blacklist: string[];
+	enable_screening: boolean;
+}
+
 export interface LLMSettings {
 	provider: 'openai' | 'minimax' | 'deepseek' | string;
 	model: string;
@@ -133,6 +141,7 @@ export interface JobRecord {
 	jd_key_requirements?: string[];
 	greeting_message?: string;
 	search_keywords?: string[];
+	screened_reason?: string;
 	source_task_id?: string;
 	first_seen_at?: string;
 	last_seen_at?: string;

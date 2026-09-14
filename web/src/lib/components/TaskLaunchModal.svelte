@@ -351,6 +351,14 @@
 										</span>
 									</div>
 								{/if}
+
+								<div class="p-2.5 bg-slate-950/60 border border-slate-800/60 rounded-xl text-[11px] text-slate-400 flex items-center justify-between">
+									<span class="flex items-center gap-1.5">
+										<span class="text-emerald-400">🛡️</span>
+										<span>已启用全局黑白名单初筛防御 (config/screening.local.yaml)</span>
+									</span>
+									<a href="/settings" class="text-cyan-400 hover:text-cyan-300 transition">规则配置 →</a>
+								</div>
 							</div>
 						{/if}
 					</div>

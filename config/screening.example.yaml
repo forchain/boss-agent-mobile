@@ -1,0 +1,44 @@
+# ==============================================================================
+# Boss Agent Mobile - Preliminary Job Screening Policy Template
+# ==============================================================================
+# Copy this file to `config/screening.local.yaml` (which is git-ignored) to
+# customize your local whitelist and blacklist filtering rules.
+#
+# Rules are evaluated deterministically at card-discovery time (zero token spend)
+# before clicking into job detail pages or opening chat dialogs.
+# ==============================================================================
+
+# Master toggle for preliminary card-level and JD screening
+enable_screening: true
+
+# 职位标题白名单（可选准入凭证）
+# - 留空（[]）：白名单机制关闭，未命中黑名单的职位默认全量放行。
+# - 配置关键词后：职位标题或标签必须命中其中至少一个，否则予以淘汰。
+title_whitelist: []
+
+# 职位标题黑名单（一票否决）
+# 职位标题或标签若包含任意一个关键词，立即初筛淘汰，绝不进入详情页。
+title_blacklist:
+  - "销售"
+  - "电话销售"
+  - "电销"
+  - "管培生"
+  - "实习"
+  - "助理"
+  - "讲师"
+  - "课程顾问"
+  - "客服"
+
+# 公司黑名单（一票否决）
+# 目标企业若命中，该企业的所有岗位自动过滤跳过。
+# 注意：系统内置直招保护守卫，禁止将猎头渠道或保密/占位公司（如“某中型公司”）加入此项。
+company_blacklist: []
+
+# 岗位摘要与 JD 关键词黑名单（一票否决）
+# 列表卡片摘要（digest）、标签或岗位描述命中即淘汰。
+jd_blacklist:
+  - "驻场"
+  - "外包"
+  - "电销"
+  - "无底薪"
+  - "纯提成"
