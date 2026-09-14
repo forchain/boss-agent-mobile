@@ -287,6 +287,25 @@ export async function createResumeRevision(
 const localAutomationTasksMap: Record<string, AutomationTask> = {};
 
 export async function createAutomationTask(taskType: string, payload: Record<string, any>): Promise<AutomationTask> {
+	if (typeof window !== 'undefined') {
+		try {
+			const res = await fetch('/api/tasks', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ task_type: taskType, payload })
+			});
+			if (res.ok) {
+				const data = await res.json();
+				if (data.success && data.task) {
+					localAutomationTasksMap[data.task.id] = data.task;
+					return data.task;
+				}
+			}
+		} catch {
+			// Fallback to direct PocketBase call below
+		}
+	}
+
 	const taskId = generatePbId();
 	const now = new Date().toISOString();
 	const taskData = {
@@ -341,6 +360,34 @@ export async function listAutomationTasks(options?: {
 	const limit = options?.limit || 20;
 	const status = options?.status;
 	const customFilter = options?.filter;
+
+	if (typeof window !== 'undefined') {
+		try {
+			const query = new URLSearchParams({
+				page: String(page),
+				limit: String(limit)
+			});
+			if (status) query.set('status', status);
+			if (customFilter) query.set('filter', customFilter);
+
+			const res = await fetch(`/api/tasks?${query.toString()}`);
+			if (res.ok) {
+				const data = await res.json();
+				if (data.success && Array.isArray(data.tasks)) {
+					for (const t of data.tasks) {
+						localAutomationTasksMap[t.id] = t;
+					}
+					return {
+						items: data.tasks,
+						totalItems: data.total ?? data.tasks.length,
+						totalPages: data.totalPages ?? 1
+					};
+				}
+			}
+		} catch {
+			// Fallback to direct PocketBase call below
+		}
+	}
 
 	try {
 		let filter = '';
@@ -401,6 +448,21 @@ export async function listAutomationTasks(options?: {
 }
 
 export async function getAutomationTask(taskId: string): Promise<AutomationTask | null> {
+	if (typeof window !== 'undefined') {
+		try {
+			const res = await fetch(`/api/tasks/${taskId}`);
+			if (res.ok) {
+				const data = await res.json();
+				if (data.success && data.task) {
+					localAutomationTasksMap[data.task.id] = data.task;
+					return data.task;
+				}
+			}
+		} catch {
+			// Fallback to direct PocketBase call below
+		}
+	}
+
 	try {
 		const r = await pb.collection('automation_tasks').getOne(taskId);
 		if (r) {
@@ -434,6 +496,27 @@ export async function rerunTask(taskId: string): Promise<AutomationTask | null> 
 }
 
 export async function resumeTask(taskId: string): Promise<boolean> {
+	if (typeof window !== 'undefined') {
+		try {
+			const res = await fetch(`/api/tasks/${taskId}`, {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ status: 'resuming' })
+			});
+			if (res.ok) {
+				const data = await res.json();
+				if (data.success) {
+					if (localAutomationTasksMap[taskId]) {
+						localAutomationTasksMap[taskId].status = 'resuming';
+					}
+					return true;
+				}
+			}
+		} catch {
+			// Fallback to direct PocketBase call below
+		}
+	}
+
 	try {
 		await pb.collection('automation_tasks').update(taskId, {
 			status: 'resuming'
@@ -452,6 +535,27 @@ export async function resumeTask(taskId: string): Promise<boolean> {
 }
 
 export async function cancelTask(taskId: string): Promise<boolean> {
+	if (typeof window !== 'undefined') {
+		try {
+			const res = await fetch(`/api/tasks/${taskId}`, {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ status: 'cancelled' })
+			});
+			if (res.ok) {
+				const data = await res.json();
+				if (data.success) {
+					if (localAutomationTasksMap[taskId]) {
+						localAutomationTasksMap[taskId].status = 'cancelled';
+					}
+					return true;
+				}
+			}
+		} catch {
+			// Fallback to direct PocketBase call below
+		}
+	}
+
 	try {
 		await pb.collection('automation_tasks').update(taskId, {
 			status: 'cancelled'
@@ -470,6 +574,16 @@ export async function cancelTask(taskId: string): Promise<boolean> {
 }
 
 export async function getJobRecords(status?: string, limit = 50): Promise<JobRecord[]> {
+	if (typeof window !== 'undefined') {
+		try {
+			const res = await fetch(`/api/jobs${status ? `?status=${status}&limit=${limit}` : `?limit=${limit}`}`);
+			if (res.ok) {
+				const data = await res.json();
+				return data.records || [];
+			}
+		} catch (e) {}
+	}
+
 	try {
 		const filter = status ? `status='${status}'` : '';
 		const result = await pb.collection('job_records').getList(1, limit, {
@@ -503,14 +617,6 @@ export async function getJobRecords(status?: string, limit = 50): Promise<JobRec
 			updated: item.updated
 		})) as JobRecord[];
 	} catch (err) {
-		// If browser direct PocketBase query fails (e.g. CORS/network), try backend proxy /api/jobs
-		try {
-			const res = await fetch(`/api/jobs${status ? `?status=${status}` : ''}`);
-			if (res.ok) {
-				const data = await res.json();
-				return data.records || [];
-			}
-		} catch (e) {}
 		return [];
 	}
 }
@@ -519,10 +625,7 @@ export async function updateJobRecord(
 	recordId: string,
 	data: Partial<JobRecord>
 ): Promise<JobRecord | null> {
-	try {
-		const updated = await pb.collection('job_records').update(recordId, data);
-		return updated as unknown as JobRecord;
-	} catch (err) {
+	if (typeof window !== 'undefined') {
 		try {
 			const res = await fetch(`/api/jobs/${recordId}`, {
 				method: 'PATCH',
@@ -534,15 +637,18 @@ export async function updateJobRecord(
 				return resData.record;
 			}
 		} catch (e) {}
+	}
+
+	try {
+		const updated = await pb.collection('job_records').update(recordId, data);
+		return updated as unknown as JobRecord;
+	} catch (err) {
 		return null;
 	}
 }
 
 export async function deleteJobRecord(recordId: string): Promise<boolean> {
-	try {
-		await pb.collection('job_records').delete(recordId);
-		return true;
-	} catch (err) {
+	if (typeof window !== 'undefined') {
 		try {
 			const res = await fetch(`/api/jobs/${recordId}`, {
 				method: 'DELETE'
@@ -552,6 +658,12 @@ export async function deleteJobRecord(recordId: string): Promise<boolean> {
 				return Boolean(resData.success);
 			}
 		} catch (e) {}
+	}
+
+	try {
+		await pb.collection('job_records').delete(recordId);
+		return true;
+	} catch (err) {
 		return false;
 	}
 }
@@ -559,6 +671,23 @@ export async function deleteJobRecord(recordId: string): Promise<boolean> {
 const localSavedSearchesMap: Record<string, SavedSearch> = {};
 
 export async function listSavedSearches(): Promise<SavedSearch[]> {
+	if (typeof window !== 'undefined') {
+		try {
+			const res = await fetch('/api/searches');
+			if (res.ok) {
+				const data = await res.json();
+				if (data.success && Array.isArray(data.searches)) {
+					for (const s of data.searches) {
+						localSavedSearchesMap[s.id] = s;
+					}
+					return data.searches;
+				}
+			}
+		} catch {
+			// Fallback to direct PocketBase call below
+		}
+	}
+
 	try {
 		const records = await pb.collection('saved_searches').getFullList({
 			sort: '-created'
@@ -591,6 +720,20 @@ export async function listSavedSearches(): Promise<SavedSearch[]> {
 }
 
 export async function getSavedSearch(id: string): Promise<SavedSearch | null> {
+	if (typeof window !== 'undefined') {
+		try {
+			const res = await fetch(`/api/searches/${id}`);
+			if (res.ok) {
+				const data = await res.json();
+				if (data.success && data.search) {
+					localSavedSearchesMap[data.search.id] = data.search;
+					return data.search;
+				}
+			}
+		} catch {
+			// Fallback to direct PocketBase call below
+		}
+	}
 	try {
 		const r = await pb.collection('saved_searches').getOne(id);
 		if (r) {
@@ -619,6 +762,25 @@ export async function getSavedSearch(id: string): Promise<SavedSearch | null> {
 }
 
 export async function saveSavedSearch(search: Partial<SavedSearch> & { name: string }): Promise<SavedSearch> {
+	if (typeof window !== 'undefined') {
+		try {
+			const res = await fetch('/api/searches', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(search)
+			});
+			if (res.ok) {
+				const data = await res.json();
+				if (data.success && data.search) {
+					localSavedSearchesMap[data.search.id] = data.search;
+					return data.search;
+				}
+			}
+		} catch {
+			// Fallback to direct PocketBase call below
+		}
+	}
+
 	const searchId = search.id || generatePbId();
 	const data = {
 		id: searchId,
@@ -658,6 +820,18 @@ export async function saveSavedSearch(search: Partial<SavedSearch> & { name: str
 }
 
 export async function deleteSavedSearch(id: string): Promise<boolean> {
+	if (typeof window !== 'undefined') {
+		try {
+			const res = await fetch(`/api/searches/${id}`, { method: 'DELETE' });
+			if (res.ok) {
+				delete localSavedSearchesMap[id];
+				return true;
+			}
+		} catch {
+			// Fallback
+		}
+	}
+
 	const existedLocally = id in localSavedSearchesMap;
 	delete localSavedSearchesMap[id];
 	try {
