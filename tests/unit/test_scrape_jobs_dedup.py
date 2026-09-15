@@ -497,4 +497,127 @@ async def test_scrape_jobs_handler_logs_error_when_jd_contains_view_more():
     assert any("Incomplete JD Error" in line and "查看更多" in line for line in logs)
 
 
+@pytest.mark.asyncio
+async def test_scrape_jobs_cancelled_task_does_not_execute_fallback():
+    """Cancelled scrape task terminates immediately and does not fallback to extracting from current screen."""
+    from boss_agent.broker.models import TaskStatus
+    from boss_agent.worker.config import WorkerConfig
+
+    broker = InMemoryTaskBroker()
+    mock_driver = MagicMock()
+    mock_driver.get_window_size.return_value = {"width": 1080, "height": 2400}
+    context = WorkerContext(config=WorkerConfig(worker_id="test-worker"), driver=mock_driver)
+    handler = ScrapeJobsHandler()
+
+    task = await broker.create_task(
+        task_type=TaskType.SCRAPE_JOBS,
+        payload={"keyword": "flutter", "enable_search": False, "max_jobs": 5},
+    )
+    # Cancel task before loop starts
+    await broker.update_task_status(task.id, status=TaskStatus.CANCELLED)
+
+    with (
+        patch("boss_agent.worker.handlers.scrape_jobs.JobListPage") as mock_list_cls,
+        patch("boss_agent.worker.handlers.scrape_jobs.JobDetailPage") as mock_detail_cls,
+    ):
+        mock_list_cls.return_value.get_feed_bottom_boundary.return_value = None
+        mock_detail = mock_detail_cls.return_value
+        mock_detail.extract_job_posting.return_value = JobPosting(
+            title="未注明职位",
+            company_name="传影旭禾",
+            salary_range="6-9万元",
+            job_description="岗位描述...",
+        )
+
+        res = await handler.handle(task, broker, context)
+
+    assert res.success is True
+    mock_detail.extract_job_posting.assert_not_called()
+    assert len(await broker.list_job_records()) == 0
+
+
+@pytest.mark.asyncio
+async def test_scrape_jobs_fallback_ignores_unspecified_title():
+    """Fallback extraction must not persist records with '未注明职位'."""
+    from boss_agent.worker.config import WorkerConfig
+
+    broker = InMemoryTaskBroker()
+    mock_driver = MagicMock()
+    mock_driver.get_window_size.return_value = {"width": 1080, "height": 2400}
+    context = WorkerContext(config=WorkerConfig(worker_id="test-worker"), driver=mock_driver)
+    handler = ScrapeJobsHandler()
+
+    task = await broker.create_task(
+        task_type=TaskType.SCRAPE_JOBS,
+        payload={"keyword": "flutter", "enable_search": False, "max_jobs": 5},
+    )
+
+    with (
+        patch("boss_agent.worker.handlers.scrape_jobs.JobListPage") as mock_list_cls,
+        patch("boss_agent.worker.handlers.scrape_jobs.JobDetailPage") as mock_detail_cls,
+    ):
+        mock_list_cls.return_value.extract_visible_job_cards.return_value = []
+        mock_list_cls.return_value.get_feed_bottom_boundary.return_value = MagicMock()
+        mock_detail = mock_detail_cls.return_value
+        mock_detail.extract_job_posting.return_value = JobPosting(
+            title="未注明职位",
+            company_name="传影旭禾",
+            salary_range="6-9万元",
+            job_description="岗位描述...",
+        )
+
+        res = await handler.handle(task, broker, context)
+
+    assert res.success is True
+    assert len(await broker.list_job_records()) == 0
+
+
+@pytest.mark.asyncio
+async def test_scrape_jobs_detail_enrichment_does_not_overwrite_title_with_unspecified():
+    """Enrichment must never overwrite a valid card title with '未注明职位'."""
+    from boss_agent.worker.config import WorkerConfig
+
+    broker = InMemoryTaskBroker()
+    mock_driver = MagicMock()
+    mock_driver.get_window_size.return_value = {"width": 1080, "height": 2400}
+    context = WorkerContext(config=WorkerConfig(worker_id="test-worker"), driver=mock_driver)
+    handler = ScrapeJobsHandler()
+
+    task = await broker.create_task(
+        task_type=TaskType.SCRAPE_JOBS,
+        payload={"keyword": "flutter", "enable_search": False, "max_jobs": 1},
+    )
+
+    card_elem = MagicMock()
+    card = JobCardBrief(
+        title="全栈技术负责人",
+        company_name="传影旭禾",
+        recruiter_name="招聘者",
+        element=card_elem,
+    )
+
+    with (
+        patch("boss_agent.worker.handlers.scrape_jobs.JobListPage") as mock_list_cls,
+        patch("boss_agent.worker.handlers.scrape_jobs.JobDetailPage") as mock_detail_cls,
+    ):
+        mock_list_cls.return_value.extract_visible_job_cards.return_value = [card]
+        mock_list_cls.return_value.get_feed_bottom_boundary.return_value = None
+        mock_detail = mock_detail_cls.return_value
+        mock_detail.extract_job_posting.return_value = JobPosting(
+            title="未注明职位",  # detail failed to find title
+            company_name="传影旭禾",
+            salary_range="6-9万元",
+            job_description="岗位职责描述...",
+        )
+
+        res = await handler.handle(task, broker, context)
+
+    assert res.success is True
+    records = await broker.list_job_records()
+    assert len(records) == 1
+    assert records[0]["title"] == "全栈技术负责人"
+    assert records[0]["salary_range"] == "6-9万元"
+
+
+
 
