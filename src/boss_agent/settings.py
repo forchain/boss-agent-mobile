@@ -17,7 +17,6 @@ except ImportError:
 DEFAULT_CONFIG_SEARCH_PATHS: list[Path] = [
     Path("config/settings.local.yaml"),
     Path("config/settings.local.json"),
-    Path("config/candidate.local.yaml"),
     Path("config/settings.yaml"),
     Path("config/settings.example.yaml"),
 ]
@@ -205,11 +204,19 @@ def load_settings(config_path: str | Path | None = None) -> dict[str, Any]:
         "pocketbase_url": DEFAULT_POCKETBASE_URL,
         "pocketbase_data_dir": None,
         "pocketbase_db_path": None,
-        "resume_path": None,
-        "force_refresh_memory": False,
+        "provider": "openai",
+        "base_url": "https://api.minimaxi.com/v1",
+        "api_key": None,
+        "model": "MiniMax-M3",
+        "temperature": 0.2,
+        "timeout_sec": 120.0,
+        "max_tokens": 262144,
+        "langsmith_tracing": False,
+        "langsmith_api_key": None,
+        "langsmith_project": "boss-agent-mobile",
+        "daily_greeting_limit": 20,
         "preview_timeout_sec": 3.0,
         "enable_greeting": True,
-        "daily_greeting_limit": 20,
     }
 
     # Load from lowest to highest priority so higher priority files overwrite
@@ -249,6 +256,34 @@ def load_settings(config_path: str | Path | None = None) -> dict[str, Any]:
             except Exception:
                 pass
 
+    # Legacy fallback: if api_key is missing or template default, check config/llm.local.yaml
+    if not config_path and merged.get("api_key") in (None, "", "your-api-key-here"):
+        legacy_llm_file = Path("config/llm.local.yaml")
+        if legacy_llm_file.is_file():
+            try:
+                legacy_content = legacy_llm_file.read_text(encoding="utf-8")
+                legacy_data = yaml.safe_load(legacy_content) if yaml else {}
+                if isinstance(legacy_data, dict):
+                    for k in (
+                        "provider",
+                        "base_url",
+                        "api_key",
+                        "model",
+                        "temperature",
+                        "timeout_sec",
+                        "max_tokens",
+                        "langsmith_tracing",
+                        "langsmith_api_key",
+                        "langsmith_project",
+                    ):
+                        val = legacy_data.get(k)
+                        if val is not None:
+                            if k == "api_key" and val == "your-api-key-here":
+                                continue
+                            merged[k] = val
+            except Exception:
+                pass
+
     env_pb_url = os.getenv("POCKETBASE_URL")
     if env_pb_url and env_pb_url.strip():
         merged["pocketbase_url"] = env_pb_url
@@ -264,6 +299,18 @@ def load_settings(config_path: str | Path | None = None) -> dict[str, Any]:
     env_pb_db_path = os.getenv("PB_DB_PATH") or os.getenv("POCKETBASE_DB_PATH")
     if env_pb_db_path and env_pb_db_path.strip():
         merged["pocketbase_db_path"] = env_pb_db_path.strip()
+
+    env_llm_key = os.getenv("LLM_API_KEY") or os.getenv("MINIMAX_API_KEY") or os.getenv("OPENAI_API_KEY")
+    if env_llm_key and env_llm_key.strip():
+        merged["api_key"] = env_llm_key.strip()
+
+    env_llm_base = os.getenv("LLM_BASE_URL") or os.getenv("MINIMAX_BASE_URL")
+    if env_llm_base and env_llm_base.strip():
+        merged["base_url"] = env_llm_base.strip()
+
+    env_llm_model = os.getenv("LLM_MODEL")
+    if env_llm_model and env_llm_model.strip():
+        merged["model"] = env_llm_model.strip()
 
     # Reciprocally derive db_path / data_dir if only one was specified
     if merged["pocketbase_data_dir"] and not merged["pocketbase_db_path"]:

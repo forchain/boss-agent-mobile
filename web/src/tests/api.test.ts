@@ -179,6 +179,33 @@ describe('SvelteKit Server Endpoints', () => {
 		expect(data.greeting_message.length).toBeGreaterThan(10);
 	});
 
+	it('POST /api/match/evaluate safely handles masked API keys without latin-1 failure', async () => {
+		const mockEvent: any = {
+			request: {
+				json: async () => ({
+					job_title: '资深 Agent 研发',
+					company_name: '智能未来',
+					salary_range: '40-60K',
+					job_description: '负责大模型 Agent 与 Android 移动端自动化架构设计，精通 Python',
+					llmSettings: {
+						provider: 'openai',
+						base_url: 'https://api.minimaxi.com/v1',
+						api_key: 'sk-cp-j••••••••••••uG8w',
+						model: 'MiniMax-M3'
+					}
+				})
+			}
+		};
+
+		const response = await handleMatchPost(mockEvent);
+		const data = await response.json();
+
+		expect(response.status).toBe(200);
+		expect(data.greeting_message).toBeDefined();
+		const reasonsStr = JSON.stringify(data.match_reasons || []);
+		expect(reasonsStr).not.toContain('latin-1');
+	});
+
 	it('POST and GET /api/jobs handles deduplication and status listing', async () => {
 		const { POST: handleJobsPost, GET: handleJobsGet } = await import('../routes/api/jobs/+server');
 		const jobData = {
@@ -360,4 +387,123 @@ describe('SvelteKit Server Endpoints', () => {
 		}
 	});
 });
+
+describe('Unified System Settings Endpoints (/api/settings)', () => {
+	it('GET /api/settings returns merged configuration with defaults', async () => {
+		const { GET: handleSettingsGet } = await import('../routes/api/settings/+server');
+		const res = await handleSettingsGet({} as any);
+		expect(res.status).toBe(200);
+		const settings = await res.json();
+
+		expect(settings.device).toBeDefined();
+		expect(settings.server_url).toBeDefined();
+		expect(settings.pocketbase_url).toBeDefined();
+		expect(settings.provider).toBeDefined();
+		expect(settings.model).toBeDefined();
+		expect(typeof settings.daily_greeting_limit).toBe('number');
+		expect(typeof settings.preview_timeout_sec).toBe('number');
+		expect(typeof settings.enable_greeting).toBe('boolean');
+	});
+
+	it('POST /api/settings persists settings and GET reflects updates', async () => {
+		const { GET: handleSettingsGet, POST: handleSettingsPost } = await import(
+			'../routes/api/settings/+server'
+		);
+
+		// 1. Get original settings to restore later
+		const origRes = await handleSettingsGet({} as any);
+		const originalSettings = await origRes.json();
+
+		try {
+			// 2. Post updated settings
+			const testPayload = {
+				...originalSettings,
+				daily_greeting_limit: 42,
+				preview_timeout_sec: 5.5,
+				device: 'emulator-test-5554'
+			};
+			const postEvent = {
+				request: {
+					json: async () => testPayload
+				}
+			} as any;
+
+			const postRes = await handleSettingsPost(postEvent);
+			expect(postRes.status).toBe(200);
+			const postJson = await postRes.json();
+			expect(postJson.success).toBe(true);
+
+			// 3. Verify GET returns updated values
+			const verifyRes = await handleSettingsGet({} as any);
+			const updated = await verifyRes.json();
+			expect(updated.daily_greeting_limit).toBe(42);
+			expect(updated.preview_timeout_sec).toBe(5.5);
+			expect(updated.device).toBe('emulator-test-5554');
+		} finally {
+			// Restore original settings
+			const restoreEvent = {
+				request: {
+					json: async () => originalSettings
+				}
+			} as any;
+			await handleSettingsPost(restoreEvent);
+		}
+	});
+
+	it('GET /api/llm/settings backward-compatible wrapper returns LLM fields', async () => {
+		const { GET: handleLlmGet } = await import('../routes/api/llm/settings/+server');
+		const res = await handleLlmGet({} as any);
+		expect(res.status).toBe(200);
+		const llm = await res.json();
+		expect(llm.provider).toBeDefined();
+		expect(llm.model).toBeDefined();
+		expect(llm.base_url).toBeDefined();
+	});
+
+	it('POST /api/settings preserves original API key when masked display string is sent', async () => {
+		const { GET: handleSettingsGet, POST: handleSettingsPost } = await import(
+			'../routes/api/settings/+server'
+		);
+
+		const origRes = await handleSettingsGet({} as any);
+		const originalSettings = await origRes.json();
+
+		try {
+			await handleSettingsPost({
+				request: {
+					json: async () => ({
+						...originalSettings,
+						api_key: 'sk-real-secret-key-12345678'
+					})
+				}
+			} as any);
+
+			await handleSettingsPost({
+				request: {
+					json: async () => ({
+						...originalSettings,
+						api_key: 'sk-real••••••••••••5678'
+					})
+				}
+			} as any);
+
+			const verifyRes = await handleSettingsGet({} as any);
+			const verified = await verifyRes.json();
+			// Client API response is masked so even admins cannot view full secret
+			expect(verified.api_key).toMatch(/^sk-real••••.*5678$/);
+
+			// Server underlying config preserves the actual secret
+			const { loadMergedSettings } = await import('$lib/server/settings');
+			const realSettings = loadMergedSettings();
+			expect(realSettings.api_key).toBe('sk-real-secret-key-12345678');
+		} finally {
+			await handleSettingsPost({
+				request: {
+					json: async () => originalSettings
+				}
+			} as any);
+		}
+	});
+});
+
 

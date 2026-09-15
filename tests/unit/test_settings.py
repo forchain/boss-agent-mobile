@@ -405,3 +405,69 @@ def test_worker_config_defaults_to_resolved_appium_url(tmp_path: Path):
         cfg = WorkerConfig()
         assert cfg.appium_url == "http://0.0.0.0:4723"
 
+
+def test_settings_example_yaml_pruned_and_consolidated():
+    """Verify settings.example.yaml contains consolidated LLM & system keys and no obsolete keys."""
+    import yaml
+
+    example_path = Path("config/settings.example.yaml")
+    assert example_path.exists()
+    content = example_path.read_text(encoding="utf-8")
+    data = yaml.safe_load(content)
+
+    # Obsolete keys must not be present
+    assert "resume_path" not in data
+    assert "force_refresh_memory" not in data
+    assert "pocketbase_data_dir" not in data
+    assert "pocketbase_db_path" not in data
+
+    # Consolidated system and LLM keys must be present
+    assert data["device"] == "emulator-5554"
+    assert data["avd_name"] == "boss_avd_arm64"
+    assert data["server_url"] == "http://127.0.0.1:4723"
+    assert data["pocketbase_url"] == "http://127.0.0.1:8090"
+    assert data["provider"] == "openai"
+    assert data["base_url"] == "https://api.minimaxi.com/v1"
+    assert data["model"] == "MiniMax-M3"
+    assert data["daily_greeting_limit"] == 20
+    assert data["preview_timeout_sec"] == 3.0
+    assert data["enable_greeting"] is True
+
+
+def test_load_settings_includes_consolidated_defaults(tmp_path: Path):
+    """load_settings returns merged dictionary including LLM and safety parameters."""
+    empty_yaml = tmp_path / "settings.local.yaml"
+    empty_yaml.write_text("# empty\n", encoding="utf-8")
+
+    with patch.dict("os.environ", {}, clear=True):
+        settings = load_settings(config_path=empty_yaml)
+        assert settings["device"] == "emulator-5554"
+        assert settings["provider"] == "openai"
+        assert settings["model"] == "MiniMax-M3"
+        assert settings["daily_greeting_limit"] == 20
+        assert settings["preview_timeout_sec"] == 3.0
+        assert settings["enable_greeting"] is True
+
+
+def test_load_settings_legacy_llm_fallback(tmp_path: Path, monkeypatch):
+    """load_settings falls back to config/llm.local.yaml when api_key is not set in settings."""
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    legacy_file = cfg_dir / "llm.local.yaml"
+    legacy_file.write_text(
+        "api_key: 'sk-legacy-123'\nmodel: 'gpt-4o-custom'\nbase_url: 'https://api.custom.com/v1'\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.chdir(tmp_path)
+    with (
+        patch("boss_agent.settings.DEFAULT_CONFIG_SEARCH_PATHS", []),
+        patch.dict("os.environ", {}, clear=True),
+    ):
+        settings = load_settings()
+        assert settings["api_key"] == "sk-legacy-123"
+        assert settings["model"] == "gpt-4o-custom"
+        assert settings["base_url"] == "https://api.custom.com/v1"
+
+
+

@@ -542,10 +542,12 @@ class ScreeningPolicy:
 
         Hierarchy:
         1. Explicit config_path
-        2. config/screening.local.yaml
-        3. config/screening.local.json
-        4. config/screening.yaml
-        5. config/screening.example.yaml
+        2. config/settings.local.yaml
+        3. config/settings.local.json
+        4. config/settings.yaml
+        5. config/settings.example.yaml
+        6. config/screening.local.yaml (legacy fallback)
+        7. config/screening.example.yaml (legacy fallback)
         """
         paths_to_check: list[Path] = []
         if config_path:
@@ -558,6 +560,11 @@ class ScreeningPolicy:
             except Exception:
                 root = Path.cwd()
             candidate_rel_paths = [
+                Path("config/settings.local.yaml"),
+                Path("config/settings.local.yml"),
+                Path("config/settings.local.json"),
+                Path("config/settings.yaml"),
+                Path("config/settings.example.yaml"),
                 Path("config/screening.local.yaml"),
                 Path("config/screening.local.yml"),
                 Path("config/screening.local.json"),
@@ -585,7 +592,16 @@ class ScreeningPolicy:
 
                         data = json.loads(content)
                     if isinstance(data, dict):
-                        return cls.from_dict(data)
+                        # Verify that screening keys exist in this config file or explicit path
+                        screening_keys = (
+                            "enable_screening",
+                            "title_blacklist",
+                            "title_whitelist",
+                            "jd_blacklist",
+                            "company_blacklist",
+                        )
+                        if config_path or any(k in data for k in screening_keys):
+                            return cls.from_dict(data)
                 except Exception:
                     pass
 
@@ -602,15 +618,28 @@ class ScreeningPolicy:
                 root = resolve_git_common_root()
             except Exception:
                 root = Path.cwd()
-            target_path = root / "config" / "screening.local.yaml"
+            target_path = root / "config" / "settings.local.yaml"
 
         target_path.parent.mkdir(parents=True, exist_ok=True)
+
+        existing_data: dict[str, Any] = {}
+        if target_path.is_file():
+            try:
+                import yaml
+
+                loaded = yaml.safe_load(target_path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    existing_data = loaded
+            except Exception:
+                pass
+
+        merged_data = {**existing_data, **self.to_dict()}
 
         try:
             import yaml
 
             content = yaml.dump(
-                self.to_dict(),
+                merged_data,
                 allow_unicode=True,
                 sort_keys=False,
                 default_flow_style=False,
