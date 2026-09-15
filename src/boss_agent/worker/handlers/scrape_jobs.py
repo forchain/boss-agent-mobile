@@ -150,6 +150,7 @@ class ScrapeJobsHandler(BaseTaskHandler):
         scanned_fingerprints: set[str] = set()
         consecutive_empty_scrolls = 0
         detail_page = JobDetailPage(driver)
+        is_cancelled = False
 
         policy_raw = payload.get("screening_policy")
         policy = (
@@ -164,6 +165,7 @@ class ScrapeJobsHandler(BaseTaskHandler):
                     task.id,
                     "🛑 [Task Cancelled] Task was cancelled by user. Terminating scrape pagination.",
                 )
+                is_cancelled = True
                 break
 
             # 1. Boundary check: Check if feed bottom banner is reached
@@ -334,10 +336,36 @@ class ScrapeJobsHandler(BaseTaskHandler):
                 if clicked:
                     try:
                         job_posting = detail_page.extract_job_posting(timeout_sec=4.0)
+                        post_title = (job_posting.title or "").strip()
+                        card_title = (card.title or "").strip()
+                        effective_title = (
+                            post_title
+                            if (
+                                post_title
+                                and post_title
+                                not in ("未注明职位", "未注明岗位", "未知职位", "未知岗位")
+                            )
+                            else card_title
+                        )
+                        if not effective_title or effective_title in (
+                            "未注明职位",
+                            "未注明岗位",
+                            "未知职位",
+                            "未知岗位",
+                        ):
+                            logger.warning(
+                                "Skipping job detail enrichment due to missing/invalid title: '%s' @ '%s'",
+                                effective_title,
+                                card.company_name,
+                            )
+                            continue
+
                         enriched_data = {
                             "fingerprint": card.fingerprint,
-                            "title": job_posting.title or card.title,
-                            "company_name": job_posting.company_name or card.company_name,
+                            "title": effective_title,
+                            "company_name": (
+                                job_posting.company_name or card.company_name or ""
+                            ).strip(),
                             "recruiter_name": card.recruiter_name
                             or job_posting.recruiter_name
                             or "招聘者",
@@ -421,47 +449,80 @@ class ScrapeJobsHandler(BaseTaskHandler):
 
             # 8. Perform humanized scroll
             list_page.scroll_job_list()
+        if is_cancelled:
+            total_scanned = len(scanned_fingerprints)
+            summary = f"Finished scraping: task was cancelled by user (scanned {total_scanned}, scraped {len(scraped_jobs)}, skipped {skipped_count})"
+            await broker.append_log(task.id, summary)
+            return HandlerResult(
+                success=True,
+                output={
+                    "total_scanned": total_scanned,
+                    "total_scraped": len(scraped_jobs),
+                    "skipped_count": skipped_count,
+                    "scraped_jobs": scraped_jobs,
+                },
+            )
+
         if not scanned_fingerprints:
             # Fallback for mock environments or direct detail view
             total_scanned = 1
             try:
                 job_posting = detail_page.extract_job_posting(timeout_sec=5.0)
-                from boss_agent.models import compute_job_fingerprint
-
-                fp = compute_job_fingerprint(
-                    job_posting.company_name,
-                    job_posting.title,
-                    job_posting.recruiter_name or "招聘者",
-                )
-                if await broker.has_job_fingerprint(fp):
-                    skipped_count += 1
+                post_title = (job_posting.title or "").strip()
+                post_company = (job_posting.company_name or "").strip()
+                if (
+                    not post_title
+                    or post_title in ("未注明职位", "未注明岗位", "未知职位", "未知岗位")
+                    or not post_company
+                    or post_company in ("未注明公司", "未知公司")
+                ):
+                    logger.warning(
+                        "Fallback job extraction ignored due to invalid title or company: title='%s', company='%s'",
+                        post_title,
+                        post_company,
+                    )
                 else:
-                    persisted = await broker.upsert_job_record(
-                        {
-                            "fingerprint": fp,
-                            "title": job_posting.title,
-                            "company_name": job_posting.company_name,
-                            "recruiter_name": job_posting.recruiter_name or "招聘者",
-                            "recruiter_title": getattr(job_posting, "recruiter_title", "") or "",
-                            "is_headhunter": getattr(job_posting, "is_headhunter", False),
-                            "company_scale": getattr(job_posting, "company_scale", "") or "",
-                            "industry": getattr(job_posting, "industry", "") or "",
-                            "tags": getattr(job_posting, "tags", []) or [],
-                            "salary_range": job_posting.salary_range,
-                            "location": job_posting.location,
-                            "digest": getattr(job_posting, "digest", "") or "",
-                            "job_description": job_posting.job_description,
-                            "status": JobRecordStatus.JD_SAVED.value,
-                            "search_keywords": [keyword] if keyword else [],
-                            "source_task_id": task.id,
-                        }
+                    from boss_agent.models import compute_job_fingerprint
+
+                    fp = compute_job_fingerprint(
+                        post_company,
+                        post_title,
+                        job_posting.recruiter_name or "招聘者",
                     )
-                    scraped_jobs.append(persisted)
-                    rec_tag = "[猎头]" if getattr(job_posting, "is_headhunter", False) else "[直招]"
-                    await broker.append_log(
-                        task.id,
-                        f"✅ Extracted {rec_tag} job: {job_posting.title} @ {job_posting.company_name} ({job_posting.salary_range})",
-                    )
+                    if await broker.has_job_fingerprint(fp):
+                        skipped_count += 1
+                    else:
+                        persisted = await broker.upsert_job_record(
+                            {
+                                "fingerprint": fp,
+                                "title": post_title,
+                                "company_name": post_company,
+                                "recruiter_name": job_posting.recruiter_name or "招聘者",
+                                "recruiter_title": getattr(job_posting, "recruiter_title", "") or "",
+                                "is_headhunter": getattr(job_posting, "is_headhunter", False),
+                                "company_scale": getattr(job_posting, "company_scale", "") or "",
+                                "industry": getattr(job_posting, "industry", "") or "",
+                                "tags": getattr(job_posting, "tags", []) or [],
+                                "salary_range": job_posting.salary_range,
+                                "location": job_posting.location,
+                                "digest": getattr(job_posting, "digest", "") or "",
+                                "job_description": job_posting.job_description,
+                                "status": JobRecordStatus.JD_SAVED.value,
+                                "search_keywords": [keyword] if keyword else [],
+                                "source_task_id": task.id,
+                            }
+                        )
+                        if persisted:
+                            scraped_jobs.append(persisted)
+                            rec_tag = (
+                                "[猎头]"
+                                if getattr(job_posting, "is_headhunter", False)
+                                else "[直招]"
+                            )
+                            await broker.append_log(
+                                task.id,
+                                f"✅ Extracted {rec_tag} job: {post_title} @ {post_company} ({job_posting.salary_range})",
+                            )
             except Exception as e:
                 await broker.append_log(task.id, f"Notice on job extraction: {e}")
         else:

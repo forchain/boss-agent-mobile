@@ -213,6 +213,17 @@ class AutoApplyHandler(BaseTaskHandler):
             await broker.append_log(task.id, f"Could not extract current job posting: {e}")
             return HandlerResult(success=False, error_message=str(e))
 
+        job_title = (job_posting.title or "").strip()
+        if not job_title or job_title in ("未注明职位", "未注明岗位", "未知职位", "未知岗位"):
+            await broker.append_log(
+                task.id,
+                f"❌ [Invalid Title] Current screen does not show a valid job title: '{job_posting.title}'. Skipping application.",
+            )
+            return HandlerResult(
+                success=False,
+                error_message=f"Current screen does not show a valid job title: '{job_posting.title}'",
+            )
+
         # 5. Execute Multi-Stage Screening & Greeting Pipeline via LangGraph
         card = JobCardBrief(
             title=job_posting.title,

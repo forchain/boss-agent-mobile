@@ -24,6 +24,9 @@ from boss_agent.settings import resolve_pocketbase_url
 
 logger = logging.getLogger("boss_agent.broker")
 
+INVALID_JOB_TITLES: frozenset[str] = frozenset({"", "未注明职位", "未注明岗位", "未知职位", "未知岗位"})
+INVALID_COMPANY_NAMES: frozenset[str] = frozenset({"", "未注明公司", "未知公司"})
+
 
 class BaseTaskBroker(ABC):
     """Abstract interface for the State Stream Task Broker."""
@@ -261,11 +264,12 @@ class InMemoryTaskBroker(BaseTaskBroker):
             return fingerprint in self._job_fingerprints
 
     async def upsert_job_record(self, record_data: dict[str, Any]) -> dict[str, Any]:
+        title = (record_data.get("title") or "").strip()
         comp_name = (record_data.get("company_name") or "").strip()
         fingerprint = record_data.get("fingerprint") or (
             compute_job_fingerprint(
                 company_name=comp_name,
-                title=record_data.get("title", ""),
+                title=title,
                 recruiter_name=record_data.get("recruiter_name", ""),
             )
             if comp_name
@@ -274,10 +278,16 @@ class InMemoryTaskBroker(BaseTaskBroker):
 
         async with self._lock:
             existing_id = self._job_fingerprints.get(fingerprint) if fingerprint else None
-            if not existing_id and (not comp_name or comp_name == "未知公司"):
+            if not existing_id and (
+                not title
+                or title in INVALID_JOB_TITLES
+                or not comp_name
+                or comp_name in INVALID_COMPANY_NAMES
+            ):
                 logger.warning(
-                    "Rejected upsert of incomplete job record without valid company_name: '%s'",
-                    record_data.get("title", ""),
+                    "Rejected upsert of incomplete job record without valid title or company: title='%s', company='%s'",
+                    title,
+                    comp_name,
                 )
                 return {}
 
@@ -285,6 +295,8 @@ class InMemoryTaskBroker(BaseTaskBroker):
             if existing_id:
                 rec = self._job_records[existing_id]
                 rec["last_seen_at"] = now
+                if title and title not in INVALID_JOB_TITLES and title != rec.get("title"):
+                    rec["title"] = title
                 new_kw = record_data.get("search_keywords", [])
                 merged_kw = list(dict.fromkeys((rec.get("search_keywords") or []) + new_kw))
                 rec["search_keywords"] = merged_kw
@@ -1235,20 +1247,27 @@ class PocketBaseTaskBroker(BaseTaskBroker):
         return 0
 
     async def upsert_job_record(self, record_data: dict[str, Any]) -> dict[str, Any]:
+        title = (record_data.get("title") or "").strip()
         comp_name = (record_data.get("company_name") or "").strip()
         fingerprint = record_data.get("fingerprint") or (
             compute_job_fingerprint(
                 company_name=comp_name,
-                title=record_data.get("title", ""),
+                title=title,
                 recruiter_name=record_data.get("recruiter_name", ""),
             )
             if comp_name
             else ""
         )
-        if not fingerprint and (not comp_name or comp_name == "未知公司"):
+        if not fingerprint and (
+            not comp_name
+            or comp_name in INVALID_COMPANY_NAMES
+            or not title
+            or title in INVALID_JOB_TITLES
+        ):
             logger.warning(
-                "Rejected upsert of incomplete job record without valid company_name: '%s'",
-                record_data.get("title", ""),
+                "Rejected upsert of incomplete job record without valid title or company: title='%s', company='%s'",
+                title,
+                comp_name,
             )
             return {}
 
@@ -1279,8 +1298,12 @@ class PocketBaseTaskBroker(BaseTaskBroker):
                         "last_seen_at": now,
                         "search_keywords": merged_kw,
                     }
-                    if record_data.get("title") and record_data["title"] != existing.get("title"):
-                        patch_body["title"] = record_data["title"]
+                    if (
+                        title
+                        and title not in INVALID_JOB_TITLES
+                        and title != existing.get("title")
+                    ):
+                        patch_body["title"] = title
                     if record_data.get("recruiter_name") and record_data[
                         "recruiter_name"
                     ] != existing.get("recruiter_name"):
@@ -1345,10 +1368,16 @@ class PocketBaseTaskBroker(BaseTaskBroker):
             logger.warning("PocketBase check fingerprint exception: %s", e)
 
         # Insert new record
-        if not comp_name or comp_name == "未知公司":
+        if (
+            not title
+            or title in INVALID_JOB_TITLES
+            or not comp_name
+            or comp_name in INVALID_COMPANY_NAMES
+        ):
             logger.warning(
-                "Rejected insert of incomplete job record without valid company_name: '%s'",
-                record_data.get("title", ""),
+                "Rejected insert of incomplete job record without valid title or company: title='%s', company='%s'",
+                title,
+                comp_name,
             )
             return {}
 
