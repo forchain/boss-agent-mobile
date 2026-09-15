@@ -1447,9 +1447,10 @@ class JobDetailPage(BaseBossPage):
                 f"'查看更多' still present in final text for '{title}'. Length: {len(desc)}"
             )
 
-        if not title and not salary and not desc:
+        if not title and not desc:
             raise RuntimeError(
-                "Failed to extract job posting: Job detail screen elements (title, salary, description) were all empty or missing."
+                "Failed to extract job posting: Both job title and description were missing or empty. "
+                "The current screen is not a valid job detail page."
             )
 
         return JobPosting(

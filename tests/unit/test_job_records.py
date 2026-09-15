@@ -426,3 +426,63 @@ def test_extract_digest_and_tags_from_jd():
     assert len(rec.tags) > 0
     assert "Java" in rec.tags
 
+
+@pytest.mark.asyncio
+async def test_broker_rejects_unspecified_or_empty_title_or_company():
+    """Verify upsert_job_record drops records with empty or placeholder title/company ('宁可不录入')."""
+    broker = InMemoryTaskBroker()
+
+    # Rejected titles
+    for bad_title in ["", "   ", "未注明职位", "未注明岗位", "未知职位", "未知岗位"]:
+        res = await broker.upsert_job_record(
+            {
+                "title": bad_title,
+                "company_name": "正常公司",
+                "recruiter_name": "招聘者",
+            }
+        )
+        assert res == {}, f"Should have rejected bad title '{bad_title}'"
+
+    # Rejected companies
+    for bad_company in ["", "   ", "未注明公司", "未知公司"]:
+        res = await broker.upsert_job_record(
+            {
+                "title": "Python工程师",
+                "company_name": bad_company,
+                "recruiter_name": "招聘者",
+            }
+        )
+        assert res == {}, f"Should have rejected bad company '{bad_company}'"
+
+    assert len(await broker.list_job_records()) == 0
+
+
+@pytest.mark.asyncio
+async def test_broker_does_not_overwrite_title_with_unspecified_on_patch():
+    """Verify patching an existing job record never overwrites its legitimate title with '未注明职位'."""
+    broker = InMemoryTaskBroker()
+
+    rec = await broker.upsert_job_record(
+        {
+            "title": "全栈开发工程师",
+            "company_name": "优质企业",
+            "recruiter_name": "张经理",
+            "status": "jd_saved",
+        }
+    )
+    assert rec["title"] == "全栈开发工程师"
+
+    # Try patching with "未注明职位"
+    patched = await broker.upsert_job_record(
+        {
+            "fingerprint": rec["fingerprint"],
+            "title": "未注明职位",
+            "company_name": "优质企业",
+            "recruiter_name": "张经理",
+            "digest": "更新的职位摘要",
+        }
+    )
+    assert patched["title"] == "全栈开发工程师"
+    assert patched["digest"] == "更新的职位摘要"
+
+
