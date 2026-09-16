@@ -172,6 +172,19 @@ cmd_start() {
         fi
     done
 
+    if [[ "${IS_DAEMON}" -eq 1 || "${DAEMON:-0}" -eq 1 ]]; then
+        if [[ ${#VITE_ARGS[@]} -gt 0 ]]; then
+            nohup env HOST="${WEB_HOST}" PORT="${WEB_PORT}" VITE_POCKETBASE_URL="${POCKETBASE_URL}" PUBLIC_POCKETBASE_URL="${POCKETBASE_URL}" npm --prefix web run dev -- --host "${WEB_HOST}" --port "${WEB_PORT}" "${VITE_ARGS[@]}" >> "${LOG_FILE}" 2>&1 &
+        else
+            nohup env HOST="${WEB_HOST}" PORT="${WEB_PORT}" VITE_POCKETBASE_URL="${POCKETBASE_URL}" PUBLIC_POCKETBASE_URL="${POCKETBASE_URL}" npm --prefix web run dev -- --host "${WEB_HOST}" --port "${WEB_PORT}" >> "${LOG_FILE}" 2>&1 &
+        fi
+        local PID=$!
+        echo "${PID}" > "${PID_FILE}"
+        echo "✅ SvelteKit Web Dashboard started in background (PID: ${PID})."
+        echo "   Logs: ${LOG_FILE}"
+        return 0
+    fi
+
     # Start in background, capture PID, pipe to log and tail
     if [[ ${#VITE_ARGS[@]} -gt 0 ]]; then
         HOST="${WEB_HOST}" PORT="${WEB_PORT}" VITE_POCKETBASE_URL="${POCKETBASE_URL}" PUBLIC_POCKETBASE_URL="${POCKETBASE_URL}" npm --prefix web run dev -- --host "${WEB_HOST}" --port "${WEB_PORT}" "${VITE_ARGS[@]}" >> "${LOG_FILE}" 2>&1 &
@@ -180,12 +193,6 @@ cmd_start() {
     fi
     local PID=$!
     echo "${PID}" > "${PID_FILE}"
-
-    if [[ "${IS_DAEMON}" -eq 1 || "${DAEMON:-0}" -eq 1 ]]; then
-        echo "✅ SvelteKit Web Dashboard started in background (PID: ${PID})."
-        echo "   Logs: ${LOG_FILE}"
-        return 0
-    fi
 
     trap 'echo -e "\n🛑 Stopping Web Dashboard (PID: '"${PID}"')..."; kill '"${PID}"' 2>/dev/null || true; rm -f '"${PID_FILE}"'; exit 0' INT TERM
 
