@@ -129,4 +129,31 @@ describe('SvelteKit Server Hooks (hooks.server.ts)', () => {
 		expect(consoleErrorSpy.mock.calls[0][1]).toBe(error);
 		expect(result).toEqual({ message: 'Internal Error' });
 	});
+
+	it('redirects /favicon.png and /favicon.ico to /favicon.svg', async () => {
+		const pngEvent = createMockEvent('/favicon.png', 'GET');
+		const pngRes = await handle({ event: pngEvent, resolve: vi.fn() });
+		expect(pngRes.status).toBe(302);
+		expect(pngRes.headers.get('Location')).toBe('/favicon.svg');
+
+		const icoEvent = createMockEvent('/favicon.ico', 'GET');
+		const icoRes = await handle({ event: icoEvent, resolve: vi.fn() });
+		expect(icoRes.status).toBe(302);
+		expect(icoRes.headers.get('Location')).toBe('/favicon.svg');
+	});
+
+	it('does not log 404 Not Found as [SERVER ERROR]', async () => {
+		const error = new Error('Not found');
+		const event = createMockEvent('/favicon.png', 'GET');
+
+		const result = handleError({
+			error,
+			event,
+			status: 404,
+			message: 'Not Found'
+		});
+
+		expect(consoleErrorSpy).not.toHaveBeenCalled();
+		expect(result).toEqual({ message: 'Not Found' });
+	});
 });

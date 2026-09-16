@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#020617"/>
+    </linearGradient>
+    <linearGradient id="primary" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#06b6d4"/>
+      <stop offset="100%" stop-color="#3b82f6"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#10b981"/>
+      <stop offset="100%" stop-color="#06b6d4"/>
+    </linearGradient>
+  </defs>
+  
+  <!-- Rounded Container -->
+  <rect width="64" height="64" rx="16" fill="url(#bg)"/>
+  <rect width="62" height="62" x="1" y="1" rx="15" fill="none" stroke="#334155" stroke-width="1.5" stroke-opacity="0.8"/>
+  
+  <!-- Robot / Agent Antenna -->
+  <circle cx="32" cy="14" r="3" fill="url(#accent)"/>
+  <path d="M32 17v4" stroke="#06b6d4" stroke-width="2.5" stroke-linecap="round"/>
+  
+  <!-- Agent Head / Screen Outline -->
+  <rect x="14" y="21" width="36" height="26" rx="7" fill="#1e293b" stroke="url(#primary)" stroke-width="2.5"/>
+  
+  <!-- Eyes / Scanner -->
+  <circle cx="25" cy="34" r="3.5" fill="#38bdf8"/>
+  <circle cx="39" cy="34" r="3.5" fill="#38bdf8"/>
+  <circle cx="26" cy="33" r="1" fill="#ffffff"/>
+  <circle cx="40" cy="33" r="1" fill="#ffffff"/>
+  
+  <!-- Wave / Status Bar at bottom -->
+  <rect x="23" y="41" width="18" height="2" rx="1" fill="url(#accent)"/>
+  
+  <!-- Sparkle Accent in top right -->
+  <path d="M48 11l1 3 3 1-3 1-1 3-1-3-3-1 3-1z" fill="#facc15"/>
+</svg>
