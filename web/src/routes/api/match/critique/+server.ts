@@ -7,8 +7,11 @@ import { readGreetingRules } from '$lib/server/greetingRulesConfig';
  * Extract the LAST top-level JSON object from a string. Scans from the end
  * for a balanced `{...}` block, which is the convention used by the Python
  * script (log lines on stdout first, JSON object on the last line).
+ *
+ * Underscore-prefixed so SvelteKit ignores it as a non-handler export while
+ * keeping it importable from unit tests.
  */
-export function extractLastJson(text: string): string | null {
+export function _extractLastJson(text: string): string | null {
 	let depth = 0;
 	let end = -1;
 	for (let i = text.length - 1; i >= 0; i--) {
@@ -85,7 +88,7 @@ export const POST: RequestHandler = async ({ request }) => {
 			// log lines (including rich-formatted error traces with literal
 			// newlines) before the final JSON line — greedy matching would
 			// capture them and break JSON.parse with "Bad control character".
-			const lastJson = extractLastJson(stdout);
+			const lastJson = _extractLastJson(stdout);
 			if (lastJson) {
 				try {
 					const parsed = JSON.parse(lastJson);

@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { extractLastJson } from '../routes/api/match/critique/+server';
+import { _extractLastJson } from '../routes/api/match/critique/+server';
 
 describe('extractLastJson', () => {
 	it('returns the only JSON object when stdout is just JSON', () => {
 		const out = '{"success":true,"revised_greeting":"hi"}';
-		expect(extractLastJson(out)).toBe(out);
+		expect(_extractLastJson(out)).toBe(out);
 	});
 
 	it('ignores leading rich-formatted log lines and returns the trailing JSON', () => {
@@ -16,7 +16,7 @@ describe('extractLastJson', () => {
 		const trailingJson = '{"success":false,"error":"LLM 微调失败"}';
 		const stdout = leadingLog + trailingJson + '\n';
 
-		const result = extractLastJson(stdout);
+		const result = _extractLastJson(stdout);
 		expect(result).not.toBeNull();
 		expect(JSON.parse(result!)).toEqual({
 			success: false,
@@ -27,7 +27,7 @@ describe('extractLastJson', () => {
 	it('handles nested objects and arrays correctly', () => {
 		const out =
 			'log noise\n{"success":true,"rule":{"id":"r1","tags":["a","b"],"nested":{"k":1}}}';
-		const result = extractLastJson(out);
+		const result = _extractLastJson(out);
 		expect(result).not.toBeNull();
 		expect(JSON.parse(result!)).toEqual({
 			success: true,
@@ -36,9 +36,9 @@ describe('extractLastJson', () => {
 	});
 
 	it('returns null when there is no balanced JSON object', () => {
-		expect(extractLastJson('no braces here')).toBeNull();
-		expect(extractLastJson('{unbalanced')).toBeNull();
-		expect(extractLastJson('')).toBeNull();
+		expect(_extractLastJson('no braces here')).toBeNull();
+		expect(_extractLastJson('{unbalanced')).toBeNull();
+		expect(_extractLastJson('')).toBeNull();
 	});
 
 	it('does not falsely match the first opening brace when later braces exist', () => {
@@ -47,13 +47,13 @@ describe('extractLastJson', () => {
 		// control characters. extractLastJson must start at the LAST opening
 		// brace that balances with the FINAL closing brace.
 		const stdout = 'noise { bad } more noise\n{"a":1}';
-		const result = extractLastJson(stdout);
+		const result = _extractLastJson(stdout);
 		expect(result).toBe('{"a":1}');
 	});
 
 	it('preserves literal Chinese characters and escape sequences inside JSON', () => {
 		const out = '{"revised_greeting":"您好，\\n这是打招呼文案。"}';
-		const result = extractLastJson(out);
+		const result = _extractLastJson(out);
 		expect(result).toBe(out);
 		const parsed = JSON.parse(result!);
 		expect(parsed.revised_greeting).toBe('您好，\n这是打招呼文案。');
