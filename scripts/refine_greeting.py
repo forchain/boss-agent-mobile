@@ -177,12 +177,15 @@ def main() -> None:
             )
         except Exception as e:
             sys.stderr.write(f"Refinement error: {e}\n")
+            # Surface the failure honestly. Do NOT concatenate the critique
+            # onto the original greeting as a fake "refined" version —
+            # that violates the contract that the LLM produces the rewrite.
             sys.stdout.write(
                 json.dumps(
                     {
                         "success": False,
                         "error": str(e),
-                        "revised_greeting": f"{current_greeting} （优化：{critique}）",
+                        "refinement_failed": True,
                     },
                     ensure_ascii=False,
                 )

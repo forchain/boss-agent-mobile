@@ -213,8 +213,14 @@ class JobMatchGreetingService:
         except Exception as e:
             console.print(f"[bold red]❌ LLM greeting refinement error:[/bold red] {e}")
 
-        # Fallback if LLM call failed or returned empty
-        return f"{current_greeting} （根据意见优化：{critique}）"
+        # Fallback if LLM call failed or returned empty.
+        # We deliberately raise so the caller (Python script / API endpoint)
+        # can surface a real error to the UI — never silently produce a
+        # concatenated "fake refined" greeting that the user would mistake
+        # for an actual LLM rewrite.
+        raise RuntimeError(
+            f"LLM 微调失败，无法生成优化文案：{e if 'e' in dir() else 'unknown'}"
+        )
 
     @traceable(name="JobMatchGreetingService.distill_memory_rule", run_type="chain")
     def distill_memory_rule(

@@ -9,6 +9,8 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
 from boss_agent.greeting_rules import (
     GreetingStyleRule,
     load_greeting_rules,
@@ -312,3 +314,29 @@ def test_service_distill_fallback_rewrites_raw_critique():
     assert raw_critique in rule.instruction  # still references the user's intent
     # Raw critique is trimmed to a sane length to keep the rule readable.
     assert len(rule.instruction) <= 280
+
+
+def test_service_refine_with_critique_raises_on_llm_failure():
+    """When LLM refinement fails, the method MUST raise — not silently
+    return a fake 'refined' greeting that is just the original text with the
+    critique concatenated in parentheses. This bug previously caused the UI
+    to show '优化后: <original>（结合建议补充：...）' as a real refinement."""
+
+    mock_llm = MagicMock()
+    mock_llm.chat_completion_json.side_effect = RuntimeError("simulated refine failure")
+
+    service = JobMatchGreetingService(llm_client=mock_llm)
+    job = JobPosting(
+        title="Senior AI Architect",
+        company_name="Global Tech",
+        salary_range="50-70K",
+        job_description="Global AI Agent role.",
+    )
+    original = "您好，我对贵司AI架构师职位非常感兴趣。"
+
+    with pytest.raises(RuntimeError, match="LLM 微调失败"):
+        service.refine_with_critique(
+            job=job,
+            current_greeting=original,
+            critique="请强调我的英语能力",
+        )

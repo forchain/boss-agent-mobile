@@ -62,6 +62,19 @@ export const POST: RequestHandler = async ({ request }) => {
 			if (jsonMatch) {
 				try {
 					const parsed = JSON.parse(jsonMatch[0]);
+					// If the Python script itself reports failure (success: false or
+					// refinement_failed: true), surface it as an error — never fabricate
+					// a fake "refined" greeting by concatenating the critique.
+					if (parsed && parsed.success === false) {
+						return json(
+							{
+								success: false,
+								error: parsed.error || 'Python refine script reported failure',
+								refinement_failed: true
+							},
+							{ status: 502 }
+						);
+					}
 					return json(parsed);
 				} catch (e) {
 					console.warn('[critique] Failed to parse Python script JSON output:', e);
@@ -69,33 +82,40 @@ export const POST: RequestHandler = async ({ request }) => {
 			}
 		}
 
-		// Fallback heuristics if python runner failed or did not return parseable JSON
+		// Python runner itself failed (non-zero exit / no parseable JSON).
+		// For refine, we REFUSE to fabricate a fake greeting by string-concatenating
+		// the critique onto the original — that is precisely the bug we are
+		// removing. Surface a real error to the UI.
 		if (action === 'refine') {
-			const fallbackGreeting = current_greeting
-				? `${current_greeting} （结合建议补充：${critique}）`
-				: `针对${jobPayload.company_name}招聘的${jobPayload.job_title}，根据您的意见（${critique}），我具备深厚技术积累与实践经验，期待深入沟通！`;
-			return json({
-				success: true,
-				revised_greeting: fallbackGreeting,
-				fallback: true,
-				warning: stderr || 'LLM execution fallback'
-			});
-		} else {
-			// Distill fallback
-			return json({
-				success: true,
-				rule: {
-					id: `rule_${Date.now()}_fallback`,
-					condition: `当 JD 涉及【${jobPayload.job_title}】或相关要求时`,
-					instruction: critique || `针对【${jobPayload.job_title}】突出核心实战落地经验与成果`,
-					enabled: true,
-					source_job: `${jobPayload.company_name} - ${jobPayload.job_title}`,
-					created_at: new Date().toISOString()
+			console.warn(`[critique] Python refine failed (code=${code}): ${stderr || 'no stderr'}`);
+			return json(
+				{
+					success: false,
+					error: `LLM 优化失败：${stderr || 'Python 脚本执行失败，未能生成优化文案。请检查 LLM 配置或重试。'}`,
+					refinement_failed: true
 				},
-				fallback: true,
-				warning: stderr || 'Rule distillation fallback'
-			});
+				{ status: 502 }
+			);
 		}
+
+		// Distill fallback: even on failure, never store the raw critique verbatim
+		// as the rule instruction — wrap it as a directive-style agent hint.
+		const trimmedCritique = (critique || '').trim().slice(0, 200);
+		return json({
+			success: true,
+			rule: {
+				id: `rule_${Date.now()}_fallback`,
+				condition: `当 JD 涉及【${jobPayload.job_title}】或相关要求时`,
+				instruction: trimmedCritique
+					? `在招呼语中体现求职者偏好：${trimmedCritique}（具体由后续 Agent 结合 JD 灵活展开）`
+					: `针对【${jobPayload.job_title}】突出核心实战落地经验与成果`,
+				enabled: true,
+				source_job: `${jobPayload.company_name} - ${jobPayload.job_title}`,
+				created_at: new Date().toISOString()
+			},
+			fallback: true,
+			warning: stderr || 'Rule distillation fallback'
+		});
 	} catch (err: any) {
 		return json({ success: false, error: err?.message || 'Critique action failed' }, { status: 500 });
 	}
