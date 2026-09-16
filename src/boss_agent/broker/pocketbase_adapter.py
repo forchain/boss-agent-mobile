@@ -278,6 +278,15 @@ class InMemoryTaskBroker(BaseTaskBroker):
 
         async with self._lock:
             existing_id = self._job_fingerprints.get(fingerprint) if fingerprint else None
+            # Fallback dedup: if no exact fingerprint match and recruiter is generic placeholder, check if company + title already exists
+            if not existing_id and comp_name and title and record_data.get("recruiter_name") in ("", "招聘者"):
+                for cand_id, cand_rec in self._job_records.items():
+                    if (
+                        cand_rec.get("company_name", "").strip() == comp_name
+                        and cand_rec.get("title", "").strip() == title
+                    ):
+                        existing_id = cand_id
+                        break
             if not existing_id and (
                 not title
                 or title in INVALID_JOB_TITLES
@@ -300,6 +309,9 @@ class InMemoryTaskBroker(BaseTaskBroker):
                 new_kw = record_data.get("search_keywords", [])
                 merged_kw = list(dict.fromkeys((rec.get("search_keywords") or []) + new_kw))
                 rec["search_keywords"] = merged_kw
+                new_recruiter = record_data.get("recruiter_name")
+                if new_recruiter and new_recruiter not in ("", "招聘者"):
+                    rec["recruiter_name"] = new_recruiter
                 if record_data.get("digest") and not rec.get("digest"):
                     rec["digest"] = record_data["digest"]
                 if record_data.get("job_description"):
@@ -1287,6 +1299,20 @@ class PocketBaseTaskBroker(BaseTaskBroker):
             )
             if check_resp.status_code == 200:
                 items = check_resp.json().get("items", [])
+                # Fallback dedup: if no exact fingerprint match and recruiter is generic placeholder, check if company + title already exists
+                if not items and comp_name and title and record_data.get("recruiter_name") in ("", "招聘者"):
+                    fb_filter = f'company_name="{comp_name}" && title="{title}"'
+                    fb_resp = await loop.run_in_executor(
+                        None,
+                        lambda: self.session.get(
+                            url,
+                            params={"filter": fb_filter, "perPage": "1"},
+                            headers=self._headers(),
+                        ),
+                    )
+                    if fb_resp.status_code == 200:
+                        items = fb_resp.json().get("items", [])
+
                 if items:
                     existing = items[0]
                     rec_id = existing["id"]
@@ -1304,10 +1330,13 @@ class PocketBaseTaskBroker(BaseTaskBroker):
                         and title != existing.get("title")
                     ):
                         patch_body["title"] = title
-                    if record_data.get("recruiter_name") and record_data[
-                        "recruiter_name"
-                    ] != existing.get("recruiter_name"):
-                        patch_body["recruiter_name"] = record_data["recruiter_name"]
+                    new_recruiter = record_data.get("recruiter_name")
+                    if (
+                        new_recruiter
+                        and new_recruiter not in ("", "招聘者")
+                        and new_recruiter != existing.get("recruiter_name")
+                    ):
+                        patch_body["recruiter_name"] = new_recruiter
                     if record_data.get("digest") and not existing.get("digest"):
                         patch_body["digest"] = record_data["digest"]
                     if record_data.get("job_description"):

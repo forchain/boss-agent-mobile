@@ -890,19 +890,19 @@
 				<div class="bg-slate-950/60 border border-slate-800/80 rounded-xl p-4 space-y-3">
 					<div class="flex items-center justify-between">
 						<div class="flex items-center space-x-1.5">
-							<span class="text-xs font-semibold text-slate-200">摘要与 JD 关键词黑名单 (JD Blacklist)</span>
+							<span class="text-xs font-semibold text-slate-200">卡片摘要关键词黑名单 (Digest Blacklist)</span>
 							<span class="text-[10px] px-1.5 py-0.5 rounded bg-rose-950/60 text-rose-400 border border-rose-800/50">一票否决</span>
 						</div>
 						<span class="text-[11px] text-slate-500">{screeningPolicy.jd_blacklist.length} 项</span>
 					</div>
 					<p class="text-[11px] text-slate-400 leading-relaxed">
-						卡片摘要或岗位描述命中即淘汰（如：<code class="text-slate-300">外包</code>, <code class="text-slate-300">驻场</code>, <code class="text-slate-300">电销</code>, <code class="text-slate-300">无底薪</code>）。
+						卡片摘要或标签命中即淘汰（如：<code class="text-slate-300">外包</code>, <code class="text-slate-300">驻场</code>, <code class="text-slate-300">电销</code>, <code class="text-slate-300">无底薪</code>），仅匹配卡片核心亮点，避免误伤全文。
 					</p>
 
 					<!-- Chips container -->
 					<div class="flex flex-wrap gap-1.5 min-h-[32px] p-2 bg-slate-900/60 border border-slate-800 rounded-lg">
 						{#if screeningPolicy.jd_blacklist.length === 0}
-							<span class="text-[11px] text-slate-500 italic">（暂无摘要与 JD 黑名单词）</span>
+							<span class="text-[11px] text-slate-500 italic">（暂无卡片摘要黑名单词）</span>
 						{:else}
 							{#each screeningPolicy.jd_blacklist as item, idx}
 								<span class="inline-flex items-center space-x-1 text-xs px-2 py-0.5 rounded-md bg-amber-950 text-amber-300 border border-amber-800/70">
@@ -922,7 +922,7 @@
 					<div class="flex items-center space-x-2">
 						<input
 							type="text"
-							placeholder="输入摘要/JD黑名单词，如: 外包"
+							placeholder="输入卡片摘要黑名单词，如: 外包"
 							bind:value={newJdBlacklist}
 							onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addTag('jd_blacklist', newJdBlacklist); } }}
 							class="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-amber-500 font-mono"

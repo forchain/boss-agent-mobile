@@ -795,6 +795,31 @@ class JobListPage(BaseBossPage):
 
             # Skip incomplete or partially visible cards without genuine company name
             if title and company and company.strip() not in ("", "未知公司"):
+                # Safeguard against viewport cutoff:
+                # When a card is cut off at the bottom of the screen, the lower sub-elements
+                # (recruiter_name and location) are not loaded into the accessibility hierarchy yet.
+                # If neither recruiter nor location was extracted, check if the card is located
+                # near the bottom edge of the viewport. If so, skip it for now and let the next scroll
+                # bring it into full view to extract complete data.
+                if not recruiter_name and not location:
+                    try:
+                        elem_loc = getattr(card_elem, "location", None) or {}
+                        elem_size = getattr(card_elem, "size", None) or {}
+                        card_bottom = elem_loc.get("y", 0) + elem_size.get("height", 0)
+                        win_height = self._get_window_size()["height"]
+                        # If card's bottom touches or exceeds 85% of screen height, it's cut off by viewport
+                        if card_bottom >= win_height * 0.85:
+                            logger.info(
+                                "Skipping bottom-cutoff job card '%s - %s' (card_bottom=%d, win_h=%d) to wait for next scroll",
+                                company.strip(),
+                                title,
+                                card_bottom,
+                                win_height,
+                            )
+                            continue
+                    except Exception:
+                        pass
+
                 briefs.append(
                     JobCardBrief(
                         title=title,
