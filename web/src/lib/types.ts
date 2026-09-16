@@ -64,6 +64,15 @@ export interface ResumeRevision {
 }
 
 
+export interface GreetingStyleRule {
+	id: string;
+	condition: string;
+	instruction: string;
+	enabled: boolean;
+	source_job?: string;
+	created_at?: string;
+}
+
 export interface ScreeningPolicy {
 	title_whitelist: string[];
 	title_blacklist: string[];
