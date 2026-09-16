@@ -63,7 +63,9 @@ export const POST: RequestHandler = async ({ request }) => {
 				try {
 					const parsed = JSON.parse(jsonMatch[0]);
 					return json(parsed);
-				} catch (e) {}
+				} catch (e) {
+					console.warn('[critique] Failed to parse Python script JSON output:', e);
+				}
 			}
 		}
 

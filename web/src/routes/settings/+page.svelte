@@ -85,8 +85,19 @@
 	let isSavingRules = $state(false);
 	let saveRulesSuccess = $state('');
 	let saveRulesError = $state('');
+	let rulesUnsaved = $state(false);
+
+	function beforeUnloadHandler(e: BeforeUnloadEvent) {
+		if (rulesUnsaved) {
+			e.preventDefault();
+			e.returnValue = '您有未保存的招呼语规则变更,确定离开吗?';
+		}
+	}
 
 	onMount(async () => {
+		if (typeof window !== 'undefined') {
+			window.addEventListener('beforeunload', beforeUnloadHandler);
+		}
 		try {
 			const res = await fetch('/api/settings');
 			if (res.ok) {
@@ -173,16 +184,19 @@
 		};
 
 		greetingRules = [newRule, ...greetingRules];
+		rulesUnsaved = true;
 		newRuleCondition = '';
 		newRuleInstruction = '';
 	}
 
 	function removeGreetingRule(id: string) {
 		greetingRules = greetingRules.filter((r) => r.id !== id);
+		rulesUnsaved = true;
 	}
 
 	function toggleGreetingRule(id: string) {
 		greetingRules = greetingRules.map((r) => (r.id === id ? { ...r, enabled: !r.enabled } : r));
+		rulesUnsaved = true;
 	}
 
 	async function onSaveGreetingRules() {
@@ -201,6 +215,7 @@
 				if (Array.isArray(data.rules)) {
 					greetingRules = data.rules;
 				}
+				rulesUnsaved = false;
 				setTimeout(() => {
 					saveRulesSuccess = '';
 				}, 4000);
@@ -1377,18 +1392,24 @@
 		<!-- Action Footer -->
 		<div class="flex flex-col sm:flex-row items-center justify-between pt-4 border-t border-slate-800/80 gap-3">
 			<span class="text-[11px] text-slate-500 font-mono">
-				📁 规则将持久化存入 config/greeting_rules.local.yaml
+				{#if rulesUnsaved}
+					<span class="text-amber-400">⚠️ 有未保存的规则变更</span>
+				{:else}
+					📁 规则将持久化存入 config/greeting_rules.local.yaml
+				{/if}
 			</span>
 
 			<button
 				type="button"
 				onclick={onSaveGreetingRules}
-				disabled={isSavingRules}
+				disabled={isSavingRules || !rulesUnsaved}
 				class="w-full sm:w-auto bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-semibold px-5 py-2.5 rounded-xl text-xs transition shadow-lg shadow-cyan-500/10 flex items-center justify-center space-x-1.5 disabled:opacity-60"
 			>
 				{#if isSavingRules}
 					<span class="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
 					<span>正在保存偏好规则...</span>
+				{:else if rulesUnsaved}
+					<span>💾 保存未保存的规则变更</span>
 				{:else}
 					<span>💾 保存长期记忆规则库</span>
 				{/if}

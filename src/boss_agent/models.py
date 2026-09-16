@@ -10,15 +10,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-from .greeting_rules import (
-    GreetingStyleRule as GreetingStyleRule,
-)
-from .greeting_rules import (
-    load_greeting_rules as load_greeting_rules,
-)
-from .greeting_rules import (
-    save_greeting_rules as save_greeting_rules,
-)
+
 
 
 class AuthStatus(StrEnum):

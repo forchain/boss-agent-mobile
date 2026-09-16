@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import yaml from 'js-yaml';
 import { getProjectRoot } from './pythonRunner';
 import type { GreetingStyleRule } from '$lib/types';
 
@@ -9,88 +10,57 @@ export function getGreetingRulesConfigPath(): string {
 }
 
 export function parseGreetingRulesYaml(content: string): GreetingStyleRule[] {
-	const rules: GreetingStyleRule[] = [];
-	const lines = content.split('\n');
-	let currentRule: Partial<GreetingStyleRule> | null = null;
-
-	for (const rawLine of lines) {
-		const line = rawLine.trim();
-		if (!line || line.startsWith('#')) continue;
-
-		if (line.startsWith('- id:') || (line.startsWith('-') && line.includes('condition:'))) {
-			if (currentRule && currentRule.condition && currentRule.instruction) {
-				rules.push({
-					id: currentRule.id || `rule_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-					condition: currentRule.condition,
-					instruction: currentRule.instruction,
-					enabled: currentRule.enabled !== false,
-					source_job: currentRule.source_job || '',
-					created_at: currentRule.created_at || new Date().toISOString()
-				});
-			}
-			currentRule = {};
-		}
-
-		if (!currentRule) continue;
-
-		if (line.includes('id:')) {
-			const val = line.replace(/^[-\s]*id:\s*/, '').replace(/^["']|["']$/g, '').trim();
-			currentRule.id = val;
-		} else if (line.includes('condition:')) {
-			const val = line.replace(/^[-\s]*condition:\s*/, '').replace(/^["']|["']$/g, '').trim();
-			currentRule.condition = val;
-		} else if (line.includes('instruction:')) {
-			const val = line.replace(/^[-\s]*instruction:\s*/, '').replace(/^["']|["']$/g, '').trim();
-			currentRule.instruction = val;
-		} else if (line.includes('enabled:')) {
-			const val = line.replace(/^[-\s]*enabled:\s*/, '').trim().toLowerCase();
-			currentRule.enabled = val === 'true';
-		} else if (line.includes('source_job:')) {
-			const val = line.replace(/^[-\s]*source_job:\s*/, '').replace(/^["']|["']$/g, '').trim();
-			currentRule.source_job = val;
-		} else if (line.includes('created_at:')) {
-			const val = line.replace(/^[-\s]*created_at:\s*/, '').replace(/^["']|["']$/g, '').trim();
-			currentRule.created_at = val;
-		}
+	let data: unknown;
+	try {
+		data = yaml.load(content);
+	} catch (e) {
+		console.warn('[GreetingRulesConfig] YAML parse error:', e);
+		return [];
 	}
 
-	if (currentRule && currentRule.condition && currentRule.instruction) {
-		rules.push({
-			id: currentRule.id || `rule_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-			condition: currentRule.condition,
-			instruction: currentRule.instruction,
-			enabled: currentRule.enabled !== false,
-			source_job: currentRule.source_job || '',
-			created_at: currentRule.created_at || new Date().toISOString()
-		});
+	let rawRules: unknown[] = [];
+	if (data && typeof data === 'object' && 'rules' in data && Array.isArray((data as any).rules)) {
+		rawRules = (data as any).rules;
+	} else if (Array.isArray(data)) {
+		rawRules = data;
+	} else {
+		return [];
 	}
 
-	return rules;
+	return rawRules
+		.filter((r): r is Record<string, unknown> => r !== null && typeof r === 'object')
+		.filter((r) => r.condition && r.instruction)
+		.map((r) => ({
+			id: String(r.id || `rule_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`),
+			condition: String(r.condition),
+			instruction: String(r.instruction),
+			enabled: r.enabled !== false,
+			source_job: String(r.source_job || ''),
+			created_at: String(r.created_at || new Date().toISOString())
+		}));
 }
 
 export function serializeGreetingRulesYaml(rules: GreetingStyleRule[]): string {
-	const lines: string[] = [
+	const header = [
 		'# ============================================================================== #',
 		'# Boss Agent Mobile - Greeting Style Rules & Long-term Preferences',
 		'# Auto-generated & updated by Boss Agent Mobile Web UI or manual editing',
 		'# ============================================================================== #',
-		'',
-		'rules:'
-	];
+		''
+	].join('\n');
 
-	for (const r of rules) {
-		lines.push(`  - id: ${JSON.stringify(r.id)}`);
-		lines.push(`    condition: ${JSON.stringify(r.condition)}`);
-		lines.push(`    instruction: ${JSON.stringify(r.instruction)}`);
-		lines.push(`    enabled: ${r.enabled ? 'true' : 'false'}`);
-		if (r.source_job) {
-			lines.push(`    source_job: ${JSON.stringify(r.source_job)}`);
-		}
-		lines.push(`    created_at: ${JSON.stringify(r.created_at || new Date().toISOString())}`);
-	}
+	const data = {
+		rules: rules.map((r) => ({
+			id: r.id,
+			condition: r.condition,
+			instruction: r.instruction,
+			enabled: r.enabled,
+			...(r.source_job ? { source_job: r.source_job } : {}),
+			created_at: r.created_at || new Date().toISOString()
+		}))
+	};
 
-	lines.push('');
-	return lines.join('\n');
+	return header + '\n' + yaml.dump(data, { lineWidth: -1, noRefs: true, sortKeys: false });
 }
 
 export function readGreetingRules(): GreetingStyleRule[] {

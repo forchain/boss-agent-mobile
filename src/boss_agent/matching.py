@@ -13,6 +13,7 @@ from rich.panel import Panel
 
 from droid_agent_core.llm import LLMDecisionClient, OpenAIChatClient
 
+from .greeting_rules import GreetingStyleRule
 from .memory import StructuredCandidateProfile
 from .models import JobPosting
 
@@ -56,7 +57,7 @@ class JobMatchGreetingService:
         """Update candidate memory profile in service context."""
         self.candidate_profile = profile
 
-    def _build_system_prompt(self, rules: list[Any] | None = None) -> str:
+    def _build_system_prompt(self, rules: list[GreetingStyleRule] | None = None) -> str:
         """Construct persistent system prompt containing candidate background, anti-template rules, and active style rules."""
         active_rules = [r for r in rules if getattr(r, "enabled", True)] if rules else []
         rules_text = ""
@@ -95,7 +96,7 @@ class JobMatchGreetingService:
         self,
         job: JobPosting,
         profile: StructuredCandidateProfile | None = None,
-        rules: list[Any] | None = None,
+        rules: list[GreetingStyleRule] | None = None,
     ) -> MatchGreetingResult:
         """Evaluate match score and generate personalized greeting message based on JD and profile."""
         if profile:
@@ -167,7 +168,7 @@ class JobMatchGreetingService:
         critique: str,
         history: list[dict[str, str]] | None = None,
         profile: StructuredCandidateProfile | None = None,
-        rules: list[Any] | None = None,
+        rules: list[GreetingStyleRule] | None = None,
     ) -> str:
         """Refine and iterate on a greeting draft based on candidate's conversational critique."""
         if profile:

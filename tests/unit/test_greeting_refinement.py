@@ -193,3 +193,88 @@ def test_service_distill_memory_rule():
     assert "海外留学" in distilled_rule.instruction
     assert "Global Tech" in distilled_rule.source_job
     assert distilled_rule.id.startswith("rule_")
+
+
+def test_service_refine_with_critique_passes_history():
+    """Spec Fix #5: refine_with_critique(history) threads prior conversation turns into the prompt."""
+    mock_llm = MagicMock()
+    mock_llm.chat_completion_json.return_value = {
+        "revised_greeting": "根据对话历史修订后的招呼语。"
+    }
+
+    service = JobMatchGreetingService(llm_client=mock_llm)
+    job = JobPosting(
+        title="Senior AI Architect",
+        company_name="Global Tech",
+        salary_range="50-70K",
+        job_description="Responsible for global AI Agent architecture.",
+    )
+    history = [
+        {"role": "user", "content": "第一轮招呼：您好！我对贵司AI架构师职位非常感兴趣。"},
+        {"role": "assistant", "content": "第一轮回复：感谢您的兴趣，能否详细说明您的技术栈？"},
+        {"role": "user", "content": "第二轮反馈：我的技术栈包括Python、LangChain和LangGraph。"},
+    ]
+
+    service.refine_with_critique(
+        job=job,
+        current_greeting="您好！我对贵司AI架构师职位非常感兴趣，曾主导过多个大模型智能体平台研发。",
+        critique="请根据之前的对话历史进行优化",
+        history=history,
+    )
+
+    call_args = mock_llm.chat_completion_json.call_args[0][0]
+    messages_content = " ".join(msg.get("content", "") for msg in call_args if msg.get("content"))
+    # All history turns must appear in the prompt
+    assert "第一轮招呼" in messages_content
+    assert "第一轮回复" in messages_content
+    assert "第二轮反馈" in messages_content
+
+
+def test_persist_reload_then_evaluate_injects_rule():
+    """Spec Fix #7: after save+load, evaluate_and_draft_greeting automatically applies the rule."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_config = Path(tmpdir) / "greeting_rules.local.yaml"
+
+        # Step 1: save a rule
+        rule = GreetingStyleRule(
+            id="rule_persist_test",
+            condition="当 JD 提及Rust或内存安全时",
+            instruction="突出开源Rust项目与内存安全调优成果",
+            enabled=True,
+            source_job="TestCorp - Rust Engineer",
+        )
+        save_greeting_rules([rule], config_path=tmp_config)
+        assert tmp_config.exists()
+
+        # Step 2: reload from disk (simulating a fresh process / service restart)
+        reloaded_rules = load_greeting_rules(config_path=tmp_config)
+        assert len(reloaded_rules) == 1
+        assert reloaded_rules[0].id == "rule_persist_test"
+        assert reloaded_rules[0].instruction == "突出开源Rust项目与内存安全调优成果"
+
+        # Step 3: pass reloaded rules to the service — rule must be injected into the prompt
+        mock_llm = MagicMock()
+        mock_llm.chat_completion_json.return_value = {
+            "match_score": 85,
+            "jd_key_requirements": ["Rust", "内存安全"],
+            "match_reasons": ["有Rust开源经验"],
+            "greeting_message": "注意到贵司强调Rust与内存安全，我有开源Rust项目经验。",
+        }
+
+        service = JobMatchGreetingService(llm_client=mock_llm)
+        job = JobPosting(
+            title="Systems Engineer",
+            company_name="SafetyFirst Labs",
+            salary_range="45-65K",
+            job_description="Seeking a systems programmer with strong Rust experience and memory safety expertise.",
+        )
+
+        result = service.evaluate_and_draft_greeting(job=job, rules=reloaded_rules)
+        assert result.match_score == 85
+
+        # Verify the rule was injected into the system prompt
+        call_args = mock_llm.chat_completion_json.call_args[0][0]
+        system_prompt = call_args[0]["content"]
+        assert "【打招呼个性化长期偏好准则" in system_prompt
+        assert "当 JD 提及Rust或内存安全时" in system_prompt
+        assert "突出开源Rust项目与内存安全调优成果" in system_prompt
