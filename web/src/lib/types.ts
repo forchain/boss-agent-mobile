@@ -182,3 +182,51 @@ export function resolveTargetAction(search: { target_action?: TargetAction | str
 	if (search.target_task_type === 'AUTO_APPLY') return 'auto_apply';
 	return 'save_jd';
 }
+
+export interface JobRecordsCounts {
+	all: number;
+	jd_saved: number;
+	matched: number;
+	applied: number;
+	ignored: number;
+	direct: number;
+	headhunter: number;
+}
+
+export interface GetJobRecordsOptions {
+	status?: string;
+	channel?: string;
+	search?: string;
+	page?: number;
+	limit?: number;
+}
+
+export interface GetJobRecordsResult {
+	items: JobRecord[];
+	totalItems: number;
+	totalPages: number;
+	page: number;
+	perPage: number;
+	counts?: JobRecordsCounts;
+}
+
+export interface PaginatedJobRecordsResponse {
+	success: boolean;
+	records: JobRecord[];
+	total: number;
+	totalPages: number;
+	page: number;
+	perPage: number;
+	counts?: JobRecordsCounts;
+	error?: string;
+}
+
+export interface PaginatedTasksResponse {
+	success: boolean;
+	tasks: AutomationTask[];
+	total: number;
+	totalPages: number;
+	page: number;
+	perPage: number;
+	message?: string;
+}

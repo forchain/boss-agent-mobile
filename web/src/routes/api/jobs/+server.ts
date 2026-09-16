@@ -9,50 +9,150 @@ function computeFingerprint(companyName: string, title: string, recruiterName: s
 	return crypto.createHash('sha256').update(raw).digest('hex');
 }
 
+import type { JobRecordsCounts } from '$lib/types';
 
 export const GET: RequestHandler = async ({ url }) => {
 	const status = url.searchParams.get('status');
-	const limit = parseInt(url.searchParams.get('limit') || '50', 10);
+	const channel = url.searchParams.get('channel');
+	const search = url.searchParams.get('search');
+	const rawPage = parseInt(url.searchParams.get('page') || '1', 10);
+	const page = Math.max(1, isNaN(rawPage) ? 1 : rawPage);
+	const rawLimit = parseInt(url.searchParams.get('limit') || '30', 10);
+	const limit = Math.min(Math.max(1, isNaN(rawLimit) ? 30 : rawLimit), 100);
 	const pbBase = getPocketBaseUrl();
 
+	const filterParts: string[] = ["company_name != ''", "company_name != '未知公司'"];
+
+	if (status === 'all' || !status) {
+		filterParts.push("status != 'ignored'");
+	} else if (status === 'jd_saved') {
+		filterParts.push("(status = 'jd_saved' || status = 'unmatched' || status = 'digest_only')");
+	} else {
+		filterParts.push(`status = '${status}'`);
+	}
+
+	if (channel === 'direct') {
+		filterParts.push('is_headhunter = false');
+	} else if (channel === 'headhunter') {
+		filterParts.push('is_headhunter = true');
+	}
+
+	if (search && search.trim()) {
+		const sanitized = search.replace(/['"\\]/g, '').trim();
+		if (sanitized) {
+			filterParts.push(
+				`(title ~ '${sanitized}' || company_name ~ '${sanitized}' || recruiter_name ~ '${sanitized}' || digest ~ '${sanitized}')`
+			);
+		}
+	}
+
+	const finalFilter = filterParts.map((p) => `(${p})`).join(' && ');
+
 	let items: any[] = [];
+	let totalItems = 0;
+	let totalPages = 0;
+
+	const fetchCount = async (filterCond: string) => {
+		try {
+			const countFilter = `(company_name != '' && company_name != '未知公司') && (${filterCond})`;
+			const r = await fetch(
+				`${pbBase}/api/collections/job_records/records?filter=${encodeURIComponent(countFilter)}&perPage=1`,
+				{ signal: AbortSignal.timeout(3000) }
+			);
+			if (r.ok) {
+				const d = await r.json();
+				return d.totalItems ?? 0;
+			}
+		} catch {}
+		return 0;
+	};
+
 	try {
-		const filter = status ? `status='${status}'` : '';
 		const query = new URLSearchParams({
 			sort: '-created',
+			page: String(page),
 			perPage: String(limit)
 		});
-		if (filter) {
-			query.set('filter', filter);
+		if (finalFilter) {
+			query.set('filter', finalFilter);
 		}
 
-		const resp = await fetch(`${pbBase}/api/collections/job_records/records?${query.toString()}`, {
-			signal: AbortSignal.timeout(3000)
-		});
-		if (resp.ok) {
-			const data = await resp.json();
+		const [dataResp, allCount, jdSavedCount, matchedCount, appliedCount, ignoredCount, directCount, headhunterCount] =
+			await Promise.all([
+				fetch(`${pbBase}/api/collections/job_records/records?${query.toString()}`, {
+					signal: AbortSignal.timeout(3000)
+				}).catch(() => null),
+				fetchCount("status != 'ignored'"),
+				fetchCount("status = 'jd_saved' || status = 'unmatched' || status = 'digest_only'"),
+				fetchCount("status = 'matched'"),
+				fetchCount("status = 'applied'"),
+				fetchCount("status = 'ignored'"),
+				fetchCount('is_headhunter = false'),
+				fetchCount('is_headhunter = true')
+			]);
+
+		if (dataResp && dataResp.ok) {
+			const data = await dataResp.json();
 			if (data.items) {
 				items = data.items;
 			}
+			totalItems = data.totalItems ?? items.length;
+			totalPages = data.totalPages ?? (items.length > 0 ? 1 : 0);
 		}
-	} catch (e) {}
 
-	items = items.filter(
-		(it: any) => it.company_name && it.company_name.trim() !== '' && it.company_name.trim() !== '未知公司'
-	);
+		items = items.filter(
+			(it: any) => it.company_name && it.company_name.trim() !== '' && it.company_name.trim() !== '未知公司'
+		);
 
-	items.sort((a: any, b: any) => {
-		const da = a.created || a.last_seen_at || '';
-		const db = b.created || b.last_seen_at || '';
-		return db.localeCompare(da);
-	});
+		items.sort((a: any, b: any) => {
+			const da = a.created || a.last_seen_at || '';
+			const db = b.created || b.last_seen_at || '';
+			return db.localeCompare(da);
+		});
 
-	items = items.map((it: any) => ({
-		...it,
-		title: cleanJobTitle(it.title)
-	}));
+		items = items.map((it: any) => ({
+			...it,
+			title: cleanJobTitle(it.title)
+		}));
 
-	return json({ success: true, records: items.slice(0, limit) });
+		const counts: JobRecordsCounts = {
+			all: allCount,
+			jd_saved: jdSavedCount,
+			matched: matchedCount,
+			applied: appliedCount,
+			ignored: ignoredCount,
+			direct: directCount,
+			headhunter: headhunterCount
+		};
+
+		return json({
+			success: true,
+			records: items,
+			total: totalItems,
+			totalPages: totalPages === 0 && items.length > 0 ? 1 : totalPages,
+			page,
+			perPage: limit,
+			counts
+		});
+	} catch (e) {
+		return json({
+			success: true,
+			records: [],
+			total: 0,
+			totalPages: 0,
+			page,
+			perPage: limit,
+			counts: {
+				all: 0,
+				jd_saved: 0,
+				matched: 0,
+				applied: 0,
+				ignored: 0,
+				direct: 0,
+				headhunter: 0
+			}
+		});
+	}
 };
 
 export const POST: RequestHandler = async ({ request }) => {

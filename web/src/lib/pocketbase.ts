@@ -1,5 +1,17 @@
 import PocketBase from 'pocketbase';
-import type { AutomationTask, CandidateProfile, JobRecord, LLMSettings, ResumeRevision, SavedSearch } from './types';
+import type {
+	AutomationTask,
+	CandidateProfile,
+	JobRecord,
+	LLMSettings,
+	ResumeRevision,
+	SavedSearch,
+	GetJobRecordsOptions,
+	GetJobRecordsResult,
+	PaginatedJobRecordsResponse,
+	PaginatedTasksResponse,
+	JobRecordsCounts
+} from './types';
 
 let currentPbUrl = '';
 
@@ -355,9 +367,11 @@ export async function listAutomationTasks(options?: {
 	filter?: string;
 	page?: number;
 	limit?: number;
-}): Promise<{ items: AutomationTask[]; totalItems: number; totalPages: number }> {
-	const page = options?.page || 1;
-	const limit = options?.limit || 20;
+}): Promise<{ items: AutomationTask[]; totalItems: number; totalPages: number; page: number; perPage: number }> {
+	const rawPage = options?.page || 1;
+	const page = Math.max(1, isNaN(rawPage) ? 1 : rawPage);
+	const rawLimit = options?.limit || 20;
+	const limit = Math.min(Math.max(1, isNaN(rawLimit) ? 20 : rawLimit), 100);
 	const status = options?.status;
 	const customFilter = options?.filter;
 
@@ -380,7 +394,9 @@ export async function listAutomationTasks(options?: {
 					return {
 						items: data.tasks,
 						totalItems: data.total ?? data.tasks.length,
-						totalPages: data.totalPages ?? 1
+						totalPages: data.totalPages ?? 1,
+						page: data.page ?? page,
+						perPage: data.perPage ?? limit
 					};
 				}
 			}
@@ -421,7 +437,9 @@ export async function listAutomationTasks(options?: {
 		return {
 			items,
 			totalItems: res.totalItems,
-			totalPages: res.totalPages
+			totalPages: res.totalPages,
+			page: res.page ?? page,
+			perPage: res.perPage ?? limit
 		};
 	} catch (e) {
 		// In-memory fallback
@@ -442,7 +460,9 @@ export async function listAutomationTasks(options?: {
 		return {
 			items: sliced,
 			totalItems: all.length,
-			totalPages: Math.ceil(all.length / limit) || 1
+			totalPages: Math.ceil(all.length / limit) || 1,
+			page,
+			perPage: limit
 		};
 	}
 }
@@ -573,24 +593,86 @@ export async function cancelTask(taskId: string): Promise<boolean> {
 	}
 }
 
-export async function getJobRecords(status?: string, limit = 50): Promise<JobRecord[]> {
+export async function getJobRecords(
+	options?: GetJobRecordsOptions | string,
+	legacyLimit = 30
+): Promise<GetJobRecordsResult> {
+	let status: string | undefined;
+	let channel: string | undefined;
+	let search: string | undefined;
+	let page = 1;
+	let limit = 30;
+
+	if (typeof options === 'string') {
+		status = options;
+		limit = legacyLimit;
+	} else if (options) {
+		status = options.status;
+		channel = options.channel;
+		search = options.search;
+		if (options.page) page = Math.max(1, options.page);
+		if (options.limit) limit = options.limit;
+	}
+	limit = Math.min(Math.max(1, limit), 100);
+
 	if (typeof window !== 'undefined') {
 		try {
-			const res = await fetch(`/api/jobs${status ? `?status=${status}&limit=${limit}` : `?limit=${limit}`}`);
+			const query = new URLSearchParams({
+				page: String(page),
+				limit: String(limit)
+			});
+			if (status) query.set('status', status);
+			if (channel) query.set('channel', channel);
+			if (search) query.set('search', search);
+
+			const res = await fetch(`/api/jobs?${query.toString()}`);
 			if (res.ok) {
-				const data = await res.json();
-				return data.records || [];
+				const data: PaginatedJobRecordsResponse = await res.json();
+				return {
+					items: data.records || [],
+					totalItems: data.total ?? (data.records ? data.records.length : 0),
+					totalPages: data.totalPages ?? 1,
+					page: data.page ?? page,
+					perPage: data.perPage ?? limit,
+					counts: data.counts
+				};
 			}
 		} catch (e) {}
 	}
 
 	try {
-		const filter = status ? `status='${status}'` : '';
-		const result = await pb.collection('job_records').getList(1, limit, {
-			filter,
+		const filterParts: string[] = ["company_name != ''", "company_name != '未知公司'"];
+		if (status && status !== 'all') {
+			if (status === 'jd_saved') {
+				filterParts.push("(status = 'jd_saved' || status = 'unmatched' || status = 'digest_only')");
+			} else {
+				filterParts.push(`status = '${status}'`);
+			}
+		} else if (status === 'all') {
+			filterParts.push("status != 'ignored'");
+		}
+		if (channel === 'direct') {
+			filterParts.push('is_headhunter = false');
+		} else if (channel === 'headhunter') {
+			filterParts.push('is_headhunter = true');
+		}
+		if (search && search.trim()) {
+			const sanitized = search.replace(/['"\\]/g, '').trim();
+			if (sanitized) {
+				filterParts.push(
+					`(title ~ '${sanitized}' || company_name ~ '${sanitized}' || recruiter_name ~ '${sanitized}' || digest ~ '${sanitized}')`
+				);
+			}
+		}
+
+		const filter = filterParts.map((p) => `(${p})`).join(' && ');
+
+		const result = await pb.collection('job_records').getList(page, limit, {
+			filter: filter || undefined,
 			sort: '-created'
 		});
-		return result.items.map((item: any) => ({
+
+		const items = result.items.map((item: any) => ({
 			id: item.id,
 			fingerprint: item.fingerprint,
 			title: item.title,
@@ -610,14 +692,29 @@ export async function getJobRecords(status?: string, limit = 50): Promise<JobRec
 			jd_key_requirements: item.jd_key_requirements || [],
 			greeting_message: item.greeting_message,
 			search_keywords: item.search_keywords || [],
+			screened_reason: item.screened_reason || '',
 			source_task_id: item.source_task_id,
 			first_seen_at: item.first_seen_at,
 			last_seen_at: item.last_seen_at,
 			created: item.created,
 			updated: item.updated
 		})) as JobRecord[];
+
+		return {
+			items,
+			totalItems: result.totalItems,
+			totalPages: result.totalPages,
+			page: result.page,
+			perPage: result.perPage
+		};
 	} catch (err) {
-		return [];
+		return {
+			items: [],
+			totalItems: 0,
+			totalPages: 0,
+			page: 1,
+			perPage: limit
+		};
 	}
 }
 

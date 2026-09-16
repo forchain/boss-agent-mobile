@@ -5,8 +5,10 @@ import { listAutomationTasks, createAutomationTask } from '$lib/pocketbase';
 export const GET: RequestHandler = async ({ url }) => {
 	try {
 		const status = url.searchParams.get('status') || undefined;
-		const page = parseInt(url.searchParams.get('page') || '1', 10);
-		const limit = parseInt(url.searchParams.get('limit') || '20', 10);
+		const rawPage = parseInt(url.searchParams.get('page') || '1', 10);
+		const page = Math.max(1, isNaN(rawPage) ? 1 : rawPage);
+		const rawLimit = parseInt(url.searchParams.get('limit') || '20', 10);
+		const limit = Math.min(Math.max(1, isNaN(rawLimit) ? 20 : rawLimit), 100);
 
 		const res = await listAutomationTasks({ status, page, limit });
 		return json({
@@ -14,7 +16,8 @@ export const GET: RequestHandler = async ({ url }) => {
 			tasks: res.items,
 			total: res.totalItems,
 			totalPages: res.totalPages,
-			page
+			page: res.page ?? page,
+			perPage: limit
 		});
 	} catch (e: any) {
 		return json(
