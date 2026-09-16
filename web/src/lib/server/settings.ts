@@ -28,9 +28,25 @@ export function parseSimpleYaml(content: string): Record<string, any> {
 		const key = keyPart.trim();
 		let val = valParts.join(':').trim();
 
-		// Strip trailing comments
-		if (!val.startsWith('"') && !val.startsWith("'") && (val.includes(' #') || val.includes('\t#'))) {
-			val = val.split(/\s+#/)[0].trim();
+		// Handle quoted values and strip trailing comments
+		if (val.startsWith('"')) {
+			const match = val.match(/^"([^"]*)"/);
+			if (match) {
+				val = match[1];
+			} else {
+				val = val.replace(/^"|"$/g, '');
+			}
+		} else if (val.startsWith("'")) {
+			const match = val.match(/^'([^']*)'/);
+			if (match) {
+				val = match[1];
+			} else {
+				val = val.replace(/^'|'$/g, '');
+			}
+		} else {
+			if (val.includes(' #') || val.includes('\t#')) {
+				val = val.split(/\s+#/)[0].trim();
+			}
 		}
 
 		// Support inline array [...]
@@ -183,11 +199,15 @@ export function loadMergedSettings(): SystemSettings {
 	}
 
 	// 3. Read active local settings config/settings.local.yaml
+	let localPbUrl: string | undefined;
 	const localFile = path.join(projectRoot, 'config', 'settings.local.yaml');
 	if (fs.existsSync(localFile)) {
 		try {
 			const parsed = parseSimpleYaml(fs.readFileSync(localFile, 'utf-8'));
 			settings = { ...settings, ...parsed };
+			if (parsed.pocketbase_url) {
+				localPbUrl = parsed.pocketbase_url;
+			}
 		} catch (e) {
 			console.warn('Failed to parse settings.local.yaml:', e);
 		}
@@ -206,7 +226,9 @@ export function loadMergedSettings(): SystemSettings {
 		settings.model = process.env.LLM_MODEL;
 	}
 	if (process.env.POCKETBASE_URL) {
-		settings.pocketbase_url = process.env.POCKETBASE_URL;
+		if (!localPbUrl || (process.env.POCKETBASE_URL !== 'http://127.0.0.1:8090' && process.env.POCKETBASE_URL !== 'http://0.0.0.0:8090')) {
+			settings.pocketbase_url = process.env.POCKETBASE_URL;
+		}
 	}
 	if (process.env.APPIUM_SERVER_URL || process.env.APPIUM_URL) {
 		settings.server_url =
