@@ -481,3 +481,106 @@ def test_backfill_purges_unknown_company_records(tmp_path: Path):
     assert remaining[0][0] == "valid_1"
     assert remaining[0][2] == "真实科技公司"
 
+
+def test_sanitize_tags_filters_recruiter_and_location():
+    """sanitize_tags must filter out recruiter name, recruiter title, location, scale, and duplicates."""
+    from boss_agent.models import sanitize_tags
+
+    # Scenario 1: Recruiter info and location mixed in tags
+    raw_tags = ["3-5年", "硕士", "王琳 · 猎头顾问", "上海"]
+    cleaned = sanitize_tags(
+        raw_tags,
+        recruiter_name="王琳",
+        recruiter_title="猎头顾问",
+        location="上海",
+        company_name="某大型半导体公司",
+        title="智能体开发工程师",
+    )
+    assert cleaned == ["3-5年", "硕士"]
+
+    # Scenario 2: Duplicates and recruiter/city attached
+    raw_tags2 = [
+        "经验不限",
+        "本科",
+        "全栈侧重前端",
+        "全栈侧重后端",
+        "全栈侧重前端",
+        "全栈侧重后端",
+        "张瑞娟 · 猎头顾问",
+        "上海",
+    ]
+    cleaned2 = sanitize_tags(
+        raw_tags2,
+        recruiter_name="张瑞娟",
+        recruiter_title="猎头顾问",
+        location="上海",
+    )
+    assert cleaned2 == ["经验不限", "本科", "全栈侧重前端", "全栈侧重后端"]
+
+    # Scenario 3: Company scale mixed in tags
+    raw_tags3 = ["5-10年", "本科", "100-499人", "人工智能", "Golang"]
+    cleaned3 = sanitize_tags(raw_tags3, location="北京")
+    assert cleaned3 == ["5-10年", "本科", "人工智能", "Golang"]
+
+
+def test_is_invalid_company_name():
+    """is_invalid_company_name must detect education, experience, recruiter, location, and scale strings."""
+    from boss_agent.models import is_invalid_company_name
+
+    # Education / Experience keywords
+    assert is_invalid_company_name("硕士") is True
+    assert is_invalid_company_name("本科") is True
+    assert is_invalid_company_name("大专") is True
+    assert is_invalid_company_name("博士") is True
+    assert is_invalid_company_name("经验不限") is True
+    assert is_invalid_company_name("3-5年") is True
+
+    # Recruiter patterns
+    assert is_invalid_company_name("王琳 · 猎头顾问") is True
+    assert is_invalid_company_name("陈女士 · HR") is True
+    assert is_invalid_company_name("张瑞娟 · 猎头顾问") is True
+
+    # Location patterns
+    assert is_invalid_company_name("上海") is True
+    assert is_invalid_company_name("上海  奉贤区  奉城") is True
+    assert is_invalid_company_name("上海  徐汇区  徐汇滨江") is True
+
+    # Scale pattern
+    assert is_invalid_company_name("100-499人") is True
+
+    # Empty / unknown
+    assert is_invalid_company_name("") is True
+    assert is_invalid_company_name("未知公司") is True
+
+    # Authentic company names must pass
+    assert is_invalid_company_name("某大型半导体公司") is False
+    assert is_invalid_company_name("上海某中型互联网公司") is False
+    assert is_invalid_company_name("字节跳动(上海)") is False
+    assert is_invalid_company_name("上海格数致知科技") is False
+
+
+def test_job_models_post_init_sanitizes_tags():
+    """JobCardBrief and JobRecord must automatically sanitize tags upon initialization."""
+    card = JobCardBrief(
+        title="智能体开发工程师",
+        company_name="某大型半导体公司",
+        recruiter_name="王琳",
+        recruiter_title="猎头顾问",
+        location="上海",
+        tags=["3-5年", "硕士", "王琳 · 猎头顾问", "上海"],
+    )
+    assert card.tags == ["3-5年", "硕士"]
+
+    rec = JobRecord(
+        title="全栈工程师-外企",
+        company_name="上海某中型互联网公司",
+        recruiter_name="张瑞娟",
+        recruiter_title="猎头顾问",
+        location="上海",
+        tags=["经验不限", "本科", "全栈侧重前端", "全栈侧重后端", "全栈侧重前端", "全栈侧重后端", "张瑞娟 · 猎头顾问", "上海"],
+        jd_key_requirements=["经验不限", "本科", "张瑞娟 · 猎头顾问", "上海"],
+    )
+    assert rec.tags == ["经验不限", "本科", "全栈侧重前端", "全栈侧重后端"]
+    assert rec.jd_key_requirements == ["经验不限", "本科"]
+
+

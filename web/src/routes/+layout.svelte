@@ -8,11 +8,14 @@
 	let isPocketBaseOnline = $state(false);
 	let currentPbUrl = $state(getPocketBaseUrl());
 	let unmatchedCount = $state(0);
+	let healthCheckTimer: ReturnType<typeof setInterval> | null = null;
 
 	$effect(() => {
-		if (data?.pocketbaseUrl) {
-			setPocketBaseUrl(data.pocketbaseUrl);
-			currentPbUrl = data.pocketbaseUrl;
+		const target = data?.pocketbaseUrl;
+		if (target && target !== currentPbUrl) {
+			setPocketBaseUrl(target);
+			currentPbUrl = target;
+			updateHealthAndCount();
 		}
 	});
 
@@ -47,6 +50,10 @@
 	}
 
 	onMount(() => {
+		if (data?.pocketbaseUrl) {
+			setPocketBaseUrl(data.pocketbaseUrl);
+			currentPbUrl = data.pocketbaseUrl;
+		}
 		updateHealthAndCount();
 
 		try {
@@ -54,9 +61,17 @@
 				updateHealthAndCount();
 			});
 		} catch (e) {}
+
+		healthCheckTimer = setInterval(() => {
+			updateHealthAndCount();
+		}, 10000);
 	});
 
 	onDestroy(() => {
+		if (healthCheckTimer) {
+			clearInterval(healthCheckTimer);
+			healthCheckTimer = null;
+		}
 		try {
 			pb.collection('job_records').unsubscribe('*');
 		} catch (e) {}

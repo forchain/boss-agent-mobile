@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { runPythonScript } from '$lib/server/pythonRunner';
+import { sanitizeLlmSettingsForRunner } from '$lib/server/settings';
 
 export const POST: RequestHandler = async ({ request }) => {
 	try {
@@ -26,7 +27,8 @@ export const POST: RequestHandler = async ({ request }) => {
 			args.push('--profile', JSON.stringify(candidate_profile));
 		}
 		if (llmSettings) {
-			args.push('--llm-config', JSON.stringify(llmSettings));
+			const cleanedSettings = sanitizeLlmSettingsForRunner(llmSettings);
+			args.push('--llm-config', JSON.stringify(cleanedSettings));
 		}
 
 		const { stdout, stderr, code } = await runPythonScript('scripts/evaluate_match.py', args);

@@ -1,8 +1,20 @@
-import { describe, it, expect, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import fs from 'node:fs';
 import { isMaskedCompanyName, validateCanBlacklistCompany } from '../lib/screening';
 import { GET, POST, DELETE } from '../routes/api/screening/blacklist/+server';
+import { getScreeningConfigPath } from '../lib/server/screeningConfig';
 
 describe('Masked Company Guardrail & Screening Utilities', () => {
+	let originalSettingsContent: string | null = null;
+	let realConfigPath: string = '';
+
+	beforeAll(() => {
+		const configPath = getScreeningConfigPath();
+		realConfigPath = fs.existsSync(configPath) ? fs.realpathSync(configPath) : configPath;
+		if (fs.existsSync(realConfigPath)) {
+			originalSettingsContent = fs.readFileSync(realConfigPath, 'utf-8');
+		}
+	});
 	it('correctly identifies masked and placeholder company names', () => {
 		expect(isMaskedCompanyName('某中型人工智能公司')).toBe(true);
 		expect(isMaskedCompanyName('成都某中型...智能公司')).toBe(true);
@@ -159,13 +171,12 @@ describe('Masked Company Guardrail & Screening Utilities', () => {
 		expect(postData.rejected_companies[0].name).toBe('某中型人工智能公司');
 	});
 
-	afterAll(async () => {
-		const { existsSync, unlinkSync } = await import('node:fs');
-		const { resolve } = await import('node:path');
-		const localYaml = resolve(process.cwd(), '../config/screening.local.yaml');
-		if (existsSync(localYaml)) {
+	afterAll(() => {
+		if (originalSettingsContent !== null) {
+			fs.writeFileSync(realConfigPath, originalSettingsContent, 'utf-8');
+		} else if (realConfigPath && fs.existsSync(realConfigPath)) {
 			try {
-				unlinkSync(localYaml);
+				fs.unlinkSync(realConfigPath);
 			} catch (e) {}
 		}
 	});

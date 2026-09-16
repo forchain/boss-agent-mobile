@@ -1,13 +1,22 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
+import { loadMergedSettings } from '$lib/server/settings';
 
 export const POST: RequestHandler = async ({ request }) => {
 	try {
 		const payload = await request.json();
 		const provider = payload.provider || 'openai';
 		const baseUrl = (payload.base_url || 'https://api.minimaxi.com/v1').replace(/\/+$/, '');
-		const apiKey = payload.api_key?.trim();
+		let apiKey = payload.api_key?.trim();
 		const model = payload.model || 'MiniMax-M3';
+
+		// If the client passed a masked display string, use the server's stored key
+		if (apiKey && (apiKey.includes('••••') || apiKey.includes('****'))) {
+			const serverSettings = loadMergedSettings();
+			if (serverSettings.api_key) {
+				apiKey = serverSettings.api_key;
+			}
+		}
 
 		if (!apiKey) {
 			return json(

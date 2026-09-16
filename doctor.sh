@@ -212,14 +212,17 @@ echo ""
 echo -e "${BOLD}${BLUE}[5/5] LLM 大模型破冰与评分配置${NC}"
 
 LLM_CONFIG_EXISTS=0
-if [[ -f "config/llm.local.yaml" ]]; then
+if [[ -f "config/settings.local.yaml" ]] && grep -E "^[[:space:]]*api_key:" config/settings.local.yaml 2>/dev/null | grep -v "your-api-key-here" | grep -qv '""'; then
+    LLM_CONFIG_EXISTS=1
+    log_pass "检测到本地配置文件 config/settings.local.yaml 中的大模型 API Key"
+elif [[ -f "config/llm.local.yaml" ]]; then
     LLM_CONFIG_EXISTS=1
     log_pass "检测到本地大模型配置文件 config/llm.local.yaml"
-elif [[ -n "${OPENAI_API_KEY:-}" || -n "${MINIMAX_API_KEY:-}" || -n "${DEEPSEEK_API_KEY:-}" ]]; then
+elif [[ -n "${OPENAI_API_KEY:-}" || -n "${MINIMAX_API_KEY:-}" || -n "${DEEPSEEK_API_KEY:-}" || -n "${LLM_API_KEY:-}" ]]; then
     LLM_CONFIG_EXISTS=1
     log_pass "检测到环境变量中的大模型 API Key"
 else
-    log_warn "未配置大模型 API Key (将使用规则兜底文案)" "运行: cp config/llm.example.yaml config/llm.local.yaml 并填入 API Key"
+    log_warn "未配置大模型 API Key (将使用规则兜底文案)" "运行: cp config/settings.example.yaml config/settings.local.yaml 并填入 API Key，或在网页端 /settings 配置"
 fi
 
 echo ""

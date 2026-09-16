@@ -711,7 +711,7 @@ export async function listSavedSearches(): Promise<SavedSearch[]> {
 			for (const s of list) {
 				localSavedSearchesMap[s.id] = s;
 			}
-			return list;
+			return Object.values(localSavedSearchesMap);
 		}
 	} catch (e) {
 		console.warn('PocketBase listSavedSearches failed, fallback to local cache:', e);

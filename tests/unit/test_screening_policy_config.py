@@ -7,9 +7,9 @@ from boss_agent.models import JobRecord, ScreeningPolicy
 
 
 def test_screening_policy_load_from_example():
-    """Verify ScreeningPolicy loads default rules from example yaml."""
-    example_path = Path("config/screening.example.yaml")
-    assert example_path.exists(), "config/screening.example.yaml must exist"
+    """Verify ScreeningPolicy loads default rules from settings.example.yaml."""
+    example_path = Path("config/settings.example.yaml")
+    assert example_path.exists(), "config/settings.example.yaml must exist"
 
     policy = ScreeningPolicy.load_default(config_path=example_path)
     assert policy.enable_screening is True

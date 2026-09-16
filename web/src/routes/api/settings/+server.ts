@@ -5,16 +5,9 @@ import { loadMergedSettings, saveSettingsToLocalYaml, maskSecret } from '$lib/se
 export const GET: RequestHandler = async () => {
 	const settings = loadMergedSettings();
 	return json({
-		provider: settings.provider,
-		base_url: settings.base_url,
+		...settings,
 		api_key: maskSecret(settings.api_key),
-		model: settings.model,
-		temperature: settings.temperature,
-		timeout_sec: settings.timeout_sec,
-		max_tokens: settings.max_tokens,
-		langsmith_tracing: settings.langsmith_tracing,
-		langsmith_api_key: maskSecret(settings.langsmith_api_key),
-		langsmith_project: settings.langsmith_project
+		langsmith_api_key: maskSecret(settings.langsmith_api_key)
 	});
 };
 
@@ -25,7 +18,7 @@ export const POST: RequestHandler = async ({ request }) => {
 		return json(result);
 	} catch (err: any) {
 		return json(
-			{ success: false, message: err?.message || 'Failed to save LLM settings' },
+			{ success: false, message: err?.message || 'Failed to save settings' },
 			{ status: 500 }
 		);
 	}

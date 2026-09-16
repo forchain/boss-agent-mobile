@@ -34,6 +34,15 @@ function formatStatusColor(status: number): string {
 
 export const handle: Handle = async ({ event, resolve }) => {
 	const path = event.url.pathname;
+
+	// Graceful fallback for legacy favicon requests without binary bloat
+	if (path === '/favicon.png' || path === '/favicon.ico') {
+		return new Response(null, {
+			status: 302,
+			headers: { Location: '/favicon.svg' }
+		});
+	}
+
 	const isApiRoute = path === '/api' || path.startsWith('/api/');
 
 	if (!isApiRoute) {
@@ -66,11 +75,17 @@ export const handle: Handle = async ({ event, resolve }) => {
 	}
 };
 
-export const handleError: HandleServerError = ({ error, event, message }) => {
+export const handleError: HandleServerError = ({ error, event, status, message }) => {
 	const timestamp = formatTimestamp();
 	const fullPath = `${event.url.pathname}${event.url.search}`;
-	console.error(`[${timestamp}] [SERVER ERROR] ${event.request.method} ${fullPath}:`, error);
+
+	// Only log 5xx or unhandled server exceptions as [SERVER ERROR]
+	// 404 and other client errors (< 500) are standard HTTP responses, not server failures
+	if ((status ?? 500) >= 500) {
+		console.error(`[${timestamp}] [SERVER ERROR] ${event.request.method} ${fullPath}:`, error);
+	}
+
 	return {
-		message: message || 'Internal Server Error'
+		message: message || (status === 404 ? 'Not Found' : 'Internal Server Error')
 	};
 };

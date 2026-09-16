@@ -69,7 +69,7 @@ export const POST: RequestHandler = async ({ request }) => {
 
 		return json({
 			success: true,
-			message: warningNotice ? `初筛策略已保存。${warningNotice}` : '初筛策略已成功保存至 config/screening.local.yaml',
+			message: warningNotice ? `初筛策略已保存。${warningNotice}` : '初筛策略已成功保存至 config/settings.local.yaml',
 			policy: updatedPolicy,
 			rejected_companies: rejectedCompanies
 		});
