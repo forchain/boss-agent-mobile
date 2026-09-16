@@ -48,6 +48,224 @@ def compute_job_fingerprint(company_name: str, title: str, recruiter_name: str) 
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+KNOWN_CITIES: tuple[str, ...] = (
+    "上海",
+    "北京",
+    "深圳",
+    "广州",
+    "杭州",
+    "成都",
+    "武汉",
+    "南京",
+    "苏州",
+    "西安",
+    "重庆",
+    "天津",
+    "长沙",
+    "厦门",
+    "合肥",
+    "青岛",
+    "郑州",
+    "大连",
+    "海外",
+    "远程",
+)
+
+RECRUITER_TITLE_KEYWORDS: tuple[str, ...] = (
+    "猎头",
+    "顾问",
+    "专员",
+    "专家",
+    "HR",
+    "招聘",
+    "经理",
+    "主管",
+    "总监",
+    "助理",
+    "VP",
+    "合伙人",
+    "Recruiter",
+    "Leader",
+    "HRBP",
+    "负责人",
+    "人事",
+    "招聘者",
+)
+
+EDUCATION_KEYWORDS: frozenset[str] = frozenset({
+    "本科",
+    "硕士",
+    "大专",
+    "博士",
+    "学历不限",
+    "初中及以下",
+    "中专/中技",
+    "高中",
+    "大专及以上",
+    "本科及以上",
+    "硕士及以上",
+    "MBA/EMBA",
+})
+
+EXPERIENCE_KEYWORDS: frozenset[str] = frozenset({
+    "经验不限",
+    "应届生",
+    "在校生",
+    "应届毕业生",
+})
+
+
+COMPANY_INDICATOR_KEYWORDS: tuple[str, ...] = (
+    "公司",
+    "科技",
+    "网络",
+    "集团",
+    "企业",
+    "银行",
+    "证券",
+    "基金",
+    "保险",
+    "有限",
+    "工作室",
+    "事务所",
+    "中心",
+    "信息",
+    "数据",
+    "通信",
+    "智能",
+    "工业",
+    "制造",
+    "电商",
+    "商贸",
+    "游戏",
+    "互娱",
+    "软件",
+    "技术",
+    "医疗",
+    "健康",
+    "生物",
+    "制药",
+    "教育",
+    "文化",
+    "传媒",
+)
+
+
+def is_likely_location(s: str) -> bool:
+    """Check if a string is likely a geographic location rather than a recruiter title or company info."""
+    if not s or not isinstance(s, str):
+        return False
+    t = s.strip()
+    if any(kw in t for kw in RECRUITER_TITLE_KEYWORDS):
+        return False
+    if any(kw in t for kw in COMPANY_INDICATOR_KEYWORDS) or "某" in t:
+        return False
+    if t in KNOWN_CITIES:
+        return True
+    if len(t) <= 8 and (
+        t.endswith("市")
+        or t.endswith("区")
+        or t.endswith("县")
+        or t.endswith("省")
+        or t.endswith("镇")
+        or t.endswith("道")
+    ):
+        return True
+    sub_parts = t.split()
+    if len(sub_parts) >= 2 and any(p in KNOWN_CITIES for p in sub_parts):
+        return True
+    return False
+
+
+def is_invalid_company_name(name: str) -> bool:
+    """Check if a candidate string is an invalid company name (e.g. education, experience, recruiter, location, scale, job duty)."""
+    if not name or not isinstance(name, str):
+        return True
+    c = name.strip()
+    if not c or c in ("", "未知公司", "未注明公司", "null", "undefined"):
+        return True
+    if len(c) > 40:
+        return True
+    if (
+        c.startswith("负责")
+        or c.startswith("岗位")
+        or c.startswith("任职")
+        or c.startswith("工作职责")
+        or c.startswith("职位描述")
+    ):
+        return True
+    if c in EDUCATION_KEYWORDS or c.endswith("学历"):
+        return True
+    if c in EXPERIENCE_KEYWORDS or bool(re.search(r"^\d+[-~至]?\d*年", c)):
+        return True
+    if any(sep in c for sep in ("·", "•", "・")):
+        return True
+    if any(kw in c for kw in ("猎头", "顾问", "招聘", "HR", "人事")) and len(c) <= 15:
+        return True
+    if bool(re.search(r"^(\d+[-~至]\d+人|\d+人以上|少于\d+人|\d+人以下|\d+人)$", c)):
+        return True
+    if any(kw in c for kw in COMPANY_INDICATOR_KEYWORDS) or "某" in c:
+        return False
+    if c in KNOWN_CITIES or is_likely_location(c):
+        return True
+    return False
+
+
+def sanitize_tags(
+    tags: list[str] | None,
+    recruiter_name: str = "",
+    recruiter_title: str = "",
+    location: str = "",
+    company_name: str = "",
+    title: str = "",
+) -> list[str]:
+    """Sanitize and deduplicate job tags, strictly stripping recruiter info, location, scale, and company."""
+    if not tags:
+        return []
+    r_name = (recruiter_name or "").strip()
+    r_title = (recruiter_title or "").strip()
+    loc = (location or "").strip()
+    comp = (company_name or "").strip()
+    tit = (title or "").strip()
+
+    cleaned: list[str] = []
+    for raw in tags:
+        if not raw:
+            continue
+        t = str(raw).strip()
+        if not t or t in ("猎", "新", "急", "热", "置顶") or len(t) > 25:
+            continue
+        # Recruiter filtering
+        if any(sep in t for sep in ("·", "•", "・")):
+            continue
+        if any(kw in t for kw in ("猎头", "顾问", "HR", "人事", "招聘专员", "招聘者", "Recruiter")):
+            continue
+        if r_name and len(r_name) >= 2 and (t == r_name or r_name in t):
+            continue
+        if r_title and len(r_title) >= 2 and (t == r_title or r_title in t):
+            continue
+        # Location filtering
+        if loc and (t == loc or loc in t or t in loc):
+            continue
+        if is_likely_location(t) or t in KNOWN_CITIES:
+            continue
+        if t.endswith("市") or t.endswith("区") or t.endswith("县"):
+            continue
+        # Scale / Company / Title filtering
+        if re.search(r"(\d+[-~至]\d+人|\d+人以上|少于\d+人|\d+人以下|\d+人)", t):
+            continue
+        if comp and len(comp) >= 2 and t == comp:
+            continue
+        if tit and len(tit) >= 2 and t == tit:
+            continue
+        if t.startswith("负责"):
+            continue
+        if t not in cleaned:
+            cleaned.append(t)
+    return cleaned
+
+
+
 def extract_digest_from_jd(jd: str, max_chars: int = 100) -> str:
     """Extract a concise 1-2 sentence digest from raw job description text."""
     if not jd or not jd.strip():
@@ -245,6 +463,23 @@ class JobRecord:
             self.digest = extract_digest_from_jd(self.job_description)
         if not self.tags:
             self.tags = extract_tags_from_text(f"{self.title} {self.job_description}")
+        self.tags = sanitize_tags(
+            self.tags,
+            recruiter_name=self.recruiter_name,
+            recruiter_title=self.recruiter_title,
+            location=self.location or "",
+            company_name=self.company_name,
+            title=self.title,
+        )
+        if self.jd_key_requirements:
+            self.jd_key_requirements = sanitize_tags(
+                self.jd_key_requirements,
+                recruiter_name=self.recruiter_name,
+                recruiter_title=self.recruiter_title,
+                location=self.location or "",
+                company_name=self.company_name,
+                title=self.title,
+            )
 
 
 @dataclass
@@ -279,6 +514,15 @@ class JobPosting:
             self.is_headhunter = True
         if not self.digest and self.job_description:
             self.digest = extract_digest_from_jd(self.job_description)
+        self.tags = sanitize_tags(
+            self.tags,
+            recruiter_name=self.recruiter_name or "",
+            recruiter_title=self.recruiter_title or "",
+            location=self.location or "",
+            company_name=self.company_name,
+            title=self.title,
+        )
+
 
 
 @dataclass

@@ -19,7 +19,12 @@ from typing import Any
 import requests
 
 from boss_agent.broker.models import AutomationTask, TaskStatus, TaskType
-from boss_agent.models import SavedSearch, compute_job_fingerprint
+from boss_agent.models import (
+    SavedSearch,
+    compute_job_fingerprint,
+    is_invalid_company_name,
+    sanitize_tags,
+)
 from boss_agent.settings import resolve_pocketbase_url
 
 logger = logging.getLogger("boss_agent.broker")
@@ -292,13 +297,36 @@ class InMemoryTaskBroker(BaseTaskBroker):
                 or title in INVALID_JOB_TITLES
                 or not comp_name
                 or comp_name in INVALID_COMPANY_NAMES
+                or is_invalid_company_name(comp_name)
             ):
                 logger.warning(
-                    "Rejected upsert of incomplete job record without valid title or company: title='%s', company='%s'",
+                    "Rejected upsert of incomplete or invalid job record: title='%s', company='%s'",
                     title,
                     comp_name,
                 )
                 return {}
+
+            r_name = record_data.get("recruiter_name", "")
+            r_title = record_data.get("recruiter_title", "")
+            loc = record_data.get("location", "")
+            if "tags" in record_data and isinstance(record_data["tags"], list):
+                record_data["tags"] = sanitize_tags(
+                    record_data["tags"],
+                    recruiter_name=r_name,
+                    recruiter_title=r_title,
+                    location=loc,
+                    company_name=comp_name,
+                    title=title,
+                )
+            if "jd_key_requirements" in record_data and isinstance(record_data["jd_key_requirements"], list):
+                record_data["jd_key_requirements"] = sanitize_tags(
+                    record_data["jd_key_requirements"],
+                    recruiter_name=r_name,
+                    recruiter_title=r_title,
+                    location=loc,
+                    company_name=comp_name,
+                    title=title,
+                )
 
             now = datetime.now(UTC).isoformat()
             if existing_id:
@@ -1270,18 +1298,41 @@ class PocketBaseTaskBroker(BaseTaskBroker):
             if comp_name
             else ""
         )
-        if not fingerprint and (
-            not comp_name
-            or comp_name in INVALID_COMPANY_NAMES
-            or not title
+        if (
+            not title
             or title in INVALID_JOB_TITLES
+            or not comp_name
+            or comp_name in INVALID_COMPANY_NAMES
+            or is_invalid_company_name(comp_name)
         ):
             logger.warning(
-                "Rejected upsert of incomplete job record without valid title or company: title='%s', company='%s'",
+                "Rejected upsert of incomplete or invalid job record: title='%s', company='%s'",
                 title,
                 comp_name,
             )
             return {}
+
+        r_name = record_data.get("recruiter_name", "")
+        r_title = record_data.get("recruiter_title", "")
+        loc = record_data.get("location", "")
+        if "tags" in record_data and isinstance(record_data["tags"], list):
+            record_data["tags"] = sanitize_tags(
+                record_data["tags"],
+                recruiter_name=r_name,
+                recruiter_title=r_title,
+                location=loc,
+                company_name=comp_name,
+                title=title,
+            )
+        if "jd_key_requirements" in record_data and isinstance(record_data["jd_key_requirements"], list):
+            record_data["jd_key_requirements"] = sanitize_tags(
+                record_data["jd_key_requirements"],
+                recruiter_name=r_name,
+                recruiter_title=r_title,
+                location=loc,
+                company_name=comp_name,
+                title=title,
+            )
 
         url = self._jobs_collection_url()
         now = datetime.now(UTC).isoformat()
@@ -1355,7 +1406,7 @@ class PocketBaseTaskBroker(BaseTaskBroker):
                         patch_body["company_scale"] = record_data["company_scale"]
                     if record_data.get("industry") and not existing.get("industry"):
                         patch_body["industry"] = record_data["industry"]
-                    if record_data.get("tags") and not existing.get("tags"):
+                    if "tags" in record_data and record_data["tags"] is not None:
                         patch_body["tags"] = record_data["tags"]
                     if record_data.get("recruiter_title") and not existing.get("recruiter_title"):
                         patch_body["recruiter_title"] = record_data["recruiter_title"]
@@ -1371,7 +1422,7 @@ class PocketBaseTaskBroker(BaseTaskBroker):
                         patch_body["greeting_message"] = record_data["greeting_message"]
                     if record_data.get("match_score") is not None:
                         patch_body["match_score"] = record_data["match_score"]
-                    if record_data.get("jd_key_requirements"):
+                    if "jd_key_requirements" in record_data and record_data["jd_key_requirements"] is not None:
                         patch_body["jd_key_requirements"] = record_data["jd_key_requirements"]
                     if "screened_reason" in record_data:
                         patch_body["screened_reason"] = record_data["screened_reason"]

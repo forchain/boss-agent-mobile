@@ -98,25 +98,97 @@
 	let headhunterCount = $derived(jobs.filter((j) => Boolean(j.is_headhunter)).length);
 
 	function getJobTags(job: JobRecord): string[] {
-		if (job.tags && job.tags.length > 0) {
-			return job.tags;
+		const recruiterName = (job.recruiter_name || '').trim();
+		const recruiterTitle = (job.recruiter_title || '').trim();
+		const loc = (job.location || '').trim();
+		const compName = (job.company_name || '').trim();
+		const compScale = (job.company_scale || '').trim();
+		const industry = (job.industry || '').trim();
+		const title = (job.title || '').trim();
+
+		const recruiterKeywords = [
+			'猎头',
+			'顾问',
+			'HR',
+			'人事',
+			'招聘',
+			'专员',
+			'主管',
+			'经理',
+			'总监',
+			'合伙人',
+			'招聘者',
+			'Recruiter',
+			'Leader'
+		];
+		const knownCities = [
+			'上海',
+			'北京',
+			'深圳',
+			'广州',
+			'杭州',
+			'成都',
+			'武汉',
+			'南京',
+			'苏州',
+			'西安',
+			'重庆',
+			'天津',
+			'长沙',
+			'厦门',
+			'合肥',
+			'青岛',
+			'郑州',
+			'大连',
+			'海外',
+			'远程'
+		];
+
+		function sanitize(tagList: string[] | undefined): string[] {
+			if (!tagList || tagList.length === 0) return [];
+			const cleaned: string[] = [];
+			for (const raw of tagList) {
+				const t = (raw || '').trim();
+				if (!t || t.length > 20) continue;
+				if (['猎', '新', '急', '热', '置顶'].includes(t)) continue;
+
+				// Recruiter filtering
+				if (recruiterName && recruiterName.length >= 2 && (t === recruiterName || t.includes(recruiterName))) continue;
+				if (recruiterTitle && recruiterTitle.length >= 2 && (t === recruiterTitle || t.includes(recruiterTitle))) continue;
+				if (t.includes('·') || t.includes('•') || t.includes('・')) continue;
+				if (recruiterKeywords.some((kw) => t.includes(kw))) continue;
+
+				// Location filtering
+				if (loc && (t === loc || loc.includes(t) || t.includes(loc))) continue;
+				if (knownCities.includes(t) || t.endsWith('市') || t.endsWith('区') || t.endsWith('县')) continue;
+
+				// Company / Scale / Industry / Title filtering
+				if (compName && t === compName) continue;
+				if (title && t === title) continue;
+				if (industry && t === industry) continue;
+				if (compScale && t === compScale) continue;
+				if (t.includes('人') && /\d+人/.test(t)) continue;
+				if (t.startsWith('负责')) continue;
+
+				if (!cleaned.includes(t)) {
+					cleaned.push(t);
+				}
+			}
+			return cleaned;
 		}
-		if (job.jd_key_requirements && job.jd_key_requirements.length > 0) {
-			const filtered = job.jd_key_requirements.filter(
-				(t) =>
-					!t.includes('人') &&
-					t !== job.industry &&
-					t !== job.location &&
-					!t.startsWith('负责') &&
-					t.length <= 15
-			);
-			if (filtered.length > 0) return filtered;
+
+		const cleanedTags = sanitize(job.tags);
+		if (cleanedTags.length > 0) {
+			return cleanedTags;
 		}
-		const fallbackTags = extractTagsFromText((job.title || '') + ' ' + (job.job_description || ''));
-		if (fallbackTags.length > 0) {
-			return fallbackTags;
+
+		const cleanedRequirements = sanitize(job.jd_key_requirements);
+		if (cleanedRequirements.length > 0) {
+			return cleanedRequirements;
 		}
-		return [];
+
+		const fallbackTags = sanitize(extractTagsFromText((job.title || '') + ' ' + (job.job_description || '')));
+		return fallbackTags;
 	}
 
 	function getJobDigest(job: JobRecord): string {

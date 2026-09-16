@@ -19,7 +19,18 @@ from droid_agent_core.locators import (
     wait_until,
 )
 
-from .models import AuthStatus, FilterConfig, JobPosting, compute_job_fingerprint
+from .models import (
+    KNOWN_CITIES,
+    RECRUITER_TITLE_KEYWORDS,
+    AuthStatus,
+    FilterConfig,
+    JobPosting,
+    clean_job_title,
+    compute_job_fingerprint,
+    is_invalid_company_name,
+    is_likely_location,
+    sanitize_tags,
+)
 
 logger = logging.getLogger("boss_agent.pages")
 console = Console()
@@ -79,6 +90,14 @@ class JobCardBrief:
             "猎头" in (self.recruiter_title or "") or "猎头" in (self.recruiter_name or "")
         ):
             self.is_headhunter = True
+        self.tags = sanitize_tags(
+            self.tags,
+            recruiter_name=self.recruiter_name,
+            recruiter_title=self.recruiter_title,
+            location=self.location,
+            company_name=self.company_name,
+            title=self.title,
+        )
         if not self.fingerprint:
             self.fingerprint = compute_job_fingerprint(
                 company_name=self.company_name,
@@ -86,86 +105,6 @@ class JobCardBrief:
                 recruiter_name=self.recruiter_name,
             )
 
-
-KNOWN_CITIES = (
-    "上海",
-    "北京",
-    "深圳",
-    "广州",
-    "杭州",
-    "成都",
-    "武汉",
-    "南京",
-    "苏州",
-    "西安",
-    "重庆",
-    "天津",
-    "长沙",
-    "厦门",
-    "合肥",
-    "青岛",
-    "郑州",
-    "大连",
-    "海外",
-    "远程",
-)
-
-RECRUITER_TITLE_KEYWORDS = (
-    "猎头",
-    "顾问",
-    "专员",
-    "专家",
-    "HR",
-    "招聘",
-    "经理",
-    "主管",
-    "总监",
-    "助理",
-    "VP",
-    "合伙人",
-    "Recruiter",
-    "Leader",
-    "HRBP",
-    "负责人",
-)
-
-
-def clean_job_title(raw_title: str) -> str:
-    """Clean job title by stripping trailing status badges, tag placeholders like '&@', '@%', and excess punctuation.
-
-    Examples:
-        "技术负责人-CTO级别｜pre-ipo公司｜医疗AI &@" -> "技术负责人-CTO级别｜pre-ipo公司｜医疗AI"
-        "CTO，外企AI Startup，可远程办公 &@"        -> "CTO，外企AI Startup，可远程办公"
-        "算法高级工程师-DataAgent &@  &@"             -> "算法高级工程师-DataAgent"
-        "外企-全栈开发工程师-不加班1075 @%"         -> "外企-全栈开发工程师-不加班1075"
-    """
-    if not raw_title:
-        return ""
-    if not isinstance(raw_title, str):
-        raw_title = str(raw_title)
-    t = raw_title.strip()
-    while True:
-        cleaned = re.sub(r"[\s&@%]+$", "", t).strip()
-        if cleaned == t:
-            break
-        t = cleaned
-    return t
-
-
-def is_likely_location(s: str) -> bool:
-    """Check if a string is likely a geographic location rather than a recruiter title or company info."""
-    if not s:
-        return False
-    t = s.strip()
-    if any(kw in t for kw in RECRUITER_TITLE_KEYWORDS):
-        return False
-    return (
-        t in KNOWN_CITIES
-        or t.endswith("市")
-        or t.endswith("区")
-        or t.endswith("县")
-        or any(c in t for c in KNOWN_CITIES)
-    )
 
 
 def parse_recruiter_info(raw_text: str) -> tuple[str, str, bool]:
@@ -238,6 +177,8 @@ def parse_company_scale_industry(
     if not raw:
         return "", scale, industry
 
+    comp_name = ""
+
     # Pattern matching scale like "100-499人", "10000人以上", "少于50人", "20-99人"
     scale_pattern = r"(\d+[-~至]\d+人|\d+人以上|少于\d+人|\d+人以下|\d+人)"
     m = re.search(scale_pattern, raw)
@@ -251,23 +192,24 @@ def parse_company_scale_industry(
         rem = parts[1].strip() if len(parts) > 1 else ""
         if rem and not industry:
             industry = rem
-        return comp_name or raw, scale, industry
-
-    # If scale was already provided explicitly and exists in raw company string
-    if scale and scale in raw:
+    elif scale and scale in raw:
+        # If scale was already provided explicitly and exists in raw company string
         parts = raw.split(scale, 1)
         comp_name = parts[0].strip()
         rem = parts[1].strip() if len(parts) > 1 else ""
         if rem and not industry:
             industry = rem
-        return comp_name or raw, scale, industry
-
-    # If industry was provided explicitly and exists at end of company string
-    if industry and raw.endswith(industry) and len(raw) > len(industry) + 2:
+    elif industry and raw.endswith(industry) and len(raw) > len(industry) + 2:
+        # If industry was provided explicitly and exists at end of company string
         comp_name = raw[: -len(industry)].strip()
-        return comp_name, scale, industry
+    else:
+        comp_name = raw
 
-    return raw, scale, industry
+    if comp_name and is_invalid_company_name(comp_name):
+        comp_name = ""
+
+    return comp_name, scale, industry
+
 
 
 class BaseBossPage:
@@ -664,6 +606,8 @@ class JobListPage(BaseBossPage):
             company, scale, industry = parse_company_scale_industry(
                 raw_company, explicit_scale=raw_scale, explicit_industry=raw_industry
             )
+            if company and is_invalid_company_name(company):
+                company = ""
             recruiter_name, recruiter_title, is_headhunter = parse_recruiter_info(raw_recruiter)
 
             # Safeguard: if location element was extracted but contains recruiter title words
@@ -692,8 +636,18 @@ class JobListPage(BaseBossPage):
                         if tags:
                             break
 
-            # Priority 2: Fallback to text heuristic parsing IF title is still missing
-            if not title:
+            if tags:
+                tags = sanitize_tags(
+                    tags,
+                    recruiter_name=recruiter_name,
+                    recruiter_title=recruiter_title,
+                    location=location,
+                    company_name=company,
+                    title=title,
+                )
+
+            # Priority 2: Fallback to text heuristic parsing IF title or company is still missing
+            if not title or not company:
                 sub_texts: list[str] = []
                 with contextlib.suppress(Exception):
                     sub_texts = [
@@ -719,22 +673,7 @@ class JobListPage(BaseBossPage):
                         salary = t
                         continue
 
-                    # 2. Title detection (first non-salary substantive text is always job title)
-                    if not title:
-                        title = clean_job_title(t)
-                        continue
-
-                    # 3. Company line detection (includes scale / industry heuristic)
-                    if not company:
-                        c_name, c_scale, c_ind = parse_company_scale_industry(t)
-                        company = c_name
-                        if c_scale and not scale:
-                            scale = c_scale
-                        if c_ind and not industry:
-                            industry = c_ind
-                        continue
-
-                    # 4. Recruiter & attached location detection (e.g. "钟先生 · 猎头顾问" or "冯女士·总经理助理 上海")
+                    # 2. Recruiter & attached location detection (e.g. "钟先生 · 猎头顾问" or "冯女士·总经理助理 上海")
                     if not recruiter_name and (
                         any(sep in t for sep in ("·", "•", "・"))
                         or any(kw in t for kw in RECRUITER_TITLE_KEYWORDS)
@@ -750,51 +689,68 @@ class JobListPage(BaseBossPage):
                             location = parts[1].strip()
                         continue
 
-                    # 5. Location detection if standalone
+                    # 3. Location detection if standalone
                     if not location and (
-                        t
-                        in (
-                            "上海",
-                            "北京",
-                            "深圳",
-                            "广州",
-                            "杭州",
-                            "成都",
-                            "武汉",
-                            "南京",
-                            "苏州",
-                            "西安",
-                            "海外",
-                        )
+                        t in KNOWN_CITIES
                         or t.endswith("市")
                         or t.endswith("区")
+                        or t.endswith("县")
+                        or is_likely_location(t)
                     ):
                         location = t
                         continue
 
-                    # 6. Standalone scale or industry detection
-                    if (
-                        re.search(r"(\d+[-~至]\d+人|\d+人以上|少于\d+人|\d+人以下)", t)
-                        and not scale
-                    ):
-                        scale = t
-                        continue
-
-                    # 7. Tags vs Snippet
+                    # 4. Requirement / education / experience tags
                     if any(
                         kw in t
                         for kw in ("年", "应届", "经验", "本科", "大专", "硕士", "博士", "学历")
                     ):
                         tags.append(t)
-                    elif len(t) > 10 and not snippet:
+                        continue
+
+                    # 5. Title detection (first non-salary substantive text is always job title)
+                    if not title:
+                        title = clean_job_title(t)
+                        continue
+
+                    # 6. Company line detection (includes scale / industry heuristic)
+                    if not company:
+                        c_name, c_scale, c_ind = parse_company_scale_industry(t)
+                        if c_name and not is_invalid_company_name(c_name):
+                            company = c_name
+                            if c_scale and not scale:
+                                scale = c_scale
+                            if c_ind and not industry:
+                                industry = c_ind
+                            continue
+
+                    # 7. Standalone scale or industry detection
+                    if (
+                        re.search(r"(\d+[-~至]\d+人|\d+人以上|少于\d+人|\d+人以下|\d+人)", t)
+                        and not scale
+                    ):
+                        scale = t
+                        continue
+
+                    # 8. Tags vs Snippet
+                    if len(t) > 10 and not snippet:
                         snippet = t
-                    elif len(t) <= 12:
+                    elif len(t) <= 12 and not is_invalid_company_name(t) and not is_likely_location(t):
                         tags.append(t)
                     elif not snippet:
                         snippet = t
 
+                tags = sanitize_tags(
+                    tags,
+                    recruiter_name=recruiter_name,
+                    recruiter_title=recruiter_title,
+                    location=location,
+                    company_name=company,
+                    title=title,
+                )
+
             # Skip incomplete or partially visible cards without genuine company name
-            if title and company and company.strip() not in ("", "未知公司"):
+            if title and company and not is_invalid_company_name(company):
                 # Safeguard against viewport cutoff:
                 # When a card is cut off at the bottom of the screen, the lower sub-elements
                 # (recruiter_name and location) are not loaded into the accessibility hierarchy yet.
