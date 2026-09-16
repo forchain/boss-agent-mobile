@@ -278,3 +278,37 @@ def test_persist_reload_then_evaluate_injects_rule():
         assert "【打招呼个性化长期偏好准则" in system_prompt
         assert "当 JD 提及Rust或内存安全时" in system_prompt
         assert "突出开源Rust项目与内存安全调优成果" in system_prompt
+
+
+def test_service_distill_fallback_rewrites_raw_critique():
+    """When LLM distillation fails, the fallback must still produce an agent-friendly
+    instruction rather than memorize the user's raw words verbatim."""
+
+    mock_llm = MagicMock()
+    # Force the JSON call to fail so the fallback path runs.
+    mock_llm.chat_completion_json.side_effect = RuntimeError("simulated distillation failure")
+
+    service = JobMatchGreetingService(llm_client=mock_llm)
+    job = JobPosting(
+        title="Senior Backend Engineer",
+        company_name="Acme Corp",
+        salary_range="30-50K",
+        job_description="We need a senior backend engineer.",
+    )
+    # A real user-typed critique that is verbose / unclear.
+    raw_critique = "我英语其实还行，工作这么多年了，开会也没啥问题，要不你也帮我提一下这个？还有就是我是党员这个事也可以说说"
+
+    rule = service.distill_memory_rule(
+        job=job,
+        original_greeting="您好，我对贵司的职位感兴趣。",
+        revised_greeting="您好，作为多年经验的后端工程师，我对贵司的职位非常感兴趣。",
+        critique=raw_critique,
+    )
+
+    # Fallback must NOT be the raw user text dumped into instruction.
+    assert rule.instruction != raw_critique
+    # Fallback reframes the raw critique into an agent-friendly directive.
+    assert "求职者偏好" in rule.instruction
+    assert raw_critique in rule.instruction  # still references the user's intent
+    # Raw critique is trimmed to a sane length to keep the rule readable.
+    assert len(rule.instruction) <= 280

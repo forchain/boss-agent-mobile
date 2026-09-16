@@ -234,7 +234,8 @@ class JobMatchGreetingService:
             "【提炼规则】：\n"
             "1. 【触发条件 (condition)】：描述在什么类型的岗位特征、JD要求或技术诉求下该规则应该生效。例如：“当 JD 强调英语能力、外企背景或海外业务时”；“当岗位需要大模型落地与多 Agent 协同架构时”。严禁绑定具体公司名称。\n"
             "2. 【执行策略 (instruction)】：描述打招呼时应采取的话术策略或突出的核心竞争优势。例如：“第一句话点明海外留学经历、英语可作工作语言并主动提及可接受全英文面试”。\n"
-            "3. 【严格以 JSON 输出】：\n"
+            "3. 【理解并转化原则 — 重要】：求职者输入的微调意见可能口语化、啰嗦或思路零散，你必须真正理解其意图，将其改写为 Agent 易于理解和执行的结构化策略，而不是逐字记忆原话。例如：用户说『我英语其实还行，工作这么多年了，开会也没啥问题，要不你也帮我提一下这个？』应提炼为『突出英语可作日常工作语言，主动提及可接受英文会议与面试』。\n"
+            "4. 【严格以 JSON 输出】：\n"
             "{\n"
             '  "condition": "触发条件描述",\n'
             '  "instruction": "执行策略描述"\n'
@@ -273,8 +274,15 @@ class JobMatchGreetingService:
         except Exception as e:
             console.print(f"[bold red]❌ LLM rule distillation error:[/bold red] {e}")
 
+        # Fallback when LLM distillation fails: still produce an agent-friendly
+        # condition/instruction pair rather than memorizing the user's raw words.
+        # We trim and reframe the raw critique into a directive-style instruction.
+        trimmed_critique = critique.strip()[:200] if critique else ""
         fallback_cond = f"当岗位涉及【{job.title}】相关要求时"
-        fallback_inst = critique if critique else f"结合【{job.title}】核心实战成果突出匹配度"
+        if trimmed_critique:
+            fallback_inst = f"在招呼语中体现求职者偏好：{trimmed_critique}（具体由后续 Agent 结合 JD 灵活展开）"
+        else:
+            fallback_inst = f"结合【{job.title}】核心实战成果突出匹配度"
         return GreetingStyleRule(
             id="",
             condition=fallback_cond,

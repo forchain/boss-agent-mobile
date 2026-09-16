@@ -1311,19 +1311,16 @@
 								{/if}
 
 								<div class="flex flex-col sm:flex-row gap-2">
-									<input
-										type="text"
+									<textarea
 										bind:value={critiqueInput}
-										placeholder="例如：强调我有海外留学背景，英语可作日常工作语言，并可接受全英文面试..."
-										class="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-cyan-500 transition"
-										onkeydown={(e) => {
-											if (e.key === 'Enter') handleRefineGreeting();
-										}}
-									/>
+										placeholder="例如：强调我有海外留学背景，英语可作日常工作语言，并可接受全英文面试。&#10;可以随便写，Agent 会自动理解并提炼成长期记忆规则，不必字斟句酌..."
+										rows="3"
+										class="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-cyan-500 transition resize-y min-h-[60px]"
+									></textarea>
 									<button
 										onclick={handleRefineGreeting}
 										disabled={isRefining || !critiqueInput.trim()}
-										class="bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-white font-medium px-4 py-1.5 rounded-lg text-xs transition flex items-center justify-center space-x-1.5 disabled:opacity-40 shadow shadow-cyan-600/20"
+										class="self-start sm:self-stretch bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-white font-medium px-4 py-1.5 rounded-lg text-xs transition flex items-center justify-center space-x-1.5 disabled:opacity-40 shadow shadow-cyan-600/20"
 									>
 										{#if isRefining}
 											<span class="animate-spin">⚡</span>
