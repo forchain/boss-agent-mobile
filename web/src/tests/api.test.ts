@@ -386,6 +386,87 @@ describe('SvelteKit Server Endpoints', () => {
 			globalThis.fetch = origFetch;
 		}
 	});
+
+	it('GET /api/jobs enforces upper limit clamp and returns paginated metadata and aggregate counts', async () => {
+		const { GET: handleJobsGet } = await import('../routes/api/jobs/+server');
+
+		// 1. Clamping test: limit=9999 should be clamped to 100
+		const clampEvent: any = {
+			url: new URL('http://localhost/api/jobs?page=1&limit=9999')
+		};
+		const clampRes = await handleJobsGet(clampEvent);
+		const clampJson = await clampRes.json();
+		expect(clampRes.status).toBe(200);
+		expect(clampJson.success).toBe(true);
+		expect(clampJson.perPage).toBe(100);
+		expect(clampJson.page).toBe(1);
+		expect(clampJson.records.length).toBeLessThanOrEqual(100);
+		expect(clampJson.counts).toBeDefined();
+		expect(typeof clampJson.counts.all).toBe('number');
+		expect(typeof clampJson.counts.jd_saved).toBe('number');
+		expect(typeof clampJson.counts.matched).toBe('number');
+		expect(typeof clampJson.counts.applied).toBe('number');
+		expect(typeof clampJson.counts.ignored).toBe('number');
+		expect(typeof clampJson.counts.direct).toBe('number');
+		expect(typeof clampJson.counts.headhunter).toBe('number');
+
+		// 2. Pagination test with small limit
+		const p1Event: any = {
+			url: new URL('http://localhost/api/jobs?page=1&limit=2')
+		};
+		const p1Res = await handleJobsGet(p1Event);
+		const p1Json = await p1Res.json();
+		expect(p1Json.page).toBe(1);
+		expect(p1Json.perPage).toBe(2);
+		expect(p1Json.records.length).toBeLessThanOrEqual(2);
+		expect(typeof p1Json.total).toBe('number');
+		expect(typeof p1Json.totalPages).toBe('number');
+
+		// 3. Lower limit clamp: limit=-10 should clamp to 1
+		const lowLimitEvent: any = {
+			url: new URL('http://localhost/api/jobs?page=-5&limit=-10')
+		};
+		const lowLimitRes = await handleJobsGet(lowLimitEvent);
+		const lowLimitJson = await lowLimitRes.json();
+		expect(lowLimitJson.page).toBe(1);
+		expect(lowLimitJson.perPage).toBe(1);
+	});
+
+	it('GET /api/tasks enforces upper limit clamp and returns paginated metadata', async () => {
+		const { GET: handleTasksGet } = await import('../routes/api/tasks/+server');
+
+		// 1. Clamping test: limit=9999 should be clamped to 100
+		const clampEvent: any = {
+			url: new URL('http://localhost/api/tasks?page=1&limit=9999')
+		};
+		const clampRes = await handleTasksGet(clampEvent);
+		const clampJson = await clampRes.json();
+		expect(clampRes.status).toBe(200);
+		expect(clampJson.success).toBe(true);
+		expect(clampJson.perPage).toBe(100);
+		expect(clampJson.page).toBe(1);
+		expect(typeof clampJson.total).toBe('number');
+		expect(typeof clampJson.totalPages).toBe('number');
+
+		// 2. Lower bound clamp: page=0 & limit=0 should clamp to page 1 & limit 1
+		const lowEvent: any = {
+			url: new URL('http://localhost/api/tasks?page=0&limit=0')
+		};
+		const lowRes = await handleTasksGet(lowEvent);
+		const lowJson = await lowRes.json();
+		expect(lowJson.page).toBe(1);
+		expect(lowJson.perPage).toBe(1);
+	});
+
+	it('getJobRecords client helper returns structured GetJobRecordsResult', async () => {
+		const { getJobRecords } = await import('../lib/pocketbase');
+		const result = await getJobRecords({ page: 1, limit: 10 });
+		expect(Array.isArray(result.items)).toBe(true);
+		expect(typeof result.totalItems).toBe('number');
+		expect(typeof result.totalPages).toBe('number');
+		expect(result.page).toBe(1);
+		expect(result.perPage).toBe(10);
+	});
 });
 
 describe('Unified System Settings Endpoints (/api/settings)', () => {

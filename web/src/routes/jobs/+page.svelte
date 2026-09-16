@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import type { JobRecord, JobRecordStatus, CandidateProfile, LLMSettings, MatchEvaluateResponse } from '$lib/types';
+	import type { JobRecord, JobRecordStatus, CandidateProfile, LLMSettings, MatchEvaluateResponse, JobRecordsCounts } from '$lib/types';
 	import {
 		pb,
 		getJobRecords,
@@ -25,6 +25,21 @@
 	let channelFilter = $state<'all' | 'direct' | 'headhunter'>('all');
 	let searchQuery = $state('');
 	let isLoading = $state(true);
+
+	// Pagination State
+	let currentPage = $state(1);
+	let pageSize = $state(30);
+	let totalJobs = $state(0);
+	let totalPages = $state(1);
+	let counts = $state<JobRecordsCounts>({
+		all: 0,
+		jd_saved: 0,
+		matched: 0,
+		applied: 0,
+		ignored: 0,
+		direct: 0,
+		headhunter: 0
+	});
 
 	// Match evaluation state
 	let isEvaluating = $state(false);
@@ -57,45 +72,8 @@
 			: { allowed: false, notice: '' }
 	);
 
-	// Derived: Filtered jobs
-	let filteredJobs = $derived(
-		jobs.filter((j) => {
-			const matchesStatus =
-				currentFilter === 'all'
-					? j.status !== 'ignored'
-					: currentFilter === 'jd_saved'
-						? j.status === 'jd_saved' || j.status === 'unmatched' || j.status === 'digest_only'
-						: j.status === currentFilter;
-			const matchesChannel =
-				channelFilter === 'all'
-					? true
-					: channelFilter === 'headhunter'
-						? Boolean(j.is_headhunter)
-						: !j.is_headhunter;
-			const query = searchQuery.trim().toLowerCase();
-			const matchesQuery = query
-				? (j.title || '').toLowerCase().includes(query) ||
-					(j.company_name || '').toLowerCase().includes(query) ||
-					(j.recruiter_name || '').toLowerCase().includes(query) ||
-					(j.recruiter_title || '').toLowerCase().includes(query) ||
-					(j.company_scale || '').toLowerCase().includes(query) ||
-					(j.industry || '').toLowerCase().includes(query) ||
-					(j.digest || '').toLowerCase().includes(query) ||
-					(j.screened_reason || '').toLowerCase().includes(query) ||
-					(j.tags || []).some((t) => t.toLowerCase().includes(query))
-				: true;
-			return matchesStatus && matchesChannel && matchesQuery;
-		})
-	);
-
-	// Counts
-	let activeJobsCount = $derived(jobs.filter((j) => j.status !== 'ignored').length);
-	let jdSavedCount = $derived(jobs.filter((j) => j.status === 'jd_saved' || j.status === 'unmatched' || j.status === 'digest_only').length);
-	let matchedCount = $derived(jobs.filter((j) => j.status === 'matched').length);
-	let appliedCount = $derived(jobs.filter((j) => j.status === 'applied').length);
-	let ignoredCount = $derived(jobs.filter((j) => j.status === 'ignored').length);
-	let directCount = $derived(jobs.filter((j) => !j.is_headhunter).length);
-	let headhunterCount = $derived(jobs.filter((j) => Boolean(j.is_headhunter)).length);
+	// Derived: Filtered jobs (jobs returned by the server are already filtered by status, channel, and search)
+	let filteredJobs = $derived(jobs);
 
 	function getJobTags(job: JobRecord): string[] {
 		const recruiterName = (job.recruiter_name || '').trim();
@@ -201,23 +179,45 @@
 		return '';
 	}
 
-	async function loadJobs() {
+	let searchDebounceTimer: any = null;
+	function handleSearchInput() {
+		clearTimeout(searchDebounceTimer);
+		searchDebounceTimer = setTimeout(() => {
+			loadJobs(1);
+		}, 300);
+	}
+
+	function onFilterChange(newFilter: JobRecordStatus | 'all') {
+		currentFilter = newFilter;
+		loadJobs(1);
+	}
+
+	function onChannelChange(newChannel: 'all' | 'direct' | 'headhunter') {
+		channelFilter = newChannel;
+		loadJobs(1);
+	}
+
+	async function loadJobs(page = 1) {
 		isLoading = true;
+		currentPage = page;
 		try {
-			const list = await getJobRecords();
-			const validList = list.filter(
-				(j) => j.company_name && j.company_name.trim() !== '' && j.company_name.trim() !== '未知公司'
-			);
-			jobs = validList;
-			if (!selectedJobId && validList.length > 0) {
-				const firstEligible = validList.find(
-					(j) => j.status === 'jd_saved' || j.status === 'unmatched' || j.status === 'digest_only'
-				);
-				if (firstEligible) {
-					selectedJobId = firstEligible.id;
-				} else {
-					selectedJobId = validList[0].id;
-				}
+			const res = await getJobRecords({
+				status: currentFilter,
+				channel: channelFilter,
+				search: searchQuery,
+				page,
+				limit: pageSize
+			});
+			jobs = res.items;
+			totalJobs = res.totalItems;
+			totalPages = res.totalPages;
+			if (res.counts) {
+				counts = res.counts;
+			}
+			if (!selectedJobId && jobs.length > 0) {
+				selectedJobId = jobs[0].id;
+			} else if (selectedJobId && !jobs.some((j) => j.id === selectedJobId) && jobs.length > 0) {
+				selectedJobId = jobs[0].id;
 			}
 		} catch (e) {
 			console.error('Failed to load jobs', e);
@@ -527,19 +527,19 @@
 		<div class="flex items-center space-x-3 text-xs">
 			<div class="bg-slate-950/80 border border-slate-800 px-3.5 py-2 rounded-xl flex items-center space-x-2 font-mono">
 				<span class="text-slate-400">待评估:</span>
-				<span class="font-bold text-cyan-400 text-sm">{jdSavedCount}</span>
+				<span class="font-bold text-cyan-400 text-sm">{counts.jd_saved}</span>
 			</div>
 			<div class="bg-slate-950/80 border border-slate-800 px-3.5 py-2 rounded-xl flex items-center space-x-2 font-mono">
 				<span class="text-slate-400">已评估:</span>
-				<span class="font-bold text-emerald-400 text-sm">{matchedCount}</span>
+				<span class="font-bold text-emerald-400 text-sm">{counts.matched}</span>
 			</div>
 			<div class="bg-slate-950/80 border border-slate-800 px-3.5 py-2 rounded-xl flex items-center space-x-2 font-mono">
 				<span class="text-slate-400">已沟通:</span>
-				<span class="font-bold text-blue-400 text-sm">{appliedCount}</span>
+				<span class="font-bold text-blue-400 text-sm">{counts.applied}</span>
 			</div>
 			<div class="bg-slate-950/80 border border-slate-800 px-3.5 py-2 rounded-xl flex items-center space-x-2 font-mono">
 				<span class="text-slate-400">已淘汰:</span>
-				<span class="font-bold text-rose-400 text-sm">{ignoredCount}</span>
+				<span class="font-bold text-rose-400 text-sm">{counts.ignored}</span>
 			</div>
 		</div>
 	</div>
@@ -553,56 +553,56 @@
 				<!-- Status Tabs -->
 				<div class="grid grid-cols-2 sm:grid-cols-5 gap-1 p-1 bg-slate-950 border border-slate-800/80 rounded-xl text-xs font-medium">
 					<button
-						onclick={() => (currentFilter = 'all')}
+						onclick={() => onFilterChange('all')}
 						class="py-1.5 rounded-lg transition text-center {currentFilter === 'all' ? 'bg-cyan-600 text-white shadow font-semibold' : 'text-slate-400 hover:text-slate-200'}"
 					>
-						全部 ({activeJobsCount})
+						全部 ({counts.all})
 					</button>
 					<button
-						onclick={() => (currentFilter = 'jd_saved')}
+						onclick={() => onFilterChange('jd_saved')}
 						class="py-1.5 rounded-lg transition text-center {currentFilter === 'jd_saved' ? 'bg-cyan-600 text-white shadow font-semibold' : 'text-slate-400 hover:text-slate-200'}"
 					>
-						待评估 ({jdSavedCount})
+						待评估 ({counts.jd_saved})
 					</button>
 					<button
-						onclick={() => (currentFilter = 'matched')}
+						onclick={() => onFilterChange('matched')}
 						class="py-1.5 rounded-lg transition text-center {currentFilter === 'matched' ? 'bg-cyan-600 text-white shadow font-semibold' : 'text-slate-400 hover:text-slate-200'}"
 					>
-						已评估 ({matchedCount})
+						已评估 ({counts.matched})
 					</button>
 					<button
-						onclick={() => (currentFilter = 'applied')}
+						onclick={() => onFilterChange('applied')}
 						class="py-1.5 rounded-lg transition text-center {currentFilter === 'applied' ? 'bg-cyan-600 text-white shadow font-semibold' : 'text-slate-400 hover:text-slate-200'}"
 					>
-						已沟通 ({appliedCount})
+						已沟通 ({counts.applied})
 					</button>
 					<button
-						onclick={() => (currentFilter = 'ignored')}
+						onclick={() => onFilterChange('ignored')}
 						class="py-1.5 rounded-lg transition text-center {currentFilter === 'ignored' ? 'bg-rose-950 text-rose-300 border border-rose-800 shadow font-semibold' : 'text-slate-400 hover:text-slate-200'}"
 					>
-						已淘汰 ({ignoredCount})
+						已淘汰 ({counts.ignored})
 					</button>
 				</div>
 
 				<!-- Recruitment Channel Tabs -->
 				<div class="grid grid-cols-3 gap-1.5 p-1 bg-slate-950 border border-slate-800/80 rounded-xl text-xs font-medium">
 					<button
-						onclick={() => (channelFilter = 'all')}
+						onclick={() => onChannelChange('all')}
 						class="py-1 rounded-lg transition text-center {channelFilter === 'all' ? 'bg-slate-800 text-cyan-300 shadow font-semibold' : 'text-slate-400 hover:text-slate-200'}"
 					>
-						全部渠道 ({jobs.length})
+						全部渠道 ({counts.direct + counts.headhunter})
 					</button>
 					<button
-						onclick={() => (channelFilter = 'direct')}
+						onclick={() => onChannelChange('direct')}
 						class="py-1 rounded-lg transition text-center {channelFilter === 'direct' ? 'bg-cyan-950/70 text-cyan-400 border border-cyan-800/80 shadow font-semibold' : 'text-slate-400 hover:text-slate-200'}"
 					>
-						🏢 仅直招 ({directCount})
+						🏢 仅直招 ({counts.direct})
 					</button>
 					<button
-						onclick={() => (channelFilter = 'headhunter')}
+						onclick={() => onChannelChange('headhunter')}
 						class="py-1 rounded-lg transition text-center {channelFilter === 'headhunter' ? 'bg-amber-950/70 text-amber-400 border border-amber-800/80 shadow font-semibold' : 'text-slate-400 hover:text-slate-200'}"
 					>
-						🎯 仅猎头 ({headhunterCount})
+						🎯 仅猎头 ({counts.headhunter})
 					</button>
 				</div>
 
@@ -612,6 +612,7 @@
 					<input
 						type="text"
 						bind:value={searchQuery}
+						oninput={handleSearchInput}
 						placeholder="搜索职位、公司、规模、行业、标签或摘要..."
 						class="w-full bg-slate-950 border border-slate-800 rounded-xl pl-8 pr-3 py-2 text-xs text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-cyan-500 transition"
 					/>
@@ -768,6 +769,49 @@
 						</div>
 					{/each}
 				{/if}
+			</div>
+
+			<!-- Pagination Bar -->
+			<div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 shadow-lg flex flex-wrap items-center justify-between gap-2 text-xs">
+				<div class="flex items-center space-x-1.5">
+					<button
+						disabled={currentPage <= 1 || isLoading}
+						onclick={() => loadJobs(currentPage - 1)}
+						class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed text-slate-200 transition font-medium text-[11px] flex items-center gap-1"
+						title="上一页"
+					>
+						◀ 上一页
+					</button>
+					<span class="text-slate-400 font-mono text-[11px] px-1">
+						第 <strong class="text-cyan-300 font-bold">{currentPage}</strong> / {totalPages || 1} 页
+					</span>
+					<button
+						disabled={currentPage >= totalPages || isLoading}
+						onclick={() => loadJobs(currentPage + 1)}
+						class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed text-slate-200 transition font-medium text-[11px] flex items-center gap-1"
+						title="下一页"
+					>
+						下一页 ▶
+					</button>
+				</div>
+
+				<div class="flex items-center space-x-2">
+					<span class="text-slate-400 text-[11px]">每页:</span>
+					<select
+						bind:value={pageSize}
+						onchange={() => {
+							currentPage = 1;
+							loadJobs(1);
+						}}
+						class="bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-slate-200 text-xs focus:outline-none focus:border-cyan-500 font-mono cursor-pointer"
+					>
+						<option value={20}>20</option>
+						<option value={30}>30</option>
+						<option value={50}>50</option>
+						<option value={100}>100 (上限)</option>
+					</select>
+					<span class="text-slate-500 font-mono text-[10px]">共 {totalJobs} 条</span>
+				</div>
 			</div>
 		</div>
 

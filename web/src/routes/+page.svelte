@@ -30,6 +30,10 @@
 	let historyTasks = $state<AutomationTask[]>([]);
 	let historyFilter = $state<string>('all');
 	let isHistoryLoading = $state(false);
+	let taskPage = $state(1);
+	let taskPageSize = $state(20);
+	let totalTasks = $state(0);
+	let taskTotalPages = $state(1);
 
 	// Scheduled Tasks & Saved Searches State
 	let savedSearches = $state<SavedSearch[]>([]);
@@ -158,14 +162,18 @@
 		checkActiveTask();
 	}
 
-	async function loadTaskHistory() {
+	async function loadTaskHistory(page = taskPage) {
 		isHistoryLoading = true;
+		taskPage = page;
 		try {
 			const res = await listAutomationTasks({
 				status: historyFilter === 'all' ? undefined : historyFilter,
-				limit: 30
+				page,
+				limit: taskPageSize
 			});
 			historyTasks = res.items;
+			totalTasks = res.totalItems;
+			taskTotalPages = res.totalPages;
 		} catch (e) {
 			console.warn('Failed to load task history:', e);
 		} finally {
@@ -589,7 +597,7 @@
 				>
 					<span>📋 任务执行历史与审计 (Task History)</span>
 					<span class="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-800 text-slate-400 font-mono">
-						{historyTasks.length}
+						{totalTasks}
 					</span>
 				</button>
 
@@ -613,7 +621,7 @@
 						<button
 							onclick={() => {
 								historyFilter = f;
-								loadTaskHistory();
+								loadTaskHistory(1);
 							}}
 							class="px-2.5 py-1 rounded-lg text-[11px] font-medium transition {historyFilter === f
 								? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
@@ -761,6 +769,46 @@
 							{/each}
 						</tbody>
 					</table>
+				</div>
+
+				<!-- Task History Pagination Bar -->
+				<div class="border-t border-slate-800/80 pt-3 flex flex-wrap items-center justify-between gap-2 text-xs">
+					<div class="flex items-center space-x-1.5">
+						<button
+							disabled={taskPage <= 1 || isHistoryLoading}
+							onclick={() => loadTaskHistory(taskPage - 1)}
+							class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed text-slate-200 transition font-medium text-[11px] flex items-center gap-1"
+							title="上一页"
+						>
+							◀ 上一页
+						</button>
+						<span class="text-slate-400 font-mono text-[11px] px-1">
+							第 <strong class="text-cyan-300 font-bold">{taskPage}</strong> / {taskTotalPages || 1} 页
+						</span>
+						<button
+							disabled={taskPage >= taskTotalPages || isHistoryLoading}
+							onclick={() => loadTaskHistory(taskPage + 1)}
+							class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed text-slate-200 transition font-medium text-[11px] flex items-center gap-1"
+							title="下一页"
+						>
+							下一页 ▶
+						</button>
+					</div>
+
+					<div class="flex items-center space-x-2">
+						<span class="text-slate-400 text-[11px]">每页:</span>
+						<select
+							bind:value={taskPageSize}
+							onchange={() => loadTaskHistory(1)}
+							class="bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-slate-200 text-xs focus:outline-none focus:border-cyan-500 font-mono cursor-pointer"
+						>
+							<option value={10}>10</option>
+							<option value={20}>20</option>
+							<option value={50}>50</option>
+							<option value={100}>100 (上限)</option>
+						</select>
+						<span class="text-slate-500 font-mono text-[10px]">共 {totalTasks} 条记录</span>
+					</div>
 				</div>
 			{/if}
 
