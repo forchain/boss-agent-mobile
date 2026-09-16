@@ -320,7 +320,9 @@ def test_service_refine_with_critique_raises_on_llm_failure():
     """When LLM refinement fails, the method MUST raise — not silently
     return a fake 'refined' greeting that is just the original text with the
     critique concatenated in parentheses. This bug previously caused the UI
-    to show '优化后: <original>（结合建议补充：...）' as a real refinement."""
+    to show '优化后: <original>（结合建议补充：...）' as a real refinement.
+    Also asserts the raised message includes the underlying error info
+    (not the literal 'unknown' string from a scoping bug)."""
 
     mock_llm = MagicMock()
     mock_llm.chat_completion_json.side_effect = RuntimeError("simulated refine failure")
@@ -334,9 +336,39 @@ def test_service_refine_with_critique_raises_on_llm_failure():
     )
     original = "您好，我对贵司AI架构师职位非常感兴趣。"
 
-    with pytest.raises(RuntimeError, match="LLM 微调失败"):
+    with pytest.raises(RuntimeError) as exc_info:
         service.refine_with_critique(
             job=job,
             current_greeting=original,
+            critique="请强调我的英语能力",
+        )
+
+    msg = str(exc_info.value)
+    assert "LLM 微调失败" in msg
+    # The message must propagate the underlying error, not the literal 'unknown'
+    # placeholder produced by a scoping bug where 'e' was checked outside the except block.
+    assert "unknown" not in msg
+    assert "simulated refine failure" in msg
+
+
+def test_service_refine_with_critique_raises_when_llm_returns_empty():
+    """When the LLM call succeeds but returns no revised_greeting, the method
+    must still raise — same root contract as a hard exception."""
+
+    mock_llm = MagicMock()
+    mock_llm.chat_completion_json.return_value = {}  # missing revised_greeting
+
+    service = JobMatchGreetingService(llm_client=mock_llm)
+    job = JobPosting(
+        title="Senior AI Architect",
+        company_name="Global Tech",
+        salary_range="50-70K",
+        job_description="Global AI Agent role.",
+    )
+
+    with pytest.raises(RuntimeError, match="LLM 微调失败"):
+        service.refine_with_critique(
+            job=job,
+            current_greeting="您好，我对贵司AI架构师职位非常感兴趣。",
             critique="请强调我的英语能力",
         )

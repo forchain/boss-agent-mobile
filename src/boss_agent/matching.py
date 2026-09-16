@@ -17,7 +17,7 @@ from .greeting_rules import GreetingStyleRule
 from .memory import StructuredCandidateProfile
 from .models import JobPosting
 
-console = Console()
+console = Console(stderr=True)
 
 
 @dataclass
@@ -205,22 +205,30 @@ class JobMatchGreetingService:
                     messages.append({"role": turn["role"], "content": turn["content"]})
         messages.append({"role": "user", "content": user_content})
 
+        llm_error: Exception | None = None
         try:
             res = self.llm_client.chat_completion_json(messages)
             revised = str(res.get("revised_greeting") or "").strip()
             if revised:
                 return revised
+            llm_error = ValueError("LLM returned empty revised_greeting")
         except Exception as e:
-            console.print(f"[bold red]❌ LLM greeting refinement error:[/bold red] {e}")
+            llm_error = e
 
-        # Fallback if LLM call failed or returned empty.
-        # We deliberately raise so the caller (Python script / API endpoint)
-        # can surface a real error to the UI — never silently produce a
-        # concatenated "fake refined" greeting that the user would mistake
-        # for an actual LLM rewrite.
-        raise RuntimeError(
-            f"LLM 微调失败，无法生成优化文案：{e if 'e' in dir() else 'unknown'}"
-        )
+        # LLM call failed or returned empty. Surface the failure honestly so
+        # the caller (Python script / API endpoint) can show a real error to
+        # the UI — never silently produce a concatenated "fake refined"
+        # greeting that the user would mistake for an actual LLM rewrite.
+        #
+        # Important: log to stderr (not stdout) so the rich-formatted error
+        # does not corrupt the JSON contract that the caller expects on
+        # stdout. console.print defaults to stdout which causes the API
+        # endpoint's JSON parser to fail with "Bad control character".
+        import sys
+        sys.stderr.write(f"❌ LLM greeting refinement error: {llm_error}\n")
+        sys.stderr.flush()
+
+        raise RuntimeError(f"LLM 微调失败，无法生成优化文案：{llm_error}")
 
     @traceable(name="JobMatchGreetingService.distill_memory_rule", run_type="chain")
     def distill_memory_rule(

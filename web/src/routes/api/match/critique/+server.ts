@@ -3,6 +3,29 @@ import type { RequestHandler } from './$types';
 import { runPythonScript } from '$lib/server/pythonRunner';
 import { readGreetingRules } from '$lib/server/greetingRulesConfig';
 
+/**
+ * Extract the LAST top-level JSON object from a string. Scans from the end
+ * for a balanced `{...}` block, which is the convention used by the Python
+ * script (log lines on stdout first, JSON object on the last line).
+ */
+export function extractLastJson(text: string): string | null {
+	let depth = 0;
+	let end = -1;
+	for (let i = text.length - 1; i >= 0; i--) {
+		const ch = text[i];
+		if (ch === '}') {
+			if (end === -1) end = i;
+			depth++;
+		} else if (ch === '{') {
+			depth--;
+			if (depth === 0) {
+				return text.slice(i, end + 1);
+			}
+		}
+	}
+	return null;
+}
+
 export const POST: RequestHandler = async ({ request }) => {
 	try {
 		const body = await request.json();
@@ -58,10 +81,14 @@ export const POST: RequestHandler = async ({ request }) => {
 		const { stdout, stderr, code } = await runPythonScript('scripts/refine_greeting.py', args);
 
 		if (stdout) {
-			const jsonMatch = stdout.match(/\{[\s\S]*\}/);
-			if (jsonMatch) {
+			// Extract the LAST JSON object on stdout. The Python script may emit
+			// log lines (including rich-formatted error traces with literal
+			// newlines) before the final JSON line — greedy matching would
+			// capture them and break JSON.parse with "Bad control character".
+			const lastJson = extractLastJson(stdout);
+			if (lastJson) {
 				try {
-					const parsed = JSON.parse(jsonMatch[0]);
+					const parsed = JSON.parse(lastJson);
 					// If the Python script itself reports failure (success: false or
 					// refinement_failed: true), surface it as an error — never fabricate
 					// a fake "refined" greeting by concatenating the critique.
@@ -77,7 +104,7 @@ export const POST: RequestHandler = async ({ request }) => {
 					}
 					return json(parsed);
 				} catch (e) {
-					console.warn('[critique] Failed to parse Python script JSON output:', e);
+					console.warn('[critique] Failed to parse Python script JSON output:', e, 'raw:', lastJson.slice(0, 200));
 				}
 			}
 		}
