@@ -11,6 +11,7 @@ import pytest
 from scripts.init_worktree import (
     ConfigSymlinkManager,
     GitWorktreeManager,
+    MainSyncStatus,
     WorktreeInitResult,
     init_worktree,
     print_rich_report,
@@ -87,6 +88,8 @@ def test_worktree_manager_sync_main_fast_forward(tmp_path):
                 return MagicMock(returncode=0, stdout="Fetched", stderr="")
             if "rev-parse" in args and "refs/remotes/origin/main" in args:
                 return MagicMock(returncode=0, stdout="sha_remote_main\n", stderr="")
+            if "worktree" in args and "--porcelain" in args:
+                return MagicMock(returncode=0, stdout="", stderr="")
             if "merge-base" in args:
                 return MagicMock(returncode=0, stdout="is ancestor", stderr="")
             if "update-ref" in args:
@@ -96,8 +99,11 @@ def test_worktree_manager_sync_main_fast_forward(tmp_path):
             return MagicMock(returncode=0, stdout="", stderr="")
 
         mock_git.side_effect = mock_git_side_effect
-        commit = manager.sync_main_branch(remote="origin", fetch=True)
-        assert commit == "sha_remote_main"
+        status = manager.sync_main_branch(remote="origin", fetch=True)
+        assert isinstance(status, MainSyncStatus)
+        assert status.main_commit == "sha_remote_main"
+        assert status.base_ref == "main"
+        assert status.is_dirty is False
 
 
 def test_worktree_manager_sync_main_no_fetch(tmp_path):
@@ -105,8 +111,10 @@ def test_worktree_manager_sync_main_no_fetch(tmp_path):
     manager = GitWorktreeManager(cwd=str(tmp_path))
     with patch.object(manager, "_run_git") as mock_git:
         mock_git.return_value = MagicMock(returncode=0, stdout="local_commit_sha\n", stderr="")
-        commit = manager.sync_main_branch(fetch=False)
-        assert commit == "local_commit_sha"
+        status = manager.sync_main_branch(fetch=False)
+        assert isinstance(status, MainSyncStatus)
+        assert status.main_commit == "local_commit_sha"
+        assert status.base_ref == "main"
 
 
 def test_worktree_manager_create_worktree_new_branch(tmp_path):
@@ -464,3 +472,143 @@ def test_init_worktree_e2e_dry_run(tmp_path):
 
     # Test report printing doesn't raise errors
     print_rich_report(result, dry_run=True)
+
+
+def test_worktree_manager_sync_main_worktree_clean_ff_merge(tmp_path):
+    """Test sync main executes merge --ff-only when worktree checking out main is clean."""
+    main_repo = tmp_path / "main_repo"
+    main_repo.mkdir()
+    manager = GitWorktreeManager(cwd=str(main_repo))
+
+    worktree_list_output = f"worktree {main_repo}\nHEAD abcdef\nbranch refs/heads/main\n\n"
+
+    with patch.object(manager, "_run_git") as mock_git:
+        calls = []
+
+        def mock_git_side_effect(args, **kwargs):
+            calls.append((args, kwargs.get("cwd")))
+            if "remote" in args:
+                return MagicMock(returncode=0, stdout="origin\n", stderr="")
+            if "fetch" in args:
+                return MagicMock(returncode=0, stdout="Fetched\n", stderr="")
+            if "rev-parse" in args and "refs/remotes/origin/main" in args:
+                return MagicMock(returncode=0, stdout="target_sha_123\n", stderr="")
+            if "worktree" in args and "--porcelain" in args:
+                return MagicMock(returncode=0, stdout=worktree_list_output, stderr="")
+            if "status" in args and "--porcelain" in args:
+                # Working tree clean
+                return MagicMock(returncode=0, stdout="", stderr="")
+            if "merge" in args and "--ff-only" in args:
+                return MagicMock(returncode=0, stdout="Updating abcdef..target_sha_123\nFast-forward", stderr="")
+            if "rev-parse" in args and "refs/heads/main" in args:
+                return MagicMock(returncode=0, stdout="target_sha_123\n", stderr="")
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        mock_git.side_effect = mock_git_side_effect
+        status = manager.sync_main_branch(remote="origin", fetch=True)
+
+        assert isinstance(status, MainSyncStatus)
+        assert status.base_ref == "main"
+        assert status.main_commit == "target_sha_123"
+        assert status.is_dirty is False
+        assert status.updated_worktree is True
+        assert status.warning is None
+
+        # Verify merge was called on main_repo
+        merge_called = any(
+            "merge" in args and "--ff-only" in args and cwd == main_repo
+            for args, cwd in calls
+        )
+        assert merge_called is True
+
+
+def test_worktree_manager_sync_main_worktree_dirty_fallback(tmp_path):
+    """Test sync main falls back to origin/main when worktree checking out main has uncommitted changes."""
+    main_repo = tmp_path / "main_repo"
+    main_repo.mkdir()
+    manager = GitWorktreeManager(cwd=str(main_repo))
+
+    worktree_list_output = f"worktree {main_repo}\nHEAD abcdef\nbranch refs/heads/main\n\n"
+
+    with patch.object(manager, "_run_git") as mock_git:
+        calls = []
+
+        def mock_git_side_effect(args, **kwargs):
+            calls.append((args, kwargs.get("cwd")))
+            if "remote" in args:
+                return MagicMock(returncode=0, stdout="origin\n", stderr="")
+            if "fetch" in args:
+                return MagicMock(returncode=0, stdout="Fetched\n", stderr="")
+            if "rev-parse" in args and "refs/remotes/origin/main" in args:
+                return MagicMock(returncode=0, stdout="remote_sha_456\n", stderr="")
+            if "worktree" in args and "--porcelain" in args:
+                return MagicMock(returncode=0, stdout=worktree_list_output, stderr="")
+            if "status" in args and "--porcelain" in args:
+                # Working tree has uncommitted changes!
+                return MagicMock(returncode=0, stdout=" M src/app.py\n", stderr="")
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        mock_git.side_effect = mock_git_side_effect
+        status = manager.sync_main_branch(remote="origin", fetch=True)
+
+        assert isinstance(status, MainSyncStatus)
+        assert status.base_ref == "origin/main"
+        assert status.main_commit == "remote_sha_456"
+        assert status.is_dirty is True
+        assert "uncommitted change" in status.dirty_reason
+        assert status.updated_worktree is False
+        assert status.warning is not None
+        assert "未提交修改" in status.warning
+
+        # Verify merge was NOT called
+        merge_called = any("merge" in args for args, _ in calls)
+        assert merge_called is False
+
+
+def test_init_worktree_with_dirty_main_end_to_end(tmp_path):
+    """Test init_worktree workflow when local main is dirty: creates branch from origin/main with warning."""
+    main_repo = tmp_path / "main_repo"
+    main_repo.mkdir()
+    (main_repo / ".git").mkdir()
+    (main_repo / "config").mkdir()
+    (main_repo / "config" / "settings.local.yaml").write_text("k: v")
+
+    with (
+        patch("scripts.init_worktree.GitWorktreeManager.get_main_repo_root", return_value=main_repo),
+        patch("scripts.init_worktree.GitWorktreeManager.sync_main_branch") as mock_sync,
+        patch("scripts.init_worktree.GitWorktreeManager.create_or_update_worktree") as mock_create,
+    ):
+        mock_sync.return_value = MainSyncStatus(
+            base_ref="origin/main",
+            main_commit="remote_sha_789",
+            is_dirty=True,
+            dirty_reason="1 uncommitted change(s)",
+            updated_worktree=False,
+            warning="⚠️ 本地 main 分支工作区存在未提交修改！",
+        )
+        mock_create.return_value = {
+            "created": True,
+            "updated": False,
+            "path": str(tmp_path / "workspaces" / "new-wt"),
+            "branch": "feat/new-wt",
+            "rebased": False,
+        }
+
+        result = init_worktree(
+            name="new-wt",
+            workspaces_dir=tmp_path / "workspaces",
+            cwd=main_repo,
+            dry_run=False,
+        )
+
+        assert result.success is True
+        assert result.base_ref == "origin/main"
+        assert result.main_dirty is True
+        assert result.warning is not None
+        # Ensure create_or_update_worktree received base_ref="origin/main"
+        mock_create.assert_called_once()
+        assert mock_create.call_args.kwargs["base_ref"] == "origin/main"
+
+        # Test printing rich report with warning doesn't fail
+        print_rich_report(result, dry_run=False)
+

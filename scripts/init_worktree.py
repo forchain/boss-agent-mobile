@@ -51,12 +51,28 @@ class SymlinkEntry:
 
 
 @dataclass
+class MainSyncStatus:
+    base_ref: str = "main"
+    main_commit: str | None = None
+    remote_commit: str | None = None
+    is_dirty: bool = False
+    dirty_reason: str = ""
+    updated_worktree: bool = False
+    warning: str | None = None
+
+
+@dataclass
 class WorktreeInitResult:
     success: bool
     name: str
     worktree_path: str
     branch: str
     main_commit: str | None = None
+    base_ref: str = "main"
+    main_updated: bool = False
+    main_dirty: bool = False
+    main_dirty_reason: str = ""
+    warning: str | None = None
     created: bool = False
     rebased: bool = False
     symlinks: list[dict[str, Any]] = field(default_factory=list)
@@ -133,44 +149,168 @@ class GitWorktreeManager:
         sibling_ws = main_repo_root.parent / "workspaces" / main_repo_root.name
         return sibling_ws.resolve()
 
-    def sync_main_branch(self, remote: str = "origin", fetch: bool = True) -> str | None:
-        """Fetch remote main and fast-forward local main branch safely."""
+    def find_worktree_for_branch(self, branch: str = "main") -> Path | None:
+        """Find the worktree path that currently has the specified branch checked out."""
+        res = self._run_git(["worktree", "list", "--porcelain"])
+        if res.returncode != 0 or not res.stdout.strip():
+            return None
+        target_ref = f"refs/heads/{branch}"
+        current_wt: Path | None = None
+        for line in res.stdout.splitlines():
+            line = line.strip()
+            if line.startswith("worktree "):
+                current_wt = Path(line.split("worktree ", 1)[1].strip()).resolve()
+            elif line.startswith("branch "):
+                ref = line.split("branch ", 1)[1].strip()
+                if ref == target_ref and current_wt:
+                    return current_wt
+            elif not line:
+                current_wt = None
+        return None
+
+    def check_worktree_dirty(self, path: Path) -> tuple[bool, str]:
+        """Check if a worktree has uncommitted tracked changes or conflicts."""
+        res = self._run_git(["status", "--porcelain", "-uno"], cwd=path)
+        if res.returncode != 0:
+            return True, f"Failed to inspect git status in {path}: {res.stderr or res.stdout}"
+        out = res.stdout.strip()
+        if out:
+            lines = out.splitlines()
+            return True, f"{len(lines)} uncommitted change(s) in tracked files"
+        return False, ""
+
+    def sync_main_branch(
+        self, remote: str = "origin", fetch: bool = True, dry_run: bool = False
+    ) -> MainSyncStatus:
+        """Fetch remote main and fast-forward local main branch / working tree safely.
+
+        If the worktree checking out 'main' is dirty, falls back to remote main (e.g. 'origin/main')
+        for worktree base, leaves local main untouched, and reports a warning for user action.
+        """
+        # Resolve local main commit
+        rev_res = self._run_git(["rev-parse", "refs/heads/main"])
+        local_commit = rev_res.stdout.strip() if rev_res.returncode == 0 else None
+
         if not fetch:
-            rev_res = self._run_git(["rev-parse", "refs/heads/main"])
-            return rev_res.stdout.strip() if rev_res.returncode == 0 else None
+            return MainSyncStatus(base_ref="main", main_commit=local_commit)
 
         # Check if remote exists
         remotes_res = self._run_git(["remote"])
         available_remotes = remotes_res.stdout.splitlines() if remotes_res.returncode == 0 else []
         if remote not in available_remotes:
-            rev_res = self._run_git(["rev-parse", "refs/heads/main"])
-            return rev_res.stdout.strip() if rev_res.returncode == 0 else None
+            return MainSyncStatus(base_ref="main", main_commit=local_commit)
 
         # 1. Fetch remote main
         fetch_res = self._run_git(["fetch", remote, "main"])
         if fetch_res.returncode != 0:
-            pass  # Proceed with local main if fetch fails / offline
+            # Proceed with local main if fetch fails / offline
+            return MainSyncStatus(base_ref="main", main_commit=local_commit)
 
-        # 2. Update local main ref safely (fast-forward only check)
+        # 2. Get remote main commit
         remote_ref_res = self._run_git(["rev-parse", f"refs/remotes/{remote}/main"])
-        if remote_ref_res.returncode == 0 and remote_ref_res.stdout.strip():
-            target_sha = remote_ref_res.stdout.strip()
-            local_ref_res = self._run_git(["rev-parse", "--verify", "refs/heads/main"])
-            if local_ref_res.returncode == 0:
-                ff_check = self._run_git(
-                    ["merge-base", "--is-ancestor", "refs/heads/main", target_sha]
-                )
-                if ff_check.returncode == 0:
-                    self._run_git(["update-ref", "refs/heads/main", target_sha])
-                    return target_sha
-                else:
-                    return local_ref_res.stdout.strip()
-            else:
-                self._run_git(["update-ref", "refs/heads/main", target_sha])
-                return target_sha
+        if remote_ref_res.returncode != 0 or not remote_ref_res.stdout.strip():
+            return MainSyncStatus(base_ref="main", main_commit=local_commit)
+        target_sha = remote_ref_res.stdout.strip()
 
-        local_ref_res = self._run_git(["rev-parse", "refs/heads/main"])
-        return local_ref_res.stdout.strip() if local_ref_res.returncode == 0 else None
+        # 3. Locate worktree checking out main
+        main_wt = self.find_worktree_for_branch("main")
+
+        if main_wt is not None:
+            # Check if main worktree is dirty
+            is_dirty, dirty_reason = self.check_worktree_dirty(main_wt)
+            if is_dirty:
+                warning = (
+                    f"⚠️ 本地 main 工作区存在未提交修改 ({main_wt})，无法自动同步工作区代码！\n"
+                    f"👉 未提交改动: {dirty_reason}\n"
+                    f"👉 本次已自动降级为直接基于远程 '{remote}/main' 进行初始化/rebase。\n"
+                    f"👉 请稍后手动前往本地 main 仓库处理未提交的修改！"
+                )
+                return MainSyncStatus(
+                    base_ref=f"{remote}/main",
+                    main_commit=target_sha,
+                    remote_commit=target_sha,
+                    is_dirty=True,
+                    dirty_reason=dirty_reason,
+                    updated_worktree=False,
+                    warning=warning,
+                )
+
+            # Main worktree is clean -> fast-forward merge remote main into working tree
+            if dry_run:
+                return MainSyncStatus(
+                    base_ref="main",
+                    main_commit=target_sha,
+                    remote_commit=target_sha,
+                    is_dirty=False,
+                    updated_worktree=True,
+                )
+
+            merge_res = self._run_git(["merge", "--ff-only", f"refs/remotes/{remote}/main"], cwd=main_wt)
+            if merge_res.returncode == 0:
+                return MainSyncStatus(
+                    base_ref="main",
+                    main_commit=target_sha,
+                    remote_commit=target_sha,
+                    is_dirty=False,
+                    updated_worktree=True,
+                )
+            else:
+                # Merge failed (e.g. untracked file collision or non-ff diverged history)
+                err_msg = merge_res.stderr.strip() or merge_res.stdout.strip() or "Fast-forward merge failed"
+                warning = (
+                    f"⚠️ 本地 main 分支与远程同步失败 ({main_wt})！\n"
+                    f"👉 失败原因: {err_msg}\n"
+                    f"👉 本次已自动降级为直接基于远程 '{remote}/main' 进行初始化/rebase。\n"
+                    f"👉 请稍后手动前往本地 main 仓库检查冲突或分叉！"
+                )
+                return MainSyncStatus(
+                    base_ref=f"{remote}/main",
+                    main_commit=target_sha,
+                    remote_commit=target_sha,
+                    is_dirty=True,
+                    dirty_reason=err_msg,
+                    updated_worktree=False,
+                    warning=warning,
+                )
+
+        # 4. No worktree is currently checking out main -> update ref directly
+        if local_commit:
+            ff_check = self._run_git(["merge-base", "--is-ancestor", "refs/heads/main", target_sha])
+            if ff_check.returncode == 0:
+                if not dry_run:
+                    self._run_git(["update-ref", "refs/heads/main", target_sha])
+                return MainSyncStatus(
+                    base_ref="main",
+                    main_commit=target_sha,
+                    remote_commit=target_sha,
+                    is_dirty=False,
+                    updated_worktree=False,
+                )
+            else:
+                warning = (
+                    f"⚠️ 本地 main 分支与远程 '{remote}/main' 分叉，无法 fast-forward！\n"
+                    f"👉 本次已自动降级为直接基于远程 '{remote}/main' 进行初始化/rebase。"
+                )
+                return MainSyncStatus(
+                    base_ref=f"{remote}/main",
+                    main_commit=target_sha,
+                    remote_commit=target_sha,
+                    is_dirty=True,
+                    dirty_reason="Diverged branches",
+                    updated_worktree=False,
+                    warning=warning,
+                )
+        else:
+            # Local main doesn't exist yet
+            if not dry_run:
+                self._run_git(["update-ref", "refs/heads/main", target_sha])
+            return MainSyncStatus(
+                base_ref="main",
+                main_commit=target_sha,
+                remote_commit=target_sha,
+                is_dirty=False,
+                updated_worktree=False,
+            )
 
     def create_or_update_worktree(
         self,
@@ -564,14 +704,23 @@ def init_worktree(
         branch_name = f"feat/{ws_name}"
 
     # 3. Synchronize main branch
-    main_commit = manager.sync_main_branch(remote=remote, fetch=fetch)
+    sync_res = manager.sync_main_branch(remote=remote, fetch=fetch, dry_run=dry_run)
+    if isinstance(sync_res, MainSyncStatus):
+        sync_status = sync_res
+    elif isinstance(sync_res, str):
+        sync_status = MainSyncStatus(base_ref="main", main_commit=sync_res)
+    else:
+        sync_status = MainSyncStatus(base_ref="main", main_commit=None)
+
+    base_ref = sync_status.base_ref
+    main_commit = sync_status.main_commit
 
     # 4. Create or update worktree
     try:
         wt_info = manager.create_or_update_worktree(
             target_path=target_path,
             branch_name=branch_name,
-            base_ref="main",
+            base_ref=base_ref,
             rebase=rebase,
             dry_run=dry_run,
         )
@@ -582,6 +731,11 @@ def init_worktree(
             worktree_path=str(target_path),
             branch=branch_name,
             main_commit=main_commit,
+            base_ref=base_ref,
+            main_updated=sync_status.updated_worktree,
+            main_dirty=sync_status.is_dirty,
+            main_dirty_reason=sync_status.dirty_reason,
+            warning=sync_status.warning,
             message=f"Worktree synchronization failed: {e}",
         )
 
@@ -594,16 +748,25 @@ def init_worktree(
         )
         symlinks_data = [asdict(e) for e in symlink_entries]
 
+    msg = "Worktree synchronized and configs linked successfully."
+    if sync_status.warning:
+        msg = f"Worktree synchronized based on {base_ref}. (Warning: local main is dirty)."
+
     return WorktreeInitResult(
         success=True,
         name=ws_name,
         worktree_path=str(target_path),
         branch=branch_name,
         main_commit=main_commit,
+        base_ref=base_ref,
+        main_updated=sync_status.updated_worktree,
+        main_dirty=sync_status.is_dirty,
+        main_dirty_reason=sync_status.dirty_reason,
+        warning=sync_status.warning,
         created=wt_info.get("created", False),
         rebased=wt_info.get("rebased", False),
         symlinks=symlinks_data,
-        message="Worktree synchronized and configs linked successfully.",
+        message=msg,
     )
 
 
@@ -613,9 +776,15 @@ def print_rich_report(result: WorktreeInitResult, dry_run: bool = False) -> None
         print(f"=== Worktree Synchronized: {result.name} ===")
         print(f"Path: {result.worktree_path}")
         print(f"Branch: {result.branch}")
-        print(f"Main Commit: {result.main_commit}")
+        print(f"Base Ref: {result.base_ref}")
+        print(f"Base Commit: {result.main_commit}")
+        print(
+            f"Local main Status: {'Dirty' if result.main_dirty else ('Updated' if result.main_updated else 'Up to date')}"
+        )
         print(f"Rebased: {'Yes' if result.rebased else 'No'}")
         print(f"Symlinks: {len(result.symlinks)} configured")
+        if result.warning:
+            print(f"\n{result.warning}\n")
         return
 
     status_str = (
@@ -629,11 +798,46 @@ def print_rich_report(result: WorktreeInitResult, dry_run: bool = False) -> None
 
     info_table.add_row("Worktree Path", result.worktree_path)
     info_table.add_row("Git Branch", f"[green]{result.branch}[/green]")
-    info_table.add_row("Base (main) Commit", result.main_commit or "N/A")
+    info_table.add_row("Base Commit", result.main_commit or "N/A")
+
+    if result.base_ref != "main":
+        info_table.add_row(
+            "Base Ref", f"[bold yellow]{result.base_ref} (fallback)[/bold yellow]"
+        )
+    else:
+        info_table.add_row("Base Ref", f"[green]{result.base_ref}[/green]")
+
+    if result.main_dirty:
+        info_table.add_row(
+            "Local main Status",
+            "[bold yellow]⚠️ Dirty (Uncommitted changes - skipped)[/bold yellow]",
+        )
+    elif result.main_updated:
+        info_table.add_row("Local main Status", "[bold green]✅ Updated (fast-forwarded)[/bold green]")
+    else:
+        info_table.add_row("Local main Status", "[dim]Up to date[/dim]")
+
     info_table.add_row("Created New", "Yes" if result.created else "Updated Existing")
-    info_table.add_row("Rebased on main", "Yes" if result.rebased else "No")
+    if result.created:
+        info_table.add_row(
+            f"Base ({result.base_ref})", f"[green]Branched from {result.base_ref}[/green]"
+        )
+    else:
+        info_table.add_row(
+            f"Rebased on {result.base_ref}",
+            "[green]Yes[/green]" if result.rebased else "[dim]No (Already up to date)[/dim]",
+        )
 
     console.print(Panel(info_table, title=title, border_style="blue"))
+
+    if result.warning:
+        console.print(
+            Panel(
+                result.warning,
+                title="[bold yellow]⚠️ Attention Required / 注意[/bold yellow]",
+                border_style="yellow",
+            )
+        )
 
     if result.symlinks:
         symlink_table = Table(title="🔗 Shared Configuration Symlinks")
