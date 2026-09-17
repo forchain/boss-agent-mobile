@@ -2,6 +2,7 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { runPythonScript } from '$lib/server/pythonRunner';
 import { readGreetingRules } from '$lib/server/greetingRulesConfig';
+import { sanitizeLlmSettingsForRunner } from '$lib/server/settings';
 
 /**
  * Extract the LAST top-level JSON object from a string. Scans from the end
@@ -78,7 +79,8 @@ export const POST: RequestHandler = async ({ request }) => {
 			args.push('--rules', JSON.stringify(activeRules));
 		}
 		if (llmSettings) {
-			args.push('--llm-config', JSON.stringify(llmSettings));
+			const cleanedSettings = sanitizeLlmSettingsForRunner(llmSettings);
+			args.push('--llm-config', JSON.stringify(cleanedSettings));
 		}
 
 		const { stdout, stderr, code } = await runPythonScript('scripts/refine_greeting.py', args);
