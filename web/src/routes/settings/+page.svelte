@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import type { SystemSettings, ScreeningPolicy } from '$lib/types';
+	import type { SystemSettings, ScreeningPolicy, GreetingStyleRule } from '$lib/types';
 	import { validateCanBlacklistCompany } from '$lib/screening';
 
 	let settings = $state<SystemSettings>({
@@ -78,7 +78,26 @@
 	let savePolicySuccess = $state('');
 	let savePolicyError = $state('');
 
+	// Greeting Style Rules & Long-term Memory State
+	let greetingRules = $state<GreetingStyleRule[]>([]);
+	let newRuleCondition = $state('');
+	let newRuleInstruction = $state('');
+	let isSavingRules = $state(false);
+	let saveRulesSuccess = $state('');
+	let saveRulesError = $state('');
+	let rulesUnsaved = $state(false);
+
+	function beforeUnloadHandler(e: BeforeUnloadEvent) {
+		if (rulesUnsaved) {
+			e.preventDefault();
+			e.returnValue = '您有未保存的招呼语规则变更,确定离开吗?';
+		}
+	}
+
 	onMount(async () => {
+		if (typeof window !== 'undefined') {
+			window.addEventListener('beforeunload', beforeUnloadHandler);
+		}
 		try {
 			const res = await fetch('/api/settings');
 			if (res.ok) {
@@ -136,7 +155,79 @@
 		} catch (e) {
 			console.warn('Failed to load screening policy:', e);
 		}
+
+		try {
+			const rRes = await fetch('/api/greeting/rules');
+			if (rRes.ok) {
+				const rData = await rRes.json();
+				if (Array.isArray(rData.rules)) {
+					greetingRules = rData.rules;
+				}
+			}
+		} catch (e) {
+			console.warn('Failed to load greeting rules:', e);
+		}
 	});
+
+	function addGreetingRule() {
+		const cond = newRuleCondition.trim();
+		const inst = newRuleInstruction.trim();
+		if (!cond || !inst) return;
+
+		const newRule: GreetingStyleRule = {
+			id: `rule_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+			condition: cond,
+			instruction: inst,
+			enabled: true,
+			source_job: '设置页手动新增',
+			created_at: new Date().toISOString()
+		};
+
+		greetingRules = [newRule, ...greetingRules];
+		rulesUnsaved = true;
+		newRuleCondition = '';
+		newRuleInstruction = '';
+	}
+
+	function removeGreetingRule(id: string) {
+		greetingRules = greetingRules.filter((r) => r.id !== id);
+		rulesUnsaved = true;
+	}
+
+	function toggleGreetingRule(id: string) {
+		greetingRules = greetingRules.map((r) => (r.id === id ? { ...r, enabled: !r.enabled } : r));
+		rulesUnsaved = true;
+	}
+
+	async function onSaveGreetingRules() {
+		isSavingRules = true;
+		saveRulesSuccess = '';
+		saveRulesError = '';
+		try {
+			const res = await fetch('/api/greeting/rules', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ rules: greetingRules })
+			});
+			const data = await res.json();
+			if (res.ok && data.success) {
+				saveRulesSuccess = data.message || '✅ 打招呼长期记忆规则已成功持久化至 config/greeting_rules.local.yaml';
+				if (Array.isArray(data.rules)) {
+					greetingRules = data.rules;
+				}
+				rulesUnsaved = false;
+				setTimeout(() => {
+					saveRulesSuccess = '';
+				}, 4000);
+			} else {
+				saveRulesError = `❌ 保存失败: ${data.error || '未知错误'}`;
+			}
+		} catch (e: any) {
+			saveRulesError = `❌ 保存异常: ${e?.message || e}`;
+		} finally {
+			isSavingRules = false;
+		}
+	}
 
 	function addTag(field: 'title_whitelist' | 'title_blacklist' | 'company_blacklist' | 'jd_blacklist', value: string) {
 		const val = value.trim();
@@ -1145,4 +1236,184 @@
 			</button>
 		</div>
 	</form>
+
+	<!-- Section: Greeting Style Rules & Long-term Memory (User Stories 8 & 9) -->
+	<div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6">
+		<div class="flex items-center justify-between border-b border-slate-800/80 pb-4">
+			<div class="flex items-center space-x-2.5">
+				<span class="text-xl">🧠</span>
+				<div>
+					<h2 class="font-semibold text-sm text-slate-100">
+						打招呼偏好与长期记忆库 (Greeting Style Rules)
+					</h2>
+					<p class="text-[11px] text-slate-400 mt-0.5">
+						沉淀人机反馈交互中的 Condition-Action 场景偏好策略，在所有岗位的 AI 评估与自动投递打招呼中自动召回并贯彻执行
+					</p>
+				</div>
+			</div>
+			<span class="text-[11px] px-2.5 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-800/80 font-mono">
+				外挂长期记忆
+			</span>
+		</div>
+
+		<!-- Feedback Messages -->
+		{#if saveRulesSuccess}
+			<div class="p-3.5 rounded-xl bg-emerald-950/60 border border-emerald-800/80 text-xs text-emerald-300 flex items-center space-x-2">
+				<span>{saveRulesSuccess}</span>
+			</div>
+		{/if}
+		{#if saveRulesError}
+			<div class="p-3.5 rounded-xl bg-rose-950/60 border border-rose-800/80 text-xs text-rose-300 flex items-center space-x-2">
+				<span>{saveRulesError}</span>
+			</div>
+		{/if}
+
+		<!-- Add New Rule Section -->
+		<div class="p-4 rounded-xl bg-slate-950/80 border border-slate-800/80 space-y-3">
+			<div class="flex items-center space-x-2 text-xs font-semibold text-slate-300">
+				<span>➕</span>
+				<span>手动添加打招呼偏好准则 (直接设定核心破冰策略)</span>
+			</div>
+
+			<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+				<div>
+					<label for="new-rule-cond" class="block text-[11px] font-medium text-slate-400 mb-1">
+						🎯 【适用条件 (Condition)】:
+					</label>
+					<input
+						id="new-rule-cond"
+						type="text"
+						bind:value={newRuleCondition}
+						placeholder="例如：当 JD 明确强调英语能力、外企背景或海外业务时..."
+						class="w-full bg-slate-900 border border-slate-700/80 rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-cyan-500 transition"
+					/>
+				</div>
+				<div>
+					<label for="new-rule-inst" class="block text-[11px] font-medium text-slate-400 mb-1">
+						⚡ 【执行策略 (Instruction)】:
+					</label>
+					<input
+						id="new-rule-inst"
+						type="text"
+						bind:value={newRuleInstruction}
+						placeholder="例如：开门见山点出海外留学经历、英语可作工作语言并主动提及可全英文面试..."
+						class="w-full bg-slate-900 border border-slate-700/80 rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-cyan-500 transition"
+					/>
+				</div>
+			</div>
+
+			<div class="flex items-center justify-end pt-1">
+				<button
+					type="button"
+					onclick={addGreetingRule}
+					disabled={!newRuleCondition.trim() || !newRuleInstruction.trim()}
+					class="bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 text-white font-medium px-4 py-1.5 rounded-lg text-xs transition flex items-center space-x-1.5 shadow"
+				>
+					<span>➕ 添加至规则库</span>
+				</button>
+			</div>
+		</div>
+
+		<!-- Rules List -->
+		<div class="space-y-3">
+			<div class="flex items-center justify-between text-xs text-slate-400 px-1">
+				<span class="font-medium">已激活与存储的偏好规则 ({greetingRules.length} 条)</span>
+				<span class="text-[11px] text-slate-500">勾选复选框可单独启用或停用规则</span>
+			</div>
+
+			{#if greetingRules.length === 0}
+				<div class="p-8 rounded-xl bg-slate-950/40 border border-dashed border-slate-800 text-center text-xs text-slate-500 space-y-1">
+					<p class="text-slate-400 font-medium">暂无已保存的打招呼偏好规则</p>
+					<p class="text-[11px]">您可以在上方手动添加，或在岗位详情卡片中对打招呼文案进行微调，系统将自动反思提炼并沉淀在此。</p>
+				</div>
+			{:else}
+				<div class="space-y-3">
+					{#each greetingRules as rule (rule.id)}
+						<div
+							class="p-4 rounded-xl border transition-all space-y-3 {rule.enabled
+								? 'bg-slate-950/90 border-slate-800'
+								: 'bg-slate-950/40 border-slate-800/40 opacity-60'}"
+						>
+							<div class="flex items-start justify-between gap-3">
+								<div class="flex items-center space-x-2.5">
+									<input
+										type="checkbox"
+										checked={rule.enabled}
+										onchange={() => toggleGreetingRule(rule.id)}
+										class="w-4 h-4 rounded border-slate-700 text-cyan-500 focus:ring-cyan-500 focus:ring-offset-slate-950 bg-slate-900 cursor-pointer"
+										title={rule.enabled ? '已启用（点击停用）' : '已停用（点击启用）'}
+									/>
+									<span class="text-xs font-mono px-2 py-0.5 rounded {rule.enabled ? 'bg-cyan-950 text-cyan-300 border border-cyan-800/60' : 'bg-slate-800 text-slate-400'}">
+										{rule.enabled ? 'ACTIVE 激活中' : 'DISABLED 停用'}
+									</span>
+									{#if rule.source_job}
+										<span class="text-[11px] text-slate-400">
+											来源: {rule.source_job}
+										</span>
+									{/if}
+								</div>
+
+								<button
+									type="button"
+									onclick={() => removeGreetingRule(rule.id)}
+									class="text-xs text-rose-400 hover:text-rose-300 bg-rose-950/30 hover:bg-rose-900/40 border border-rose-800/50 px-2.5 py-1 rounded-lg transition"
+									title="删除此规则"
+								>
+									🗑️ 删除
+								</button>
+							</div>
+
+							<div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+								<div>
+									<label for={`rule-cond-${rule.id}`} class="block text-[11px] text-slate-400 mb-1">【生效触发条件】:</label>
+									<input
+										id={`rule-cond-${rule.id}`}
+										type="text"
+										bind:value={rule.condition}
+										class="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-cyan-500 transition"
+									/>
+								</div>
+								<div>
+									<label for={`rule-inst-${rule.id}`} class="block text-[11px] text-slate-400 mb-1">【执行话术策略】:</label>
+									<input
+										id={`rule-inst-${rule.id}`}
+										type="text"
+										bind:value={rule.instruction}
+										class="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-cyan-200 focus:outline-none focus:border-cyan-500 transition"
+									/>
+								</div>
+							</div>
+						</div>
+					{/each}
+				</div>
+			{/if}
+		</div>
+
+		<!-- Action Footer -->
+		<div class="flex flex-col sm:flex-row items-center justify-between pt-4 border-t border-slate-800/80 gap-3">
+			<span class="text-[11px] text-slate-500 font-mono">
+				{#if rulesUnsaved}
+					<span class="text-amber-400">⚠️ 有未保存的规则变更</span>
+				{:else}
+					📁 规则将持久化存入 config/greeting_rules.local.yaml
+				{/if}
+			</span>
+
+			<button
+				type="button"
+				onclick={onSaveGreetingRules}
+				disabled={isSavingRules || !rulesUnsaved}
+				class="w-full sm:w-auto bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-semibold px-5 py-2.5 rounded-xl text-xs transition shadow-lg shadow-cyan-500/10 flex items-center justify-center space-x-1.5 disabled:opacity-60"
+			>
+				{#if isSavingRules}
+					<span class="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+					<span>正在保存偏好规则...</span>
+				{:else if rulesUnsaved}
+					<span>💾 保存未保存的规则变更</span>
+				{:else}
+					<span>💾 保存长期记忆规则库</span>
+				{/if}
+			</button>
+		</div>
+	</div>
 </div>

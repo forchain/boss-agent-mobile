@@ -1,6 +1,14 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import type { JobRecord, JobRecordStatus, CandidateProfile, LLMSettings, MatchEvaluateResponse, JobRecordsCounts } from '$lib/types';
+	import type {
+		JobRecord,
+		JobRecordStatus,
+		CandidateProfile,
+		LLMSettings,
+		MatchEvaluateResponse,
+		JobRecordsCounts,
+		GreetingStyleRule
+	} from '$lib/types';
 	import {
 		pb,
 		getJobRecords,
@@ -49,6 +57,18 @@
 	let saveGreetingNotice = $state('');
 	let isDispatchingApply = $state(false);
 	let applyNotice = $state('');
+
+	// Conversational Critique & Long-term Memory Distillation State
+	let critiqueInput = $state('');
+	let isRefining = $state(false);
+	let refineError = $state('');
+	let refinementDiff = $state<{ before: string; after: string } | null>(null);
+	let isDistilling = $state(false);
+	let distilledRuleDraft = $state<GreetingStyleRule | null>(null);
+	let isSavingRule = $state(false);
+	let ruleSaveNotice = $state('');
+	let showManualDistillPrompt = $state(false);
+	let activeGreetingRules = $state<GreetingStyleRule[]>([]);
 
 	// Blacklist Guardrail & Restore state
 	let isBlacklisting = $state(false);
@@ -233,6 +253,11 @@
 			saveGreetingNotice = '';
 			applyNotice = '';
 			blacklistNotice = '';
+			critiqueInput = '';
+			refinementDiff = null;
+			distilledRuleDraft = null;
+			showManualDistillPrompt = false;
+			refineError = '';
 		}
 	});
 
@@ -249,6 +274,17 @@
 			const res = await fetch('/api/llm/settings');
 			if (res.ok) {
 				llmSettings = await res.json();
+			}
+		} catch (e) {}
+
+		// Load Greeting Style Rules
+		try {
+			const rRes = await fetch('/api/greeting/rules');
+			if (rRes.ok) {
+				const rData = await rRes.json();
+				if (Array.isArray(rData.rules)) {
+					activeGreetingRules = rData.rules;
+				}
 			}
 		} catch (e) {}
 
@@ -307,7 +343,8 @@
 					salary_range: selectedJob.salary_range,
 					job_description: selectedJob.job_description,
 					candidate_profile: profile,
-					llmSettings: llmSettings
+					llmSettings: llmSettings,
+					rules: activeGreetingRules
 				})
 			});
 
@@ -340,11 +377,15 @@
 
 	async function handleSaveGreeting() {
 		if (!selectedJob) return;
+		const hadChanged = customGreeting.trim() !== (selectedJob.greeting_message || '').trim();
 		isSavingGreeting = true;
 		try {
 			await updateJobRecord(selectedJob.id, { greeting_message: customGreeting });
 			jobs = jobs.map((j) => (j.id === selectedJob.id ? { ...j, greeting_message: customGreeting } : j));
 			saveGreetingNotice = '✅ 打招呼语已保存';
+			if (hadChanged) {
+				showManualDistillPrompt = true;
+			}
 			setTimeout(() => {
 				saveGreetingNotice = '';
 			}, 3000);
@@ -353,6 +394,149 @@
 		} finally {
 			isSavingGreeting = false;
 		}
+	}
+
+	async function handleRefineGreeting() {
+		if (!selectedJob || !critiqueInput.trim()) return;
+		isRefining = true;
+		refineError = '';
+		try {
+			const res = await fetch('/api/match/critique', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					action: 'refine',
+					job: {
+						title: selectedJob.title,
+						company_name: selectedJob.company_name,
+						salary_range: selectedJob.salary_range,
+						job_description: selectedJob.job_description
+					},
+					current_greeting: customGreeting,
+					critique: critiqueInput.trim(),
+					candidate_profile: profile,
+					llmSettings: llmSettings,
+					rules: activeGreetingRules
+				})
+			});
+
+			const data = await res.json();
+			if (!res.ok || !data.success) {
+				throw new Error(data.error || '微调优化失败');
+			}
+
+			refinementDiff = {
+				before: customGreeting,
+				after: data.revised_greeting
+			};
+		} catch (err: any) {
+			refineError = err.message || '优化请求异常';
+		} finally {
+			isRefining = false;
+		}
+	}
+
+	async function handleApplyRevisedGreeting() {
+		if (!selectedJob || !refinementDiff) return;
+		const oldGreeting = refinementDiff.before;
+		const newGreeting = refinementDiff.after;
+		const usedCritique = critiqueInput;
+
+		customGreeting = newGreeting;
+		refinementDiff = null;
+
+		try {
+			await updateJobRecord(selectedJob.id, { greeting_message: newGreeting });
+			jobs = jobs.map((j) => (j.id === selectedJob.id ? { ...j, greeting_message: newGreeting } : j));
+			saveGreetingNotice = '✅ 已采纳优化文案并保存';
+			setTimeout(() => {
+				saveGreetingNotice = '';
+			}, 3000);
+		} catch (e: any) {}
+
+		// Automatically trigger distillation of condition-action rule draft
+		await handleDistillRule(oldGreeting, newGreeting, usedCritique);
+	}
+
+	function handleDismissDiff() {
+		refinementDiff = null;
+	}
+
+	async function handleDistillRule(orig: string, rev: string, crit: string) {
+		if (!selectedJob) return;
+		isDistilling = true;
+		ruleSaveNotice = '';
+		try {
+			const res = await fetch('/api/match/critique', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					action: 'distill',
+					job: {
+						title: selectedJob.title,
+						company_name: selectedJob.company_name,
+						salary_range: selectedJob.salary_range,
+						job_description: selectedJob.job_description
+					},
+					original_greeting: orig,
+					revised_greeting: rev,
+					critique: crit,
+					llmSettings: llmSettings
+				})
+			});
+
+			const data = await res.json();
+			if (res.ok && data.success && data.rule) {
+				distilledRuleDraft = data.rule;
+			}
+		} catch (e) {
+			console.warn('Failed to distill memory rule:', e);
+		} finally {
+			isDistilling = false;
+		}
+	}
+
+	async function handleConfirmSaveDistilledRule() {
+		if (!distilledRuleDraft) return;
+		isSavingRule = true;
+		ruleSaveNotice = '';
+		try {
+			const res = await fetch('/api/greeting/rules', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					action: 'add',
+					rule: distilledRuleDraft
+				})
+			});
+			const data = await res.json();
+			if (res.ok && data.success) {
+				ruleSaveNotice = '✅ 偏好规则已保存至长期记忆，后续同类岗位将自动生效！';
+				if (Array.isArray(data.rules)) {
+					activeGreetingRules = data.rules;
+				}
+				setTimeout(() => {
+					distilledRuleDraft = null;
+					ruleSaveNotice = '';
+				}, 3500);
+			} else {
+				ruleSaveNotice = '❌ 保存规则失败: ' + (data.error || '未知错误');
+			}
+		} catch (e: any) {
+			ruleSaveNotice = '❌ 保存异常: ' + (e?.message || e);
+		} finally {
+			isSavingRule = false;
+		}
+	}
+
+	async function handleDistillFromManualEdit() {
+		showManualDistillPrompt = false;
+		if (!selectedJob) return;
+		await handleDistillRule(
+			selectedJob.greeting_message || '初版招呼语',
+			customGreeting,
+			'求职者针对岗位痛点进行的手动微调与定制'
+		);
 	}
 
 	async function handleIgnoreJob() {
@@ -1067,7 +1251,10 @@
 									placeholder="AI 定制破冰打招呼文案..."
 									class="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-cyan-200 focus:outline-none focus:border-cyan-500 font-mono leading-relaxed transition"
 								></textarea>
-								<div class="flex items-center justify-end">
+								<div class="flex items-center justify-between">
+									<span class="text-[11px] text-slate-500 font-mono">
+										字数: {customGreeting.trim().length} 字
+									</span>
 									<button
 										onclick={handleSaveGreeting}
 										disabled={isSavingGreeting}
@@ -1077,6 +1264,226 @@
 									</button>
 								</div>
 							</div>
+
+							<!-- Optional Suggestion on Manual Edit Save (User Story 6) -->
+							{#if showManualDistillPrompt}
+								<div class="p-3 bg-cyan-950/40 border border-cyan-800/80 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs">
+									<div class="flex items-center space-x-2 text-cyan-200">
+										<span class="text-base">💡</span>
+										<span>检测到您手动调整了打招呼文案，是否将本次修改要点反思沉淀为长期记忆规则？</span>
+									</div>
+									<div class="flex items-center space-x-2 self-end sm:self-auto">
+										<button
+											onclick={() => (showManualDistillPrompt = false)}
+											class="text-slate-400 hover:text-slate-200 text-xs px-2 py-1"
+										>
+											忽略
+										</button>
+										<button
+											onclick={handleDistillFromManualEdit}
+											class="bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white px-3 py-1 rounded-lg text-xs font-medium transition shadow flex items-center space-x-1"
+										>
+											<span>🧠 提炼长期规则</span>
+										</button>
+									</div>
+								</div>
+							{/if}
+
+							<!-- Interactive Refinement & Human Feedback Bar (User Stories 1 & 2) -->
+							<div class="bg-slate-950/80 border border-slate-800/80 rounded-xl p-3.5 space-y-3">
+								<div class="flex items-center justify-between">
+									<div class="flex items-center space-x-1.5">
+										<span class="text-cyan-400">✨</span>
+										<span class="text-xs font-semibold text-slate-200">针对该岗位提出微调意见 / 批注</span>
+									</div>
+									{#if isDistilling}
+										<span class="text-[11px] text-cyan-400 animate-pulse flex items-center space-x-1">
+											<span class="animate-spin">🔄</span>
+											<span>正在反思提炼通用规则...</span>
+										</span>
+									{/if}
+								</div>
+
+								{#if refineError}
+									<div class="p-2 bg-rose-950/60 border border-rose-800 rounded-lg text-xs text-rose-300">
+										❌ {refineError}
+									</div>
+								{/if}
+
+								<div class="flex flex-col sm:flex-row gap-2">
+									<textarea
+										bind:value={critiqueInput}
+										placeholder="例如：强调我有海外留学背景，英语可作日常工作语言，并可接受全英文面试。&#10;可以随便写，Agent 会自动理解并提炼成长期记忆规则，不必字斟句酌..."
+										rows="3"
+										class="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-cyan-500 transition resize-y min-h-[60px]"
+									></textarea>
+									<button
+										onclick={handleRefineGreeting}
+										disabled={isRefining || !critiqueInput.trim()}
+										class="self-start sm:self-stretch bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-white font-medium px-4 py-1.5 rounded-lg text-xs transition flex items-center justify-center space-x-1.5 disabled:opacity-40 shadow shadow-cyan-600/20"
+									>
+										{#if isRefining}
+											<span class="animate-spin">⚡</span>
+											<span>优化重写中...</span>
+										{:else}
+											<span>💬 发送优化要求</span>
+										{/if}
+									</button>
+								</div>
+
+								<!-- Quick Feedback Templates -->
+								<div class="flex flex-wrap items-center gap-1.5 text-[11px]">
+									<span class="text-slate-500 mr-0.5">快捷建议:</span>
+									<button
+										onclick={() => (critiqueInput = '突出我英语口语流利、有跨国协同经验，可直接全英文面试')}
+										class="text-slate-400 hover:text-cyan-300 bg-slate-900/90 hover:bg-slate-800 px-2 py-0.5 rounded border border-slate-800 transition"
+									>
+										💡 突出英语与跨国协同
+									</button>
+									<button
+										onclick={() => (critiqueInput = '强调从0到1主导过千万级高并发系统与核心架构重构')}
+										class="text-slate-400 hover:text-cyan-300 bg-slate-900/90 hover:bg-slate-800 px-2 py-0.5 rounded border border-slate-800 transition"
+									>
+										💡 突出千万级高并发实战
+									</button>
+									<button
+										onclick={() => (critiqueInput = '突出我主导开发并开源了大模型多Agent自动化工作流框架')}
+										class="text-slate-400 hover:text-cyan-300 bg-slate-900/90 hover:bg-slate-800 px-2 py-0.5 rounded border border-slate-800 transition"
+									>
+										💡 突出开源Agent实操落地
+									</button>
+									<button
+										onclick={() => (critiqueInput = '话术更精炼务实一些，控制在90字以内，开门见山直奔业务痛点')}
+										class="text-slate-400 hover:text-cyan-300 bg-slate-900/90 hover:bg-slate-800 px-2 py-0.5 rounded border border-slate-800 transition"
+									>
+										💡 极简风格(90字内)
+									</button>
+								</div>
+							</div>
+
+							<!-- Before / After Comparison Preview (User Story 3) -->
+							{#if refinementDiff}
+								<div class="bg-slate-950 border border-cyan-800/80 rounded-xl p-4 space-y-3 shadow-lg">
+									<div class="flex items-center justify-between border-b border-slate-800 pb-2">
+										<span class="text-xs font-semibold text-cyan-300 flex items-center space-x-1.5">
+											<span>⚖️</span>
+											<span>招呼语微调效果对比 (Before / After)</span>
+										</span>
+										<div class="flex items-center space-x-2">
+											<button
+												onclick={handleDismissDiff}
+												class="text-xs text-slate-400 hover:text-slate-200 px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 transition"
+											>
+												放弃修改
+											</button>
+											<button
+												onclick={handleApplyRevisedGreeting}
+												class="text-xs font-medium text-white bg-emerald-600 hover:bg-emerald-500 px-3.5 py-1 rounded-lg transition shadow flex items-center space-x-1"
+											>
+												<span>✅ 采纳并应用</span>
+											</button>
+										</div>
+									</div>
+
+									<div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+										<div class="bg-slate-900/80 border border-slate-800/80 rounded-lg p-3 space-y-1.5">
+											<div class="flex items-center justify-between">
+												<span class="text-[11px] font-semibold text-slate-400">优化前 (当前文案)</span>
+												<span class="text-[10px] text-slate-500 font-mono">{refinementDiff.before.length}字</span>
+											</div>
+											<p class="text-slate-300 font-mono text-xs leading-relaxed whitespace-pre-wrap">
+												{refinementDiff.before}
+											</p>
+										</div>
+										<div class="bg-cyan-950/20 border border-cyan-800/60 rounded-lg p-3 space-y-1.5">
+											<div class="flex items-center justify-between">
+												<span class="text-[11px] font-semibold text-cyan-300">优化后 (新生成文案)</span>
+												<span class="text-[10px] text-cyan-400 font-mono">{refinementDiff.after.length}字</span>
+											</div>
+											<p class="text-cyan-200 font-mono text-xs leading-relaxed whitespace-pre-wrap">
+												{refinementDiff.after}
+											</p>
+										</div>
+									</div>
+								</div>
+							{/if}
+
+							<!-- Distilled Long-Term Memory Rule Confirmation Card (User Stories 4 & 5) -->
+							{#if distilledRuleDraft}
+								<div class="bg-gradient-to-br from-cyan-950/40 via-slate-950 to-blue-950/40 border border-cyan-600/50 rounded-xl p-4 space-y-3 shadow-xl">
+									<div class="flex items-center justify-between">
+										<div class="flex items-center space-x-2">
+											<span class="text-base">🧠</span>
+											<span class="text-xs font-semibold text-cyan-200">
+												AI 反思提炼：长期偏好记忆规则 (Condition-Action)
+											</span>
+										</div>
+										<button
+											onclick={() => (distilledRuleDraft = null)}
+											class="text-slate-500 hover:text-slate-300 text-xs px-1.5 py-0.5"
+											title="关闭"
+										>
+											✕ 暂不保存
+										</button>
+									</div>
+
+									<p class="text-[11px] text-slate-400 leading-normal">
+										从本次微调中提炼出的泛化策略。保存后，在后续任何同类职位的打招呼与自动投递中将自动贯彻该规则：
+									</p>
+
+									<div class="space-y-2.5 text-xs">
+										<div>
+											<label for="rule-condition-input" class="block text-[11px] font-medium text-slate-300 mb-1">
+												🎯 【生效条件 (Condition)】:
+											</label>
+											<input
+												id="rule-condition-input"
+												type="text"
+												bind:value={distilledRuleDraft.condition}
+												placeholder="例如：当 JD 强调英语能力或外企背景时..."
+												class="w-full bg-slate-900 border border-slate-700/80 rounded-lg px-3 py-1.5 text-xs text-cyan-200 focus:outline-none focus:border-cyan-500 transition"
+											/>
+										</div>
+										<div>
+											<label for="rule-instruction-input" class="block text-[11px] font-medium text-slate-300 mb-1">
+												⚡ 【执行策略 (Instruction)】:
+											</label>
+											<input
+												id="rule-instruction-input"
+												type="text"
+												bind:value={distilledRuleDraft.instruction}
+												placeholder="例如：开门见山点出海外留学经历、英语可作工作语言并主动提及可全英文面试..."
+												class="w-full bg-slate-900 border border-slate-700/80 rounded-lg px-3 py-1.5 text-xs text-cyan-200 focus:outline-none focus:border-cyan-500 transition"
+											/>
+										</div>
+									</div>
+
+									<div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 pt-1 border-t border-slate-800/80">
+										{#if ruleSaveNotice}
+											<span class="text-xs font-medium {ruleSaveNotice.startsWith('✅') ? 'text-emerald-400' : 'text-rose-400'}">
+												{ruleSaveNotice}
+											</span>
+										{:else}
+											<span class="text-[11px] text-slate-500">
+												规则将持久化存入 config/greeting_rules.local.yaml
+											</span>
+										{/if}
+
+										<button
+											onclick={handleConfirmSaveDistilledRule}
+											disabled={isSavingRule}
+											class="bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-medium px-4 py-1.5 rounded-lg text-xs transition flex items-center space-x-1.5 shadow-lg shadow-cyan-600/20 disabled:opacity-50"
+										>
+											{#if isSavingRule}
+												<span class="animate-spin">🔄</span>
+												<span>正在保存...</span>
+											{:else}
+												<span>💾 一键确认沉淀为长期记忆</span>
+											{/if}
+										</button>
+									</div>
+								</div>
+							{/if}
 
 							<!-- Bottom Action Bar (Apply, Ignore & Guardrail Blacklist) -->
 							<div class="space-y-3 pt-3 border-t border-slate-800/80">
