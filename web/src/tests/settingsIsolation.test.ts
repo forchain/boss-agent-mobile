@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
+import { setupSettingsSandbox, type SettingsSandbox } from './settingsSandbox';
 
 // Regression guard for issue #185: server-side settings persistence previously
 // wrote straight through config/settings.local.yaml (a symlink to the shared
@@ -35,68 +34,23 @@ const SEED_YAML = [
 	''
 ].join('\n');
 
-let tmpDir: string;
-let tmpFile: string;
-let realFile: string | null = null;
-let realSnapshot: Buffer | null = null;
-
-// Environment variables that loadMergedSettings() would otherwise let override
-// the seeded file values; removed for the suite and restored afterwards.
-const OVERRIDDEN_ENV_KEYS = [
-	'LLM_API_KEY',
-	'MINIMAX_API_KEY',
-	'OPENAI_API_KEY',
-	'LLM_BASE_URL',
-	'MINIMAX_BASE_URL',
-	'LLM_MODEL',
-	'POCKETBASE_URL',
-	'APPIUM_SERVER_URL',
-	'APPIUM_URL',
-	'ANDROID_AVD'
-];
-const savedEnv: Record<string, string | undefined> = {};
-
-beforeAll(async () => {
-	const { getProjectRoot } = await import('../lib/server/pythonRunner');
-	const candidate = path.join(getProjectRoot(), 'config', 'settings.local.yaml');
-	if (fs.existsSync(candidate)) {
-		realFile = fs.realpathSync(candidate);
-		realSnapshot = fs.readFileSync(realFile);
-	}
-
-	for (const key of OVERRIDDEN_ENV_KEYS) {
-		savedEnv[key] = process.env[key];
-		delete process.env[key];
-	}
-
-	tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'boss-settings-isolation-'));
-	tmpFile = path.join(tmpDir, 'settings.local.yaml');
-	fs.writeFileSync(tmpFile, SEED_YAML);
-	process.env.BOSS_SETTINGS_LOCAL_PATH = tmpFile;
-});
-
-afterAll(() => {
-	delete process.env.BOSS_SETTINGS_LOCAL_PATH;
-	for (const [key, value] of Object.entries(savedEnv)) {
-		if (value === undefined) delete process.env[key];
-		else process.env[key] = value;
-	}
-
-	if (realFile && realSnapshot) {
-		const now = fs.existsSync(realFile) ? fs.readFileSync(realFile) : null;
-		expect(now && now.equals(realSnapshot)).toBe(true);
-	}
-
-	fs.rmSync(tmpDir, { recursive: true, force: true });
-});
-
 describe('Settings persistence isolation (issue #185)', () => {
+	let sandbox: SettingsSandbox;
+
+	beforeAll(() => {
+		sandbox = setupSettingsSandbox(SEED_YAML);
+	});
+
+	afterAll(() => {
+		sandbox.cleanup();
+	});
+
 	it('saveSettingsToLocalYaml writes to the injected path and preserves untouched fields', async () => {
 		const { saveSettingsToLocalYaml } = await import('../lib/server/settings');
 
 		saveSettingsToLocalYaml({ daily_greeting_limit: 33 } as any);
 
-		const written = fs.readFileSync(tmpFile, 'utf-8');
+		const written = fs.readFileSync(sandbox.file, 'utf-8');
 		expect(written).toContain('daily_greeting_limit: 33');
 		// Fields absent from the payload must survive the save untouched.
 		expect(written).toContain('https://pb-seed.example:4433');
@@ -145,4 +99,7 @@ describe('Settings persistence isolation (issue #185)', () => {
 
 		expect(loadMergedSettings().api_key).toBe('sk-seed-initial-key-9876');
 	});
+
+	// Byte-guard against issue #185 recurrences: runs after every save above.
+	it('left the developer settings file untouched', () => sandbox.assertRealConfigUntouched());
 });

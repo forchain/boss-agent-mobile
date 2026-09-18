@@ -66,14 +66,16 @@ export function parseSimpleYaml(content: string): Record<string, any> {
 			continue;
 		}
 
-		if (val === '' && !wasQuoted) {
-			result[key] = [];
-			currentListKey = key;
-			continue;
-		}
 		if (val === '') {
-			result[key] = '';
-			currentListKey = null;
+			if (wasQuoted) {
+				// An explicit "" is an empty string, not an (empty) list header
+				result[key] = '';
+				currentListKey = null;
+			} else {
+				// A bare `key:` line introduces a multi-line list
+				result[key] = [];
+				currentListKey = key;
+			}
 			continue;
 		}
 
@@ -127,6 +129,12 @@ export function maskSecret(val?: string): string {
 	return `${s.slice(0, prefixLen)}••••••••••••${s.slice(-suffixLen)}`;
 }
 
+// True when a value looks like a maskSecret() display glyph rather than a real
+// secret (issue #185). Single source of truth for every "is this masked?" check.
+export function isMaskedDisplayValue(val: unknown): boolean {
+	return typeof val === 'string' && (val.includes('•') || val.includes('****'));
+}
+
 export function sanitizeLlmSettingsForRunner(settings: any): any {
 	if (!settings || typeof settings !== 'object') return settings;
 	const cleaned = { ...settings };
@@ -134,12 +142,11 @@ export function sanitizeLlmSettingsForRunner(settings: any): any {
 	if (
 		!key ||
 		typeof key !== 'string' ||
-		key.includes('•') ||
-		key.includes('****') ||
+		isMaskedDisplayValue(key) ||
 		key === 'your-api-key-here'
 	) {
 		const serverSettings = loadMergedSettings();
-		if (serverSettings.api_key && !serverSettings.api_key.includes('•') && !serverSettings.api_key.includes('****')) {
+		if (serverSettings.api_key && !isMaskedDisplayValue(serverSettings.api_key)) {
 			cleaned.api_key = serverSettings.api_key;
 		} else {
 			delete cleaned.api_key;
@@ -281,8 +288,7 @@ export function saveSettingsToLocalYaml(
 	const isUsableSecret = (val: unknown): val is string =>
 		typeof val === 'string' &&
 		val.trim() !== '' &&
-		!val.includes('•') &&
-		!val.includes('****') &&
+		!isMaskedDisplayValue(val) &&
 		!PLACEHOLDER_SECRETS.has(val);
 
 	const resolveSecret = (incoming: string | undefined, onDisk: string | undefined): string =>
@@ -291,8 +297,9 @@ export function saveSettingsToLocalYaml(
 	let finalApiKey = resolveSecret(newSettings.api_key, existing.api_key);
 	const finalLangsmithKey = resolveSecret(newSettings.langsmith_api_key, existing.langsmith_api_key);
 
-	// Fallback to legacy llm.local.yaml if still empty
-	if (!finalApiKey) {
+	// Fallback to legacy llm.local.yaml if still empty. Skipped under the test
+	// seam so a sandboxed save can never pull in the developer's real key.
+	if (!finalApiKey && !process.env.BOSS_SETTINGS_LOCAL_PATH) {
 		const legacyLlmFile = path.join(getProjectRoot(), 'config', 'llm.local.yaml');
 		if (fs.existsSync(legacyLlmFile)) {
 			const legacyContent = fs.readFileSync(legacyLlmFile, 'utf-8');
@@ -369,5 +376,8 @@ export function saveSettingsToLocalYaml(
 	const realTarget = fs.existsSync(targetFile) ? fs.realpathSync(targetFile) : targetFile;
 	fs.writeFileSync(realTarget, yamlContent, 'utf-8');
 
-	return { success: true, message: 'Settings saved to config/settings.local.yaml' };
+	// Report where the settings actually landed (issue #185 review C4)
+	const rel = path.relative(getProjectRoot(), targetFile);
+	const shownPath = rel && !rel.startsWith('..') ? rel : targetFile;
+	return { success: true, message: `Settings saved to ${shownPath}` };
 }

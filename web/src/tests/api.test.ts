@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
+import { setupSettingsSandbox, type SettingsSandbox } from './settingsSandbox';
 import { POST as handleResumePost } from '../routes/api/candidate/resume/+server';
 import { POST as handleMatchPost } from '../routes/api/match/evaluate/+server';
 import { getCandidateProfile, saveCandidateProfile, createAutomationTask } from '../lib/pocketbase';
@@ -473,52 +473,32 @@ describe('SvelteKit Server Endpoints', () => {
 });
 
 describe('Unified System Settings Endpoints (/api/settings)', () => {
-	// Issue #185: these tests exercise real persistence. Redirect the settings file
-	// at a scratch copy via BOSS_SETTINGS_LOCAL_PATH, and verify afterwards that the
-	// developer's real config/settings.local.yaml (a shared symlink) stayed untouched.
-	let scratchDir: string;
-	let realConfigFile: string | null = null;
-	let realConfigSnapshot: Buffer | null = null;
+	// Issue #185: these tests exercise real persistence. The sandbox helper
+	// redirects writes at a scratch settings file and unsets env overrides;
+	// a final test asserts the shared config/settings.local.yaml symlink stayed
+	// byte-identical throughout.
+	const SEED_YAML = [
+		'device: "test-emulator"',
+		'server_url: "http://127.0.0.1:4723"',
+		'pocketbase_url: "http://127.0.0.1:8090"',
+		'provider: "openai"',
+		'base_url: "https://api.test.local/v1"',
+		'api_key: "sk-isolated-test-key-1234"',
+		'model: "TestModel"',
+		'daily_greeting_limit: 20',
+		'preview_timeout_sec: 3',
+		'enable_greeting: true'
+	].join('\n');
 
-	beforeAll(async () => {
-		const { getProjectRoot } = await import('../lib/server/pythonRunner');
-		const candidate = path.join(getProjectRoot(), 'config', 'settings.local.yaml');
-		if (fs.existsSync(candidate)) {
-			realConfigFile = fs.realpathSync(candidate);
-			realConfigSnapshot = fs.readFileSync(realConfigFile);
-		}
+	let sandbox: SettingsSandbox;
 
-		scratchDir = fs.mkdtempSync(path.join(os.tmpdir(), 'boss-api-settings-'));
-		const scratchFile = path.join(scratchDir, 'settings.local.yaml');
-		fs.writeFileSync(
-			scratchFile,
-			[
-				'device: "test-emulator"',
-				'server_url: "http://127.0.0.1:4723"',
-				'pocketbase_url: "http://127.0.0.1:8090"',
-				'provider: "openai"',
-				'base_url: "https://api.test.local/v1"',
-				'api_key: "sk-isolated-test-key-1234"',
-				'model: "TestModel"',
-				'daily_greeting_limit: 20',
-				'preview_timeout_sec: 3',
-				'enable_greeting: true'
-			].join('\n')
-		);
-		process.env.BOSS_SETTINGS_LOCAL_PATH = scratchFile;
+	beforeAll(() => {
+		sandbox = setupSettingsSandbox(SEED_YAML);
 	});
 
 	afterAll(() => {
-		delete process.env.BOSS_SETTINGS_LOCAL_PATH;
-
-		if (realConfigFile && realConfigSnapshot) {
-			const now = fs.existsSync(realConfigFile) ? fs.readFileSync(realConfigFile) : null;
-			expect(now && now.equals(realConfigSnapshot)).toBe(true);
-		}
-
-		fs.rmSync(scratchDir, { recursive: true, force: true });
+		sandbox.cleanup();
 	});
-
 
 	it('GET /api/settings returns merged configuration with defaults', async () => {
 		const { GET: handleSettingsGet } = await import('../routes/api/settings/+server');
@@ -635,6 +615,9 @@ describe('Unified System Settings Endpoints (/api/settings)', () => {
 			} as any);
 		}
 	});
+
+	// Byte-guard against issue #185 recurrences: runs after every POST/GET above.
+	it('left the developer settings file untouched', () => sandbox.assertRealConfigUntouched());
 });
 
 
