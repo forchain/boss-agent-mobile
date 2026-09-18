@@ -119,6 +119,84 @@ def test_refine_uses_same_greeting_prompt_document():
     assert "【微调优化特别说明】" in system_prompt
 
 
+def test_refine_greeting_prompt_rewrites_whole_document_preserving_points():
+    mock_llm = MagicMock()
+    mock_llm.chat_completion_json.return_value = {
+        "prompt": LOCAL_TEXT + "\n7. 【主动给出作品集链接】。"
+    }
+    service = JobMatchGreetingService(llm_client=mock_llm)
+    refined = service.refine_greeting_prompt(
+        job=_job(),
+        original_greeting="旧版泛泛招呼语",
+        revised_greeting="直击英语协同痛点的新版招呼语",
+        critique="强调海外留学和英语工作语言",
+        current_prompt=LOCAL_TEXT,
+    )
+
+    assert refined == LOCAL_TEXT + "\n7. 【主动给出作品集链接】。"
+
+    call_args = mock_llm.chat_completion_json.call_args[0][0]
+    system_prompt = call_args[0]["content"]
+    # The rewrite must be told to preserve every existing point.
+    assert "保留" in system_prompt
+    # The rewrite request must carry the current document as its base.
+    user_prompt = call_args[1]["content"]
+    assert LOCAL_TEXT in user_prompt
+    assert "旧版泛泛招呼语" in user_prompt
+    assert "直击英语协同痛点的新版招呼语" in user_prompt
+    assert "强调海外留学和英语工作语言" in user_prompt
+    assert "Senior AI Architect" in user_prompt
+
+
+def test_refine_greeting_prompt_lazy_loads_current_document(tmp_path, monkeypatch):
+    import boss_agent.greeting_prompt as gp
+
+    _make_config(tmp_path, local=LOCAL_TEXT)
+    monkeypatch.setattr(gp, "resolve_git_common_root", lambda: tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    mock_llm = MagicMock()
+    mock_llm.chat_completion_json.return_value = {"prompt": "改进后的完整文档。"}
+    service = JobMatchGreetingService(llm_client=mock_llm)
+    service.refine_greeting_prompt(
+        job=_job(),
+        original_greeting="a",
+        revised_greeting="b",
+        critique="c",
+    )
+    user_prompt = mock_llm.chat_completion_json.call_args[0][0][1]["content"]
+    assert LOCAL_TEXT in user_prompt
+
+
+def test_refine_greeting_prompt_raises_on_llm_failure():
+    mock_llm = MagicMock()
+    mock_llm.chat_completion_json.side_effect = RuntimeError("simulated rewrite failure")
+    service = JobMatchGreetingService(llm_client=mock_llm)
+    with pytest.raises(RuntimeError) as exc_info:
+        service.refine_greeting_prompt(
+            job=_job(),
+            original_greeting="a",
+            revised_greeting="b",
+            critique="c",
+            current_prompt=LOCAL_TEXT,
+        )
+    assert "simulated rewrite failure" in str(exc_info.value)
+
+
+def test_refine_greeting_prompt_rejects_empty_llm_output():
+    mock_llm = MagicMock()
+    mock_llm.chat_completion_json.return_value = {"prompt": "   "}
+    service = JobMatchGreetingService(llm_client=mock_llm)
+    with pytest.raises(RuntimeError):
+        service.refine_greeting_prompt(
+            job=_job(),
+            original_greeting="a",
+            revised_greeting="b",
+            critique="c",
+            current_prompt=LOCAL_TEXT,
+        )
+
+
 def test_evaluate_lazy_loads_prompt_file(tmp_path, monkeypatch):
     import boss_agent.greeting_prompt as gp
 

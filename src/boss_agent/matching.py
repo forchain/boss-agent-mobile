@@ -214,6 +214,67 @@ class JobMatchGreetingService:
 
         raise RuntimeError(f"LLM 微调失败，无法生成优化文案：{llm_error}")
 
+    @traceable(name="JobMatchGreetingService.refine_greeting_prompt", run_type="chain")
+    def refine_greeting_prompt(
+        self,
+        job: JobPosting,
+        original_greeting: str,
+        revised_greeting: str,
+        critique: str = "",
+        current_prompt: str | None = None,
+    ) -> str:
+        """Rewrite the entire Greeting Prompt in light of one concrete job example.
+
+        The editable document stays coherent by whole-document rewrite: every
+        still-valid point must be preserved, the new lesson is generalized into
+        the prose. Never fabricates — failures raise so the caller can surface
+        a real error (ADR 0010).
+        """
+        if current_prompt is None:
+            current_prompt = load_greeting_prompt()
+
+        system_prompt = (
+            "你是一名资深的求职对话智能体提示词打磨专家 (Prompt Refinement Specialist)。\n"
+            "下面给出求职者当前沉淀的《打招呼长期记忆提示词》(Greeting Prompt)，以及一次具体的招呼语改进实例：初版招呼语 →（求职者批注）→ 最终满意的招呼语。\n"
+            "你的任务：结合该实例反思，整篇重写这份 Greeting Prompt，使其成为更准确、更通用、连贯可读的最终写作准则。\n\n"
+            "【改写规则】：\n"
+            "1. 【保留全部既有条款 — 最重要】：必须保留当前提示词中所有仍然有效的写作要点，严禁在重写中丢失历史沉淀；只做修正、合并、去重与泛化。\n"
+            "2. 【通用化】：把本次实例中的具体经验改写为适用于所有同类岗位的通用写作准则，严禁绑定具体公司名称或单一职位。\n"
+            "3. 【理解并转化批注意图】：求职者的批注可能口语化、零散，必须真正理解其意图并转化为可执行的写作指令，而不是逐字照搬原话。\n"
+            "4. 【保持既有 Markdown 散文结构】：延续当前文档的人设句与【打招呼破冰铁律与原则】编号条目风格，输出仍然是一份可直接使用的完整提示词。\n"
+            "5. 【严格 JSON 输出】：{\"prompt\": \"改进后的完整提示词全文\"}"
+        )
+
+        jd_snippet = (job.job_description or "")[:350]
+        user_content = (
+            f"【当前 Greeting Prompt 全文】：\n{current_prompt}\n\n"
+            f"目标职位: {job.title}\n"
+            f"目标公司: {job.company_name}\n"
+            f"岗位描述片段:\n{jd_snippet}\n\n"
+            f"【本次实例】\n修改前招呼语:\n{original_greeting}\n\n"
+            f"求职者批注:\n{critique or '用户手动修改'}\n\n"
+            f"修改后满意招呼语:\n{revised_greeting}\n\n"
+            "请结合上述实例整篇重写 Greeting Prompt，严格输出 JSON：{\"prompt\": \"改进后的完整提示词全文\"}"
+        )
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ]
+
+        try:
+            data = self.llm_client.chat_completion_json(messages)
+            prompt_text = str(data.get("prompt") or "").strip()
+            if not prompt_text:
+                raise ValueError("LLM 返回空 prompt 字段")
+            return prompt_text
+        except Exception as e:
+            # stderr only: the caller parses a JSON contract from stdout.
+            import sys
+
+            sys.stderr.write(f"❌ Greeting Prompt refinement error: {e}\n")
+            raise RuntimeError(f"提示词打磨失败，无法生成改进版 Greeting Prompt：{e}")
+
     @traceable(name="JobMatchGreetingService.distill_memory_rule", run_type="chain")
     def distill_memory_rule(
         self,

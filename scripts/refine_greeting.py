@@ -25,9 +25,9 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Refine greeting with critique or distill rules")
     parser.add_argument(
         "--action",
-        choices=["refine", "distill"],
+        choices=["refine", "distill", "prompt-refine"],
         default="refine",
-        help="Action to perform: refine greeting or distill rule",
+        help="Action: refine greeting, distill rule (deprecated), or rewrite the Greeting Prompt",
     )
     parser.add_argument("--job", "-j", type=str, required=True, help="Job details JSON string")
     parser.add_argument(
@@ -179,6 +179,39 @@ def main() -> None:
                         "success": False,
                         "error": str(e),
                         "refinement_failed": True,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
+    elif args.action == "prompt-refine":
+        orig_greeting = args.original_greeting or args.current_greeting or ""
+        rev_greeting = args.revised_greeting or ""
+        critique = args.critique or ""
+        try:
+            refined_prompt = service.refine_greeting_prompt(
+                job=job,
+                original_greeting=orig_greeting,
+                revised_greeting=rev_greeting,
+                critique=critique,
+                current_prompt=args.greeting_prompt,
+            )
+            sys.stdout.write(
+                json.dumps(
+                    {"success": True, "refined_prompt": refined_prompt}, ensure_ascii=False
+                )
+                + "\n"
+            )
+        except Exception as e:
+            sys.stderr.write(f"Prompt refinement error: {e}\n")
+            # Never fabricate a prompt rewrite — the document is the candidate's
+            # settled memory and only the LLM (or the candidate) may change it.
+            sys.stdout.write(
+                json.dumps(
+                    {
+                        "success": False,
+                        "error": str(e),
+                        "prompt_refine_failed": True,
                     },
                     ensure_ascii=False,
                 )

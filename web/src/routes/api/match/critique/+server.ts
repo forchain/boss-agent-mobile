@@ -42,7 +42,8 @@ export const POST: RequestHandler = async ({ request }) => {
 			revised_greeting = '',
 			history = null,
 			candidate_profile = null,
-			llmSettings = null
+			llmSettings = null,
+			current_prompt = null
 		} = body;
 
 		const jobPayload = {
@@ -54,8 +55,12 @@ export const POST: RequestHandler = async ({ request }) => {
 
 		const args = ['--action', action, '--job', JSON.stringify(jobPayload)];
 
-		if (action === 'refine') {
-			args.push('--greeting-prompt', readGreetingPrompt().prompt);
+		if (action === 'refine' || action === 'prompt-refine') {
+			const promptText =
+				typeof current_prompt === 'string' && current_prompt.length > 0
+					? current_prompt
+					: readGreetingPrompt().prompt;
+			args.push('--greeting-prompt', promptText);
 		}
 
 		if (current_greeting) {
@@ -93,14 +98,16 @@ export const POST: RequestHandler = async ({ request }) => {
 				try {
 					const parsed = JSON.parse(lastJson);
 					// If the Python script itself reports failure (success: false or
-					// refinement_failed: true), surface it as an error — never fabricate
-					// a fake "refined" greeting by concatenating the critique.
+					// *_failed: true), surface it as an error — never fabricate a
+					// fake "refined" greeting or prompt rewrite.
 					if (parsed && parsed.success === false) {
 						return json(
 							{
 								success: false,
 								error: parsed.error || 'Python refine script reported failure',
-								refinement_failed: true
+								...(action === 'prompt-refine'
+									? { prompt_refine_failed: true }
+									: { refinement_failed: true })
 							},
 							{ status: 502 }
 						);
@@ -113,17 +120,23 @@ export const POST: RequestHandler = async ({ request }) => {
 		}
 
 		// Python runner itself failed (non-zero exit / no parseable JSON).
-		// For refine, we REFUSE to fabricate a fake greeting by string-concatenating
-		// the critique onto the original — that is precisely the bug we are
-		// removing. Surface a real error to the UI.
-		if (action === 'refine') {
-			console.warn(`[critique] Python refine failed (code=${code}): ${stderr || 'no stderr'}`);
+		// For refine and prompt-refine, we REFUSE to fabricate any output —
+		// a fake greeting, or worst of all, a fake rewrite of the candidate's
+		// settled Greeting Prompt memory. Surface a real error to the UI.
+		if (action === 'refine' || action === 'prompt-refine') {
+			console.warn(`[critique] Python ${action} failed (code=${code}): ${stderr || 'no stderr'}`);
 			return json(
-				{
-					success: false,
-					error: `LLM 优化失败：${stderr || 'Python 脚本执行失败，未能生成优化文案。请检查 LLM 配置或重试。'}`,
-					refinement_failed: true
-				},
+				action === 'prompt-refine'
+					? {
+							success: false,
+							error: `提示词打磨失败：${stderr || 'Python 脚本执行失败，未能生成改进版提示词。请检查 LLM 配置或重试。'}`,
+							prompt_refine_failed: true
+						}
+					: {
+							success: false,
+							error: `LLM 优化失败：${stderr || 'Python 脚本执行失败，未能生成优化文案。请检查 LLM 配置或重试。'}`,
+							refinement_failed: true
+						},
 				{ status: 502 }
 			);
 		}
