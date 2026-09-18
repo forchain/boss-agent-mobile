@@ -1,7 +1,7 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { runPythonScript } from '$lib/server/pythonRunner';
-import { readGreetingPrompt } from '$lib/server/greetingPromptConfig';
+import { tryReadGreetingPromptForRunner } from '$lib/server/greetingPromptConfig';
 import { sanitizeLlmSettingsForRunner } from '$lib/server/settings';
 
 /**
@@ -56,11 +56,14 @@ export const POST: RequestHandler = async ({ request }) => {
 		const args = ['--action', action, '--job', JSON.stringify(jobPayload)];
 
 		if (action === 'refine' || action === 'prompt-refine') {
-			const promptText =
-				typeof current_prompt === 'string' && current_prompt.length > 0
-					? current_prompt
-					: readGreetingPrompt().prompt;
-			args.push('--greeting-prompt', promptText);
+			if (typeof current_prompt === 'string' && current_prompt.length > 0) {
+				args.push('--greeting-prompt', current_prompt);
+			} else {
+				const stored = tryReadGreetingPromptForRunner();
+				if (stored !== null) {
+					args.push('--greeting-prompt', stored);
+				}
+			}
 		}
 
 		if (current_greeting) {
@@ -141,24 +144,17 @@ export const POST: RequestHandler = async ({ request }) => {
 			);
 		}
 
-		// Distill fallback: even on failure, never store the raw critique verbatim
-		// as the rule instruction — wrap it as a directive-style agent hint.
-		const trimmedCritique = (critique || '').trim().slice(0, 200);
-		return json({
-			success: true,
-			rule: {
-				id: `rule_${Date.now()}_fallback`,
-				condition: `当 JD 涉及【${jobPayload.job_title}】或相关要求时`,
-				instruction: trimmedCritique
-					? `在招呼语中体现求职者偏好：${trimmedCritique}（具体由后续 Agent 结合 JD 灵活展开）`
-					: `针对【${jobPayload.job_title}】突出核心实战落地经验与成果`,
-				enabled: true,
-				source_job: `${jobPayload.company_name} - ${jobPayload.job_title}`,
-				created_at: new Date().toISOString()
+		// Any other action reaching this point failed without a parseable
+		// result. There is no fabricated fallback anymore (ADR 0010): surface
+		// a real error so the UI never pretends a memory update succeeded.
+		console.warn(`[critique] Python ${action} failed (code=${code}): ${stderr || 'no stderr'}`);
+		return json(
+			{
+				success: false,
+				error: stderr || 'Python 脚本执行失败，请检查 LLM 配置或重试。'
 			},
-			fallback: true,
-			warning: stderr || 'Rule distillation fallback'
-		});
+			{ status: 502 }
+		);
 	} catch (err: any) {
 		return json({ success: false, error: err?.message || 'Critique action failed' }, { status: 500 });
 	}

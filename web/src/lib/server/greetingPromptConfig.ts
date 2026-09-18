@@ -57,6 +57,21 @@ export function readDefaultGreetingPrompt(): string {
 }
 
 /**
+ * Best-effort read used when forwarding the document to the Python runner:
+ * if the web side cannot resolve it (e.g. an unmerged branch whose config
+ * root lacks the seed file), omit the CLI flag and let the Python lazy
+ * loader — or its own error handling — take over instead of hard-failing
+ * the request.
+ */
+export function tryReadGreetingPromptForRunner(): string | null {
+	try {
+		return readGreetingPrompt().prompt;
+	} catch {
+		return null;
+	}
+}
+
+/**
  * Persist the Greeting Prompt verbatim via an atomic temp-file + rename so a
  * crashed writer can never leave a truncated document that would masquerade
  * as the settled memory.

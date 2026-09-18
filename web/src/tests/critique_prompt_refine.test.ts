@@ -13,6 +13,7 @@ vi.mock('$lib/server/pythonRunner', () => ({
 }));
 
 const { POST } = await import('../routes/api/match/critique/+server');
+const { POST: EVALUATE_POST } = await import('../routes/api/match/evaluate/+server');
 
 let tmpRoot = '';
 const SEED_TEXT = '# 种子提示词';
@@ -108,5 +109,69 @@ describe('POST /api/match/critique action=prompt-refine', () => {
 		expect(res.status).toBe(502);
 		expect(data.success).toBe(false);
 		expect(data.prompt_refine_failed).toBe(true);
+	});
+});
+
+describe('prompt document unresolvable on the web side', () => {
+	it('prompt-refine still runs, omitting the flag so Python resolves the document itself', async () => {
+		const emptyRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'no-prompt-doc-'));
+		process.env.BOSS_CONFIG_ROOT = emptyRoot;
+		runPythonScript.mockResolvedValue({
+			stdout: JSON.stringify({ success: true, refined_prompt: 'x' }),
+			stderr: '',
+			code: 0
+		});
+		try {
+			const res = await (POST as any)({ request: req(refineBody) });
+			expect(res.status).toBe(200);
+			const args = runPythonScript.mock.calls[runPythonScript.mock.calls.length - 1][1];
+			expect(args).not.toContain('--greeting-prompt');
+		} finally {
+			fs.rmSync(emptyRoot, { recursive: true, force: true });
+		}
+	});
+
+	it('match/evaluate forwards the stored document when present', async () => {
+		runPythonScript.mockResolvedValue({
+			stdout: JSON.stringify({ match_score: 90, jd_key_requirements: [], match_reasons: [], greeting_message: 'hi' }),
+			stderr: '',
+			code: 0
+		});
+		const res = await (EVALUATE_POST as any)({
+			request: new Request('http://localhost/api/match/evaluate', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ job_title: '架构师', job_description: 'x'.repeat(40) })
+			})
+		});
+		expect(res.status).toBe(200);
+		const args = runPythonScript.mock.calls[runPythonScript.mock.calls.length - 1][1];
+		const i = args.indexOf('--greeting-prompt');
+		expect(i).toBeGreaterThan(-1);
+		expect(args[i + 1]).toBe(SEED_TEXT);
+	});
+
+	it('match/evaluate omits the flag and still runs when the document cannot be resolved', async () => {
+		const emptyRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'no-prompt-doc-'));
+		process.env.BOSS_CONFIG_ROOT = emptyRoot;
+		runPythonScript.mockResolvedValue({
+			stdout: JSON.stringify({ match_score: 90, jd_key_requirements: [], match_reasons: [], greeting_message: 'hi' }),
+			stderr: '',
+			code: 0
+		});
+		try {
+			const res = await (EVALUATE_POST as any)({
+				request: new Request('http://localhost/api/match/evaluate', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ job_title: '架构师', job_description: 'x'.repeat(40) })
+				})
+			});
+			expect(res.status).toBe(200);
+			const args = runPythonScript.mock.calls[runPythonScript.mock.calls.length - 1][1];
+			expect(args).not.toContain('--greeting-prompt');
+		} finally {
+			fs.rmSync(emptyRoot, { recursive: true, force: true });
+		}
 	});
 });

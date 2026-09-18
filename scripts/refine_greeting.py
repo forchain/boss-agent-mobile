@@ -2,7 +2,8 @@
 """
 scripts/refine_greeting.py
 ==========================
-CLI entrypoint to refine greetings with human critique or distill condition-action rules.
+CLI entrypoint to refine greetings with human critique or perform whole-document
+Prompt Refinement of the settled Greeting Prompt (ADR 0010).
 """
 
 import argparse
@@ -22,12 +23,12 @@ from droid_agent_core.llm import LLMConfig, OpenAIChatClient  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Refine greeting with critique or distill rules")
+    parser = argparse.ArgumentParser(description="Refine greeting with critique or refine the Greeting Prompt")
     parser.add_argument(
         "--action",
-        choices=["refine", "distill", "prompt-refine"],
+        choices=["refine", "prompt-refine"],
         default="refine",
-        help="Action: refine greeting, distill rule (deprecated), or rewrite the Greeting Prompt",
+        help="Action: refine greeting with critique, or rewrite the Greeting Prompt (Prompt Refinement)",
     )
     parser.add_argument("--job", "-j", type=str, required=True, help="Job details JSON string")
     parser.add_argument(
@@ -42,13 +43,13 @@ def parse_args() -> argparse.Namespace:
         "--original-greeting",
         type=str,
         default="",
-        help="Original greeting before revision (for distill)",
+        help="Original greeting before revision (for prompt-refine)",
     )
     parser.add_argument(
         "--revised-greeting",
         type=str,
         default="",
-        help="Revised greeting after revision (for distill)",
+        help="Revised greeting after revision (for prompt-refine)",
     )
     parser.add_argument("--critique", "-c", type=str, default="", help="Candidate critique/feedback")
     parser.add_argument("--history", type=str, default=None, help="Dialogue history JSON string")
@@ -217,29 +218,6 @@ def main() -> None:
                 )
                 + "\n"
             )
-    elif args.action == "distill":
-        orig_greeting = args.original_greeting or args.current_greeting or ""
-        rev_greeting = args.revised_greeting or ""
-        critique = args.critique or ""
-        try:
-            distilled_rule = service.distill_memory_rule(
-                job=job,
-                original_greeting=orig_greeting,
-                revised_greeting=rev_greeting,
-                critique=critique,
-            )
-            sys.stdout.write(
-                json.dumps(
-                    {"success": True, "rule": distilled_rule.to_dict()}, ensure_ascii=False
-                )
-                + "\n"
-            )
-        except Exception as e:
-            sys.stderr.write(f"Distillation error: {e}\n")
-            sys.stdout.write(
-                json.dumps({"success": False, "error": str(e)}, ensure_ascii=False) + "\n"
-            )
-
 
 if __name__ == "__main__":
     main()

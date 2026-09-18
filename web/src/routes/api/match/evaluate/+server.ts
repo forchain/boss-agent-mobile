@@ -2,7 +2,7 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { runPythonScript } from '$lib/server/pythonRunner';
 import { sanitizeLlmSettingsForRunner } from '$lib/server/settings';
-import { readGreetingPrompt } from '$lib/server/greetingPromptConfig';
+import { tryReadGreetingPromptForRunner } from '$lib/server/greetingPromptConfig';
 
 export const POST: RequestHandler = async ({ request }) => {
 	try {
@@ -23,7 +23,11 @@ export const POST: RequestHandler = async ({ request }) => {
 			job_description
 		};
 
-		const args = ['--job', JSON.stringify(jobPayload), '--greeting-prompt', readGreetingPrompt().prompt];
+		const args = ['--job', JSON.stringify(jobPayload)];
+		const promptText = tryReadGreetingPromptForRunner();
+		if (promptText !== null) {
+			args.push('--greeting-prompt', promptText);
+		}
 		if (candidate_profile) {
 			args.push('--profile', JSON.stringify(candidate_profile));
 		}
