@@ -172,7 +172,7 @@
 		}
 	});
 
-	async function onSaveGreetingPrompt() {
+	async function postGreetingPrompt(payload: Record<string, unknown>, fallbackSuccess: string, failureLabel: string) {
 		isSavingPrompt = true;
 		savePromptSuccess = '';
 		savePromptError = '';
@@ -180,54 +180,33 @@
 			const res = await fetch('/api/greeting/prompt', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ prompt: greetingPrompt })
+				body: JSON.stringify(payload)
 			});
 			const data = await res.json();
 			if (res.ok && data.success) {
-				savePromptSuccess = data.message || '✅ 招呼语长期记忆提示词已成功持久化';
 				greetingPrompt = data.prompt ?? greetingPrompt;
 				greetingPromptIsDefault = false;
 				promptUnsaved = false;
+				savePromptSuccess = data.message || fallbackSuccess;
 				setTimeout(() => {
 					savePromptSuccess = '';
 				}, 4000);
 			} else {
-				savePromptError = `❌ 保存失败: ${data.error || '未知错误'}`;
+				savePromptError = `❌ ${failureLabel}: ${data.error || '未知错误'}`;
 			}
 		} catch (e: any) {
-			savePromptError = `❌ 保存异常: ${e?.message || e}`;
+			savePromptError = `❌ ${failureLabel}异常: ${e?.message || e}`;
 		} finally {
 			isSavingPrompt = false;
 		}
 	}
 
-	async function onRestoreGreetingPromptDefault() {
-		isSavingPrompt = true;
-		savePromptSuccess = '';
-		savePromptError = '';
-		try {
-			const res = await fetch('/api/greeting/prompt', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ restore_default: true })
-			});
-			const data = await res.json();
-			if (res.ok && data.success) {
-				greetingPrompt = data.prompt ?? '';
-				greetingPromptIsDefault = false;
-				promptUnsaved = false;
-				savePromptSuccess = '✅ 已恢复为默认提示词并持久化';
-				setTimeout(() => {
-					savePromptSuccess = '';
-				}, 4000);
-			} else {
-				savePromptError = `❌ 恢复默认失败: ${data.error || '未知错误'}`;
-			}
-		} catch (e: any) {
-			savePromptError = `❌ 恢复默认异常: ${e?.message || e}`;
-		} finally {
-			isSavingPrompt = false;
-		}
+	function onSaveGreetingPrompt() {
+		return postGreetingPrompt({ prompt: greetingPrompt }, '✅ 招呼语长期记忆提示词已成功持久化', '保存失败');
+	}
+
+	function onRestoreGreetingPromptDefault() {
+		return postGreetingPrompt({ restore_default: true }, '✅ 已恢复为默认提示词并持久化', '恢复默认失败');
 	}
 
 	function addTag(field: 'title_whitelist' | 'title_blacklist' | 'company_blacklist' | 'jd_blacklist', value: string) {

@@ -83,7 +83,7 @@ class JobMatchGreetingService:
             "【打招呼长期记忆提示词 (Greeting Prompt — 求职者沉淀的最终写作准则，必须逐条贯彻)】：\n"
             f"{greeting_prompt}\n\n"
             "【输出格式硬性约定】：\n"
-            "6. 【严格 JSON 输出】：严格以标准合法的 JSON 格式输出。字符串内容中严禁出现未转义的英文字符双引号（若需引用或书名请使用中文书名号《》或中文引号“”）。"
+            "【严格 JSON 输出】：严格以标准合法的 JSON 格式输出。字符串内容中严禁出现未转义的英文字符双引号（若需引用或书名请使用中文书名号《》或中文引号“”）。"
         )
 
     @traceable(name="JobMatchGreetingService.evaluate_and_draft_greeting", run_type="chain")

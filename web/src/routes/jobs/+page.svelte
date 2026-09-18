@@ -67,7 +67,7 @@
 	let promptRefinement = $state<{ before: string; after: string } | null>(null);
 	let isSavingPrompt = $state(false);
 	let promptSaveNotice = $state('');
-	let showManualRefinePrompt = $state(false);
+	let showManualEditSuggestion = $state(false);
 
 	// Blacklist Guardrail & Restore state
 	let isBlacklisting = $state(false);
@@ -255,7 +255,7 @@
 			critiqueInput = '';
 			refinementDiff = null;
 			promptRefinement = null;
-			showManualRefinePrompt = false;
+			showManualEditSuggestion = false;
 			refineError = '';
 		}
 	});
@@ -382,7 +382,7 @@
 			jobs = jobs.map((j) => (j.id === selectedJob.id ? { ...j, greeting_message: customGreeting } : j));
 			saveGreetingNotice = '✅ 打招呼语已保存';
 			if (hadChanged) {
-				showManualRefinePrompt = true;
+				showManualEditSuggestion = true;
 			}
 			setTimeout(() => {
 				saveGreetingNotice = '';
@@ -532,7 +532,7 @@
 	}
 
 	async function handleRefineFromManualEdit() {
-		showManualRefinePrompt = false;
+		showManualEditSuggestion = false;
 		if (!selectedJob) return;
 		await handleRefinePrompt(
 			selectedJob.greeting_message || '初版招呼语',
@@ -1268,7 +1268,7 @@
 							</div>
 
 							<!-- Optional Suggestion on Manual Edit Save (User Story 6) -->
-							{#if showManualRefinePrompt}
+							{#if showManualEditSuggestion}
 								<div class="p-3 bg-cyan-950/40 border border-cyan-800/80 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs">
 									<div class="flex items-center space-x-2 text-cyan-200">
 										<span class="text-base">💡</span>
@@ -1276,7 +1276,7 @@
 									</div>
 									<div class="flex items-center space-x-2 self-end sm:self-auto">
 										<button
-											onclick={() => (showManualRefinePrompt = false)}
+											onclick={() => (showManualEditSuggestion = false)}
 											class="text-slate-400 hover:text-slate-200 text-xs px-2 py-1"
 										>
 											忽略

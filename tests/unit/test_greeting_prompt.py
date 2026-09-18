@@ -61,6 +61,33 @@ def test_seed_serves_as_default_before_first_save(tmp_path, monkeypatch):
     assert load_greeting_prompt() == SEED_TEXT
 
 
+def test_stray_cwd_local_never_outranks_shared_root_document(tmp_path, monkeypatch):
+    """A stray local document dropped in some unrelated working directory must
+    not shadow the shared-root document the Settings UI reads and writes —
+    web and automation must always greet from the same settled memory."""
+    import boss_agent.greeting_prompt as gp
+
+    root = tmp_path / "root"
+    _make_config(root, seed=SEED_TEXT)
+    stray_cwd = tmp_path / "stray-worktree"
+    _make_config(stray_cwd, seed="其他种子", local="散落的本地文档，UI 从未展示过它")
+    monkeypatch.setattr(gp, "resolve_git_common_root", lambda: root)
+    monkeypatch.chdir(stray_cwd)
+    assert load_greeting_prompt() == SEED_TEXT
+
+
+def test_shared_root_local_wins_over_cwd_documents(tmp_path, monkeypatch):
+    import boss_agent.greeting_prompt as gp
+
+    root = tmp_path / "root"
+    _make_config(root, seed=SEED_TEXT, local=LOCAL_TEXT)
+    stray_cwd = tmp_path / "other-worktree"
+    _make_config(stray_cwd, local="别的 worktree 的本地文档")
+    monkeypatch.setattr(gp, "resolve_git_common_root", lambda: root)
+    monkeypatch.chdir(stray_cwd)
+    assert load_greeting_prompt() == LOCAL_TEXT
+
+
 def test_missing_document_fails_loudly(tmp_path, monkeypatch):
     import boss_agent.greeting_prompt as gp
 

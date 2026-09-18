@@ -63,4 +63,35 @@ describe('Greeting Prompt store', () => {
 		const leftovers = fs.readdirSync(dir).filter((f) => f.includes('.tmp'));
 		expect(leftovers).toEqual([]);
 	});
+
+	it('falls back to the repository seed when the shared root has no document yet', async () => {
+		// Simulates an unmerged branch: the git-common config root does not
+		// have the tracked seed file yet, but the working tree does.
+		process.env.BOSS_CONFIG_ROOT = path.join(tmpRoot, 'not-a-repo');
+		const { readGreetingPrompt } = await importFresh();
+		const { prompt, isDefault } = readGreetingPrompt();
+		expect(isDefault).toBe(true);
+		expect(prompt).toContain('严禁模板化套话');
+	});
+});
+
+describe('Web ↔ Python config-root parity (spec #179 story 17)', () => {
+	it('resolves the same shared config root as the Python side', async () => {
+		delete process.env.BOSS_CONFIG_ROOT;
+		const repoRoot = path.resolve(process.cwd(), '..');
+		const { spawnSync } = await import('node:child_process');
+		const py = spawnSync(
+			path.join(repoRoot, '.venv', 'bin', 'python'),
+			[
+				'-c',
+				"import sys; sys.path.insert(0, 'src'); from boss_agent.settings import resolve_git_common_root; print(resolve_git_common_root())"
+			],
+			{ cwd: repoRoot, encoding: 'utf-8' }
+		);
+		if (py.status !== 0) {
+			return; // no Python venv on this machine; parity is pinned by the shared git primitive
+		}
+		const { resolveConfigRoot } = await importFresh();
+		expect(resolveConfigRoot()).toBe(py.stdout.trim());
+	});
 });

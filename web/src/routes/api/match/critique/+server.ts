@@ -1,7 +1,7 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { runPythonScript } from '$lib/server/pythonRunner';
-import { tryReadGreetingPromptForRunner } from '$lib/server/greetingPromptConfig';
+import { pushGreetingPromptArg } from '$lib/server/greetingPromptConfig';
 import { sanitizeLlmSettingsForRunner } from '$lib/server/settings';
 
 /**
@@ -53,16 +53,22 @@ export const POST: RequestHandler = async ({ request }) => {
 			job_description: job.job_description || job.description || ''
 		};
 
+		// Both document-driven actions consume the Greeting Prompt and must
+		// never fabricate output on failure (ADR 0010).
+		const promptDrivenAction = action === 'refine' || action === 'prompt-refine';
+		const failedFlag = action === 'prompt-refine' ? 'prompt_refine_failed' : 'refinement_failed';
+		const failureResponse = (error: string) => {
+			console.warn(`[critique] Python ${action} failed: ${error}`);
+			return json({ success: false, error, [failedFlag]: true }, { status: 502 });
+		};
+
 		const args = ['--action', action, '--job', JSON.stringify(jobPayload)];
 
-		if (action === 'refine' || action === 'prompt-refine') {
+		if (promptDrivenAction) {
 			if (typeof current_prompt === 'string' && current_prompt.length > 0) {
 				args.push('--greeting-prompt', current_prompt);
 			} else {
-				const stored = tryReadGreetingPromptForRunner();
-				if (stored !== null) {
-					args.push('--greeting-prompt', stored);
-				}
+				pushGreetingPromptArg(args);
 			}
 		}
 
@@ -100,20 +106,11 @@ export const POST: RequestHandler = async ({ request }) => {
 			if (lastJson) {
 				try {
 					const parsed = JSON.parse(lastJson);
-					// If the Python script itself reports failure (success: false or
-					// *_failed: true), surface it as an error — never fabricate a
-					// fake "refined" greeting or prompt rewrite.
+					// If the Python script itself reports failure (success: false),
+					// surface it as an error — never fabricate a fake "refined"
+					// greeting or prompt rewrite.
 					if (parsed && parsed.success === false) {
-						return json(
-							{
-								success: false,
-								error: parsed.error || 'Python refine script reported failure',
-								...(action === 'prompt-refine'
-									? { prompt_refine_failed: true }
-									: { refinement_failed: true })
-							},
-							{ status: 502 }
-						);
+						return failureResponse(parsed.error || 'Python refine script reported failure');
 					}
 					return json(parsed);
 				} catch (e) {
@@ -123,38 +120,18 @@ export const POST: RequestHandler = async ({ request }) => {
 		}
 
 		// Python runner itself failed (non-zero exit / no parseable JSON).
-		// For refine and prompt-refine, we REFUSE to fabricate any output —
-		// a fake greeting, or worst of all, a fake rewrite of the candidate's
-		// settled Greeting Prompt memory. Surface a real error to the UI.
-		if (action === 'refine' || action === 'prompt-refine') {
-			console.warn(`[critique] Python ${action} failed (code=${code}): ${stderr || 'no stderr'}`);
-			return json(
-				action === 'prompt-refine'
-					? {
-							success: false,
-							error: `提示词打磨失败：${stderr || 'Python 脚本执行失败，未能生成改进版提示词。请检查 LLM 配置或重试。'}`,
-							prompt_refine_failed: true
-						}
-					: {
-							success: false,
-							error: `LLM 优化失败：${stderr || 'Python 脚本执行失败，未能生成优化文案。请检查 LLM 配置或重试。'}`,
-							refinement_failed: true
-						},
-				{ status: 502 }
-			);
-		}
-
-		// Any other action reaching this point failed without a parseable
-		// result. There is no fabricated fallback anymore (ADR 0010): surface
-		// a real error so the UI never pretends a memory update succeeded.
-		console.warn(`[critique] Python ${action} failed (code=${code}): ${stderr || 'no stderr'}`);
-		return json(
-			{
-				success: false,
-				error: stderr || 'Python 脚本执行失败，请检查 LLM 配置或重试。'
-			},
-			{ status: 502 }
-		);
+		// For document-driven actions we REFUSE to fabricate any output — a
+		// fake greeting, or worst of all, a fake rewrite of the candidate's
+		// settled Greeting Prompt memory. There is no fallback branch anymore
+		// (ADR 0010): every failure path surfaces a real 502 to the UI.
+		const detail = stderr || 'Python 脚本执行失败，请检查 LLM 配置或重试。';
+		const prefix =
+			action === 'prompt-refine'
+				? '提示词打磨失败：'
+				: action === 'refine'
+					? 'LLM 优化失败：'
+					: '';
+		return failureResponse(prefix ? prefix + detail : detail);
 	} catch (err: any) {
 		return json({ success: false, error: err?.message || 'Critique action failed' }, { status: 500 });
 	}

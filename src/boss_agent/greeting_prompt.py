@@ -19,18 +19,25 @@ SEED_FILENAME = "greeting_prompt.example.md"
 
 
 def candidate_paths(config_path: str | Path | None = None) -> list[Path]:
-    """Resolve the load order: explicit path, then local-before-seed from the
-    shared git-common config root, then the same pair under the cwd."""
+    """Resolve the load order: explicit path, then the shared-root document
+    (local wins over seed), and finally the cwd copy of the *seed* only.
+
+    A stray local document under the cwd must never shadow the shared-root
+    document that the Web Settings UI reads and writes — web and automation
+    must always greet from the same settled memory (spec #179 story 17). The
+    cwd seed fallback keeps an unmerged branch runnable from a linked
+    worktree whose shared root does not have the seed file yet.
+    """
     if config_path is not None:
         return [Path(config_path)]
 
-    roots = [resolve_git_common_root(), Path.cwd()]
-    paths: list[Path] = []
-    for root in roots:
-        paths.append(root / "config" / LOCAL_FILENAME)
-    for root in roots:
-        paths.append(root / "config" / SEED_FILENAME)
-    return paths
+    root = resolve_git_common_root()
+    cwd = Path.cwd()
+    return [
+        root / "config" / LOCAL_FILENAME,
+        root / "config" / SEED_FILENAME,
+        cwd / "config" / SEED_FILENAME,
+    ]
 
 
 def load_greeting_prompt(config_path: str | Path | None = None) -> str:
