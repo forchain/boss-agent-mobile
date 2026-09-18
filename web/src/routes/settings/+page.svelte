@@ -87,10 +87,19 @@
 	let saveRulesError = $state('');
 	let rulesUnsaved = $state(false);
 
+	// Greeting Prompt (single living long-term memory document) State
+	let greetingPrompt = $state('');
+	let greetingPromptIsDefault = $state(false);
+	let greetingPromptLoaded = $state(false);
+	let isSavingPrompt = $state(false);
+	let savePromptSuccess = $state('');
+	let savePromptError = $state('');
+	let promptUnsaved = $state(false);
+
 	function beforeUnloadHandler(e: BeforeUnloadEvent) {
-		if (rulesUnsaved) {
+		if (rulesUnsaved || promptUnsaved) {
 			e.preventDefault();
-			e.returnValue = '您有未保存的招呼语规则变更,确定离开吗?';
+			e.returnValue = '您有未保存的招呼语长期记忆变更,确定离开吗?';
 		}
 	}
 
@@ -167,7 +176,80 @@
 		} catch (e) {
 			console.warn('Failed to load greeting rules:', e);
 		}
+
+		try {
+			const gpRes = await fetch('/api/greeting/prompt');
+			if (gpRes.ok) {
+				const gpData = await gpRes.json();
+				if (typeof gpData.prompt === 'string') {
+					greetingPrompt = gpData.prompt;
+					greetingPromptIsDefault = Boolean(gpData.isDefault);
+					greetingPromptLoaded = true;
+					promptUnsaved = false;
+				}
+			}
+		} catch (e) {
+			console.warn('Failed to load greeting prompt:', e);
+		}
 	});
+
+	async function onSaveGreetingPrompt() {
+		isSavingPrompt = true;
+		savePromptSuccess = '';
+		savePromptError = '';
+		try {
+			const res = await fetch('/api/greeting/prompt', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ prompt: greetingPrompt })
+			});
+			const data = await res.json();
+			if (res.ok && data.success) {
+				savePromptSuccess = data.message || '✅ 招呼语长期记忆提示词已成功持久化';
+				greetingPrompt = data.prompt ?? greetingPrompt;
+				greetingPromptIsDefault = false;
+				promptUnsaved = false;
+				setTimeout(() => {
+					savePromptSuccess = '';
+				}, 4000);
+			} else {
+				savePromptError = `❌ 保存失败: ${data.error || '未知错误'}`;
+			}
+		} catch (e: any) {
+			savePromptError = `❌ 保存异常: ${e?.message || e}`;
+		} finally {
+			isSavingPrompt = false;
+		}
+	}
+
+	async function onRestoreGreetingPromptDefault() {
+		isSavingPrompt = true;
+		savePromptSuccess = '';
+		savePromptError = '';
+		try {
+			const res = await fetch('/api/greeting/prompt', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ restore_default: true })
+			});
+			const data = await res.json();
+			if (res.ok && data.success) {
+				greetingPrompt = data.prompt ?? '';
+				greetingPromptIsDefault = false;
+				promptUnsaved = false;
+				savePromptSuccess = '✅ 已恢复为默认提示词并持久化';
+				setTimeout(() => {
+					savePromptSuccess = '';
+				}, 4000);
+			} else {
+				savePromptError = `❌ 恢复默认失败: ${data.error || '未知错误'}`;
+			}
+		} catch (e: any) {
+			savePromptError = `❌ 恢复默认异常: ${e?.message || e}`;
+		} finally {
+			isSavingPrompt = false;
+		}
+	}
 
 	function addGreetingRule() {
 		const cond = newRuleCondition.trim();
@@ -1236,6 +1318,79 @@
 			</button>
 		</div>
 	</form>
+
+	<!-- Section: Greeting Prompt — 单一长期记忆提示词 (ADR 0010) -->
+	<div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6">
+		<div class="flex items-center justify-between border-b border-slate-800/80 pb-4">
+			<div class="flex items-center space-x-2.5">
+				<span class="text-xl">🧠</span>
+				<div>
+					<h2 class="font-semibold text-sm text-slate-100">
+						打招呼长期记忆提示词 (Greeting Prompt)
+					</h2>
+					<p class="text-[11px] text-slate-400 mt-0.5">
+						唯一的招呼语长期记忆：系统据此撰写所有岗位的破冰打招呼语。可直接编辑修正，或在岗位卡片中批注采纳后由 AI 整篇打磨并经您确认更新
+					</p>
+				</div>
+			</div>
+			<span class="text-[11px] px-2.5 py-0.5 rounded-full {greetingPromptIsDefault ? 'bg-amber-950 text-amber-300 border border-amber-800/80' : 'bg-cyan-950 text-cyan-300 border border-cyan-800/80'} font-mono">
+				{greetingPromptIsDefault ? '默认种子' : '已沉淀记忆'}
+			</span>
+		</div>
+
+		{#if savePromptSuccess}
+			<div class="p-3.5 rounded-xl bg-emerald-950/60 border border-emerald-800/80 text-xs text-emerald-300 flex items-center space-x-2">
+				<span>{savePromptSuccess}</span>
+			</div>
+		{/if}
+		{#if savePromptError}
+			<div class="p-3.5 rounded-xl bg-rose-950/60 border border-rose-800/80 text-xs text-rose-300 flex items-center space-x-2">
+				<span>{savePromptError}</span>
+			</div>
+		{/if}
+
+		<textarea
+			bind:value={greetingPrompt}
+			oninput={() => (promptUnsaved = true)}
+			rows="14"
+			placeholder="加载长期记忆提示词中..."
+			class="w-full bg-slate-950/80 border border-slate-800 rounded-xl px-4 py-3 text-xs text-slate-200 font-mono leading-relaxed placeholder-slate-600 focus:outline-none focus:border-cyan-500 transition resize-y"
+		></textarea>
+
+		<div class="flex flex-col sm:flex-row items-center justify-between pt-4 border-t border-slate-800/80 gap-3">
+			<span class="text-[11px] text-slate-500 font-mono">
+				{#if promptUnsaved}
+					<span class="text-amber-400">⚠️ 有未保存的提示词变更</span>
+				{:else}
+					📁 逐字持久化存入 config/greeting_prompt.local.md · 当前 {greetingPrompt.length} 字
+				{/if}
+			</span>
+
+			<div class="flex items-center gap-2 w-full sm:w-auto">
+				<button
+					type="button"
+					onclick={onRestoreGreetingPromptDefault}
+					disabled={isSavingPrompt}
+					class="w-full sm:w-auto bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 font-medium px-4 py-2.5 rounded-xl text-xs transition disabled:opacity-60"
+				>
+					↺ 恢复默认提示词
+				</button>
+				<button
+					type="button"
+					onclick={onSaveGreetingPrompt}
+					disabled={isSavingPrompt || !greetingPromptLoaded || !promptUnsaved}
+					class="w-full sm:w-auto bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-semibold px-5 py-2.5 rounded-xl text-xs transition shadow-lg shadow-cyan-500/10 flex items-center justify-center space-x-1.5 disabled:opacity-60"
+				>
+					{#if isSavingPrompt}
+						<span class="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+						<span>正在保存提示词...</span>
+					{:else}
+						<span>💾 保存长期记忆提示词</span>
+					{/if}
+				</button>
+			</div>
+		</div>
+	</div>
 
 	<!-- Section: Greeting Style Rules & Long-term Memory (User Stories 8 & 9) -->
 	<div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6">
