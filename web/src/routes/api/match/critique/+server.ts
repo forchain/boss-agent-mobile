@@ -1,7 +1,7 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { runPythonScript } from '$lib/server/pythonRunner';
-import { readGreetingRules } from '$lib/server/greetingRulesConfig';
+import { readGreetingPrompt } from '$lib/server/greetingPromptConfig';
 import { sanitizeLlmSettingsForRunner } from '$lib/server/settings';
 
 /**
@@ -42,8 +42,7 @@ export const POST: RequestHandler = async ({ request }) => {
 			revised_greeting = '',
 			history = null,
 			candidate_profile = null,
-			llmSettings = null,
-			rules = null
+			llmSettings = null
 		} = body;
 
 		const jobPayload = {
@@ -53,9 +52,11 @@ export const POST: RequestHandler = async ({ request }) => {
 			job_description: job.job_description || job.description || ''
 		};
 
-		const activeRules = rules || readGreetingRules();
-
 		const args = ['--action', action, '--job', JSON.stringify(jobPayload)];
+
+		if (action === 'refine') {
+			args.push('--greeting-prompt', readGreetingPrompt().prompt);
+		}
 
 		if (current_greeting) {
 			args.push('--current-greeting', current_greeting);
@@ -74,9 +75,6 @@ export const POST: RequestHandler = async ({ request }) => {
 		}
 		if (candidate_profile) {
 			args.push('--profile', JSON.stringify(candidate_profile));
-		}
-		if (activeRules && activeRules.length) {
-			args.push('--rules', JSON.stringify(activeRules));
 		}
 		if (llmSettings) {
 			const cleanedSettings = sanitizeLlmSettingsForRunner(llmSettings);

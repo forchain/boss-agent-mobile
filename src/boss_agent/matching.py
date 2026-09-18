@@ -13,7 +13,7 @@ from rich.panel import Panel
 
 from droid_agent_core.llm import LLMDecisionClient, OpenAIChatClient
 
-from .greeting_rules import GreetingStyleRule
+from .greeting_prompt import load_greeting_prompt
 from .memory import StructuredCandidateProfile
 from .models import JobPosting
 
@@ -57,18 +57,13 @@ class JobMatchGreetingService:
         """Update candidate memory profile in service context."""
         self.candidate_profile = profile
 
-    def _build_system_prompt(self, rules: list[GreetingStyleRule] | None = None) -> str:
-        """Construct persistent system prompt containing candidate background, anti-template rules, and active style rules."""
-        active_rules = [r for r in rules if getattr(r, "enabled", True)] if rules else []
-        rules_text = ""
-        if active_rules:
-            rules_lines = ["\n\n【打招呼个性化长期偏好准则 (用户沉淀的针对性记忆)】："]
-            rules_lines.append(
-                "以下是求职者长期沉淀的破冰偏好准则。在分析目标岗位 JD 时，若命中触发条件，必须在打招呼文案中贯彻执行对应的策略："
-            )
-            for idx, r in enumerate(active_rules, 1):
-                rules_lines.append(f"{idx}. 【触发条件】: {r.condition} -> 【执行策略】: {r.instruction}")
-            rules_text = "\n".join(rules_lines)
+    def _build_system_prompt(self, greeting_prompt: str | None = None) -> str:
+        """Compose the system prompt: structural scaffolding plus the settled
+        Greeting Prompt document embedded verbatim (ADR 0010). The editable
+        persona and writing principles live in the document; code keeps only
+        the candidate profile interpolation and the JSON output contract."""
+        if greeting_prompt is None:
+            greeting_prompt = load_greeting_prompt()
 
         if not self.candidate_profile:
             base = (
@@ -76,19 +71,19 @@ class JobMatchGreetingService:
                 "Analyze job descriptions (JD), extract core requirements, and draft compelling, "
                 "tailored greeting messages. Output JSON only."
             )
-            return base + rules_text
+            return (
+                f"{base}\n\n"
+                "【打招呼长期记忆提示词 (Greeting Prompt — 求职者沉淀的最终写作准则，必须逐条贯彻)】：\n"
+                f"{greeting_prompt}"
+            )
 
         return (
-            "你是一名资深的技术猎头顾问与求职沟通专家。你当前代表以下求职者进行精准的岗位契合度评估与高回复率打招呼破冰：\n\n"
+            "你当前代表以下求职者进行精准的岗位契合度评估与高回复率打招呼破冰：\n\n"
             f"[求职者背景画像]\n{self.candidate_profile.format_for_prompt()}\n\n"
-            "【打招呼破冰铁律与原则】：\n"
-            "1. 【严禁模板化套话】：严禁使用“您好！我是XX，有X年经验…”、“看到贵司招聘职位，非常感兴趣…”等空洞模板话术。\n"
-            "2. 【深度针对 JD 痛点】：仔细研读目标岗位 JD，提炼出招聘方最核心、最紧迫的 1-2 项技术挑战或业务痛点（例如高并发场景、移动端底层架构、LLM Agent 平台与工作流编排等）。\n"
-            "3. 【用匹配成果直接证明能力】：第一句话直接切入该核心痛点，并优先用求职者背景画像中真实存在、最契合的具体项目经历（例如大模型 Agent 架构设计、LangGraph/LangChain 工程化落地、自动化多 Agent 协同、开源项目或大型高并发架构攻坚等）与代表作直接证明匹配能力，严禁仅泛泛罗列基础编程语言，必须突出求职者在 Agent 与核心架构方向上的深度实战积累。\n"
-            "4. 【突出为团队带来的价值】：向 HR / 业务面试官展现“我能为该团队/业务解决什么具体问题”。\n"
-            "5. 【真诚、专业、精炼】：语气真诚自然、自信得体，字数严格控制在 80-150 字以内，极大降低招聘方阅读与筛选负担，提升沟通回复意愿。\n"
+            "【打招呼长期记忆提示词 (Greeting Prompt — 求职者沉淀的最终写作准则，必须逐条贯彻)】：\n"
+            f"{greeting_prompt}\n\n"
+            "【输出格式硬性约定】：\n"
             "6. 【严格 JSON 输出】：严格以标准合法的 JSON 格式输出。字符串内容中严禁出现未转义的英文字符双引号（若需引用或书名请使用中文书名号《》或中文引号“”）。"
-            f"{rules_text}"
         )
 
     @traceable(name="JobMatchGreetingService.evaluate_and_draft_greeting", run_type="chain")
@@ -96,7 +91,7 @@ class JobMatchGreetingService:
         self,
         job: JobPosting,
         profile: StructuredCandidateProfile | None = None,
-        rules: list[GreetingStyleRule] | None = None,
+        greeting_prompt: str | None = None,
     ) -> MatchGreetingResult:
         """Evaluate match score and generate personalized greeting message based on JD and profile."""
         if profile:
@@ -110,12 +105,7 @@ class JobMatchGreetingService:
                 "Full JD (tv_description) from detail page is strictly required for greeting generation."
             )
 
-        if rules is None:
-            from .greeting_rules import load_greeting_rules
-
-            rules = load_greeting_rules()
-
-        system_prompt = self._build_system_prompt(rules=rules)
+        system_prompt = self._build_system_prompt(greeting_prompt=greeting_prompt)
 
         user_prompt = (
             "请深入分析以下招聘岗位(JD)，提炼其核心诉求，评估契合度并生成针对该 JD 定制的破冰打招呼文案：\n\n"
@@ -123,7 +113,6 @@ class JobMatchGreetingService:
             f"招聘公司: {job.company_name}\n"
             f"薪资范围: {job.salary_range}\n"
             f"岗位描述(JD):\n{job.job_description or '暂无详细描述'}\n\n"
-            "请特别注意：若系统提示中包含【打招呼个性化长期偏好准则】，请在分析该岗位时贯彻对应的策略。\n\n"
             "请严格以 JSON 格式输出以下结构：\n"
             "{\n"
             '  "match_score": 匹配度评分(0到100之间的整数),\n'
@@ -168,18 +157,13 @@ class JobMatchGreetingService:
         critique: str,
         history: list[dict[str, str]] | None = None,
         profile: StructuredCandidateProfile | None = None,
-        rules: list[GreetingStyleRule] | None = None,
+        greeting_prompt: str | None = None,
     ) -> str:
         """Refine and iterate on a greeting draft based on candidate's conversational critique."""
         if profile:
             self.set_candidate_profile(profile)
 
-        if rules is None:
-            from .greeting_rules import load_greeting_rules
-
-            rules = load_greeting_rules()
-
-        system_prompt = self._build_system_prompt(rules=rules)
+        system_prompt = self._build_system_prompt(greeting_prompt=greeting_prompt)
         system_prompt += (
             "\n\n【微调优化特别说明】：\n"
             "求职者对当前招呼语提出了具体的修改建议或批注。你必须充分吸纳求职者的反馈，"

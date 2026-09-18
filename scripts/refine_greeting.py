@@ -15,7 +15,6 @@ root_dir = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(root_dir))
 sys.path.insert(0, str(root_dir / "src"))
 
-from boss_agent.greeting_rules import GreetingStyleRule, load_greeting_rules  # noqa: E402
 from boss_agent.matching import JobMatchGreetingService  # noqa: E402
 from boss_agent.memory import StructuredCandidateProfile  # noqa: E402
 from boss_agent.models import JobPosting  # noqa: E402
@@ -54,7 +53,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--critique", "-c", type=str, default="", help="Candidate critique/feedback")
     parser.add_argument("--history", type=str, default=None, help="Dialogue history JSON string")
     parser.add_argument("--profile", "-p", type=str, default=None, help="Candidate profile JSON string")
-    parser.add_argument("--rules", "-r", type=str, default=None, help="Greeting rules JSON string")
+    parser.add_argument(
+        "--greeting-prompt",
+        type=str,
+        default=None,
+        help="Greeting Prompt document text (lazy-loaded from config when omitted)",
+    )
     parser.add_argument("--llm-config", type=str, default=None, help="LLM config as JSON string")
     return parser.parse_args()
 
@@ -135,17 +139,6 @@ def main() -> None:
         except Exception as e:
             sys.stderr.write(f"Warning: Failed to load cached candidate memory ({e})\n")
 
-    rules = None
-    if args.rules:
-        try:
-            rules_data = json.loads(args.rules)
-            if isinstance(rules_data, list):
-                rules = [GreetingStyleRule.from_dict(r) for r in rules_data if isinstance(r, dict)]
-        except Exception as e:
-            sys.stderr.write(f"Warning: Failed to parse rules JSON ({e})\n")
-    if rules is None:
-        rules = load_greeting_rules()
-
     history = None
     if args.history:
         try:
@@ -169,7 +162,7 @@ def main() -> None:
                 critique=critique,
                 history=history,
                 profile=candidate_profile,
-                rules=rules,
+                greeting_prompt=args.greeting_prompt,
             )
             sys.stdout.write(
                 json.dumps({"success": True, "revised_greeting": revised}, ensure_ascii=False)

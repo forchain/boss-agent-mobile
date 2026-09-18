@@ -87,50 +87,6 @@ def test_greeting_rules_save_and_load_roundtrip():
         assert loaded[1].enabled is False
 
 
-def test_service_injects_active_rules_into_evaluate_prompt():
-    mock_llm = MagicMock()
-    mock_llm.chat_completion_json.return_value = {
-        "match_score": 90,
-        "jd_key_requirements": ["英语口语流利，能跨国协同"],
-        "match_reasons": ["具备海外留学经历，可全英文面试"],
-        "greeting_message": "关注到贵司对英语流利沟通的明确要求，我具备海外留学背景，英语可作日常工作语言并随时接受英文面试，非常期待进一步交流！",
-    }
-
-    rule_active = GreetingStyleRule(
-        id="r_eng",
-        condition="当 JD 强调英语能力或跨国业务时",
-        instruction="开门见山点出海外留学经历、英语可作为工作语言并主动提及可接受全英文面试",
-        enabled=True,
-    )
-    rule_disabled = GreetingStyleRule(
-        id="r_disabled",
-        condition="当 JD 强调Flutter时",
-        instruction="强调Flutter跨端经验",
-        enabled=False,
-    )
-
-    service = JobMatchGreetingService(llm_client=mock_llm)
-    job = JobPosting(
-        title="Senior Android Engineer (Global)",
-        company_name="International AI Corp",
-        salary_range="40-60K",
-        job_description="We are looking for a senior Android developer with strong English communication skills to collaborate with our overseas team.",
-    )
-
-    result = service.evaluate_and_draft_greeting(job=job, rules=[rule_active, rule_disabled])
-    assert result.match_score == 90
-    assert "海外留学" in result.greeting_message
-
-    # Check prompt passed to LLM
-    call_args = mock_llm.chat_completion_json.call_args[0][0]
-    system_prompt = call_args[0]["content"]
-    assert "【打招呼个性化长期偏好准则" in system_prompt
-    assert "当 JD 强调英语能力或跨国业务时" in system_prompt
-    assert "开门见山点出海外留学经历" in system_prompt
-    # Disabled rule should NOT be present
-    assert "强调Flutter跨端经验" not in system_prompt
-
-
 def test_service_refine_with_critique():
     mock_llm = MagicMock()
     mock_llm.chat_completion_json.return_value = {
@@ -230,56 +186,6 @@ def test_service_refine_with_critique_passes_history():
     assert "第一轮招呼" in messages_content
     assert "第一轮回复" in messages_content
     assert "第二轮反馈" in messages_content
-
-
-def test_persist_reload_then_evaluate_injects_rule():
-    """Spec Fix #7: after save+load, evaluate_and_draft_greeting automatically applies the rule."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tmp_config = Path(tmpdir) / "greeting_rules.local.yaml"
-
-        # Step 1: save a rule
-        rule = GreetingStyleRule(
-            id="rule_persist_test",
-            condition="当 JD 提及Rust或内存安全时",
-            instruction="突出开源Rust项目与内存安全调优成果",
-            enabled=True,
-            source_job="TestCorp - Rust Engineer",
-        )
-        save_greeting_rules([rule], config_path=tmp_config)
-        assert tmp_config.exists()
-
-        # Step 2: reload from disk (simulating a fresh process / service restart)
-        reloaded_rules = load_greeting_rules(config_path=tmp_config)
-        assert len(reloaded_rules) == 1
-        assert reloaded_rules[0].id == "rule_persist_test"
-        assert reloaded_rules[0].instruction == "突出开源Rust项目与内存安全调优成果"
-
-        # Step 3: pass reloaded rules to the service — rule must be injected into the prompt
-        mock_llm = MagicMock()
-        mock_llm.chat_completion_json.return_value = {
-            "match_score": 85,
-            "jd_key_requirements": ["Rust", "内存安全"],
-            "match_reasons": ["有Rust开源经验"],
-            "greeting_message": "注意到贵司强调Rust与内存安全，我有开源Rust项目经验。",
-        }
-
-        service = JobMatchGreetingService(llm_client=mock_llm)
-        job = JobPosting(
-            title="Systems Engineer",
-            company_name="SafetyFirst Labs",
-            salary_range="45-65K",
-            job_description="Seeking a systems programmer with strong Rust experience and memory safety expertise.",
-        )
-
-        result = service.evaluate_and_draft_greeting(job=job, rules=reloaded_rules)
-        assert result.match_score == 85
-
-        # Verify the rule was injected into the system prompt
-        call_args = mock_llm.chat_completion_json.call_args[0][0]
-        system_prompt = call_args[0]["content"]
-        assert "【打招呼个性化长期偏好准则" in system_prompt
-        assert "当 JD 提及Rust或内存安全时" in system_prompt
-        assert "突出开源Rust项目与内存安全调优成果" in system_prompt
 
 
 def test_service_distill_fallback_rewrites_raw_critique():
