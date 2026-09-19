@@ -442,6 +442,8 @@ class JobRecord:
     greeting_message: str = ""
     search_keywords: list[str] = field(default_factory=list)
     screened_reason: str = ""
+    relaxed_by_whitelist: bool = False
+    screening_audit: str = ""
     first_seen_at: str | None = None
     last_seen_at: str | None = None
     source_task_id: str | None = None

@@ -376,6 +376,10 @@ class InMemoryTaskBroker(BaseTaskBroker):
                     rec["jd_key_requirements"] = record_data["jd_key_requirements"]
                 if "screened_reason" in record_data:
                     rec["screened_reason"] = record_data["screened_reason"]
+                if "relaxed_by_whitelist" in record_data:
+                    rec["relaxed_by_whitelist"] = bool(record_data["relaxed_by_whitelist"])
+                if record_data.get("screening_audit"):
+                    rec["screening_audit"] = record_data["screening_audit"]
                 rec["updated"] = now
                 return dict(rec)
 
@@ -400,6 +404,8 @@ class InMemoryTaskBroker(BaseTaskBroker):
                 "job_description": record_data.get("job_description", ""),
                 "status": status_val or "unmatched",
                 "screened_reason": record_data.get("screened_reason", ""),
+                "relaxed_by_whitelist": bool(record_data.get("relaxed_by_whitelist", False)),
+                "screening_audit": record_data.get("screening_audit", ""),
                 "match_score": record_data.get("match_score"),
                 "jd_key_requirements": record_data.get("jd_key_requirements", []),
                 "greeting_message": record_data.get("greeting_message", ""),
@@ -1426,6 +1432,10 @@ class PocketBaseTaskBroker(BaseTaskBroker):
                         patch_body["jd_key_requirements"] = record_data["jd_key_requirements"]
                     if "screened_reason" in record_data:
                         patch_body["screened_reason"] = record_data["screened_reason"]
+                    if "relaxed_by_whitelist" in record_data:
+                        patch_body["relaxed_by_whitelist"] = bool(record_data["relaxed_by_whitelist"])
+                    if record_data.get("screening_audit"):
+                        patch_body["screening_audit"] = record_data["screening_audit"]
 
                     patch_url = f"{url}/{rec_id}"
                     patch_resp = await loop.run_in_executor(
@@ -1480,6 +1490,8 @@ class PocketBaseTaskBroker(BaseTaskBroker):
             "job_description": record_data.get("job_description", ""),
             "status": status_val or "unmatched",
             "screened_reason": record_data.get("screened_reason", ""),
+            "relaxed_by_whitelist": bool(record_data.get("relaxed_by_whitelist", False)),
+            "screening_audit": record_data.get("screening_audit", ""),
             "match_score": record_data.get("match_score"),
             "jd_key_requirements": record_data.get("jd_key_requirements", []),
             "greeting_message": record_data.get("greeting_message", ""),

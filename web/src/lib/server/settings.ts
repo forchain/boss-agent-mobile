@@ -178,6 +178,7 @@ export function loadMergedSettings(): SystemSettings {
 		preview_timeout_sec: 3.0,
 		enable_greeting: true,
 		enable_screening: true,
+		channel_preference: 'all',
 		title_whitelist: [],
 		title_blacklist: ['销售', '电话销售', '电销', '管培生', '实习', '助理', '讲师', '课程顾问', '客服'],
 		company_blacklist: [],
@@ -365,6 +366,13 @@ export function saveSettingsToLocalYaml(
 		`# 6. Preliminary Job Screening Policy & Blacklist/Whitelist Rules`,
 		`# ------------------------------------------------------------------------------`,
 		`enable_screening: ${merged.enable_screening !== undefined ? Boolean(merged.enable_screening) : true}`,
+		// App-Enforced Filter channel preference (spec #187). Invalid/absent values
+		// fall back to the safe default 'all' so a partial save can never corrupt it.
+		`channel_preference: ${JSON.stringify(
+			['all', 'direct_only', 'headhunter_only'].includes(String(merged.channel_preference))
+				? String(merged.channel_preference)
+				: 'all'
+		)}`,
 		`title_whitelist: ${JSON.stringify(merged.title_whitelist || [])}`,
 		`title_blacklist: ${JSON.stringify(merged.title_blacklist || [])}`,
 		`company_blacklist: ${JSON.stringify(merged.company_blacklist || [])}`,

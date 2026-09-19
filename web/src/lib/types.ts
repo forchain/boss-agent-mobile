@@ -79,6 +79,7 @@ export interface ScreeningPolicy {
 	company_blacklist: string[];
 	jd_blacklist: string[];
 	enable_screening: boolean;
+	channel_preference?: 'all' | 'direct_only' | 'headhunter_only' | string;
 }
 
 export interface LLMSettings {
@@ -123,6 +124,7 @@ export interface SystemSettings {
 	title_blacklist?: string[];
 	company_blacklist?: string[];
 	jd_blacklist?: string[];
+	channel_preference?: 'all' | 'direct_only' | 'headhunter_only' | string;
 }
 
 export interface MatchEvaluateRequest {
@@ -187,6 +189,8 @@ export interface JobRecord {
 	greeting_message?: string;
 	search_keywords?: string[];
 	screened_reason?: string;
+	relaxed_by_whitelist?: boolean;
+	screening_audit?: string;
 	source_task_id?: string;
 	first_seen_at?: string;
 	last_seen_at?: string;

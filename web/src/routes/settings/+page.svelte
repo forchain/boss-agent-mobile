@@ -797,7 +797,7 @@
 							</span>
 						</div>
 						<p class="text-[11px] text-slate-400 mt-0.5">
-							声明式配置直存 <code class="text-cyan-400 font-mono">config/settings.local.yaml</code>。在搜索结果扫描与移动端投递时，实行零 Token 前置一票否决与准入过滤。
+							声明式配置直存 <code class="text-cyan-400 font-mono">config/settings.local.yaml</code>。在搜索结果扫描与移动端投递时，实行零 Token 前置一票否决与 App 端强制过滤（支持白名单放宽豁免）。
 						</p>
 					</div>
 				</div>
@@ -834,19 +834,19 @@
 				<div class="bg-slate-950/60 border border-slate-800/80 rounded-xl p-4 space-y-3">
 					<div class="flex items-center justify-between">
 						<div class="flex items-center space-x-1.5">
-							<span class="text-xs font-semibold text-slate-200">职位标题白名单 (Title Whitelist)</span>
-							<span class="text-[10px] px-1.5 py-0.5 rounded bg-cyan-950/60 text-cyan-400 border border-cyan-800/50">可选准入</span>
+							<span class="text-xs font-semibold text-slate-200">兴趣/专长白名单 (Title Whitelist)</span>
+							<span class="text-[10px] px-1.5 py-0.5 rounded bg-cyan-950/60 text-cyan-400 border border-cyan-800/50">放宽豁免</span>
 						</div>
 						<span class="text-[11px] text-slate-500">{screeningPolicy.title_whitelist.length} 项</span>
 					</div>
 					<p class="text-[11px] text-slate-400 leading-relaxed">
-						留空表示不限制；若填写，职位标题或标签必须命中其中至少一个才保留（如：<code class="text-slate-300">Agent</code>, <code class="text-slate-300">架构师</code>）。
+						白名单不再是准入闸门，未命中的岗位不会因此被淘汰。仅当岗位触发 App 自身限制（如猎头渠道 direct_only 拦截）时，卡片标题/标签/公司/摘要命中这些代表核心兴趣或深耕领域的关键词，才予以放宽豁免、继续进入精筛（如：<code class="text-slate-300">大模型</code>, <code class="text-slate-300">游戏AI</code>）。
 					</p>
 
 					<!-- Chips container -->
 					<div class="flex flex-wrap gap-1.5 min-h-[32px] p-2 bg-slate-900/60 border border-slate-800 rounded-lg">
 						{#if screeningPolicy.title_whitelist.length === 0}
-							<span class="text-[11px] text-slate-500 italic">（未配置白名单，非黑名单职位默认全量放行）</span>
+							<span class="text-[11px] text-slate-500 italic">（未配置白名单：非黑名单职位照常放行，违例岗位无放宽豁免）</span>
 						{:else}
 							{#each screeningPolicy.title_whitelist as item, idx}
 								<span class="inline-flex items-center space-x-1 text-xs px-2 py-0.5 rounded-md bg-cyan-950 text-cyan-300 border border-cyan-800/70">
@@ -866,7 +866,7 @@
 					<div class="flex items-center space-x-2">
 						<input
 							type="text"
-							placeholder="输入标题白名单词，如: Python"
+							placeholder="输入放宽豁免关键词，如: 大模型"
 							bind:value={newTitleWhitelist}
 							onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addTag('title_whitelist', newTitleWhitelist); } }}
 							class="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-cyan-500 font-mono"

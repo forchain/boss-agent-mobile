@@ -281,6 +281,8 @@ class ScrapeJobsHandler(BaseTaskHandler):
                         "jd_key_requirements": card_tags,
                         "status": JobRecordStatus.IGNORED.value,
                         "screened_reason": reason,
+                        "relaxed_by_whitelist": False,
+                        "screening_audit": "",
                         "search_keywords": [keyword] if keyword else [],
                         "source_task_id": task.id,
                     }
@@ -290,6 +292,57 @@ class ScrapeJobsHandler(BaseTaskHandler):
                         f"⏭️ [初筛淘汰] '{card.title}' @ '{card.company_name}': {reason}",
                     )
                     continue
+
+                # 4.5 App-Enforced Filters (platform-inexpressible constraints, e.g. recruitment
+                # channel) with Whitelist Relaxation rescue before detail navigation.
+                app_pass, app_violation = policy.evaluate_app_enforced_filters(
+                    is_headhunter=getattr(card, "is_headhunter", False)
+                )
+                is_relaxed = False
+                screening_audit = ""
+                if not app_pass:
+                    is_relaxed, relax_token = policy.evaluate_whitelist_relaxation(
+                        title=card.title,
+                        company_name=card.company_name,
+                        tags=card_tags,
+                        digest=digest_text,
+                    )
+                    screening_audit = f"App端强制过滤违例: {app_violation}"
+                    if not is_relaxed:
+                        skipped_count += 1
+                        app_ignored_record = {
+                            "fingerprint": card.fingerprint,
+                            "title": card.title,
+                            "company_name": card.company_name,
+                            "recruiter_name": card.recruiter_name,
+                            "recruiter_title": getattr(card, "recruiter_title", "") or "",
+                            "is_headhunter": getattr(card, "is_headhunter", False),
+                            "company_scale": getattr(card, "company_scale", "") or "",
+                            "industry": getattr(card, "industry", "") or "",
+                            "tags": card_tags,
+                            "salary_range": getattr(card, "salary_range", "") or "",
+                            "location": getattr(card, "location", "") or "",
+                            "digest": digest_text,
+                            "job_description": "",
+                            "jd_key_requirements": card_tags,
+                            "status": JobRecordStatus.IGNORED.value,
+                            "screened_reason": app_violation,
+                            "relaxed_by_whitelist": False,
+                            "screening_audit": screening_audit,
+                            "search_keywords": [keyword] if keyword else [],
+                            "source_task_id": task.id,
+                        }
+                        await broker.upsert_job_record(app_ignored_record)
+                        await broker.append_log(
+                            task.id,
+                            f"🛑 [App端强制过滤] '{card.title}' @ '{card.company_name}': {app_violation}",
+                        )
+                        continue
+                    screening_audit += f"；【白名单放宽】命中关键词 '{relax_token}'，予以豁免"
+                    await broker.append_log(
+                        task.id,
+                        f"🎗️ [白名单放宽] '{card.title}' 命中 '{relax_token}' 豁免渠道限制，继续采集",
+                    )
 
                 # 5. Execute Action based on target_action
                 rec_type = "[猎头]" if getattr(card, "is_headhunter", False) else "[直招]"
@@ -311,6 +364,8 @@ class ScrapeJobsHandler(BaseTaskHandler):
                     else "",
                     "jd_key_requirements": card_tags,
                     "status": JobRecordStatus.JD_SAVED.value,
+                    "relaxed_by_whitelist": is_relaxed,
+                    "screening_audit": screening_audit,
                     "search_keywords": [keyword] if keyword else [],
                     "source_task_id": task.id,
                 }
@@ -386,6 +441,8 @@ class ScrapeJobsHandler(BaseTaskHandler):
                             "job_description": job_posting.job_description
                             or card_record.get("job_description", ""),
                             "status": JobRecordStatus.JD_SAVED.value,
+                            "relaxed_by_whitelist": is_relaxed,
+                            "screening_audit": screening_audit,
                             "search_keywords": [keyword] if keyword else [],
                             "source_task_id": task.id,
                         }
