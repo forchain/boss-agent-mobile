@@ -10,6 +10,9 @@ with contextlib.suppress(ImportError):
     from .matching import JobMatchGreetingService, MatchGreetingResult
 
 with contextlib.suppress(ImportError):
+    from .greeting_prompt import load_greeting_prompt
+
+with contextlib.suppress(ImportError):
     from .memory import (
         ProfileNormalizer,
         ResumeMemoryManager,
@@ -17,11 +20,6 @@ with contextlib.suppress(ImportError):
         StructuredCandidateProfile,
     )
 
-from .greeting_rules import (
-    GreetingStyleRule,
-    load_greeting_rules,
-    save_greeting_rules,
-)
 from .models import (
     AuthStatus,
     CandidateProfile,
@@ -79,7 +77,6 @@ __all__ = [
     "FilterConfig",
     "FilterDialogPage",
     "GreetingDrafterAgent",
-    "GreetingStyleRule",
     "IndustryFilterDialogPage",
     "JDSemanticScreenerAgent",
     "JobApplicationState",
@@ -106,7 +103,7 @@ __all__ = [
     "build_resume_lifecycle_graph",
     "get_global_search_registry",
     "is_masked_company_name",
-    "load_greeting_rules",
+    "load_greeting_prompt",
     "load_settings",
     "resolve_git_common_root",
     "resolve_pocketbase_data_dir",
@@ -114,5 +111,4 @@ __all__ = [
     "resolve_pocketbase_url",
     "run_job_application_graph",
     "run_resume_lifecycle_graph",
-    "save_greeting_rules",
 ]

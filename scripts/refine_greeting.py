@@ -2,7 +2,8 @@
 """
 scripts/refine_greeting.py
 ==========================
-CLI entrypoint to refine greetings with human critique or distill condition-action rules.
+CLI entrypoint to refine greetings with human critique or perform whole-document
+Prompt Refinement of the settled Greeting Prompt (ADR 0010).
 """
 
 import argparse
@@ -15,7 +16,6 @@ root_dir = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(root_dir))
 sys.path.insert(0, str(root_dir / "src"))
 
-from boss_agent.greeting_rules import GreetingStyleRule, load_greeting_rules  # noqa: E402
 from boss_agent.matching import JobMatchGreetingService  # noqa: E402
 from boss_agent.memory import StructuredCandidateProfile  # noqa: E402
 from boss_agent.models import JobPosting  # noqa: E402
@@ -23,12 +23,12 @@ from droid_agent_core.llm import LLMConfig, OpenAIChatClient  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Refine greeting with critique or distill rules")
+    parser = argparse.ArgumentParser(description="Refine greeting with critique or refine the Greeting Prompt")
     parser.add_argument(
         "--action",
-        choices=["refine", "distill"],
+        choices=["refine", "prompt-refine"],
         default="refine",
-        help="Action to perform: refine greeting or distill rule",
+        help="Action: refine greeting with critique, or rewrite the Greeting Prompt (Prompt Refinement)",
     )
     parser.add_argument("--job", "-j", type=str, required=True, help="Job details JSON string")
     parser.add_argument(
@@ -43,18 +43,23 @@ def parse_args() -> argparse.Namespace:
         "--original-greeting",
         type=str,
         default="",
-        help="Original greeting before revision (for distill)",
+        help="Original greeting before revision (for prompt-refine)",
     )
     parser.add_argument(
         "--revised-greeting",
         type=str,
         default="",
-        help="Revised greeting after revision (for distill)",
+        help="Revised greeting after revision (for prompt-refine)",
     )
     parser.add_argument("--critique", "-c", type=str, default="", help="Candidate critique/feedback")
     parser.add_argument("--history", type=str, default=None, help="Dialogue history JSON string")
     parser.add_argument("--profile", "-p", type=str, default=None, help="Candidate profile JSON string")
-    parser.add_argument("--rules", "-r", type=str, default=None, help="Greeting rules JSON string")
+    parser.add_argument(
+        "--greeting-prompt",
+        type=str,
+        default=None,
+        help="Greeting Prompt document text (lazy-loaded from config when omitted)",
+    )
     parser.add_argument("--llm-config", type=str, default=None, help="LLM config as JSON string")
     return parser.parse_args()
 
@@ -135,17 +140,6 @@ def main() -> None:
         except Exception as e:
             sys.stderr.write(f"Warning: Failed to load cached candidate memory ({e})\n")
 
-    rules = None
-    if args.rules:
-        try:
-            rules_data = json.loads(args.rules)
-            if isinstance(rules_data, list):
-                rules = [GreetingStyleRule.from_dict(r) for r in rules_data if isinstance(r, dict)]
-        except Exception as e:
-            sys.stderr.write(f"Warning: Failed to parse rules JSON ({e})\n")
-    if rules is None:
-        rules = load_greeting_rules()
-
     history = None
     if args.history:
         try:
@@ -169,7 +163,7 @@ def main() -> None:
                 critique=critique,
                 history=history,
                 profile=candidate_profile,
-                rules=rules,
+                greeting_prompt=args.greeting_prompt,
             )
             sys.stdout.write(
                 json.dumps({"success": True, "revised_greeting": revised}, ensure_ascii=False)
@@ -191,29 +185,39 @@ def main() -> None:
                 )
                 + "\n"
             )
-    elif args.action == "distill":
+    elif args.action == "prompt-refine":
         orig_greeting = args.original_greeting or args.current_greeting or ""
         rev_greeting = args.revised_greeting or ""
         critique = args.critique or ""
         try:
-            distilled_rule = service.distill_memory_rule(
+            refined_prompt = service.refine_greeting_prompt(
                 job=job,
                 original_greeting=orig_greeting,
                 revised_greeting=rev_greeting,
                 critique=critique,
+                current_prompt=args.greeting_prompt,
             )
             sys.stdout.write(
                 json.dumps(
-                    {"success": True, "rule": distilled_rule.to_dict()}, ensure_ascii=False
+                    {"success": True, "refined_prompt": refined_prompt}, ensure_ascii=False
                 )
                 + "\n"
             )
         except Exception as e:
-            sys.stderr.write(f"Distillation error: {e}\n")
+            sys.stderr.write(f"Prompt refinement error: {e}\n")
+            # Never fabricate a prompt rewrite — the document is the candidate's
+            # settled memory and only the LLM (or the candidate) may change it.
             sys.stdout.write(
-                json.dumps({"success": False, "error": str(e)}, ensure_ascii=False) + "\n"
+                json.dumps(
+                    {
+                        "success": False,
+                        "error": str(e),
+                        "prompt_refine_failed": True,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
             )
-
 
 if __name__ == "__main__":
     main()

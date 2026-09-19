@@ -133,6 +133,14 @@ _Avoid_: Deep filter, JD checker, prompt screener
 The high-context LLM agent generating anti-template, tailored ice-breaking messages combining full candidate profile highlights with extracted JD pain points.
 _Avoid_: Greeting generator, ice breaker, message writer
 
+**Greeting Prompt (`greeting_prompt.local.md`)**:
+The single living Markdown document encoding how the Greeting Drafter Agent should write ice-breakers — the one and only long-term greeting memory surface. Seeded from a default, directly human-editable, and applied verbatim by every generation path. Supersedes the retired Greeting Style Rules list (ADR 0010).
+_Avoid_: style rules, rule list, memory database, 多条规则
+
+**Prompt Refinement (打磨)**:
+The LLM step that rewrites the entire Greeting Prompt in light of one concrete job example (critique plus before/after greetings), preserving all existing guidance and merging lessons; it only persists after the candidate approves a before/after diff. Raw critiques are never persisted; only the adopted document survives.
+_Avoid_: rule distillation, memory extraction, 沉淀规则, append-log
+
 **Resume Lifecycle Graph (`ResumeLifecycleState`)**:
 The stateful LangGraph orchestrator governing candidate resume ingestion, text extraction, structured profile document generation, semantic diffing, and database persistence.
 _Avoid_: Resume script, resume pipeline, upload helper
