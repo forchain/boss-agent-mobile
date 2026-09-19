@@ -15,7 +15,7 @@ from droid_agent_core.llm import LLMDecisionClient, OpenAIChatClient
 
 from .greeting_rules import GreetingStyleRule
 from .memory import StructuredCandidateProfile
-from .models import JobPosting
+from .models import JobPosting, ScreeningPolicy
 
 console = Console(stderr=True)
 
@@ -91,14 +91,42 @@ class JobMatchGreetingService:
             f"{rules_text}"
         )
 
+    @staticmethod
+    def _build_blacklist_constraint_section(screening_policy: ScreeningPolicy | None) -> str:
+        """Render the dynamic negative-constraint block injected from the active ScreeningPolicy."""
+        if not screening_policy or not screening_policy.enable_screening:
+            return ""
+        tokens = list(
+            dict.fromkeys(
+                t.strip()
+                for t in (screening_policy.jd_blacklist + screening_policy.title_blacklist)
+                if t and t.strip()
+            )
+        )
+        if not tokens:
+            return ""
+        return (
+            "\n\n【黑名单消极约束（动态注入自当前筛选策略 ScreeningPolicy）】：\n"
+            f"以下关键词/主题是求职者明确拉黑的负面清单：{tokens}\n"
+            "1. 严禁在匹配论证与破冰文案中迎合、夸赞或主动罗列上述黑名单主题；"
+            "不得将求职者经历中与之相关的部分包装成匹配亮点。\n"
+            "2. 若目标岗位的核心职责恰以黑名单主题为主体（例如挂名Agent平台实为纯Java开发），"
+            "应判定为实质不匹配：显著调低 match_score，保持中性表述，避免任何赞美话术。\n"
+        )
+
     @traceable(name="JobMatchGreetingService.evaluate_and_draft_greeting", run_type="chain")
     def evaluate_and_draft_greeting(
         self,
         job: JobPosting,
         profile: StructuredCandidateProfile | None = None,
         rules: list[GreetingStyleRule] | None = None,
+        screening_policy: ScreeningPolicy | None = None,
     ) -> MatchGreetingResult:
-        """Evaluate match score and generate personalized greeting message based on JD and profile."""
+        """Evaluate match score and generate personalized greeting message based on JD and profile.
+
+        The active ScreeningPolicy blacklists are dynamically injected as negative
+        disqualification constraints so the draft never pitches or praises disallowed stacks.
+        """
         if profile:
             self.set_candidate_profile(profile)
 
@@ -116,6 +144,7 @@ class JobMatchGreetingService:
             rules = load_greeting_rules()
 
         system_prompt = self._build_system_prompt(rules=rules)
+        system_prompt += self._build_blacklist_constraint_section(screening_policy)
 
         user_prompt = (
             "请深入分析以下招聘岗位(JD)，提炼其核心诉求，评估契合度并生成针对该 JD 定制的破冰打招呼文案：\n\n"
