@@ -27,6 +27,7 @@ export function parseSimpleYaml(content: string): Record<string, any> {
 		const [keyPart, ...valParts] = trimmed.split(':');
 		const key = keyPart.trim();
 		let val = valParts.join(':').trim();
+		const wasQuoted = val.startsWith('"') || val.startsWith("'");
 
 		// Handle quoted values and strip trailing comments
 		if (val.startsWith('"')) {
@@ -66,8 +67,15 @@ export function parseSimpleYaml(content: string): Record<string, any> {
 		}
 
 		if (val === '') {
-			result[key] = [];
-			currentListKey = key;
+			if (wasQuoted) {
+				// An explicit "" is an empty string, not an (empty) list header
+				result[key] = '';
+				currentListKey = null;
+			} else {
+				// A bare `key:` line introduces a multi-line list
+				result[key] = [];
+				currentListKey = key;
+			}
 			continue;
 		}
 
@@ -87,6 +95,16 @@ export function parseSimpleYaml(content: string): Record<string, any> {
 		}
 	}
 	return result;
+}
+
+export function getSettingsLocalPath(): string {
+	// Test/dev injection seam (issue #185): point persistence at a scratch file
+	// instead of the real config/settings.local.yaml, which is a shared symlink.
+	const override = process.env.BOSS_SETTINGS_LOCAL_PATH;
+	if (override && override.trim()) {
+		return path.resolve(override.trim());
+	}
+	return path.join(getProjectRoot(), 'config', 'settings.local.yaml');
 }
 
 export function maskSecret(val?: string): string {
@@ -111,6 +129,12 @@ export function maskSecret(val?: string): string {
 	return `${s.slice(0, prefixLen)}••••••••••••${s.slice(-suffixLen)}`;
 }
 
+// True when a value looks like a maskSecret() display glyph rather than a real
+// secret (issue #185). Single source of truth for every "is this masked?" check.
+export function isMaskedDisplayValue(val: unknown): boolean {
+	return typeof val === 'string' && (val.includes('•') || val.includes('****'));
+}
+
 export function sanitizeLlmSettingsForRunner(settings: any): any {
 	if (!settings || typeof settings !== 'object') return settings;
 	const cleaned = { ...settings };
@@ -118,12 +142,11 @@ export function sanitizeLlmSettingsForRunner(settings: any): any {
 	if (
 		!key ||
 		typeof key !== 'string' ||
-		key.includes('•') ||
-		key.includes('****') ||
+		isMaskedDisplayValue(key) ||
 		key === 'your-api-key-here'
 	) {
 		const serverSettings = loadMergedSettings();
-		if (serverSettings.api_key && !serverSettings.api_key.includes('•') && !serverSettings.api_key.includes('****')) {
+		if (serverSettings.api_key && !isMaskedDisplayValue(serverSettings.api_key)) {
 			cleaned.api_key = serverSettings.api_key;
 		} else {
 			delete cleaned.api_key;
@@ -200,7 +223,7 @@ export function loadMergedSettings(): SystemSettings {
 
 	// 3. Read active local settings config/settings.local.yaml
 	let localPbUrl: string | undefined;
-	const localFile = path.join(projectRoot, 'config', 'settings.local.yaml');
+	const localFile = getSettingsLocalPath();
 	if (fs.existsSync(localFile)) {
 		try {
 			const parsed = parseSimpleYaml(fs.readFileSync(localFile, 'utf-8'));
@@ -248,51 +271,53 @@ export function loadMergedSettings(): SystemSettings {
 export function saveSettingsToLocalYaml(
 	newSettings: Partial<SystemSettings>
 ): { success: boolean; message: string } {
-	const projectRoot = getProjectRoot();
-	const configDir = path.join(projectRoot, 'config');
+	const targetFile = getSettingsLocalPath();
+	const configDir = path.dirname(targetFile);
 	if (!fs.existsSync(configDir)) {
 		fs.mkdirSync(configDir, { recursive: true });
 	}
-	const targetFile = path.join(configDir, 'settings.local.yaml');
 
-	// Preserve existing secret keys if newSettings passed empty string or masked display value
-	let finalApiKey = newSettings.api_key || '';
-	let finalLangsmithKey = newSettings.langsmith_api_key || '';
+	// Merge into the current file so partial saves (e.g. screening-only writes)
+	// never reset fields that were absent from the payload.
+	const existingContent = fs.existsSync(targetFile) ? fs.readFileSync(targetFile, 'utf-8') : '';
+	const existing = (existingContent ? parseSimpleYaml(existingContent) : {}) as Partial<SystemSettings>;
 
-	if (finalApiKey.includes('••••') || finalApiKey.includes('****')) {
-		finalApiKey = '';
-	}
-	if (finalLangsmithKey.includes('••••') || finalLangsmithKey.includes('****')) {
-		finalLangsmithKey = '';
-	}
+	// Empty strings, masked display values and template placeholders must never
+	// land in the file as a "new" secret (issue #185: fixtures clobbering real keys).
+	const PLACEHOLDER_SECRETS = new Set(['your-api-key-here', 'your-langsmith-api-key-here']);
+	const isUsableSecret = (val: unknown): val is string =>
+		typeof val === 'string' &&
+		val.trim() !== '' &&
+		!isMaskedDisplayValue(val) &&
+		!PLACEHOLDER_SECRETS.has(val);
 
-	if (fs.existsSync(targetFile)) {
-		const existingContent = fs.readFileSync(targetFile, 'utf-8');
-		if (!finalApiKey) {
-			const match = existingContent.match(/^[ \t]*api_key:[ \t]*["']?([^"'\r\n]+)["']?/m);
-			if (match && match[1] && match[1] !== 'your-api-key-here') {
-				finalApiKey = match[1];
-			}
-		}
-		if (!finalLangsmithKey) {
-			const match = existingContent.match(/^[ \t]*langsmith_api_key:[ \t]*["']?([^"'\r\n]+)["']?/m);
-			if (match && match[1] && match[1] !== 'your-langsmith-api-key-here') {
-				finalLangsmithKey = match[1];
-			}
-		}
-	}
+	const resolveSecret = (incoming: string | undefined, onDisk: string | undefined): string =>
+		isUsableSecret(incoming) ? incoming : isUsableSecret(onDisk) ? onDisk : '';
 
-	// Fallback to legacy llm.local.yaml if still empty
-	if (!finalApiKey) {
-		const legacyLlmFile = path.join(configDir, 'llm.local.yaml');
+	let finalApiKey = resolveSecret(newSettings.api_key, existing.api_key);
+	const finalLangsmithKey = resolveSecret(newSettings.langsmith_api_key, existing.langsmith_api_key);
+
+	// Fallback to legacy llm.local.yaml if still empty. Skipped under the test
+	// seam so a sandboxed save can never pull in the developer's real key.
+	if (!finalApiKey && !process.env.BOSS_SETTINGS_LOCAL_PATH) {
+		const legacyLlmFile = path.join(getProjectRoot(), 'config', 'llm.local.yaml');
 		if (fs.existsSync(legacyLlmFile)) {
 			const legacyContent = fs.readFileSync(legacyLlmFile, 'utf-8');
 			const match = legacyContent.match(/^[ \t]*api_key:[ \t]*["']?([^"'\r\n]+)["']?/m);
-			if (match && match[1] && match[1] !== 'your-api-key-here') {
+			if (match && match[1] && !PLACEHOLDER_SECRETS.has(match[1])) {
 				finalApiKey = match[1];
 			}
 		}
 	}
+
+	const definedOnly = (obj: Partial<SystemSettings>): Record<string, any> => {
+		const out: Record<string, any> = {};
+		for (const [k, v] of Object.entries(obj)) {
+			if (v !== undefined) out[k] = v;
+		}
+		return out;
+	};
+	const merged = { ...existing, ...definedOnly(newSettings), api_key: finalApiKey, langsmith_api_key: finalLangsmithKey };
 
 	const yamlContent = [
 		`# ==============================================================================`,
@@ -302,48 +327,48 @@ export function saveSettingsToLocalYaml(
 		`# ------------------------------------------------------------------------------`,
 		`# 1. Mobile Virtual Device & Appium Server`,
 		`# ------------------------------------------------------------------------------`,
-		`device: "${newSettings.device || 'emulator-5554'}"`,
-		`avd_name: "${newSettings.avd_name || 'boss_avd_arm64'}"`,
-		`server_url: "${newSettings.server_url || 'http://127.0.0.1:4723'}"`,
+		`device: "${merged.device || 'emulator-5554'}"`,
+		`avd_name: "${merged.avd_name || 'boss_avd_arm64'}"`,
+		`server_url: "${merged.server_url || 'http://127.0.0.1:4723'}"`,
 		``,
 		`# ------------------------------------------------------------------------------`,
 		`# 2. PocketBase State Stream Broker`,
 		`# ------------------------------------------------------------------------------`,
-		`pocketbase_url: "${(newSettings.pocketbase_url || 'http://127.0.0.1:8090').replace(/\/+$/, '')}"`,
+		`pocketbase_url: "${(merged.pocketbase_url || 'http://127.0.0.1:8090').replace(/\/+$/, '')}"`,
 		``,
 		`# ------------------------------------------------------------------------------`,
 		`# 3. LLM Reasoning Provider`,
 		`# ------------------------------------------------------------------------------`,
-		`provider: "${newSettings.provider || 'openai'}"`,
-		`base_url: "${(newSettings.base_url || 'https://api.minimaxi.com/v1').replace(/\/+$/, '')}"`,
+		`provider: "${merged.provider || 'openai'}"`,
+		`base_url: "${(merged.base_url || 'https://api.minimaxi.com/v1').replace(/\/+$/, '')}"`,
 		`api_key: "${finalApiKey}"`,
-		`model: "${newSettings.model || 'MiniMax-M3'}"`,
-		`temperature: ${newSettings.temperature ?? 0.2}`,
-		`timeout_sec: ${newSettings.timeout_sec ?? 120.0}`,
-		`max_tokens: ${newSettings.max_tokens ?? 262144}`,
+		`model: "${merged.model || 'MiniMax-M3'}"`,
+		`temperature: ${merged.temperature ?? 0.2}`,
+		`timeout_sec: ${merged.timeout_sec ?? 120.0}`,
+		`max_tokens: ${merged.max_tokens ?? 262144}`,
 		``,
 		`# ------------------------------------------------------------------------------`,
 		`# 4. LangSmith Observability & Tracing`,
 		`# ------------------------------------------------------------------------------`,
-		`langsmith_tracing: ${Boolean(newSettings.langsmith_tracing)}`,
+		`langsmith_tracing: ${Boolean(merged.langsmith_tracing)}`,
 		`langsmith_api_key: "${finalLangsmithKey}"`,
-		`langsmith_project: "${newSettings.langsmith_project || 'boss-agent-mobile'}"`,
+		`langsmith_project: "${merged.langsmith_project || 'boss-agent-mobile'}"`,
 		``,
 		`# ------------------------------------------------------------------------------`,
 		`# 5. Automation & Safety Rules`,
 		`# ------------------------------------------------------------------------------`,
-		`daily_greeting_limit: ${parseInt(String(newSettings.daily_greeting_limit ?? 20), 10) || 20}`,
-		`preview_timeout_sec: ${parseFloat(String(newSettings.preview_timeout_sec ?? 3.0)) || 3.0}`,
-		`enable_greeting: ${newSettings.enable_greeting !== false}`,
+		`daily_greeting_limit: ${parseInt(String(merged.daily_greeting_limit ?? 20), 10) || 20}`,
+		`preview_timeout_sec: ${parseFloat(String(merged.preview_timeout_sec ?? 3.0)) || 3.0}`,
+		`enable_greeting: ${merged.enable_greeting !== false}`,
 		``,
 		`# ------------------------------------------------------------------------------`,
 		`# 6. Preliminary Job Screening Policy & Blacklist/Whitelist Rules`,
 		`# ------------------------------------------------------------------------------`,
-		`enable_screening: ${newSettings.enable_screening !== undefined ? Boolean(newSettings.enable_screening) : true}`,
-		`title_whitelist: ${JSON.stringify(newSettings.title_whitelist || [])}`,
-		`title_blacklist: ${JSON.stringify(newSettings.title_blacklist || [])}`,
-		`company_blacklist: ${JSON.stringify(newSettings.company_blacklist || [])}`,
-		`jd_blacklist: ${JSON.stringify(newSettings.jd_blacklist || [])}`,
+		`enable_screening: ${merged.enable_screening !== undefined ? Boolean(merged.enable_screening) : true}`,
+		`title_whitelist: ${JSON.stringify(merged.title_whitelist || [])}`,
+		`title_blacklist: ${JSON.stringify(merged.title_blacklist || [])}`,
+		`company_blacklist: ${JSON.stringify(merged.company_blacklist || [])}`,
+		`jd_blacklist: ${JSON.stringify(merged.jd_blacklist || [])}`,
 		``
 	].join('\n');
 
@@ -351,5 +376,8 @@ export function saveSettingsToLocalYaml(
 	const realTarget = fs.existsSync(targetFile) ? fs.realpathSync(targetFile) : targetFile;
 	fs.writeFileSync(realTarget, yamlContent, 'utf-8');
 
-	return { success: true, message: 'Settings saved to config/settings.local.yaml' };
+	// Report where the settings actually landed (issue #185 review C4)
+	const rel = path.relative(getProjectRoot(), targetFile);
+	const shownPath = rel && !rel.startsWith('..') ? rel : targetFile;
+	return { success: true, message: `Settings saved to ${shownPath}` };
 }

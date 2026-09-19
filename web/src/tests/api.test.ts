@@ -1,4 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
+import { setupSettingsSandbox, type SettingsSandbox } from './settingsSandbox';
 import { POST as handleResumePost } from '../routes/api/candidate/resume/+server';
 import { POST as handleMatchPost } from '../routes/api/match/evaluate/+server';
 import { getCandidateProfile, saveCandidateProfile, createAutomationTask } from '../lib/pocketbase';
@@ -470,6 +473,33 @@ describe('SvelteKit Server Endpoints', () => {
 });
 
 describe('Unified System Settings Endpoints (/api/settings)', () => {
+	// Issue #185: these tests exercise real persistence. The sandbox helper
+	// redirects writes at a scratch settings file and unsets env overrides;
+	// a final test asserts the shared config/settings.local.yaml symlink stayed
+	// byte-identical throughout.
+	const SEED_YAML = [
+		'device: "test-emulator"',
+		'server_url: "http://127.0.0.1:4723"',
+		'pocketbase_url: "http://127.0.0.1:8090"',
+		'provider: "openai"',
+		'base_url: "https://api.test.local/v1"',
+		'api_key: "sk-isolated-test-key-1234"',
+		'model: "TestModel"',
+		'daily_greeting_limit: 20',
+		'preview_timeout_sec: 3',
+		'enable_greeting: true'
+	].join('\n');
+
+	let sandbox: SettingsSandbox;
+
+	beforeAll(() => {
+		sandbox = setupSettingsSandbox(SEED_YAML);
+	});
+
+	afterAll(() => {
+		sandbox.cleanup();
+	});
+
 	it('GET /api/settings returns merged configuration with defaults', async () => {
 		const { GET: handleSettingsGet } = await import('../routes/api/settings/+server');
 		const res = await handleSettingsGet({} as any);
@@ -585,6 +615,9 @@ describe('Unified System Settings Endpoints (/api/settings)', () => {
 			} as any);
 		}
 	});
+
+	// Byte-guard against issue #185 recurrences: runs after every POST/GET above.
+	it('left the developer settings file untouched', () => sandbox.assertRealConfigUntouched());
 });
 
 

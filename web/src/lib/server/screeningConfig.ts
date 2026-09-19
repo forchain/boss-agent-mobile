@@ -2,11 +2,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { getProjectRoot } from './pythonRunner';
 import type { ScreeningPolicy } from '$lib/types';
-import { loadMergedSettings, saveSettingsToLocalYaml, parseSimpleYaml } from './settings';
+import { loadMergedSettings, saveSettingsToLocalYaml, parseSimpleYaml, getSettingsLocalPath } from './settings';
 
 export function getScreeningConfigPath(): string {
-	const root = getProjectRoot();
-	return path.join(root, 'config', 'settings.local.yaml');
+	// Follow the settings persistence seam (issue #185): under
+	// BOSS_SETTINGS_LOCAL_PATH the sandbox file is the screening store too.
+	return getSettingsLocalPath();
 }
 
 export function parseScreeningPolicyYaml(content: string): ScreeningPolicy {
@@ -87,7 +88,12 @@ export function writeScreeningPolicy(policy: ScreeningPolicy): void {
 		jd_blacklist: policy.jd_blacklist
 	});
 
-	// Clean up legacy config/screening.local.yaml if it exists to avoid desync
+	// Clean up legacy config/screening.local.yaml if it exists to avoid desync.
+	// Skipped under the test seam (issue #185): those legacy files belong to
+	// the developer's real config, not the sandbox.
+	if (process.env.BOSS_SETTINGS_LOCAL_PATH) {
+		return;
+	}
 	const root = getProjectRoot();
 	const legacyScreeningPath = path.join(root, 'config', 'screening.local.yaml');
 	if (fs.existsSync(legacyScreeningPath)) {

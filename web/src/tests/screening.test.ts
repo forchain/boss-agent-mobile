@@ -1,19 +1,30 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import fs from 'node:fs';
 import { isMaskedCompanyName, validateCanBlacklistCompany } from '../lib/screening';
 import { GET, POST, DELETE } from '../routes/api/screening/blacklist/+server';
-import { getScreeningConfigPath } from '../lib/server/screeningConfig';
+import { setupSettingsSandbox, type SettingsSandbox } from './settingsSandbox';
 
 describe('Masked Company Guardrail & Screening Utilities', () => {
-	let originalSettingsContent: string | null = null;
-	let realConfigPath: string = '';
+	// Issue #185: blacklist/policy saves hit real persistence — run them against
+	// a scratch settings file, never the shared config/settings.local.yaml symlink.
+	const SEED_YAML = [
+		'device: "test-emulator"',
+		'server_url: "http://127.0.0.1:4723"',
+		'pocketbase_url: "http://127.0.0.1:8090"',
+		'provider: "openai"',
+		'base_url: "https://api.test.local/v1"',
+		'api_key: "sk-sandbox-key-0000"',
+		'model: "SandboxModel"',
+		'enable_screening: true',
+		'title_whitelist: []',
+		'title_blacklist: []',
+		'company_blacklist: []',
+		'jd_blacklist: []'
+	].join('\n');
+
+	let sandbox: SettingsSandbox;
 
 	beforeAll(() => {
-		const configPath = getScreeningConfigPath();
-		realConfigPath = fs.existsSync(configPath) ? fs.realpathSync(configPath) : configPath;
-		if (fs.existsSync(realConfigPath)) {
-			originalSettingsContent = fs.readFileSync(realConfigPath, 'utf-8');
-		}
+		sandbox = setupSettingsSandbox(SEED_YAML);
 	});
 	it('correctly identifies masked and placeholder company names', () => {
 		expect(isMaskedCompanyName('某中型人工智能公司')).toBe(true);
@@ -171,13 +182,10 @@ describe('Masked Company Guardrail & Screening Utilities', () => {
 		expect(postData.rejected_companies[0].name).toBe('某中型人工智能公司');
 	});
 
+	// Byte-guard against issue #185 recurrences: runs after every save above.
+	it('left the developer settings file untouched', () => sandbox.assertRealConfigUntouched());
+
 	afterAll(() => {
-		if (originalSettingsContent !== null) {
-			fs.writeFileSync(realConfigPath, originalSettingsContent, 'utf-8');
-		} else if (realConfigPath && fs.existsSync(realConfigPath)) {
-			try {
-				fs.unlinkSync(realConfigPath);
-			} catch (e) {}
-		}
+		sandbox.cleanup();
 	});
 });
