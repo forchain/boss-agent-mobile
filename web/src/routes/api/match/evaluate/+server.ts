@@ -2,7 +2,7 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { runPythonScript } from '$lib/server/pythonRunner';
 import { sanitizeLlmSettingsForRunner } from '$lib/server/settings';
-import { readGreetingRules } from '$lib/server/greetingRulesConfig';
+import { pushGreetingPromptArg } from '$lib/server/greetingPromptConfig';
 
 export const POST: RequestHandler = async ({ request }) => {
 	try {
@@ -13,8 +13,7 @@ export const POST: RequestHandler = async ({ request }) => {
 			salary_range = '面议',
 			job_description = '',
 			candidate_profile = null,
-			llmSettings = null,
-			rules = null
+			llmSettings = null
 		} = body;
 
 		const jobPayload = {
@@ -24,14 +23,10 @@ export const POST: RequestHandler = async ({ request }) => {
 			job_description
 		};
 
-		const activeRules = rules || readGreetingRules();
-
 		const args = ['--job', JSON.stringify(jobPayload)];
+		pushGreetingPromptArg(args);
 		if (candidate_profile) {
 			args.push('--profile', JSON.stringify(candidate_profile));
-		}
-		if (activeRules && activeRules.length) {
-			args.push('--rules', JSON.stringify(activeRules));
 		}
 		if (llmSettings) {
 			const cleanedSettings = sanitizeLlmSettingsForRunner(llmSettings);

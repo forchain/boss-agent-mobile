@@ -1,7 +1,7 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { runPythonScript } from '$lib/server/pythonRunner';
-import { readGreetingRules } from '$lib/server/greetingRulesConfig';
+import { pushGreetingPromptArg } from '$lib/server/greetingPromptConfig';
 import { sanitizeLlmSettingsForRunner } from '$lib/server/settings';
 
 /**
@@ -43,7 +43,7 @@ export const POST: RequestHandler = async ({ request }) => {
 			history = null,
 			candidate_profile = null,
 			llmSettings = null,
-			rules = null
+			current_prompt = null
 		} = body;
 
 		const jobPayload = {
@@ -53,9 +53,24 @@ export const POST: RequestHandler = async ({ request }) => {
 			job_description: job.job_description || job.description || ''
 		};
 
-		const activeRules = rules || readGreetingRules();
+		// Both document-driven actions consume the Greeting Prompt and must
+		// never fabricate output on failure (ADR 0010).
+		const promptDrivenAction = action === 'refine' || action === 'prompt-refine';
+		const failedFlag = action === 'prompt-refine' ? 'prompt_refine_failed' : 'refinement_failed';
+		const failureResponse = (error: string) => {
+			console.warn(`[critique] Python ${action} failed: ${error}`);
+			return json({ success: false, error, [failedFlag]: true }, { status: 502 });
+		};
 
 		const args = ['--action', action, '--job', JSON.stringify(jobPayload)];
+
+		if (promptDrivenAction) {
+			if (typeof current_prompt === 'string' && current_prompt.length > 0) {
+				args.push('--greeting-prompt', current_prompt);
+			} else {
+				pushGreetingPromptArg(args);
+			}
+		}
 
 		if (current_greeting) {
 			args.push('--current-greeting', current_greeting);
@@ -75,9 +90,6 @@ export const POST: RequestHandler = async ({ request }) => {
 		if (candidate_profile) {
 			args.push('--profile', JSON.stringify(candidate_profile));
 		}
-		if (activeRules && activeRules.length) {
-			args.push('--rules', JSON.stringify(activeRules));
-		}
 		if (llmSettings) {
 			const cleanedSettings = sanitizeLlmSettingsForRunner(llmSettings);
 			args.push('--llm-config', JSON.stringify(cleanedSettings));
@@ -94,18 +106,11 @@ export const POST: RequestHandler = async ({ request }) => {
 			if (lastJson) {
 				try {
 					const parsed = JSON.parse(lastJson);
-					// If the Python script itself reports failure (success: false or
-					// refinement_failed: true), surface it as an error — never fabricate
-					// a fake "refined" greeting by concatenating the critique.
+					// If the Python script itself reports failure (success: false),
+					// surface it as an error — never fabricate a fake "refined"
+					// greeting or prompt rewrite.
 					if (parsed && parsed.success === false) {
-						return json(
-							{
-								success: false,
-								error: parsed.error || 'Python refine script reported failure',
-								refinement_failed: true
-							},
-							{ status: 502 }
-						);
+						return failureResponse(parsed.error || 'Python refine script reported failure');
 					}
 					return json(parsed);
 				} catch (e) {
@@ -115,39 +120,18 @@ export const POST: RequestHandler = async ({ request }) => {
 		}
 
 		// Python runner itself failed (non-zero exit / no parseable JSON).
-		// For refine, we REFUSE to fabricate a fake greeting by string-concatenating
-		// the critique onto the original — that is precisely the bug we are
-		// removing. Surface a real error to the UI.
-		if (action === 'refine') {
-			console.warn(`[critique] Python refine failed (code=${code}): ${stderr || 'no stderr'}`);
-			return json(
-				{
-					success: false,
-					error: `LLM 优化失败：${stderr || 'Python 脚本执行失败，未能生成优化文案。请检查 LLM 配置或重试。'}`,
-					refinement_failed: true
-				},
-				{ status: 502 }
-			);
-		}
-
-		// Distill fallback: even on failure, never store the raw critique verbatim
-		// as the rule instruction — wrap it as a directive-style agent hint.
-		const trimmedCritique = (critique || '').trim().slice(0, 200);
-		return json({
-			success: true,
-			rule: {
-				id: `rule_${Date.now()}_fallback`,
-				condition: `当 JD 涉及【${jobPayload.job_title}】或相关要求时`,
-				instruction: trimmedCritique
-					? `在招呼语中体现求职者偏好：${trimmedCritique}（具体由后续 Agent 结合 JD 灵活展开）`
-					: `针对【${jobPayload.job_title}】突出核心实战落地经验与成果`,
-				enabled: true,
-				source_job: `${jobPayload.company_name} - ${jobPayload.job_title}`,
-				created_at: new Date().toISOString()
-			},
-			fallback: true,
-			warning: stderr || 'Rule distillation fallback'
-		});
+		// For document-driven actions we REFUSE to fabricate any output — a
+		// fake greeting, or worst of all, a fake rewrite of the candidate's
+		// settled Greeting Prompt memory. There is no fallback branch anymore
+		// (ADR 0010): every failure path surfaces a real 502 to the UI.
+		const detail = stderr || 'Python 脚本执行失败，请检查 LLM 配置或重试。';
+		const prefix =
+			action === 'prompt-refine'
+				? '提示词打磨失败：'
+				: action === 'refine'
+					? 'LLM 优化失败：'
+					: '';
+		return failureResponse(prefix ? prefix + detail : detail);
 	} catch (err: any) {
 		return json({ success: false, error: err?.message || 'Critique action failed' }, { status: 500 });
 	}

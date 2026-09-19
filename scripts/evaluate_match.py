@@ -25,7 +25,12 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Evaluate job match and generate greeting")
     parser.add_argument("--job", "-j", type=str, required=True, help="Job details JSON string")
     parser.add_argument("--profile", "-p", type=str, default=None, help="Candidate profile JSON string")
-    parser.add_argument("--rules", "-r", type=str, default=None, help="Greeting rules JSON string")
+    parser.add_argument(
+        "--greeting-prompt",
+        type=str,
+        default=None,
+        help="Greeting Prompt document text (lazy-loaded from config when omitted)",
+    )
     parser.add_argument("--llm-config", type=str, default=None, help="LLM config as JSON string")
     return parser.parse_args()
 
@@ -111,17 +116,6 @@ def main() -> None:
         except Exception as e:
             sys.stderr.write(f"Warning: Failed to load cached candidate memory ({e})\n")
 
-    rules = None
-    if args.rules:
-        try:
-            from boss_agent.greeting_rules import GreetingStyleRule
-
-            rules_data = json.loads(args.rules)
-            if isinstance(rules_data, list):
-                rules = [GreetingStyleRule.from_dict(r) for r in rules_data if isinstance(r, dict)]
-        except Exception as e:
-            sys.stderr.write(f"Warning: Failed to parse rules JSON ({e})\n")
-
     llm_client = build_llm_client(args.llm_config)
     service = JobMatchGreetingService(
         llm_client=llm_client,
@@ -129,7 +123,9 @@ def main() -> None:
     )
 
     try:
-        result = service.evaluate_and_draft_greeting(job, profile=candidate_profile, rules=rules)
+        result = service.evaluate_and_draft_greeting(
+            job, profile=candidate_profile, greeting_prompt=args.greeting_prompt
+        )
         sys.stdout.write(json.dumps(result.to_dict(), ensure_ascii=False) + "\n")
     except Exception as e:
         sys.stderr.write(f"Match evaluation error: {e}\n")
