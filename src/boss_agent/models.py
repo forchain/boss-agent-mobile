@@ -397,6 +397,14 @@ class TargetAction(StrEnum):
     AUTO_APPLY = "auto_apply"
 
 
+class ChannelPreference(StrEnum):
+    """Recruitment channel target for App-Enforced Filters (Boss offers no native filter)."""
+
+    ALL = "all"
+    DIRECT_ONLY = "direct_only"
+    HEADHUNTER_ONLY = "headhunter_only"
+
+
 STATE_RANK: dict[str, int] = {
     JobRecordStatus.IGNORED: -1,
     JobRecordStatus.DIGEST_ONLY: 1,
@@ -641,13 +649,84 @@ def is_masked_company_name(name: str | None) -> bool:
 
 @dataclass
 class ScreeningPolicy:
-    """Policy rules for multi-stage job screening."""
+    """Policy rules for multi-stage job screening.
+
+    Blacklists enforce deterministic one-strike rejection over compact card facets.
+    The whitelist is NOT an inclusion gate and never rejects a job: it exists solely
+    as relaxation tokens for App-Enforced Filters (see ``evaluate_app_enforced_filters``
+    and ``evaluate_whitelist_relaxation``).
+    """
 
     title_whitelist: list[str] = field(default_factory=list)
     title_blacklist: list[str] = field(default_factory=list)
     company_blacklist: list[str] = field(default_factory=list)
     jd_blacklist: list[str] = field(default_factory=list)
     enable_screening: bool = True
+    channel_preference: str = ChannelPreference.ALL
+
+    def __post_init__(self) -> None:
+        self.channel_preference = self._normalize_channel_preference(self.channel_preference)
+
+    @staticmethod
+    def _normalize_channel_preference(value: Any) -> str:
+        """Coerce a channel preference value to a valid ChannelPreference, defaulting to 'all'."""
+        try:
+            return ChannelPreference(str(value).strip().lower()).value
+        except ValueError:
+            return ChannelPreference.ALL.value
+
+    def evaluate_app_enforced_filters(self, is_headhunter: bool = False) -> tuple[bool, str]:
+        """Evaluate App-Enforced Filters the Boss platform cannot express natively.
+
+        Currently the recruitment channel preference (direct-hire vs headhunter).
+        Commute distance ceilings and future app-side conditions hook in here.
+        Returns (passed: bool, violation: str); ``violation`` is an empty string when
+        the card satisfies all App-Enforced Filters, otherwise a human-readable
+        description of the violated condition, which the Whitelist Relaxation router
+        may still exempt.
+        """
+        if not self.enable_screening:
+            return True, ""
+
+        if self.channel_preference == ChannelPreference.DIRECT_ONLY and is_headhunter:
+            return False, "【App端强制过滤】猎头代招岗位违反直聘渠道偏好 (channel_preference='direct_only')"
+
+        if self.channel_preference == ChannelPreference.HEADHUNTER_ONLY and not is_headhunter:
+            return False, "【App端强制过滤】直招岗位违反猎头渠道偏好 (channel_preference='headhunter_only')"
+
+        return True, ""
+
+    def evaluate_whitelist_relaxation(
+        self,
+        title: str,
+        company_name: str = "",
+        tags: list[str] | None = None,
+        digest: str = "",
+    ) -> tuple[bool, str]:
+        """Evaluate Whitelist Relaxation for a card that violated an App-Enforced Filter.
+
+        Inspects the compact card facets (title, tags, company, digest) against the
+        whitelist tokens, which encode subject matter the candidate cares deeply about
+        or is strong in. Returns (is_relaxed: bool, matched_token: str); an empty
+        whitelist simply means nothing can be relaxed. This method grants exemptions
+        only — it never rejects, and non-matching jobs pass normal evaluation when no
+        App-Enforced Filter was violated.
+        """
+        active_whitelist = [w.strip() for w in self.title_whitelist if w and w.strip()]
+        if not active_whitelist:
+            return False, ""
+
+        facets = [
+            (title or "").lower(),
+            (company_name or "").lower(),
+            " ".join(str(t).lower() for t in (tags or [])),
+            (digest or "").lower(),
+        ]
+        for token in active_whitelist:
+            normalized = token.lower()
+            if any(normalized in facet for facet in facets):
+                return True, token
+        return False, ""
 
     def validate_can_blacklist_company(
         self,
@@ -749,16 +828,8 @@ class ScreeningPolicy:
             if b and (b in norm_digest or any(b in t for t in norm_tags)):
                 return False, f"命中岗位摘要/标签黑名单关键词: '{black}'"
 
-        # 4. Check title whitelist (若配置了白名单，必须在 title, tags, 或 digest 中命中至少一个)
-        active_whitelist = [w.strip().lower() for w in self.title_whitelist if w.strip()]
-        if active_whitelist:
-            hit = any(
-                w in norm_title or any(w in t for t in norm_tags) or w in norm_digest
-                for w in active_whitelist
-            )
-            if not hit:
-                return False, f"未命中任何职位白名单关键词 (要求: {self.title_whitelist})"
-
+        # 白名单不再是准入闸门: 未命中白名单不拒绝卡片, 仅在 App 端强制过滤
+        # 违例时由 evaluate_whitelist_relaxation 决定是否豁免放宽。
         return True, "通过卡片初筛"
 
     def to_dict(self) -> dict[str, Any]:
@@ -768,6 +839,7 @@ class ScreeningPolicy:
             "company_blacklist": self.company_blacklist,
             "jd_blacklist": self.jd_blacklist,
             "enable_screening": self.enable_screening,
+            "channel_preference": self.channel_preference,
         }
 
     @classmethod
@@ -780,6 +852,9 @@ class ScreeningPolicy:
             company_blacklist=list(data.get("company_blacklist") or []),
             jd_blacklist=list(data.get("jd_blacklist") or []),
             enable_screening=bool(data.get("enable_screening", True)),
+            channel_preference=cls._normalize_channel_preference(
+                data.get("channel_preference", ChannelPreference.ALL.value)
+            ),
         )
 
     @classmethod
@@ -845,6 +920,7 @@ class ScreeningPolicy:
                             "title_whitelist",
                             "jd_blacklist",
                             "company_blacklist",
+                            "channel_preference",
                         )
                         if config_path or any(k in data for k in screening_keys):
                             return cls.from_dict(data)
@@ -895,6 +971,7 @@ class ScreeningPolicy:
 
             lines = [
                 f"enable_screening: {'true' if self.enable_screening else 'false'}",
+                f'channel_preference: "{self.channel_preference}"',
                 "title_whitelist:",
                 *[f"  - {json.dumps(w, ensure_ascii=False)}" for w in self.title_whitelist],
                 "title_blacklist:",

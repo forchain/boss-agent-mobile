@@ -68,7 +68,15 @@ enable_greeting: true
 # Master switch for deterministic rule-based preliminary screening (zero token cost)
 enable_screening: true
 
-# 职位标题白名单（可选准入凭证，留空表示不限制；非空时职位标题必须命中至少一个）
+# 招聘渠道 App-Enforced Filter（Boss 平台无原生渠道筛选，由本应用判定）：
+#   "all"            直招与猎头岗位均接受（默认）
+#   "direct_only"    仅直招岗位，猎头岗位被拦截（可被白名单放宽豁免）
+#   "headhunter_only" 仅猎头岗位（可被白名单放宽豁免）
+channel_preference: "all"
+
+# 兴趣/专长放宽令牌（非准入闸门）：白名单绝不淘汰岗位；仅当岗位触发
+# App-Enforced Filter 违例时，若卡片要素（标题/标签/公司/摘要）命中任一
+# 白名单关键词，则视为候选人核心兴趣或深耕领域，予以豁免放宽继续评估。
 title_whitelist: []
 
 # 职位标题黑名单（一票否决，命中即淘汰，绝不进入详情页）

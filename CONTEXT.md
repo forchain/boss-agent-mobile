@@ -105,8 +105,16 @@ The LLM-driven structural diffing and human-in-the-loop review workflow that com
 _Avoid_: resume overwrite, profile replacement, auto-parse override
 
 **Screening Policy (`ScreeningPolicy`)**:
-The structured configuration encapsulating candidate negative constraints, title whitelists, title blacklists, company blacklists, and JD-level blacklists declared in `config/screening.local.yaml`. Whitelists are optional inclusion tokens (disabled when empty, treating all non-blacklisted jobs as candidates; enforcing positive inclusion when specified), while blacklists enforce deterministic one-strike rejection.
+The structured configuration encapsulating candidate negative constraints, title whitelists, title blacklists, company blacklists, and JD-level blacklists declared in `config/screening.local.yaml`. Blacklists enforce one-strike rejection. One-strike rejection is deterministic only over the compact card facets (title, tags, digest); a blacklisted term is never deterministically scanned across the full Job Description, because a passing mention there does not indict the role. The full-JD blacklist verdict is semantic: rejection only when the blacklisted subject matter constitutes the job's core requirement or primary stack, never when merely referenced as background, nice-to-have, or negation. The whitelist is not an inclusion gate and never rejects a job; it exists solely as relaxation tokens for App-Enforced Filters, encoding subject matter the candidate cares deeply about or is strong in, strong enough to widen a condition the app itself imposed.
 _Avoid_: Filter keywords, blacklist config, keyword rules
+
+**App-Enforced Filter**:
+A screening condition the Boss platform does not offer natively in its search interface — recruitment channel (direct-hire vs headhunter), commute distance ceilings, and future peers — and that our app therefore evaluates in its own logic against jobs already retrieved from the platform. Because the platform cannot pre-filter these, jobs violating them are skipped by our own judgement rather than by platform relevance, and every such skip is subject to Whitelist Relaxation.
+_Avoid_: platform filter, native search condition, search keyword
+
+**Whitelist Relaxation (白名单放宽)**:
+The exemption rule by which a job an App-Enforced Filter would skip is admitted into the normal pipeline after all when its card facets (title, tags, digest) hit a whitelist token, because strong personal interest or expertise is deemed to outweigh the violated condition. It is the sole surviving role of the whitelist: an interest signal that widens app-side constraints, never an inclusion gate that rejects non-matching jobs.
+_Avoid_: whitelist gate, inclusion filter, positive match
 
 **Configuration Realm (`config/*.yaml`)**:
 The declarative, human-readable single source of truth for all global system configurations (LLM, screening policies, candidate persona, settings), managed by developers, administrators, or Web UI endpoints.
@@ -122,15 +130,15 @@ The stateful LangGraph orchestrator governing the complete multi-tier lifecycle 
 _Avoid_: Screening pipeline, match chain, agent workflow
 
 **Keyword Screener**:
-The zero-token deterministic gatekeeper node evaluating visible job card metadata (title, tags, company, digest) against the active Screening Policy before triggering expensive mobile navigation.
+The zero-token deterministic gatekeeper node evaluating visible job card metadata (title, tags, company, digest) against the active Screening Policy before triggering expensive mobile navigation. Confined to the compact card facets by design, where collateral over-rejection is tolerated because the short text mirrors the role's core; it never operates on the full Job Description.
 _Avoid_: Title filter, card checker, fast screener
 
 **JD Semantic Screener Agent**:
-The token-optimized LLM agent evaluating extracted job descriptions against negative constraints and blacklist criteria without candidate resume overhead.
+The token-optimized LLM agent evaluating extracted job descriptions against negative constraints and blacklist criteria without candidate resume overhead. It is the sole blacklists authority at JD stage: deterministic keyword matching is forbidden over the full description, and rejection happens only when a blacklisted subject matter semantically constitutes the role's core requirement, not a passing mention.
 _Avoid_: Deep filter, JD checker, prompt screener
 
 **Greeting Drafter Agent**:
-The high-context LLM agent generating anti-template, tailored ice-breaking messages combining full candidate profile highlights with extracted JD pain points.
+The high-context LLM agent generating anti-template, tailored ice-breaking messages combining full candidate profile highlights with extracted JD pain points. The active Screening Policy's blacklists are dynamically injected into its matching judgement, so a job that fits the resume on paper but centers on a blacklisted subject matter (e.g. a Java role when Java is blacklisted) is disqualified at draft time even when neither the resume nor card text reveals the conflict.
 _Avoid_: Greeting generator, ice breaker, message writer
 
 **Resume Lifecycle Graph (`ResumeLifecycleState`)**:

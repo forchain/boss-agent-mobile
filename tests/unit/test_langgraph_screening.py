@@ -72,7 +72,9 @@ def test_keyword_screener_company_blacklist_rejection():
     assert "软通动力" in state["keyword_reason"]
 
 
-def test_keyword_screener_whitelist_not_hit():
+def test_keyword_screener_whitelist_miss_no_longer_rejects():
+    """Whitelist is no longer an inclusion gate (issue #188): a card missing all whitelist
+    tokens passes the keyword stage and continues down the pipeline for normal evaluation."""
     policy = ScreeningPolicy(
         title_whitelist=["Agent", "大模型", "Python"],
     )
@@ -82,10 +84,19 @@ def test_keyword_screener_whitelist_not_hit():
         recruiter_name="王五",
         tags=["K8s", "Docker"],
     )
-    state = run_job_application_graph(card, policy=policy)
-    assert state["keyword_pass"] is False
-    assert state["status"] == "filtered_by_keyword"
-    assert "未命中任何职位白名单" in state["keyword_reason"]
+    mock_llm = MagicMock()
+    mock_llm.chat_completion_json.side_effect = [
+        {"pass": True, "reason": "云原生架构岗位，未触犯任何黑名单"},
+        {
+            "match_score": 70,
+            "greeting_message": "您好，看到贵司在招聘云原生架构师...",
+        },
+    ]
+    jd_text = "岗位职责：负责容器平台与云原生基础设施建设，精通 Go 与 Kubernetes。"
+    state = run_job_application_graph(card, policy=policy, jd_text=jd_text, llm_client=mock_llm)
+    assert state["keyword_pass"] is True
+    assert state["keyword_reason"] == "通过卡片初筛"
+    assert state["status"] == "greeting_drafted"
 
 
 def test_keyword_screener_whitelist_hit_and_pass():
