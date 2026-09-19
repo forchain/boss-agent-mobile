@@ -86,3 +86,82 @@ def test_smoke_harness_runs_matching_and_types_greeting():
     mock_memory_mgr.load_memory.assert_called_once()
     mock_matching_svc.evaluate_and_draft_greeting.assert_called_once()
     mock_matching_svc.render_match_card.assert_called_once_with(job, mock_match_result)
+
+
+def _headhunter_smoke_harness(channel_policy, whitelist=None):
+    """Build a SmokeHarness whose detail page yields a headhunter posting."""
+    from boss_agent.models import JobPosting, ScreeningPolicy
+
+    mock_driver = MagicMock()
+    mock_driver.get_window_size.return_value = {"width": 1080, "height": 2400}
+    mock_btn = MagicMock()
+    mock_btn.rect = {"x": 50, "y": 50, "width": 100, "height": 50}
+    mock_driver.find_elements.return_value = [mock_btn]
+
+    mock_memory_mgr = MagicMock()
+    mock_memory_mgr.load_memory.return_value = StructuredCandidateProfile(
+        name="测试候选人",
+        years_of_experience=7,
+        core_skills=["Python", "Appium", "LLM"],
+    )
+
+    mock_matching_svc = MagicMock()
+    mock_matching_svc.evaluate_and_draft_greeting.return_value = MatchGreetingResult(
+        match_score=95,
+        match_reasons=["技术栈高度匹配"],
+        greeting_message="您好！看到贵司大模型平台岗位，我有完整实战经验……",
+    )
+
+    harness = SmokeHarness(
+        driver=mock_driver,
+        takeover_handler=TakeoverHandler(mock_driver, auto_confirm_for_test=True),
+        memory_manager=mock_memory_mgr,
+        matching_service=mock_matching_svc,
+        screening_policy=ScreeningPolicy(
+            channel_preference=channel_policy,
+            title_whitelist=whitelist or [],
+        ),
+        preview_timeout_sec=0.01,
+        enable_greeting_draft=True,
+    )
+
+    # Detail extraction on real devices yields no recruiter facet; inject a
+    # headhunter posting directly to exercise the App-Enforced Filter path.
+    harness.detail_page = MagicMock()
+    harness.detail_page.extract_job_posting.return_value = JobPosting(
+        title="大模型平台负责人",
+        company_name="某人力资源服务公司",
+        salary_range="40-60K",
+        job_description=(
+            "主导企业级大模型应用与Agent工作流平台建设，负责推理链编排、"
+            "向量检索体系优化以及多智能体协同框架的架构设计。"
+        ),
+        recruiter_name="钟先生",
+        recruiter_title="猎头顾问",
+        is_headhunter=True,
+    )
+    return harness, mock_matching_svc
+
+
+def test_smoke_harness_app_rule_violation_short_circuits_greeting():
+    """direct_only + headhunter posting without whitelist rescue: the CLI workflow
+    must NOT draft/type a greeting or open chat (issue review: workflows guard)."""
+    harness, mock_matching_svc = _headhunter_smoke_harness("direct_only")
+
+    with patch("time.sleep", return_value=None):
+        harness.run_smoke_test()
+
+    mock_matching_svc.evaluate_and_draft_greeting.assert_not_called()
+    mock_matching_svc.render_match_card.assert_not_called()
+    harness.detail_page.open_chat.assert_not_called()
+
+
+def test_smoke_harness_relaxed_headhunter_still_drafts_greeting():
+    """direct_only + headhunter posting hitting the whitelist: relaxation rescue keeps
+    the normal greeting draft path alive."""
+    harness, mock_matching_svc = _headhunter_smoke_harness("direct_only", whitelist=["大模型"])
+
+    with patch("time.sleep", return_value=None):
+        harness.run_smoke_test()
+
+    mock_matching_svc.evaluate_and_draft_greeting.assert_called_once()

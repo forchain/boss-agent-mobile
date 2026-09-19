@@ -113,7 +113,7 @@ A screening condition the Boss platform does not offer natively in its search in
 _Avoid_: platform filter, native search condition, search keyword
 
 **Whitelist Relaxation (白名单放宽)**:
-The exemption rule by which a job an App-Enforced Filter would skip is admitted into the normal pipeline after all when its card facets (title, tags, digest) hit a whitelist token, because strong personal interest or expertise is deemed to outweigh the violated condition. It is the sole surviving role of the whitelist: an interest signal that widens app-side constraints, never an inclusion gate that rejects non-matching jobs.
+The exemption rule by which a job an App-Enforced Filter would skip is admitted into the normal pipeline after all when its card facets (title, tags, company, digest) hit a whitelist token, because strong personal interest or expertise is deemed to outweigh the violated condition. It is the sole surviving role of the whitelist: an interest signal that widens app-side constraints, never an inclusion gate that rejects non-matching jobs.
 _Avoid_: whitelist gate, inclusion filter, positive match
 
 **Configuration Realm (`config/*.yaml`)**:

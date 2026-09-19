@@ -79,7 +79,7 @@ export interface ScreeningPolicy {
 	company_blacklist: string[];
 	jd_blacklist: string[];
 	enable_screening: boolean;
-	channel_preference?: 'all' | 'direct_only' | 'headhunter_only' | string;
+	channel_preference?: 'all' | 'direct_only' | 'headhunter_only';
 }
 
 export interface LLMSettings {
@@ -124,7 +124,7 @@ export interface SystemSettings {
 	title_blacklist?: string[];
 	company_blacklist?: string[];
 	jd_blacklist?: string[];
-	channel_preference?: 'all' | 'direct_only' | 'headhunter_only' | string;
+	channel_preference?: 'all' | 'direct_only' | 'headhunter_only';
 }
 
 export interface MatchEvaluateRequest {

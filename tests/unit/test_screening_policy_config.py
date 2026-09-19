@@ -204,7 +204,7 @@ def test_matches_card_keywords_whitelist_miss_no_longer_rejects():
 
 
 def test_matches_card_keywords_blacklists_still_reject_with_whitelist_configured():
-    """Removing the whitelist gate must not weaken blacklist one-strike rejection."""
+    """Blacklist one-strike rejection stays fully in force under whitelist-relaxation semantics."""
     policy = ScreeningPolicy(
         title_whitelist=["Agent", "大模型"],
         title_blacklist=["销售"],
