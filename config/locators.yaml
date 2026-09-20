@@ -138,7 +138,7 @@ job_detail:
   title:
     - "//*[contains(@resource-id, 'tv_job_name') or contains(@resource-id, 'job_title')]"
   company:
-    - "//*[contains(@resource-id, 'tv_company_name') or contains(@resource-id, 'company_name')]"
+    - "//*[contains(@resource-id, 'tv_company_name') or contains(@resource-id, 'company_name') or contains(@resource-id, 'tv_brand_name') or contains(@resource-id, 'tv_com_name') or contains(@resource-id, 'tv_company')]"
   salary:
     - "//*[contains(@resource-id, 'tv_job_salary') or contains(@resource-id, 'salary')]"
   desc:

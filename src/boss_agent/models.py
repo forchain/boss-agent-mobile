@@ -11,8 +11,6 @@ from pathlib import Path
 from typing import Any
 
 
-
-
 class AuthStatus(StrEnum):
     AUTHENTICATED = "AUTHENTICATED"
     UNAUTHENTICATED = "UNAUTHENTICATED"
@@ -94,27 +92,31 @@ RECRUITER_TITLE_KEYWORDS: tuple[str, ...] = (
     "招聘者",
 )
 
-EDUCATION_KEYWORDS: frozenset[str] = frozenset({
-    "本科",
-    "硕士",
-    "大专",
-    "博士",
-    "学历不限",
-    "初中及以下",
-    "中专/中技",
-    "高中",
-    "大专及以上",
-    "本科及以上",
-    "硕士及以上",
-    "MBA/EMBA",
-})
+EDUCATION_KEYWORDS: frozenset[str] = frozenset(
+    {
+        "本科",
+        "硕士",
+        "大专",
+        "博士",
+        "学历不限",
+        "初中及以下",
+        "中专/中技",
+        "高中",
+        "大专及以上",
+        "本科及以上",
+        "硕士及以上",
+        "MBA/EMBA",
+    }
+)
 
-EXPERIENCE_KEYWORDS: frozenset[str] = frozenset({
-    "经验不限",
-    "应届生",
-    "在校生",
-    "应届毕业生",
-})
+EXPERIENCE_KEYWORDS: frozenset[str] = frozenset(
+    {
+        "经验不限",
+        "应届生",
+        "在校生",
+        "应届毕业生",
+    }
+)
 
 
 COMPANY_INDICATOR_KEYWORDS: tuple[str, ...] = (
@@ -174,9 +176,12 @@ def is_likely_location(s: str) -> bool:
     ):
         return True
     sub_parts = t.split()
-    if len(sub_parts) >= 2 and any(p in KNOWN_CITIES for p in sub_parts):
-        return True
-    return False
+    return bool(len(sub_parts) >= 2 and any(p in KNOWN_CITIES for p in sub_parts))
+
+
+INVALID_COMPANY_NAMES: frozenset[str] = frozenset(
+    {"", "未知公司", "未注明公司", "null", "undefined"}
+)
 
 
 def is_invalid_company_name(name: str) -> bool:
@@ -184,7 +189,7 @@ def is_invalid_company_name(name: str) -> bool:
     if not name or not isinstance(name, str):
         return True
     c = name.strip()
-    if not c or c in ("", "未知公司", "未注明公司", "null", "undefined"):
+    if not c or c in INVALID_COMPANY_NAMES:
         return True
     if len(c) > 40:
         return True
@@ -208,9 +213,7 @@ def is_invalid_company_name(name: str) -> bool:
         return True
     if any(kw in c for kw in COMPANY_INDICATOR_KEYWORDS) or "某" in c:
         return False
-    if c in KNOWN_CITIES or is_likely_location(c):
-        return True
-    return False
+    return bool(c in KNOWN_CITIES or is_likely_location(c))
 
 
 def sanitize_tags(
@@ -265,7 +268,6 @@ def sanitize_tags(
         if t not in cleaned:
             cleaned.append(t)
     return cleaned
-
 
 
 def extract_digest_from_jd(jd: str, max_chars: int = 100) -> str:
@@ -536,7 +538,6 @@ class JobPosting:
         )
 
 
-
 @dataclass
 class CandidateProfile:
     name: str
@@ -587,9 +588,15 @@ class FilterConfig:
             return False
         return any(
             [
-                bool(self.education and self.education.strip() and self.education.strip() != "不限"),
+                bool(
+                    self.education and self.education.strip() and self.education.strip() != "不限"
+                ),
                 bool(self.salary and self.salary.strip() and self.salary.strip() != "不限"),
-                bool(self.experience and self.experience.strip() and self.experience.strip() != "不限"),
+                bool(
+                    self.experience
+                    and self.experience.strip()
+                    and self.experience.strip() != "不限"
+                ),
                 bool(self.activity and self.activity.strip() and self.activity.strip() != "不限"),
                 bool(self.company_scales),
                 bool(self.industries),
@@ -691,10 +698,16 @@ class ScreeningPolicy:
             return True, ""
 
         if self.channel_preference == ChannelPreference.DIRECT_ONLY and is_headhunter:
-            return False, "【App端强制过滤】猎头代招岗位违反直聘渠道偏好 (channel_preference='direct_only')"
+            return (
+                False,
+                "【App端强制过滤】猎头代招岗位违反直聘渠道偏好 (channel_preference='direct_only')",
+            )
 
         if self.channel_preference == ChannelPreference.HEADHUNTER_ONLY and not is_headhunter:
-            return False, "【App端强制过滤】直招岗位违反猎头渠道偏好 (channel_preference='headhunter_only')"
+            return (
+                False,
+                "【App端强制过滤】直招岗位违反猎头渠道偏好 (channel_preference='headhunter_only')",
+            )
 
         return True, ""
 

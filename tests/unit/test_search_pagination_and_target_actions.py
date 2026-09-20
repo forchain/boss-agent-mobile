@@ -262,11 +262,78 @@ async def test_scrape_jobs_handler_save_jd_enriches_full_jd():
     assert finished.status == TaskStatus.SUCCESS
 
     # Verify job record was stored with jd_saved status
+
+
+@pytest.mark.asyncio
+async def test_scrape_jobs_handler_detail_missing_company_falls_back_to_card_company():
+    """Verify that when detail screen does not have company name, scrape_jobs falls back to card company name and enriches full JD."""
+    broker = InMemoryTaskBroker()
+    mock_driver = MagicMock()
+    mock_driver.get_window_size.return_value = {"width": 1080, "height": 2400}
+
+    mock_card = MagicMock()
+    mock_title = MagicMock(text="AI Agent Engineer")
+    mock_card_company = MagicMock(text="Innovative AI")
+    mock_salary = MagicMock(text="40-60K")
+    mock_desc = MagicMock(text="Detailed Job Description for AI Agent Engineer.")
+    mock_nav_elem = MagicMock()
+
+    is_detail_screen = False
+
+    def mock_find(by, value):
+        nonlocal is_detail_screen
+        if "job_card" in value or "view_job_card" in value:
+            return [mock_card]
+        if "job_name" in value or "tv_job_name" in value:
+            return [mock_title]
+        if "company_name" in value or "tv_company_name" in value:
+            if is_detail_screen:
+                return []
+            return [mock_card_company]
+        if "salary" in value or "tv_job_salary" in value:
+            return [mock_salary]
+        if "desc" in value or "tv_job_desc" in value or "tv_description" in value:
+            return [mock_desc]
+        if "bottom_tips" in value or "暂无符合职位" in value:
+            return []
+        return [mock_nav_elem]
+
+    def on_card_click():
+        nonlocal is_detail_screen
+        is_detail_screen = True
+
+    mock_card.click.side_effect = on_card_click
+    mock_driver.find_elements.side_effect = mock_find
+    mock_card.find_elements.side_effect = mock_find
+
+    from selenium.common.exceptions import NoSuchElementException
+
+    mock_driver.find_element.side_effect = NoSuchElementException("No bottom")
+
+    config = WorkerConfig(worker_id="test-save-jd-worker", poll_interval_sec=0.01)
+    context = WorkerContext(config=config, driver=mock_driver)
+    worker = AutomationWorker(
+        config=config,
+        broker=broker,
+        context=context,
+        handlers=[ScrapeJobsHandler()],
+    )
+
+    task = await broker.create_task(
+        task_type=TaskType.SCRAPE_JOBS,
+        payload={"keyword": "AI", "target_action": "save_jd", "max_jobs": 1},
+    )
+
+    await worker.run_once()
+
+    finished = await broker.get_task(task.id)
+    assert finished.status == TaskStatus.SUCCESS
+
     jobs = await broker.list_job_records()
     assert len(jobs) == 1
+    assert jobs[0]["company_name"] == "Innovative AI"
     assert jobs[0]["status"] == "jd_saved"
-    # Card was clicked for detail view
-    mock_card.click.assert_called_once()
+    assert jobs[0]["job_description"] == "Detailed Job Description for AI Agent Engineer."
 
 
 @pytest.mark.asyncio

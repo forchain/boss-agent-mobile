@@ -197,7 +197,7 @@ class JobMatchGreetingService:
             "\n\n【微调优化特别说明】：\n"
             "求职者对当前招呼语提出了具体的修改建议或批注。你必须充分吸纳求职者的反馈，"
             "重新生成一版契合 JD、满足求职者要求、且符合反套路和精炼原则（80-150字）的破冰打招呼语。\n"
-            "请严格以 JSON 格式输出：{\"revised_greeting\": \"重写后的破冰招呼语全文\"}"
+            '请严格以 JSON 格式输出：{"revised_greeting": "重写后的破冰招呼语全文"}'
         )
 
         user_content = (
@@ -238,6 +238,7 @@ class JobMatchGreetingService:
         # stdout. console.print defaults to stdout which causes the API
         # endpoint's JSON parser to fail with "Bad control character".
         import sys
+
         sys.stderr.write(f"❌ LLM greeting refinement error: {llm_error}\n")
         sys.stderr.flush()
 
@@ -271,7 +272,7 @@ class JobMatchGreetingService:
             "2. 【通用化】：把本次实例中的具体经验改写为适用于所有同类岗位的通用写作准则，严禁绑定具体公司名称或单一职位。\n"
             "3. 【理解并转化批注意图】：求职者的批注可能口语化、零散，必须真正理解其意图并转化为可执行的写作指令，而不是逐字照搬原话。\n"
             "4. 【保持既有 Markdown 散文结构】：延续当前文档的人设句与【打招呼破冰铁律与原则】编号条目风格，输出仍然是一份可直接使用的完整提示词。\n"
-            "5. 【严格 JSON 输出】：{\"prompt\": \"改进后的完整提示词全文\"}"
+            '5. 【严格 JSON 输出】：{"prompt": "改进后的完整提示词全文"}'
         )
 
         jd_snippet = (job.job_description or "")[:350]
@@ -283,7 +284,7 @@ class JobMatchGreetingService:
             f"【本次实例】\n修改前招呼语:\n{original_greeting}\n\n"
             f"求职者批注:\n{critique or '用户手动修改'}\n\n"
             f"修改后满意招呼语:\n{revised_greeting}\n\n"
-            "请结合上述实例整篇重写 Greeting Prompt，严格输出 JSON：{\"prompt\": \"改进后的完整提示词全文\"}"
+            '请结合上述实例整篇重写 Greeting Prompt，严格输出 JSON：{"prompt": "改进后的完整提示词全文"}'
         )
 
         messages = [
@@ -302,7 +303,7 @@ class JobMatchGreetingService:
             import sys
 
             sys.stderr.write(f"❌ Greeting Prompt refinement error: {e}\n")
-            raise RuntimeError(f"提示词打磨失败，无法生成改进版 Greeting Prompt：{e}")
+            raise RuntimeError(f"提示词打磨失败，无法生成改进版 Greeting Prompt：{e}") from e
 
     def render_match_card(self, job: JobPosting, result: MatchGreetingResult) -> None:
         """Render a formatted Rich card in the console showing match breakdown and greeting text."""

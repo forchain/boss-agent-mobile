@@ -106,7 +106,6 @@ class JobCardBrief:
             )
 
 
-
 def parse_recruiter_info(raw_text: str) -> tuple[str, str, bool]:
     """Parse raw recruiter text into (name, title, is_headhunter).
 
@@ -209,7 +208,6 @@ def parse_company_scale_industry(
         comp_name = ""
 
     return comp_name, scale, industry
-
 
 
 class BaseBossPage:
@@ -735,7 +733,11 @@ class JobListPage(BaseBossPage):
                     # 8. Tags vs Snippet
                     if len(t) > 10 and not snippet:
                         snippet = t
-                    elif len(t) <= 12 and not is_invalid_company_name(t) and not is_likely_location(t):
+                    elif (
+                        len(t) <= 12
+                        and not is_invalid_company_name(t)
+                        and not is_likely_location(t)
+                    ):
                         tags.append(t)
                     elif not snippet:
                         snippet = t
@@ -963,7 +965,9 @@ class FilterDialogPage(BaseBossPage):
             self.scroll_dialog_down()
             return _try_click_option()
 
-        logger.warning("Filter option '%s' (candidates=%s) not found in dialog", trimmed, candidates)
+        logger.warning(
+            "Filter option '%s' (candidates=%s) not found in dialog", trimmed, candidates
+        )
         return False
 
     def confirm_filter(self, timeout_sec: float = 5.0) -> bool:
@@ -1018,7 +1022,9 @@ class FilterDialogPage(BaseBossPage):
             self.select_option(config.experience, auto_scroll=False)
 
         # 2. Scroll down for bottom sections: Activity and Company Scales
-        needs_scroll = _is_effective(config.activity) or any(_is_effective(s) for s in config.company_scales)
+        needs_scroll = _is_effective(config.activity) or any(
+            _is_effective(s) for s in config.company_scales
+        )
         if needs_scroll:
             self.scroll_dialog_down()
 
@@ -1361,7 +1367,12 @@ class JobDetailPage(BaseBossPage):
 
         return True
 
-    def extract_job_posting(self, timeout_sec: float = 10.0) -> JobPosting:
+    def extract_job_posting(
+        self,
+        timeout_sec: float = 10.0,
+        fallback_company: str = "",
+        fallback_title: str = "",
+    ) -> JobPosting:
         """Extract structured JobPosting from current job detail screen.
 
         Raises RuntimeError if job details are not found on the screen.
@@ -1428,15 +1439,18 @@ class JobDetailPage(BaseBossPage):
                 f"'查看更多' still present in final text for '{title}'. Length: {len(desc)}"
             )
 
-        if not title and not desc:
+        eff_title = title or fallback_title or "未注明职位"
+        eff_company = company or fallback_company or "未注明公司"
+
+        if not eff_title and not desc:
             raise RuntimeError(
                 "Failed to extract job posting: Both job title and description were missing or empty. "
                 "The current screen is not a valid job detail page."
             )
 
         return JobPosting(
-            title=title or "未注明职位",
-            company_name=company or "未注明公司",
+            title=eff_title,
+            company_name=eff_company,
             salary_range=salary or "面议",
             job_description=desc or "无详细岗位描述",
         )

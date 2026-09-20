@@ -10,12 +10,14 @@ from typing import Any
 from boss_agent.broker.models import AutomationTask, TaskStatus, TaskType
 from boss_agent.broker.pocketbase_adapter import BaseTaskBroker
 from boss_agent.models import (
+    INVALID_COMPANY_NAMES,
     STATE_RANK,
     TARGET_ACTION_RANK,
     FilterConfig,
     JobRecordStatus,
     ScreeningPolicy,
     TargetAction,
+    is_invalid_company_name,
 )
 from boss_agent.pages import (
     FilterDialogPage,
@@ -235,7 +237,15 @@ class ScrapeJobsHandler(BaseTaskHandler):
                         continue
 
                     cur_rank = STATE_RANK.get(existing_status, 1)
-                    if cur_rank >= required_rank:
+                    has_full_jd = bool((existing_record.get("job_description") or "").strip())
+                    is_already_progressed = cur_rank > TARGET_ACTION_RANK.get(
+                        TargetAction.SAVE_JD, 1
+                    )
+                    if cur_rank >= required_rank and (
+                        is_already_progressed
+                        or target_action != TargetAction.SAVE_JD
+                        or has_full_jd
+                    ):
                         skipped_count += 1
                         await broker.append_log(
                             task.id,
@@ -363,7 +373,9 @@ class ScrapeJobsHandler(BaseTaskHandler):
                     if existing_record
                     else "",
                     "jd_key_requirements": card_tags,
-                    "status": JobRecordStatus.JD_SAVED.value,
+                    "status": JobRecordStatus.JD_SAVED.value
+                    if (existing_record and (existing_record.get("job_description") or "").strip())
+                    else JobRecordStatus.UNMATCHED.value,
                     "relaxed_by_whitelist": is_relaxed,
                     "screening_audit": screening_audit,
                     "search_keywords": [keyword] if keyword else [],
@@ -390,7 +402,11 @@ class ScrapeJobsHandler(BaseTaskHandler):
 
                 if clicked:
                     try:
-                        job_posting = detail_page.extract_job_posting(timeout_sec=4.0)
+                        job_posting = detail_page.extract_job_posting(
+                            timeout_sec=4.0,
+                            fallback_company=card.company_name,
+                            fallback_title=card.title,
+                        )
                         post_title = (job_posting.title or "").strip()
                         card_title = (card.title or "").strip()
                         effective_title = (
@@ -415,12 +431,22 @@ class ScrapeJobsHandler(BaseTaskHandler):
                             )
                             continue
 
+                        post_company = (job_posting.company_name or "").strip()
+                        card_company = (card.company_name or "").strip()
+                        effective_company = (
+                            post_company
+                            if (
+                                post_company
+                                and post_company not in INVALID_COMPANY_NAMES
+                                and not is_invalid_company_name(post_company)
+                            )
+                            else card_company
+                        )
+
                         enriched_data = {
                             "fingerprint": card.fingerprint,
                             "title": effective_title,
-                            "company_name": (
-                                job_posting.company_name or card.company_name or ""
-                            ).strip(),
+                            "company_name": effective_company,
                             "recruiter_name": card.recruiter_name
                             or job_posting.recruiter_name
                             or "招聘者",
@@ -447,23 +473,36 @@ class ScrapeJobsHandler(BaseTaskHandler):
                             "source_task_id": task.id,
                         }
                         persisted = await broker.upsert_job_record(enriched_data)
-                        scraped_jobs[-1] = persisted
-                        hh_tag = "[猎头]" if enriched_data["is_headhunter"] else "[直招]"
-                        if "查看更多" in (persisted.get("job_description") or ""):
+                        if not persisted:
                             logger.error(
-                                "Incomplete JD: '查看更多' still present in extracted JD for %s '%s'",
-                                hh_tag,
-                                persisted.get("title", ""),
+                                "Failed to persist enriched job record: title='%s', company='%s'",
+                                effective_title,
+                                effective_company,
                             )
                             await broker.append_log(
                                 task.id,
-                                f"❌ [Incomplete JD Error] '查看更多' was detected in extracted JD for {hh_tag} '{persisted['title']}'",
+                                f"❌ [Enrich Error] Failed to persist enriched job record for '{effective_title}' @ '{effective_company}'",
                             )
                         else:
-                            await broker.append_log(
-                                task.id,
-                                f"✨ [Enriched Detail] Extracted full JD for {hh_tag} '{persisted['title']}' ({len(persisted.get('job_description', ''))} chars)",
-                            )
+                            scraped_jobs[-1] = persisted
+                            hh_tag = "[猎头]" if enriched_data["is_headhunter"] else "[直招]"
+                            persisted_desc = persisted.get("job_description") or ""
+                            persisted_title = persisted.get("title", effective_title)
+                            if "查看更多" in persisted_desc:
+                                logger.error(
+                                    "Incomplete JD: '查看更多' still present in extracted JD for %s '%s'",
+                                    hh_tag,
+                                    persisted_title,
+                                )
+                                await broker.append_log(
+                                    task.id,
+                                    f"❌ [Incomplete JD Error] '查看更多' was detected in extracted JD for {hh_tag} '{persisted_title}'",
+                                )
+                            else:
+                                await broker.append_log(
+                                    task.id,
+                                    f"✨ [Enriched Detail] Extracted full JD for {hh_tag} '{persisted_title}' ({len(persisted_desc)} chars)",
+                                )
                     except Exception as e:
                         logger.error(
                             "Failed to extract detail for '%s': %s",
@@ -555,7 +594,8 @@ class ScrapeJobsHandler(BaseTaskHandler):
                                 "title": post_title,
                                 "company_name": post_company,
                                 "recruiter_name": job_posting.recruiter_name or "招聘者",
-                                "recruiter_title": getattr(job_posting, "recruiter_title", "") or "",
+                                "recruiter_title": getattr(job_posting, "recruiter_title", "")
+                                or "",
                                 "is_headhunter": getattr(job_posting, "is_headhunter", False),
                                 "company_scale": getattr(job_posting, "company_scale", "") or "",
                                 "industry": getattr(job_posting, "industry", "") or "",
