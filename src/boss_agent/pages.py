@@ -33,6 +33,7 @@ from .models import (
 )
 
 logger = logging.getLogger("boss_agent.pages")
+ui_logger = logging.getLogger("droid_agent_core.ui")
 console = Console()
 
 
@@ -248,12 +249,29 @@ class BaseBossPage:
         if not self.driver or not selectors:
             return None
         for sel in selectors:
+            t0 = time.monotonic()
             try:
                 elems = self.driver.find_elements(by=sel.by.value, value=sel.value)
-                if elems:
-                    return elems[0]
-            except Exception:
+            except Exception as exc:
+                ui_logger.debug(
+                    "[UI] find key=%s by=%s selector=%.160s -> error:%s in %.2fs",
+                    sel.description or "-",
+                    sel.by.value,
+                    sel.value,
+                    exc,
+                    time.monotonic() - t0,
+                )
                 continue
+            ui_logger.debug(
+                "[UI] find key=%s by=%s selector=%.160s -> %s in %.2fs",
+                sel.description or "-",
+                sel.by.value,
+                sel.value,
+                "match" if elems else "none",
+                time.monotonic() - t0,
+            )
+            if elems:
+                return elems[0]
         return None
 
     def find_by_key(
@@ -264,8 +282,10 @@ class BaseBossPage:
         default: str | list[str] | None = None,
     ):
         """Find an element using its configured key with automatic strategy detection."""
+        ui_logger.debug("[UI] find_by_key '%s' timeout=%.1fs", key, timeout_sec)
         selectors = self.locators.get_selectors(key, format_args=format_args, default=default)
         if not selectors:
+            ui_logger.debug("[UI] find_by_key '%s' -> no selectors configured", key)
             return None
 
         if timeout_sec > 0:
@@ -276,6 +296,7 @@ class BaseBossPage:
                     error_message=f"Element not found for key '{key}'",
                 )
             except TimeoutError:
+                ui_logger.debug("[UI] find_by_key '%s' -> timed out after %.1fs", key, timeout_sec)
                 return None
         return self._find_by_selectors(selectors)
 
@@ -287,6 +308,7 @@ class BaseBossPage:
         default: str | list[str] | None = None,
     ):
         """Wait until an element for the given key is found on screen."""
+        ui_logger.debug("[UI] wait_for_key '%s' timeout=%.1fs", key, timeout_sec)
         if not self.driver:
             raise RuntimeError("Driver session is not initialized")
         selectors = self.locators.get_selectors(key, format_args=format_args, default=default)
@@ -368,11 +390,13 @@ class JobListPage(BaseBossPage):
             return
         if hasattr(self.driver, "press_keycode"):
             try:
+                ui_logger.debug("[UI] press KEYCODE_BACK (4) via=driver.press_keycode")
                 self.driver.press_keycode(4)  # Android KEYCODE_BACK
                 return
             except Exception:
                 pass
         if hasattr(self.driver, "back"):
+            ui_logger.debug("[UI] press back via=driver.back")
             with contextlib.suppress(Exception):
                 self.driver.back()
 

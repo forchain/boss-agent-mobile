@@ -48,10 +48,18 @@ def main() -> None:
         action="store_true",
         help="Enable integrated Cron scheduler daemon alongside the worker",
     )
+    parser.add_argument(
+        "--log-level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="Root logging level. DEBUG additionally enables low-level UI operation telemetry "
+        "(logger 'droid_agent_core.ui').",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+        level=getattr(logging, args.log_level, logging.INFO),
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
     logger = logging.getLogger("worker_main")
 

@@ -5,9 +5,23 @@ Humanized gesture synthesis, Bézier touch movements, and spatial jitter.
 """
 
 import contextlib
+import logging
 import random
 import time
 from dataclasses import dataclass
+
+ui_logger = logging.getLogger("droid_agent_core.ui")
+
+
+def _describe_element(element) -> str:
+    """Compact, non-sensitive element description for UI debug telemetry."""
+    if element is None:
+        return "None"
+    class_name = getattr(element, "class_name", None) or type(element).__name__
+    rect = getattr(element, "rect", None)
+    if isinstance(rect, dict):
+        return f"{class_name} rect={{{rect.get('x')},{rect.get('y')},{rect.get('width')},{rect.get('height')}}}"
+    return str(class_name)
 
 
 @dataclass
@@ -162,10 +176,25 @@ class HumanizedGestureExecutor:
                 height=float(rect["height"]),
             )
             if hasattr(self.driver, "tap"):
-                self.driver.tap([(x, y)], duration=random.randint(60, 120))
+                dur = random.randint(60, 120)
+                ui_logger.debug(
+                    "[UI] click element=%s target=(%.1f, %.1f) duration=%dms via=driver.tap",
+                    _describe_element(element),
+                    x,
+                    y,
+                    dur,
+                )
+                self.driver.tap([(x, y)], duration=dur)
             else:
+                ui_logger.debug(
+                    "[UI] click element=%s target=(%.1f, %.1f) via=element.click",
+                    _describe_element(element),
+                    x,
+                    y,
+                )
                 element.click()
         else:
+            ui_logger.debug("[UI] click element=%s via=element.click", _describe_element(element))
             element.click()
 
         self.random_sleep(0.1, 0.3)
@@ -187,6 +216,12 @@ class HumanizedGestureExecutor:
         target_y = round(float(y + offset_y), 1)
 
         dur = random.randint(duration_ms[0], duration_ms[1])
+        ui_logger.debug(
+            "[UI] tap target=(%.1f, %.1f) duration=%dms via=driver.tap",
+            target_x,
+            target_y,
+            dur,
+        )
         if hasattr(self.driver, "tap"):
             self.driver.tap([(target_x, target_y)], duration=dur)
         self.random_sleep(0.1, 0.3)
@@ -195,6 +230,13 @@ class HumanizedGestureExecutor:
         """Type text into an input element with realistic humanized timing."""
         if not element or not text:
             return
+
+        ui_logger.debug(
+            "[UI] type element=%s len=%d clear_first=%s",
+            _describe_element(element),
+            len(text),
+            clear_first,
+        )
 
         if clear_first and hasattr(element, "clear"):
             with contextlib.suppress(Exception):
@@ -219,6 +261,14 @@ class HumanizedGestureExecutor:
         start_pt = curve[0]
         end_pt = curve[-1]
 
+        ui_logger.debug(
+            "[UI] swipe (%.1f, %.1f) -> (%.1f, %.1f) duration=%dms",
+            start_pt.x,
+            start_pt.y,
+            end_pt.x,
+            end_pt.y,
+            duration_ms,
+        )
         if hasattr(self.driver, "swipe"):
             self.driver.swipe(
                 int(start_pt.x),
