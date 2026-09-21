@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { getProjectRoot } from './pythonRunner';
 import type { ScreeningPolicy } from '$lib/types';
+import { normalizeCommuteLimit } from '$lib/commute';
 import { loadMergedSettings, saveSettingsToLocalYaml, parseSimpleYaml, getSettingsLocalPath } from './settings';
 
 export function getScreeningConfigPath(): string {
@@ -17,7 +18,8 @@ export function parseScreeningPolicyYaml(content: string): ScreeningPolicy {
 		title_whitelist: Array.isArray(parsed.title_whitelist) ? parsed.title_whitelist : [],
 		title_blacklist: Array.isArray(parsed.title_blacklist) ? parsed.title_blacklist : [],
 		company_blacklist: Array.isArray(parsed.company_blacklist) ? parsed.company_blacklist : [],
-		jd_blacklist: Array.isArray(parsed.jd_blacklist) ? parsed.jd_blacklist : []
+		jd_blacklist: Array.isArray(parsed.jd_blacklist) ? parsed.jd_blacklist : [],
+		max_commute_distance_km: normalizeCommuteLimit(parsed.max_commute_distance_km)
 	};
 }
 
@@ -33,6 +35,7 @@ export function serializeScreeningPolicyYaml(policy: ScreeningPolicy): string {
 		`title_blacklist: ${JSON.stringify(policy.title_blacklist || [])}`,
 		`company_blacklist: ${JSON.stringify(policy.company_blacklist || [])}`,
 		`jd_blacklist: ${JSON.stringify(policy.jd_blacklist || [])}`,
+		`max_commute_distance_km: ${normalizeCommuteLimit(policy.max_commute_distance_km) ?? 'null'}`,
 		''
 	];
 	return lines.join('\n');
@@ -54,7 +57,8 @@ export function readScreeningPolicy(): ScreeningPolicy {
 			title_whitelist: settings.title_whitelist || [],
 			title_blacklist: settings.title_blacklist || [],
 			company_blacklist: settings.company_blacklist || [],
-			jd_blacklist: settings.jd_blacklist || []
+			jd_blacklist: settings.jd_blacklist || [],
+			max_commute_distance_km: normalizeCommuteLimit(settings.max_commute_distance_km)
 		};
 	}
 
@@ -75,7 +79,8 @@ export function readScreeningPolicy(): ScreeningPolicy {
 		title_whitelist: [],
 		title_blacklist: ['销售', '电话销售', '电销', '管培生', '实习', '助理', '讲师', '课程顾问', '客服'],
 		company_blacklist: [],
-		jd_blacklist: ['驻场', '外包', '电销', '无底薪', '纯提成']
+		jd_blacklist: ['驻场', '外包', '电销', '无底薪', '纯提成'],
+		max_commute_distance_km: 40.0
 	};
 }
 
@@ -85,7 +90,8 @@ export function writeScreeningPolicy(policy: ScreeningPolicy): void {
 		title_whitelist: policy.title_whitelist,
 		title_blacklist: policy.title_blacklist,
 		company_blacklist: policy.company_blacklist,
-		jd_blacklist: policy.jd_blacklist
+		jd_blacklist: policy.jd_blacklist,
+		max_commute_distance_km: normalizeCommuteLimit(policy.max_commute_distance_km)
 	});
 
 	// Clean up legacy config/screening.local.yaml if it exists to avoid desync.

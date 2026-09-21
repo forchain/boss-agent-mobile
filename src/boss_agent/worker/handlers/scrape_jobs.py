@@ -17,16 +17,19 @@ from boss_agent.models import (
     TARGET_ACTION_RANK,
     ChatButtonState,
     FilterConfig,
+    JobPosting,
     JobRecordStatus,
     ScreeningPolicy,
     TargetAction,
     is_communication_expired,
     is_direct_hire_company,
+    commute_columns,
     is_invalid_company_name,
 )
 from boss_agent.pages import (
     FilterDialogPage,
     IndustryFilterDialogPage,
+    JobCardBrief,
     JobDetailPage,
     JobListPage,
     SearchPage,
@@ -38,6 +41,53 @@ from boss_agent.worker.handlers.base import BaseTaskHandler, HandlerResult
 from boss_agent.worker.handlers.search_entry import run_search_entry
 
 logger = logging.getLogger(__name__)
+
+
+def _app_filter_rejection_record(
+    card: JobCardBrief,
+    *,
+    violation: str,
+    audit: str,
+    keyword: str | None,
+    task_id: str,
+    tags: list[str],
+    digest: str,
+    posting: JobPosting | None = None,
+    title: str | None = None,
+) -> dict[str, Any]:
+    """Build the ``ignored`` job record for an App-Enforced Filter violation.
+
+    ``relaxed_by_whitelist`` is always False here: the field records whether the job
+    was *admitted* by relaxation, and this record was rejected. Any relaxation granted
+    on a different dimension survives in ``screening_audit`` as part of the trail.
+
+    ``posting`` is supplied only by the detail-stage check, where the card facets have
+    already been persisted and the commute distance is known.
+    """
+    record: dict[str, Any] = {
+        "fingerprint": card.fingerprint,
+        "title": title or card.title,
+        "company_name": card.company_name,
+        "recruiter_name": card.recruiter_name,
+        "recruiter_title": getattr(card, "recruiter_title", "") or "",
+        "is_headhunter": getattr(card, "is_headhunter", False),
+        "company_scale": getattr(card, "company_scale", "") or "",
+        "industry": getattr(card, "industry", "") or "",
+        "tags": tags,
+        "salary_range": getattr(card, "salary_range", "") or "",
+        "location": getattr(card, "location", "") or "",
+        "digest": digest,
+        "job_description": (posting.job_description if posting else "") or "",
+        "jd_key_requirements": tags,
+        "status": JobRecordStatus.IGNORED.value,
+        "screened_reason": violation,
+        "relaxed_by_whitelist": False,
+        "screening_audit": audit,
+        "search_keywords": [keyword] if keyword else [],
+        "source_task_id": task_id,
+    }
+    record.update(commute_columns(posting))
+    return record
 
 
 class ScrapeJobsHandler(BaseTaskHandler):
@@ -154,6 +204,15 @@ class ScrapeJobsHandler(BaseTaskHandler):
         policy = (
             ScreeningPolicy.from_dict(policy_raw) if policy_raw else ScreeningPolicy.load_default()
         )
+        # Commute distance can only be read off the detail page bottom, so the probe is
+        # armed here and the verdict rendered once the posting has been extracted.
+        probe_commute_distance = policy.is_commute_filter_active
+        if probe_commute_distance:
+            await broker.append_log(
+                task.id,
+                f"📍 [App端强制过滤] Active ceiling {policy.max_commute_distance_km}km; "
+                f"probing detail page bottom for the distance widget.",
+            )
 
         cooldown_days = resolve_communication_cooldown_days(payload)
         applied_direct_companies = await broker.get_applied_direct_companies(
@@ -366,29 +425,17 @@ class ScrapeJobsHandler(BaseTaskHandler):
                     screening_audit = f"App端强制过滤违例: {app_violation}"
                     if not is_relaxed:
                         skipped_count += 1
-                        app_ignored_record = {
-                            "fingerprint": card.fingerprint,
-                            "title": card.title,
-                            "company_name": card.company_name,
-                            "recruiter_name": card.recruiter_name,
-                            "recruiter_title": getattr(card, "recruiter_title", "") or "",
-                            "is_headhunter": getattr(card, "is_headhunter", False),
-                            "company_scale": getattr(card, "company_scale", "") or "",
-                            "industry": getattr(card, "industry", "") or "",
-                            "tags": card_tags,
-                            "salary_range": getattr(card, "salary_range", "") or "",
-                            "location": getattr(card, "location", "") or "",
-                            "digest": digest_text,
-                            "job_description": "",
-                            "jd_key_requirements": card_tags,
-                            "status": JobRecordStatus.IGNORED.value,
-                            "screened_reason": app_violation,
-                            "relaxed_by_whitelist": False,
-                            "screening_audit": screening_audit,
-                            "search_keywords": [keyword] if keyword else [],
-                            "source_task_id": task.id,
-                        }
-                        await broker.upsert_job_record(app_ignored_record)
+                        await broker.upsert_job_record(
+                            _app_filter_rejection_record(
+                                card,
+                                violation=app_violation,
+                                audit=screening_audit,
+                                keyword=keyword,
+                                task_id=task.id,
+                                tags=card_tags,
+                                digest=digest_text,
+                            )
+                        )
                         await broker.append_log(
                             task.id,
                             f"🛑 [App端强制过滤] '{card.title}' @ '{card.company_name}': {app_violation}",
@@ -486,6 +533,7 @@ class ScrapeJobsHandler(BaseTaskHandler):
                             timeout_sec=4.0,
                             fallback_company=card.company_name,
                             fallback_title=card.title,
+                            probe_commute_distance=probe_commute_distance,
                         )
                         post_title = (job_posting.title or "").strip()
                         card_title = (card.title or "").strip()
@@ -510,6 +558,70 @@ class ScrapeJobsHandler(BaseTaskHandler):
                                 card.company_name,
                             )
                             continue
+
+                        # 5.5 Commute distance App-Enforced Filter (spec #209). The
+                        # distance widget only exists at the bottom of the detail page,
+                        # so this verdict can only be rendered here. The channel
+                        # dimension is deliberately excluded: it was already adjudicated
+                        # (and audited) from the card before navigating.
+                        commute_pass, commute_violation = policy.evaluate_commute_distance(
+                            job_posting.commute_distance_km
+                        )
+                        if job_posting.commute_distance_km is not None:
+                            await broker.append_log(
+                                task.id,
+                                f"📍 [App端强制过滤] '{effective_title}' 距家庭住址 "
+                                f"{job_posting.commute_distance_km:.1f}km"
+                                + (
+                                    " (在通勤上限内)"
+                                    if commute_pass
+                                    else f" (超过上限 {policy.max_commute_distance_km:.1f}km)"
+                                ),
+                            )
+
+                        if not commute_pass:
+                            commute_relaxed, commute_token = policy.evaluate_whitelist_relaxation(
+                                title=card.title or effective_title,
+                                company_name=card.company_name,
+                                tags=card_tags,
+                                digest=digest_text,
+                            )
+                            audit_parts = [screening_audit, f"App端强制过滤违例: {commute_violation}"]
+                            screening_audit = "；".join(p for p in audit_parts if p)
+
+                            if not commute_relaxed:
+                                if scraped_jobs:
+                                    scraped_jobs.pop()
+                                skipped_count += 1
+                                await broker.upsert_job_record(
+                                    _app_filter_rejection_record(
+                                        card,
+                                        violation=commute_violation,
+                                        audit=screening_audit,
+                                        keyword=keyword,
+                                        task_id=task.id,
+                                        tags=card_tags,
+                                        digest=digest_text,
+                                        posting=job_posting,
+                                        title=effective_title,
+                                    )
+                                )
+                                await broker.append_log(
+                                    task.id,
+                                    f"🛑 [App端强制过滤] '{effective_title}' @ '{card.company_name}': "
+                                    f"{commute_violation}，已标记为淘汰并停止采集",
+                                )
+                                continue
+
+                            is_relaxed = True
+                            screening_audit += (
+                                f"；【白名单放宽】命中关键词 '{commute_token}'，予以豁免"
+                            )
+                            await broker.append_log(
+                                task.id,
+                                f"🎗️ [白名单放宽] '{effective_title}' 命中 '{commute_token}' "
+                                f"豁免通勤距离限制，继续采集",
+                            )
 
                         post_company = (job_posting.company_name or "").strip()
                         card_company = (card.company_name or "").strip()
@@ -549,6 +661,7 @@ class ScrapeJobsHandler(BaseTaskHandler):
                             "status": JobRecordStatus.JD_SAVED.value,
                             "relaxed_by_whitelist": is_relaxed,
                             "screening_audit": screening_audit,
+                            **commute_columns(job_posting),
                             "search_keywords": [keyword] if keyword else [],
                             "source_task_id": task.id,
                         }
@@ -685,6 +798,7 @@ class ScrapeJobsHandler(BaseTaskHandler):
                                 "digest": getattr(job_posting, "digest", "") or "",
                                 "job_description": job_posting.job_description,
                                 "status": JobRecordStatus.JD_SAVED.value,
+                                **commute_columns(job_posting),
                                 "search_keywords": [keyword] if keyword else [],
                                 "source_task_id": task.id,
                             }

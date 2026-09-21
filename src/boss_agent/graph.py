@@ -26,6 +26,7 @@ class JobApplicationState(TypedDict, total=False):
     screening_policy: dict[str, Any]  # Serialized ScreeningPolicy
     candidate_profile: dict[str, Any]  # Serialized StructuredCandidateProfile
     jd_text: str
+    commute_distance_km: float | None  # Probed detail-page commute distance (spec #209)
 
     # Intermediate / Output: Keyword Screener
     keyword_pass: bool
@@ -162,7 +163,7 @@ def _card_facets(state: JobApplicationState) -> dict[str, Any]:
 
 @traceable(name="app_enforced_filter_node", run_type="tool")
 def app_enforced_filter_node(state: JobApplicationState) -> dict[str, Any]:
-    """Deterministic node evaluating App-Enforced Filters (e.g. recruitment channel).
+    """Deterministic node evaluating App-Enforced Filters (recruitment channel, commute distance).
 
     These are constraints the Boss platform cannot express in its native search UI
     and must be judged app-side after card retrieval. Violations are not final:
@@ -172,8 +173,13 @@ def app_enforced_filter_node(state: JobApplicationState) -> dict[str, Any]:
     policy_dict = state.get("screening_policy") or {}
     policy = ScreeningPolicy.from_dict(policy_dict)
 
+    commute_distance_km = state.get("commute_distance_km")
+    if commute_distance_km is None:
+        commute_distance_km = card_dict.get("commute_distance_km")
+
     passed, violation = policy.evaluate_app_enforced_filters(
-        is_headhunter=bool(card_dict.get("is_headhunter", False))
+        is_headhunter=bool(card_dict.get("is_headhunter", False)),
+        commute_distance_km=commute_distance_km,
     )
 
     return {
@@ -454,6 +460,8 @@ def run_job_application_graph(
             "digest": card.digest or card.snippet,
             "snippet": card.snippet or card.digest,
             "is_headhunter": card.is_headhunter,
+            "commute_distance_km": card.commute_distance_km,
+            "commute_distance_text": card.commute_distance_text,
         }
     else:
         card_dict = dict(card)
@@ -477,6 +485,7 @@ def run_job_application_graph(
         "screening_policy": policy_dict,
         "candidate_profile": profile_dict,
         "jd_text": jd_text,
+        "commute_distance_km": card_dict.get("commute_distance_km"),
         "status": "pending",
     }
 

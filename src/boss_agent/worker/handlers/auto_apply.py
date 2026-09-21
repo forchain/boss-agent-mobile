@@ -13,6 +13,7 @@ from boss_agent.models import (
     FilterConfig,
     JobRecordStatus,
     ScreeningPolicy,
+    commute_columns,
     is_masked_company_name,
 )
 from boss_agent.pages import (
@@ -268,8 +269,21 @@ class AutoApplyHandler(BaseTaskHandler):
                 output={"applied": False, "status": chat_state.value},
             )
 
+        # Bottom-probe the commute widget only while the ceiling is active; otherwise
+        # every inspection would pay swipe latency for a filter that cannot reject.
+        probe_commute_distance = policy.is_commute_filter_active
+        if probe_commute_distance:
+            await broker.append_log(
+                task.id,
+                f"📍 [App端强制过滤] Active ceiling {policy.max_commute_distance_km}km; "
+                f"probing detail page bottom for the distance widget.",
+            )
+
         try:
-            job_posting = detail_page.extract_job_posting(timeout_sec=5.0)
+            job_posting = detail_page.extract_job_posting(
+                timeout_sec=5.0,
+                probe_commute_distance=probe_commute_distance,
+            )
         except Exception as e:
             await broker.append_log(task.id, f"Could not extract current job posting: {e}")
             return HandlerResult(success=False, error_message=str(e))
@@ -295,6 +309,8 @@ class AutoApplyHandler(BaseTaskHandler):
             salary_range=job_posting.salary_range,
             location=job_posting.location or "",
             tags=job_posting.tags,
+            commute_distance_km=job_posting.commute_distance_km,
+            commute_distance_text=job_posting.commute_distance_text,
         )
 
         graph_result = run_job_application_graph(
@@ -337,6 +353,7 @@ class AutoApplyHandler(BaseTaskHandler):
                     "screening_audit": screening_audit,
                     "search_keywords": [keyword] if keyword else [],
                     "source_task_id": task.id,
+                    **commute_columns(job_posting),
                 }
             )
             return HandlerResult(
@@ -372,6 +389,7 @@ class AutoApplyHandler(BaseTaskHandler):
                     "screening_audit": screening_audit,
                     "search_keywords": [keyword] if keyword else [],
                     "source_task_id": task.id,
+                    **commute_columns(job_posting),
                 }
             )
             return HandlerResult(
@@ -411,6 +429,7 @@ class AutoApplyHandler(BaseTaskHandler):
                     "screening_audit": screening_audit,
                     "search_keywords": [keyword] if keyword else [],
                     "source_task_id": task.id,
+                    **commute_columns(job_posting),
                 }
             )
             return HandlerResult(
@@ -476,6 +495,7 @@ class AutoApplyHandler(BaseTaskHandler):
                             "screening_audit": screening_audit,
                             "search_keywords": [keyword] if keyword else [],
                             "source_task_id": task.id,
+                            **commute_columns(job_posting),
                         }
                     )
                     applied = False
@@ -525,6 +545,7 @@ class AutoApplyHandler(BaseTaskHandler):
                                 "jd_key_requirements": match_reasons,
                                 "search_keywords": [keyword] if keyword else [],
                                 "source_task_id": task.id,
+                                **commute_columns(job_posting),
                             }
                         )
                         chat_page.navigate_back()
@@ -548,6 +569,7 @@ class AutoApplyHandler(BaseTaskHandler):
                         "jd_key_requirements": match_reasons,
                         "search_keywords": [keyword] if keyword else [],
                         "source_task_id": task.id,
+                        **commute_columns(job_posting),
                     }
                 )
         else:
@@ -573,6 +595,7 @@ class AutoApplyHandler(BaseTaskHandler):
                     "screening_audit": screening_audit,
                     "search_keywords": [keyword] if keyword else [],
                     "source_task_id": task.id,
+                    **commute_columns(job_posting),
                 }
             )
             applied = False

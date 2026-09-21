@@ -98,6 +98,9 @@ JOB_RECORDS_FIELDS = [
     {"name": "screening_audit", "type": "text", "required": False},
     {"name": "applied_at", "type": "date", "required": False},
     {"name": "applied_source", "type": "text", "required": False},
+    # App-Enforced commute distance (spec #209), probed from the detail page bottom.
+    {"name": "commute_distance_km", "type": "number", "required": False},
+    {"name": "commute_distance_text", "type": "text", "required": False},
     {"name": "first_seen_at", "type": "date", "required": False},
     {"name": "last_seen_at", "type": "date", "required": False},
     {"name": "source_task_id", "type": "text", "required": False},
@@ -370,6 +373,8 @@ def provision_sqlite_database(
                     screening_audit TEXT,
                     applied_at TEXT,
                     applied_source TEXT,
+                    commute_distance_km REAL,
+                    commute_distance_text TEXT,
                     first_seen_at TEXT,
                     last_seen_at TEXT,
                     source_task_id TEXT,
@@ -402,6 +407,8 @@ def provision_sqlite_database(
                 ("screening_audit", "TEXT"),
                 ("applied_at", "TEXT"),
                 ("applied_source", "TEXT"),
+                ("commute_distance_km", "REAL"),
+                ("commute_distance_text", "TEXT"),
             ]
             for col_name, col_type in new_job_cols:
                 if col_name not in job_cols:

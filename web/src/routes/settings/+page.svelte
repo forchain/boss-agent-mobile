@@ -3,6 +3,7 @@
 	import type { SystemSettings, ScreeningPolicy, CommunicationSummary } from '$lib/types';
 	import { validateCanBlacklistCompany } from '$lib/screening';
 	import { getCommunicationSummary, postCommunicationAction } from '$lib/pocketbase';
+	import { formatCommuteLimitInput, isCommuteLimitDisabled, normalizeCommuteLimit } from '$lib/commute';
 
 	let settings = $state<SystemSettings>({
 		device: 'emulator-5554',
@@ -99,8 +100,17 @@
 		title_whitelist: [],
 		title_blacklist: [],
 		company_blacklist: [],
-		jd_blacklist: []
+		jd_blacklist: [],
+		max_commute_distance_km: 40
 	});
+
+	// Bound as text so an empty field can express "distance filtering disabled"
+	// (a number-bound input yields undefined for empty, losing that distinction).
+	let maxCommuteInput = $state('40');
+
+	function readCommuteInput(): number | null {
+		return normalizeCommuteLimit(maxCommuteInput);
+	}
 
 	let newTitleWhitelist = $state('');
 	let newTitleBlacklist = $state('');
@@ -165,8 +175,13 @@
 						title_whitelist: Array.isArray(conf.title_whitelist) ? conf.title_whitelist : [],
 						title_blacklist: Array.isArray(conf.title_blacklist) ? conf.title_blacklist : [],
 						company_blacklist: Array.isArray(conf.company_blacklist) ? conf.company_blacklist : [],
-						jd_blacklist: Array.isArray(conf.jd_blacklist) ? conf.jd_blacklist : []
+						jd_blacklist: Array.isArray(conf.jd_blacklist) ? conf.jd_blacklist : [],
+						max_commute_distance_km:
+							conf.max_commute_distance_km === null || conf.max_commute_distance_km === undefined
+								? null
+								: Number(conf.max_commute_distance_km)
 					};
+					maxCommuteInput = formatCommuteLimitInput(conf.max_commute_distance_km);
 				}
 			}
 		} catch (e) {
@@ -183,8 +198,14 @@
 						title_whitelist: Array.isArray(pData.policy.title_whitelist) ? pData.policy.title_whitelist : [],
 						title_blacklist: Array.isArray(pData.policy.title_blacklist) ? pData.policy.title_blacklist : [],
 						company_blacklist: Array.isArray(pData.policy.company_blacklist) ? pData.policy.company_blacklist : [],
-						jd_blacklist: Array.isArray(pData.policy.jd_blacklist) ? pData.policy.jd_blacklist : []
+						jd_blacklist: Array.isArray(pData.policy.jd_blacklist) ? pData.policy.jd_blacklist : [],
+						max_commute_distance_km:
+							pData.policy.max_commute_distance_km === null ||
+							pData.policy.max_commute_distance_km === undefined
+								? null
+								: Number(pData.policy.max_commute_distance_km)
 					};
+					maxCommuteInput = formatCommuteLimitInput(pData.policy.max_commute_distance_km);
 				}
 			}
 		} catch (e) {
@@ -278,6 +299,7 @@
 		savePolicySuccess = '';
 		savePolicyError = '';
 		companyValidationError = '';
+		screeningPolicy.max_commute_distance_km = readCommuteInput();
 		try {
 			const res = await fetch('/api/screening/policy', {
 				method: 'POST',
@@ -317,6 +339,7 @@
 		settings.title_blacklist = screeningPolicy.title_blacklist;
 		settings.company_blacklist = screeningPolicy.company_blacklist;
 		settings.jd_blacklist = screeningPolicy.jd_blacklist;
+		settings.max_commute_distance_km = readCommuteInput();
 
 		isSaving = true;
 		saveSuccessMessage = '';
@@ -845,6 +868,38 @@
 					<span>⚠️ {companyValidationError}</span>
 				</div>
 			{/if}
+
+			<!-- App-Enforced Filter: commute distance ceiling (spec #209) -->
+			<div class="bg-slate-950/60 border border-slate-800/80 rounded-xl p-4 space-y-3">
+				<div class="flex items-center justify-between">
+					<div class="flex items-center space-x-1.5">
+						<span class="text-xs font-semibold text-slate-200">最大通勤距离 (Max Commute Distance)</span>
+						<span class="text-[10px] px-1.5 py-0.5 rounded bg-amber-950/60 text-amber-400 border border-amber-800/50">
+							App 端强制过滤
+						</span>
+					</div>
+					<span class="text-[11px] text-slate-500">
+						{isCommuteLimitDisabled(maxCommuteInput) ? '已停用距离过滤' : `${maxCommuteInput.trim()} 公里`}
+					</span>
+				</div>
+				<p class="text-[11px] text-slate-400 leading-relaxed">
+					Boss 平台无原生通勤距离筛选，由本应用在岗位详情页触底探测「距离家庭住址」组件后判定。超过上限的岗位将被标记为淘汰并中止打招呼；命中
+					<code class="text-slate-300">兴趣/专长白名单</code>
+					的岗位仍会放宽豁免。留空或填 0 表示停用（如只看远程岗位）；未取到距离组件时一律放行。
+				</p>
+				<div class="flex items-center space-x-2">
+					<input
+						id="max-commute-distance-input"
+						type="number"
+						min="0"
+						step="1"
+						placeholder="40"
+						bind:value={maxCommuteInput}
+						class="w-32 bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs font-mono text-slate-200 focus:outline-none focus:border-cyan-500"
+					/>
+					<span class="text-xs text-slate-400">公里 (留空或 0 = 停用)</span>
+				</div>
+			</div>
 
 			<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
 				<!-- 1. Title Whitelist -->

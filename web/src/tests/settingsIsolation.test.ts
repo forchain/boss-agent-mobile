@@ -117,6 +117,54 @@ describe('Settings persistence isolation (issue #185)', () => {
 		expect(loadMergedSettings().channel_preference).toBe('all');
 	});
 
+	// Spec #209 / Ticket #210: the commute ceiling is an App-Enforced Filter knob and
+	// must round-trip through the same persistence seam, including "disabled" (null).
+	it('max_commute_distance_km survives save round-trips and partial saves', async () => {
+		const { saveSettingsToLocalYaml, loadMergedSettings } = await import('../lib/server/settings');
+
+		saveSettingsToLocalYaml({ ...loadMergedSettings(), max_commute_distance_km: 25 } as any);
+		expect(loadMergedSettings().max_commute_distance_km).toBe(25);
+
+		// A screening-only partial save must not reset the stored ceiling.
+		saveSettingsToLocalYaml({ title_whitelist: ['大模型'] } as any);
+		expect(loadMergedSettings().max_commute_distance_km).toBe(25);
+
+		// null / blank / non-numeric all mean "distance filtering disabled".
+		for (const disabled of [null, '', 'null', 'not-a-number']) {
+			saveSettingsToLocalYaml({
+				...loadMergedSettings(),
+				max_commute_distance_km: disabled
+			} as any);
+			expect(loadMergedSettings().max_commute_distance_km).toBeNull();
+		}
+	});
+
+	it('screening policy read/write round-trips max_commute_distance_km', async () => {
+		const { readScreeningPolicy, writeScreeningPolicy } = await import(
+			'../lib/server/screeningConfig'
+		);
+
+		writeScreeningPolicy({
+			enable_screening: true,
+			title_whitelist: ['大模型'],
+			title_blacklist: [],
+			company_blacklist: [],
+			jd_blacklist: [],
+			max_commute_distance_km: 32.5
+		});
+		expect(readScreeningPolicy().max_commute_distance_km).toBe(32.5);
+
+		writeScreeningPolicy({
+			enable_screening: true,
+			title_whitelist: [],
+			title_blacklist: [],
+			company_blacklist: [],
+			jd_blacklist: [],
+			max_commute_distance_km: null
+		});
+		expect(readScreeningPolicy().max_commute_distance_km).toBeNull();
+	});
+
 	// Byte-guard against issue #185 recurrences: runs after every save above.
 	it('left the developer settings file untouched', () => sandbox.assertRealConfigUntouched());
 });

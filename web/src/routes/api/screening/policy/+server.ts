@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { readScreeningPolicy, writeScreeningPolicy } from '$lib/server/screeningConfig';
+import { normalizeCommuteLimit } from '$lib/commute';
 import { validateCanBlacklistCompany } from '$lib/screening';
 import type { ScreeningPolicy } from '$lib/types';
 
@@ -38,6 +39,12 @@ export const POST: RequestHandler = async ({ request }) => {
 		const rawCompanyBlacklist = rawPolicy.company_blacklist !== undefined ? cleanList(rawPolicy.company_blacklist) : current.company_blacklist;
 		const jdBlacklist = rawPolicy.jd_blacklist !== undefined ? cleanList(rawPolicy.jd_blacklist) : current.jd_blacklist;
 		const enableScreening = rawPolicy.enable_screening !== undefined ? Boolean(rawPolicy.enable_screening) : current.enable_screening;
+		// Commute ceiling (spec #209): absent key preserves the stored value; anything
+		// that coerces to null (null, "", "null") disables distance filtering entirely.
+		const maxCommuteDistanceKm =
+			rawPolicy.max_commute_distance_km !== undefined
+				? normalizeCommuteLimit(rawPolicy.max_commute_distance_km)
+				: normalizeCommuteLimit(current.max_commute_distance_km);
 
 		// Validate company blacklist items with guardrails
 		const validCompanies: string[] = [];
@@ -57,7 +64,8 @@ export const POST: RequestHandler = async ({ request }) => {
 			title_whitelist: titleWhitelist,
 			title_blacklist: titleBlacklist,
 			company_blacklist: validCompanies,
-			jd_blacklist: jdBlacklist
+			jd_blacklist: jdBlacklist,
+			max_commute_distance_km: maxCommuteDistanceKm
 		};
 
 		writeScreeningPolicy(updatedPolicy);

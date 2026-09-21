@@ -2,6 +2,7 @@ import { getProjectRoot } from '$lib/server/pythonRunner';
 import path from 'path';
 import fs from 'fs';
 import type { SystemSettings } from '$lib/types';
+import { normalizeCommuteLimit } from '$lib/commute';
 
 export function parseSimpleYaml(content: string): Record<string, any> {
 	const result: Record<string, any> = {};
@@ -180,6 +181,7 @@ export function loadMergedSettings(): SystemSettings {
 		communication_cooldown_days: 30,
 		enable_screening: true,
 		channel_preference: 'all',
+		max_commute_distance_km: 40.0,
 		title_whitelist: [],
 		title_blacklist: ['销售', '电话销售', '电销', '管培生', '实习', '助理', '讲师', '课程顾问', '客服'],
 		company_blacklist: [],
@@ -262,6 +264,11 @@ export function loadMergedSettings(): SystemSettings {
 	if (process.env.ANDROID_AVD) {
 		settings.avd_name = process.env.ANDROID_AVD;
 	}
+
+	// Commute ceiling: a value on disk always wins over the 40km baseline, including
+	// an explicit null (disabled). YAML `null` parses to the string "null", so the
+	// coercion is what makes "disabled" survive a save/load cycle.
+	settings.max_commute_distance_km = normalizeCommuteLimit(settings.max_commute_distance_km);
 
 	// Filter out template placeholder strings
 	if (settings.api_key === 'your-api-key-here') settings.api_key = '';
@@ -383,6 +390,15 @@ export function saveSettingsToLocalYaml(
 				? String(merged.channel_preference)
 				: 'all'
 		)}`,
+		// App-Enforced Filter commute ceiling (spec #209). `null` disables distance
+		// filtering entirely. A key already on disk (including a stored "null") always
+		// wins over the 40km baseline; the baseline only applies when the file has no
+		// opinion yet.
+		`max_commute_distance_km: ${
+			'max_commute_distance_km' in merged
+				? (normalizeCommuteLimit(merged.max_commute_distance_km)?.toString() ?? 'null')
+				: '40'
+		}`,
 		`title_whitelist: ${JSON.stringify(merged.title_whitelist || [])}`,
 		`title_blacklist: ${JSON.stringify(merged.title_blacklist || [])}`,
 		`company_blacklist: ${JSON.stringify(merged.company_blacklist || [])}`,

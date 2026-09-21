@@ -155,6 +155,13 @@ job_detail:
     - "//*[@text='立即沟通' or @text='继续沟通' or @text='聊一聊' or @text='去沟通' or @text='发消息' or @text='停止招聘' or @text='职位已关闭' or @text='已下线']"
   back_btn:
     - "//*[@content-desc='返回' or contains(@resource-id, 'iv_back')]"
+  # Commute distance widget at the bottom of the detail page (spec #209):
+  # "距离家庭住址19.5千米". Absent when the candidate has no saved home
+  # address, so extraction must fail open.
+  distance_tip:
+    - "//android.widget.ViewFlipper[@resource-id='com.hpbr.bosszhipin:id/home_tip_vf']/android.widget.TextView[@resource-id='com.hpbr.bosszhipin:id/tv_title']"
+    - "//*[@resource-id='com.hpbr.bosszhipin:id/home_tip_vf']//*[@resource-id='com.hpbr.bosszhipin:id/tv_title']"
+    - "com.hpbr.bosszhipin:id/home_tip_vf"
 
 system_dialog:
   permission_buttons:

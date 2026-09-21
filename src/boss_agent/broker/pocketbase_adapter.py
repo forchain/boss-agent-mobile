@@ -426,6 +426,12 @@ class InMemoryTaskBroker(BaseTaskBroker):
                     rec["applied_at"] = record_data["applied_at"]
                 if record_data.get("applied_source"):
                     rec["applied_source"] = record_data["applied_source"]
+                # Commute distance (spec #209): only overwrite with a known value so a
+                # later probe that fails open never erases a previously measured one.
+                if record_data.get("commute_distance_km") is not None:
+                    rec["commute_distance_km"] = record_data["commute_distance_km"]
+                if record_data.get("commute_distance_text"):
+                    rec["commute_distance_text"] = record_data["commute_distance_text"]
                 rec["updated"] = now
                 return dict(rec)
 
@@ -454,6 +460,8 @@ class InMemoryTaskBroker(BaseTaskBroker):
                 "screening_audit": record_data.get("screening_audit", ""),
                 "applied_at": record_data.get("applied_at"),
                 "applied_source": record_data.get("applied_source", ""),
+                "commute_distance_km": record_data.get("commute_distance_km"),
+                "commute_distance_text": record_data.get("commute_distance_text", ""),
                 "match_score": record_data.get("match_score"),
                 "jd_key_requirements": record_data.get("jd_key_requirements", []),
                 "greeting_message": record_data.get("greeting_message", ""),
@@ -1605,6 +1613,12 @@ class PocketBaseTaskBroker(BaseTaskBroker):
                         patch_body["applied_at"] = record_data["applied_at"]
                     if record_data.get("applied_source"):
                         patch_body["applied_source"] = record_data["applied_source"]
+                    # Commute distance (spec #209): only overwrite with a known value so
+                    # a later probe that fails open never erases a measured distance.
+                    if record_data.get("commute_distance_km") is not None:
+                        patch_body["commute_distance_km"] = record_data["commute_distance_km"]
+                    if record_data.get("commute_distance_text"):
+                        patch_body["commute_distance_text"] = record_data["commute_distance_text"]
 
                     patch_url = f"{url}/{rec_id}"
                     patch_resp = await loop.run_in_executor(
@@ -1663,6 +1677,8 @@ class PocketBaseTaskBroker(BaseTaskBroker):
             "screening_audit": record_data.get("screening_audit", ""),
             "applied_at": record_data.get("applied_at"),
             "applied_source": record_data.get("applied_source", ""),
+            "commute_distance_km": record_data.get("commute_distance_km"),
+            "commute_distance_text": record_data.get("commute_distance_text", ""),
             "match_score": record_data.get("match_score"),
             "jd_key_requirements": record_data.get("jd_key_requirements", []),
             "greeting_message": record_data.get("greeting_message", ""),
