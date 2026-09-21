@@ -183,8 +183,28 @@ _Avoid_: blind tap, ocr clicker, hardcoded absolute coordinates
 
 
 **Job Lifecycle State**:
-The monotonic progression state of a Job Record tracking its data richness and application stage across mobile automation and backend manual actions (`ignored`, `jd_saved`, `matched`, `applied`; historical `digest_only` records map to `jd_saved`).
+The progression state of a Job Record tracking its data richness and application stage across mobile automation and backend manual actions (`ignored`, `jd_saved`, `matched`, `applied`; historical `digest_only` records map to `jd_saved`). The terminal `applied` state encompasses both Agent-Dispatched (`agent_auto_send`) greetings and Platform Historical Contacts (`platform_historical`); upon cool-down expiry or manual clearance, an `applied` record transitions back to `jd_saved` with its JD preserved for re-engagement.
 _Avoid_: job status flag, task progress, record phase
+
+**Communication Action Button (`btn_chat`)**:
+The primary call-to-action button widget (`com.hpbr.bosszhipin:id/btn_chat`) on the Job Detail Page reflecting platform engagement status ("立即沟通" / "聊一聊" for uncontacted jobs, "继续沟通" for previously contacted jobs, and "停止招聘" / "职位已关闭" for expired postings).
+_Avoid_: chat trigger, detail button, contact icon
+
+**Platform Historical Contact (`platform_historical`)**:
+A job posting previously engaged by the candidate on the platform prior to or outside agent execution, identified by "继续沟通" on the detail page, ingested directly into the database as `applied` without JD extraction or greeting dispatch to enable zero-overhead list-card skipping in subsequent scans.
+_Avoid_: manual chat, external application, old job
+
+**Enterprise-Level Direct-Hire Exclusion (直招同企避嫌 / 已沟通排重)**:
+The deduplication guardrail wherein active communication (`status == 'applied'`) with any direct-hire enterprise (`is_headhunter == False`, non-masked) automatically suppresses all other job postings from that same company during card preliminary screening. Headhunter channels (`is_headhunter == True`) and masked company names are strictly exempted.
+_Avoid_: company ban, company blacklist, total block
+
+**Re-application Cool-down Window (复投冷却时效)**:
+The configurable temporal threshold (`communication_cooldown_days`, default 30 days) after which previously communicated jobs and direct-hire enterprise exclusions expire, permitting re-evaluation and fresh application outreach without permanent suppression.
+_Avoid_: re-apply timer, retry delay, expire timeout
+
+**Communication State Clearance (沟通状态重置)**:
+The manual or automated state recovery action that transitions an `applied` job record back to `jd_saved` (clearing `applied_at`) and releases enterprise-level exclusion, allowing re-engagement without re-scraping the mobile JD.
+_Avoid_: unapply, job unblock, delete communication
 
 **Search Feed Boundary**:
 The explicit platform termination marker (`tv_tips` displaying "暂无符合职位，为你推荐") signalling the end of genuine search keyword results and preventing automation pagination into unrelated recommendation feeds.
@@ -199,5 +219,6 @@ The DEBUG-level `droid_agent_core.ui` log stream recording every concrete UI act
 _Avoid_: UI logging, debug prints, action trace
 
 **Daily Greeting Limit**:
-The system safety threshold restricting outbound mobile greeting volume per calendar day to protect user accounts from platform rate limits and anti-bot challenges, automatically degrading `auto_apply` to `save_jd` upon exhaustion.
+The system safety threshold restricting outbound mobile greeting volume per calendar day to protect user accounts from platform rate limits and anti-bot challenges, evaluated strictly against successful agent greeting dispatches (`applied_at >= today`), automatically degrading `auto_apply` to `save_jd` upon exhaustion.
 _Avoid_: daily quota, message cap, max chats
+
