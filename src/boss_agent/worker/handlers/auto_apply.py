@@ -17,6 +17,7 @@ from boss_agent.pages import (
 )
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.handlers.base import BaseTaskHandler, HandlerResult
+from boss_agent.worker.handlers.search_entry import run_search_entry
 
 
 class AutoApplyHandler(BaseTaskHandler):
@@ -135,32 +136,9 @@ class AutoApplyHandler(BaseTaskHandler):
         # 3. Search Keyword if specified
         enable_search = bool(payload.get("enable_search", True))
         if enable_search and keyword:
-            search_page = SearchPage(driver)
-            max_attempts = 2
-            search_success = False
-            # No pre-navigation: open_search() unwinds subpages itself (two anchors +
-            # hardware Back), so navigating home first only added blind probing delay.
-            for attempt in range(max_attempts):
-                if not search_page.is_search_page():
-                    list_page.open_search(timeout_sec=5.0)
-                if search_page.search(keyword, timeout_sec=10.0):
-                    search_success = True
-                    break
-                if attempt < max_attempts - 1:
-                    await broker.append_log(
-                        task.id,
-                        f"⚠️ 第 {attempt + 1}/{max_attempts} 次进入搜索页面并搜索 '{keyword}' 失败，"
-                        f"准备第 {attempt + 2} 次尝试...",
-                    )
-
-            if search_success:
+            if await run_search_entry(broker, task.id, list_page, SearchPage(driver), keyword):
                 await broker.append_log(task.id, f"Navigated to search results for '{keyword}'")
             else:
-                await broker.append_log(
-                    task.id,
-                    f"❌ 已尝试 {max_attempts} 次仍未能进入搜索页面或执行关键词搜索: '{keyword}'，"
-                    f"重试次数已耗尽，终止任务以避免误操作推荐流",
-                )
                 return HandlerResult(
                     success=False,
                     output={"error": f"Failed to execute search for keyword '{keyword}'"},
@@ -298,9 +276,7 @@ class AutoApplyHandler(BaseTaskHandler):
 
         if not app_rule_pass and not relaxed:
             reason = app_rule_violation or "未通过App端强制过滤"
-            await broker.append_log(
-                task.id, f"🛑 [App端强制过滤] '{job_posting.title}': {reason}"
-            )
+            await broker.append_log(task.id, f"🛑 [App端强制过滤] '{job_posting.title}': {reason}")
             await broker.upsert_job_record(
                 {
                     "fingerprint": card.fingerprint,

@@ -190,6 +190,14 @@ _Avoid_: job status flag, task progress, record phase
 The explicit platform termination marker (`tv_tips` displaying "暂无符合职位，为你推荐") signalling the end of genuine search keyword results and preventing automation pagination into unrelated recommendation feeds.
 _Avoid_: bottom banner, footer divider, scroll end
 
+**Two-Anchor Search Entry**:
+The engine that recognises exactly two states for entering search — the search input box (`et_search`) or the home search entry icon (`img_icon`) — and otherwise presses the hardware Back key (bounded, re-activating the app if Back escaped it) until one appears, rather than probing unrelated page and dialog controls.
+_Avoid_: search flow, entry heuristic, navigation cascade
+
+**UI Operation Telemetry**:
+The DEBUG-level `droid_agent_core.ui` log stream recording every concrete UI action (click, tap, typed text length, swipe, key press) and selector lookup with its elapsed seconds; silenceable by log level and never written to the task broker stream.
+_Avoid_: UI logging, debug prints, action trace
+
 **Daily Greeting Limit**:
 The system safety threshold restricting outbound mobile greeting volume per calendar day to protect user accounts from platform rate limits and anti-bot challenges, automatically degrading `auto_apply` to `save_jd` upon exhaustion.
 _Avoid_: daily quota, message cap, max chats

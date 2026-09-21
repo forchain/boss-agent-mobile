@@ -2,6 +2,7 @@ import contextlib
 import logging
 import re
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -35,6 +36,23 @@ from .models import (
 logger = logging.getLogger("boss_agent.pages")
 ui_logger = logging.getLogger("droid_agent_core.ui")
 console = Console()
+
+# Jittered hardware-Back cadence for search/home recovery. Deliberately a range,
+# not a fixed interval: a perfectly regular Back rhythm is exactly the timing
+# signature the humanized-interaction policy (ADR-0005) exists to avoid.
+BACK_INTERVAL_SEC: tuple[float, float] = (0.35, 0.65)
+
+
+def _log_selector_lookup(selector: UISelector, outcome: str, started_at: float) -> None:
+    """Emit one UI telemetry line for a single selector query."""
+    ui_logger.debug(
+        "[UI] find key=%s by=%s selector=%.160s -> %s in %.2fs",
+        selector.description or "-",
+        selector.by.value,
+        selector.value,
+        outcome,
+        time.monotonic() - started_at,
+    )
 
 
 def _log_info(msg: str) -> None:
@@ -249,27 +267,13 @@ class BaseBossPage:
         if not self.driver or not selectors:
             return None
         for sel in selectors:
-            t0 = time.monotonic()
+            started_at = time.monotonic()
             try:
                 elems = self.driver.find_elements(by=sel.by.value, value=sel.value)
             except Exception as exc:
-                ui_logger.debug(
-                    "[UI] find key=%s by=%s selector=%.160s -> error:%s in %.2fs",
-                    sel.description or "-",
-                    sel.by.value,
-                    sel.value,
-                    exc,
-                    time.monotonic() - t0,
-                )
+                _log_selector_lookup(sel, f"error:{exc}", started_at)
                 continue
-            ui_logger.debug(
-                "[UI] find key=%s by=%s selector=%.160s -> %s in %.2fs",
-                sel.description or "-",
-                sel.by.value,
-                sel.value,
-                "match" if elems else "none",
-                time.monotonic() - t0,
-            )
+            _log_selector_lookup(sel, "match" if elems else "none", started_at)
             if elems:
                 return elems[0]
         return None
@@ -299,6 +303,19 @@ class BaseBossPage:
                 ui_logger.debug("[UI] find_by_key '%s' -> timed out after %.1fs", key, timeout_sec)
                 return None
         return self._find_by_selectors(selectors)
+
+    def find_now(
+        self,
+        key: str,
+        format_args: dict[str, Any] | None = None,
+        default: str | list[str] | None = None,
+    ):
+        """Single fast-fail lookup: exactly one query, no polling.
+
+        State checks that callers run inside their own retry loop use this, so a
+        miss costs one selector query instead of a wait budget nobody honours.
+        """
+        return self.find_by_key(key, timeout_sec=0.0, format_args=format_args, default=default)
 
     def wait_for_key(
         self,
@@ -345,6 +362,38 @@ class BaseBossPage:
             error_message=f"Timed out waiting for element: {selector.description or selector.value}",
         )
 
+    def press_back(self) -> None:
+        """Send Android KEYCODE_BACK (keyevent 4) or driver.back() to press the hardware back button."""
+        if not self.driver:
+            return
+        if hasattr(self.driver, "press_keycode"):
+            try:
+                ui_logger.debug("[UI] press KEYCODE_BACK (4) via=driver.press_keycode")
+                self.driver.press_keycode(4)  # Android KEYCODE_BACK
+                return
+            except Exception:
+                pass
+        if hasattr(self.driver, "back"):
+            ui_logger.debug("[UI] press back via=driver.back")
+            with contextlib.suppress(Exception):
+                self.driver.back()
+
+    def _ensure_foreground(self) -> None:
+        """Re-activate the Boss app if a Back press escaped it (e.g. to the launcher).
+
+        The `current_package` property is itself a driver round-trip that can raise
+        on a stale session, so a failure here must never abort the caller's loop.
+        """
+        if not self.driver:
+            return
+        try:
+            package = getattr(self.driver, "current_package", None)
+        except Exception:
+            return
+        if isinstance(package, str) and package and package != self.BOSS_PACKAGE_NAME:
+            logger.warning("Foreground package is '%s' instead of Boss; re-activating app", package)
+            self.activate_app()
+
 
 class StartupDialogPage(BaseBossPage):
     """Handles startup privacy policy and permission dialogs."""
@@ -384,23 +433,7 @@ class JobListPage(BaseBossPage):
         """Check if currently on the main job recommendation home page."""
         return self.find_by_key("job_list.search_icon", timeout_sec=0.5) is not None
 
-    def press_back(self) -> None:
-        """Send Android KEYCODE_BACK (keyevent 4) or driver.back() to press the hardware back button."""
-        if not self.driver:
-            return
-        if hasattr(self.driver, "press_keycode"):
-            try:
-                ui_logger.debug("[UI] press KEYCODE_BACK (4) via=driver.press_keycode")
-                self.driver.press_keycode(4)  # Android KEYCODE_BACK
-                return
-            except Exception:
-                pass
-        if hasattr(self.driver, "back"):
-            ui_logger.debug("[UI] press back via=driver.back")
-            with contextlib.suppress(Exception):
-                self.driver.back()
-
-    def navigate_to_home(self, max_attempts: int = 6, back_interval_sec: float = 0.5) -> bool:
+    def navigate_to_home(self, max_attempts: int = 6) -> bool:
         """Return to the Job Recommendation home page by pressing Back only.
 
         The home page state is defined by a single anchor: the search entry icon.
@@ -408,24 +441,29 @@ class JobListPage(BaseBossPage):
         dialog close buttons, chat/detail back buttons or bottom tabs, which used to
         cost 20-40 seconds per call.
         """
+        return self._press_back_until(self.is_on_home_page, max_attempts)
+
+    def _press_back_until(self, is_done: Callable[[], bool], max_attempts: int) -> bool:
+        """Recover toward ``is_done()`` with Back presses, bounded by ``max_attempts``.
+
+        Per attempt: the 职位 bottom tab anchor (one fast query — measured on device,
+        a bottom tab such as 消息 ignores Back entirely, so the tab click is the only
+        way home from there), then a hardware Back press on a humanized cadence.
+        """
         for _ in range(max_attempts):
-            if self.is_on_home_page():
+            if is_done():
                 return True
+
+            job_tab = self.find_now("job_list.job_tab")
+            if job_tab:
+                self.gestures.human_click(job_tab)
+                if is_done():
+                    return True
+
             self._ensure_foreground()
             self.press_back()
-            time.sleep(back_interval_sec)
-        return self.is_on_home_page()
-
-    def _ensure_foreground(self) -> None:
-        """Re-activate the Boss app if a Back press escaped it (e.g. to the launcher)."""
-        if not self.driver:
-            return
-        package = getattr(self.driver, "current_package", None)
-        if isinstance(package, str) and package and package != self.BOSS_PACKAGE_NAME:
-            logger.warning(
-                "Foreground package is '%s' instead of Boss; re-activating app", package
-            )
-            self.activate_app()
+            self.gestures.random_sleep(*BACK_INTERVAL_SEC)
+        return is_done()
 
     def ensure_job_tab(self) -> bool:
         """Ensure the user is on the primary '职位' (Job) navigation tab."""
@@ -435,12 +473,7 @@ class JobListPage(BaseBossPage):
             return True
         return False
 
-    def open_search(
-        self,
-        timeout_sec: float = 10.0,
-        max_back_attempts: int = 10,
-        back_interval_sec: float = 0.5,
-    ) -> bool:
+    def open_search(self, timeout_sec: float = 10.0, max_back_attempts: int = 10) -> bool:
         """Enter the search input screen using exactly two anchors.
 
         1. Search input box already on screen -> we are done (no navigation at all).
@@ -451,22 +484,16 @@ class JobListPage(BaseBossPage):
         """
         search_page = SearchPage(self.driver)
 
-        for _ in range(max_back_attempts):
+        def try_enter() -> bool:
             if search_page.is_search_page():
                 return True
+            entry = self.find_now("job_list.search_icon")
+            if not entry:
+                return False
+            self.gestures.human_click(entry)
+            return search_page.wait_for_search_page(timeout_sec=timeout_sec)
 
-            entry = self.find_by_key("job_list.search_icon", timeout_sec=0.0)
-            if entry:
-                self.gestures.human_click(entry)
-                if search_page.wait_for_search_page(timeout_sec=timeout_sec):
-                    return True
-                continue
-
-            self._ensure_foreground()
-            self.press_back()
-            time.sleep(back_interval_sec)
-
-        return search_page.is_search_page()
+        return self._press_back_until(try_enter, max_back_attempts)
 
     def wait_for_jobs_loaded(self, timeout_sec: float = 15.0) -> bool:
         """Wait until at least one job card is present on the screen."""
@@ -794,8 +821,13 @@ class SearchPage(BaseBossPage):
     """Page Object for the Boss 直聘 job search screen."""
 
     def is_search_page(self) -> bool:
-        """Check if currently on the search input screen."""
-        return self.find_by_key("search.search_input", timeout_sec=0.5) is not None
+        """Check if currently on the search input screen.
+
+        Single fast-fail query (no wait loop): the caller polls this in its own
+        retry loop, and a slow "wait" here both lied about its budget and made
+        every miss cost several seconds.
+        """
+        return self.find_by_key("search.search_input", timeout_sec=0.0) is not None
 
     def wait_for_search_page(self, timeout_sec: float = 10.0) -> bool:
         """Wait until search input box is present on screen."""

@@ -25,4 +25,5 @@ Entering search from a subpage took 20-40 seconds per cold attempt, and a failed
 
 ## Trade-offs
 - Blind Back presses can escape the app (to the launcher) instead of unwinding a screen; the bounded count plus the foreground re-activation guard keep that self-correcting rather than fatal.
+- Back does not unwind a bottom tab: measured on emulator-5554, two Back presses from the 消息 tab left the app outside the home anchor, while clicking the 职位 tab returned home. The recovery loop therefore clicks the 职位 tab anchor (one fast `find_now` query) before each Back press — one deliberate exception to "two anchors only", because that tab *is* the home column.
 - Recovery now depends on the two anchors alone. If a future Boss build renames `img_icon` or `et_search`, entry fails fast and loudly instead of silently succeeding via some legacy fallback — that is the intended behaviour, and the DEBUG telemetry is what makes the new anchor discoverable.

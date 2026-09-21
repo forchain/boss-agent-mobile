@@ -61,6 +61,43 @@ def test_navigate_to_home_presses_back_until_search_entry_visible():
     )
 
 
+def test_navigate_to_home_recovers_from_another_bottom_tab():
+    """Device-verified on emulator-5554: hardware Back does NOT leave the 消息/我的 tab
+    (two presses left us outside the home anchor); clicking the 职位 tab does."""
+    mock_driver = MagicMock()
+    mock_driver.get_window_size.return_value = {"width": 1080, "height": 2400}
+
+    mock_search_icon = MagicMock()
+    mock_search_icon.rect = {"x": 900, "y": 100, "width": 80, "height": 80}
+    mock_job_tab = MagicMock()
+    mock_job_tab.rect = {"x": 100, "y": 2300, "width": 200, "height": 100}
+
+    state = {"on_job_tab": False}
+
+    def mock_find_elements(by, value):
+        if "ly_menu" in value or "img_icon" in value:
+            return [mock_search_icon] if state["on_job_tab"] else []
+        if "tv_tab_1" in value or "职位" in value:
+            return [] if state["on_job_tab"] else [mock_job_tab]
+        return []
+
+    mock_driver.find_elements.side_effect = mock_find_elements
+
+    page = JobListPage(mock_driver)
+
+    def mock_click(elem):
+        if elem is mock_job_tab:
+            state["on_job_tab"] = True
+
+    page.gestures.human_click = mock_click
+
+    assert page.navigate_to_home() is True
+    assert state["on_job_tab"] is True
+    assert mock_driver.press_keycode.call_count == 0, (
+        "another bottom tab ignores Back; the 职位 tab anchor is the recovery there"
+    )
+
+
 def test_navigate_to_home_gives_up_after_bounded_attempts():
     mock_driver = MagicMock()
     mock_driver.get_window_size.return_value = {"width": 1080, "height": 2400}

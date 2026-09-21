@@ -16,12 +16,12 @@ from unittest.mock import patch
 
 import pytest
 
-from boss_agent.pages import JobListPage
-from droid_agent_core.locators import LocatorRegistry
+from boss_agent.pages import JobListPage, SearchPage
+from droid_agent_core.locators import By, LocatorRegistry
 
 EXACT_SEARCH_ICON_XPATH = (
     '//android.widget.LinearLayout[@resource-id="com.hpbr.bosszhipin:id/ly_menu"]'
-    '/android.widget.RelativeLayout[2]'
+    "/android.widget.RelativeLayout[2]"
     '/android.widget.ImageView[@resource-id="com.hpbr.bosszhipin:id/img_icon"]'
 )
 
@@ -72,9 +72,11 @@ class EntryDriver:
 
     def press_keycode(self, code):
         self.keycodes.append(code)
-        if self._icon_visible_after_backs is not None:
-            if len(self.keycodes) >= self._icon_visible_after_backs:
-                self.icon_visible = True
+        if (
+            self._icon_visible_after_backs is not None
+            and len(self.keycodes) >= self._icon_visible_after_backs
+        ):
+            self.icon_visible = True
 
     def activate_app(self, package):
         self.activated_count += 1
@@ -83,14 +85,41 @@ class EntryDriver:
     def get_window_size(self):
         return {"width": 1080, "height": 2400}
 
-    def has_no_back_probe_of_secondary_buttons(self):
-        banned = ("btn_cancel", "iv_close", "btn_back", "iv_back", "content-desc")
-        return not any(b in v for _, v in self.queried for b in banned)
+
+def secondary_button_probes(driver: EntryDriver) -> list[str]:
+    """Queries the engine should never make: dialog/subpage close and back buttons."""
+    banned = ("btn_cancel", "iv_close", "btn_back", "iv_back", "content-desc")
+    return [value for _, value in driver.queried if any(b in value for b in banned)]
 
 
 # ---------------------------------------------------------------------------
 # Locator configuration
 # ---------------------------------------------------------------------------
+
+
+def test_search_input_locator_is_single_verified_id():
+    """The input-box anchor is the other half of the engine: one verified id, not a list."""
+    registry = LocatorRegistry(
+        base_config_path="config/locators.yaml",
+        local_config_path="config/__definitely_missing__.yaml",
+    )
+    selectors = registry.get_selectors("search.search_input")
+    assert len(selectors) == 1, (
+        f"search_input must be locked to one verified id, got {len(selectors)}"
+    )
+    assert selectors[0].by == By.ID
+    assert selectors[0].value == "com.hpbr.bosszhipin:id/et_search"
+
+
+def test_is_search_page_miss_costs_exactly_one_query():
+    driver = EntryDriver()
+    driver.icon_visible = False  # off the search page: nothing matches
+    page = SearchPage(driver)
+
+    assert page.is_search_page() is False
+    assert len(driver.queried) == 1, (
+        f"a miss must cost exactly one element query, got {len(driver.queried)}: {driver.queried}"
+    )
 
 
 def test_search_icon_locator_is_single_exact_xpath():
@@ -136,7 +165,7 @@ def test_open_search_backtracks_from_subpage_until_entry_found():
     assert driver.keycodes == [4, 4, 4], (
         f"expected exactly 3 hardware Back presses, got {driver.keycodes}"
     )
-    assert driver.has_no_back_probe_of_secondary_buttons(), (
+    assert secondary_button_probes(driver) == [], (
         "engine must not query irrelevant dialog-close / subpage back-button selectors"
     )
 

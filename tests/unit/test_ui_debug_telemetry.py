@@ -16,7 +16,7 @@ from unittest.mock import patch
 
 import pytest
 
-from boss_agent.pages import JobListPage
+from boss_agent.pages import JobListPage, SearchPage
 from droid_agent_core.gestures import HumanizedGestureExecutor, Point
 
 UI_LOGGER = "droid_agent_core.ui"
@@ -89,12 +89,13 @@ def test_human_click_emits_debug_log_with_element_and_coordinates(ui_caplog):
 
     records = ui_records(ui_caplog)
     assert any(
-        "click" in r.getMessage().lower() and "ImageView" in r.getMessage()
-        for r in records
-    ), f"expected a click debug entry describing the element, got: {[r.getMessage() for r in records]}"
-    assert any(
-        re.search(r"target=\(\d", r.getMessage()) for r in records
-    ), "expected tapped coordinates to be logged"
+        "click" in r.getMessage().lower() and "ImageView" in r.getMessage() for r in records
+    ), (
+        f"expected a click debug entry describing the element, got: {[r.getMessage() for r in records]}"
+    )
+    assert any(re.search(r"target=\(\d", r.getMessage()) for r in records), (
+        "expected tapped coordinates to be logged"
+    )
     assert all(r.levelno == logging.DEBUG for r in records)
 
 
@@ -106,9 +107,9 @@ def test_human_click_at_point_logs_target_coordinates(ui_caplog):
 
     assert len(driver.taps) == 1
     records = [r for r in ui_records(ui_caplog) if "tap" in r.getMessage().lower()]
-    assert any(re.search(r"\(\s*\d{2,4}\.?\d*\s*,\s*\d{2,4}\.?\d*\s*\)", r.getMessage()) for r in records), (
-        f"expected coordinate pair in tap log, got: {[r.getMessage() for r in records]}"
-    )
+    assert any(
+        re.search(r"\(\s*\d{2,4}\.?\d*\s*,\s*\d{2,4}\.?\d*\s*\)", r.getMessage()) for r in records
+    ), f"expected coordinate pair in tap log, got: {[r.getMessage() for r in records]}"
 
 
 def test_human_type_logs_text_length_without_raw_text(ui_caplog):
@@ -135,7 +136,9 @@ def test_human_swipe_logs_endpoints(ui_caplog):
     executor.human_swipe(Point(540.0, 1800.0), Point(540.0, 600.0), duration_ms=500)
 
     assert len(driver.swipes) == 1
-    swipe_logs = [r.getMessage() for r in ui_records(ui_caplog) if "swipe" in r.getMessage().lower()]
+    swipe_logs = [
+        r.getMessage() for r in ui_records(ui_caplog) if "swipe" in r.getMessage().lower()
+    ]
     assert swipe_logs, "expected a swipe debug entry"
     assert any("->" in msg or "to=" in msg for msg in swipe_logs), (
         f"expected from->to endpoints in swipe log, got: {swipe_logs}"
@@ -157,6 +160,17 @@ def test_press_back_logs_keycode(ui_caplog):
     back_logs = [r.getMessage() for r in ui_records(ui_caplog) if "back" in r.getMessage().lower()]
     assert back_logs, "expected a back-key debug entry"
     assert any("4" in msg or "KEYCODE_BACK" in msg for msg in back_logs)
+
+
+def test_press_back_telemetry_is_available_on_every_page_object(ui_caplog):
+    """#194 lists press_back among BaseBossPage telemetry, not only the job list page."""
+    driver = FakeDriver()
+    page = SearchPage(driver)
+
+    page.press_back()
+
+    assert driver.keycodes == [4]
+    assert any("KEYCODE_BACK" in r.getMessage() for r in ui_records(ui_caplog))
 
 
 def test_find_by_key_logs_selector_value_and_duration(ui_caplog):
