@@ -27,6 +27,23 @@
 	let minScore = $state(75);
 	let taskMode = $state<'preview' | 'auto_send'>('preview');
 
+	// New Greeting Inbox rejection cleanup (issue #208). Dry-run defaults ON so a
+	// one-click trigger can never send real messages by accident.
+	let chatDryRun = $state(true);
+	let chatReplyText = $state('收到 谢谢');
+	let chatMaxScanDepth = $state<number>(30);
+
+	async function loadChatAcknowledgmentDefaults() {
+		try {
+			const res = await fetch('/api/settings');
+			if (!res.ok) return;
+			const conf = await res.json();
+			chatReplyText = conf.chat?.rejection_reply_text || '收到 谢谢';
+			const depth = Number(conf.chat?.max_scan_depth);
+			chatMaxScanDepth = depth > 0 ? depth : 30;
+		} catch (e) {}
+	}
+
 	async function loadSearches() {
 		try {
 			const list = await listSavedSearches();
@@ -42,6 +59,7 @@
 	$effect(() => {
 		if (isOpen) {
 			loadSearches();
+			loadChatAcknowledgmentDefaults();
 		}
 	});
 
@@ -96,7 +114,7 @@
 		}
 	}
 
-	async function handleLaunchDiagnostic(type: 'CHECK_LOGIN' | 'CHECK_CHAT') {
+	async function handleLaunchDiagnostic(type: 'CHECK_LOGIN') {
 		isSubmitting = true;
 		errorMessage = '';
 		try {
@@ -108,6 +126,25 @@
 			onClose();
 		} catch (e: any) {
 			errorMessage = e?.message || '下发诊断任务失败';
+		} finally {
+			isSubmitting = false;
+		}
+	}
+
+	/** One-click New Greeting Inbox rejection cleanup trigger (issue #208). */
+	async function handleLaunchChatCleanup() {
+		isSubmitting = true;
+		errorMessage = '';
+		try {
+			const task = await createAutomationTask('CHECK_CHAT', {
+				dry_run: chatDryRun,
+				rejection_reply_text: chatReplyText.trim() || '收到 谢谢',
+				max_scan_depth: Number(chatMaxScanDepth) > 0 ? Number(chatMaxScanDepth) : 30
+			});
+			onTaskCreated(task);
+			onClose();
+		} catch (e: any) {
+			errorMessage = e?.message || '下发收件箱拒信清扫任务失败';
 		} finally {
 			isSubmitting = false;
 		}
@@ -359,7 +396,7 @@
 					</div>
 				{:else if activeTab === 'diagnostic'}
 					<div class="space-y-3">
-						<p class="text-slate-400">下发系统级检测任务，验证移动端模拟器与 Boss 直聘状态，不触发职位投递：</p>
+						<p class="text-slate-400">下发系统级检测任务与收件箱清扫任务，验证移动端模拟器与 Boss 直聘状态，不触发职位投递：</p>
 						<div class="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
 							<button
 								type="button"
@@ -377,22 +414,74 @@
 									启动 App，跳过广告与权限弹窗，检测当前是否处于登录就绪状态。
 								</p>
 							</button>
+						</div>
+
+						<!-- New Greeting Inbox rejection cleanup (issue #208) -->
+						<div class="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3">
+							<div class="flex items-center space-x-2">
+								<span class="text-xl">💬</span>
+								<div>
+									<div class="font-bold text-slate-200">新招呼拒信清扫 (CHECK_CHAT)</div>
+									<p class="text-[11px] text-slate-500 mt-0.5">
+										扫描「新招呼」收件箱，识别明确拒信后礼貌收尾并标记“不感兴趣（重复推荐）”。
+									</p>
+								</div>
+							</div>
+
+							<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+								<div>
+									<label for="chat-cleanup-reply-input" class="block text-slate-400 mb-1 font-medium text-[11px]">
+										礼貌收尾文案
+									</label>
+									<input
+										id="chat-cleanup-reply-input"
+										type="text"
+										maxlength="200"
+										bind:value={chatReplyText}
+										placeholder="收到 谢谢"
+										class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-cyan-500 text-xs"
+									/>
+								</div>
+								<div>
+									<label for="chat-cleanup-depth-input" class="block text-slate-400 mb-1 font-medium text-[11px]">
+										最大扫描条数
+									</label>
+									<input
+										id="chat-cleanup-depth-input"
+										type="number"
+										min="1"
+										max="500"
+										bind:value={chatMaxScanDepth}
+										class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-cyan-500 font-mono text-xs"
+									/>
+								</div>
+							</div>
+
+							<label class="flex items-start space-x-2 cursor-pointer">
+								<input type="checkbox" bind:checked={chatDryRun} class="mt-0.5 accent-cyan-500" />
+								<span class="text-[11px] text-slate-400">
+									🛡️ 演练模式 (dry-run)：仅记录判定结果，不发送消息、不点击不感兴趣
+								</span>
+							</label>
+
+							{#if !chatDryRun}
+								<div class="p-2.5 rounded-xl bg-amber-950/60 border border-amber-800/70 text-[11px] text-amber-300">
+									⚠️ 演练模式已关闭：本次将向识别到的拒信会话真实发送文案并提交“不感兴趣”反馈。
+								</div>
+							{/if}
 
 							<button
 								type="button"
-								onclick={() => handleLaunchDiagnostic('CHECK_CHAT')}
+								onclick={handleLaunchChatCleanup}
 								disabled={isSubmitting}
-								class="p-4 rounded-xl bg-slate-950 hover:bg-slate-800/60 border border-slate-800 text-left transition flex flex-col justify-between space-y-2 group"
+								class="w-full bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-semibold px-4 py-2.5 rounded-xl text-xs transition shadow-lg shadow-cyan-500/20 disabled:opacity-60 flex items-center justify-center space-x-1.5"
 							>
-								<div class="flex items-center space-x-2">
-									<span class="text-xl">💬</span>
-									<span class="font-bold text-slate-200 group-hover:text-cyan-400 transition">
-										检查沟通列表 (CHECK_CHAT)
-									</span>
-								</div>
-								<p class="text-[11px] text-slate-500">
-									导航至 App 沟通页，统计未读消息并核对历史已打招呼的职位。
-								</p>
+								{#if isSubmitting}
+									<span class="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+									<span>下发中...</span>
+								{:else}
+									<span>{chatDryRun ? '🧪 下发演练扫描' : '🧹 下发收件箱清扫'}</span>
+								{/if}
 							</button>
 						</div>
 					</div>

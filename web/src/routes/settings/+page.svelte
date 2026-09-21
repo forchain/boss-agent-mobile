@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import type { SystemSettings, ScreeningPolicy } from '$lib/types';
+	import type { SystemSettings, ScreeningPolicy, ChatAcknowledgmentConfig } from '$lib/types';
 	import { validateCanBlacklistCompany } from '$lib/screening';
 
 	let settings = $state<SystemSettings>({
@@ -20,7 +20,11 @@
 		langsmith_project: 'boss-agent-mobile',
 		daily_greeting_limit: 20,
 		preview_timeout_sec: 3.0,
-		enable_greeting: true
+		enable_greeting: true,
+		chat: {
+			rejection_reply_text: '收到 谢谢',
+			max_scan_depth: 30
+		}
 	});
 
 	let isEditingApiKey = $state(false);
@@ -66,6 +70,13 @@
 		title_blacklist: [],
 		company_blacklist: [],
 		jd_blacklist: []
+	});
+
+	// New Greeting Inbox rejection auto-acknowledgment (issue #208). Mirrors the
+	// nested `chat:` block; synced into `settings.chat` on save.
+	let chatAck = $state<ChatAcknowledgmentConfig>({
+		rejection_reply_text: '收到 谢谢',
+		max_scan_depth: 30
 	});
 
 	let newTitleWhitelist = $state('');
@@ -119,7 +130,17 @@
 					langsmith_project: conf.langsmith_project || 'boss-agent-mobile',
 					daily_greeting_limit: conf.daily_greeting_limit ?? 20,
 					preview_timeout_sec: conf.preview_timeout_sec ?? 3.0,
-					enable_greeting: conf.enable_greeting !== false
+					enable_greeting: conf.enable_greeting !== false,
+					chat: {
+						rejection_reply_text: conf.chat?.rejection_reply_text || '收到 谢谢',
+						max_scan_depth:
+							Number(conf.chat?.max_scan_depth) > 0 ? Number(conf.chat.max_scan_depth) : 30
+					}
+				};
+				chatAck = {
+					rejection_reply_text: conf.chat?.rejection_reply_text || '收到 谢谢',
+					max_scan_depth:
+						Number(conf.chat?.max_scan_depth) > 0 ? Number(conf.chat.max_scan_depth) : 30
 				};
 				isEditingApiKey = !conf.api_key;
 				isEditingLangsmithKey = !conf.langsmith_api_key;
@@ -280,6 +301,12 @@
 		settings.title_blacklist = screeningPolicy.title_blacklist;
 		settings.company_blacklist = screeningPolicy.company_blacklist;
 		settings.jd_blacklist = screeningPolicy.jd_blacklist;
+
+		// Sync the rejection acknowledgment block (nested `chat:` config)
+		settings.chat = {
+			rejection_reply_text: chatAck.rejection_reply_text || '收到 谢谢',
+			max_scan_depth: Number(chatAck.max_scan_depth) > 0 ? Number(chatAck.max_scan_depth) : 30
+		};
 
 		isSaving = true;
 		saveSuccessMessage = '';
@@ -1191,6 +1218,66 @@
 					</div>
 					<p class="text-[11px] text-slate-500">关闭后仅抓取职位信息，不触发投递与破冰打招呼</p>
 				</div>
+			</div>
+		</div>
+
+		<!-- Section 7: New Greeting Inbox Rejection Acknowledgment Card -->
+		<div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-5">
+			<div class="flex items-center justify-between border-b border-slate-800/80 pb-4">
+				<div class="flex items-center space-x-2.5">
+					<span class="text-xl">💬</span>
+					<div>
+						<h2 class="font-semibold text-sm text-slate-100">新招呼收件箱 · 拒信自动回复 (Rejection Auto-Acknowledgment)</h2>
+						<p class="text-[11px] text-slate-400 mt-0.5">
+							识别招聘者的明确拒信后礼貌收尾，并自动标记“不感兴趣（重复推荐）”清理收件箱
+						</p>
+					</div>
+				</div>
+				<span class="text-[11px] px-2.5 py-0.5 rounded-full bg-cyan-950 text-cyan-400 border border-cyan-800/80 font-mono">
+					收件箱清理
+				</span>
+			</div>
+
+			<div class="grid grid-cols-1 md:grid-cols-3 gap-5">
+				<div class="md:col-span-2">
+					<label for="chat-rejection-reply-input" class="block text-xs font-medium text-slate-300 mb-1.5">
+						礼貌收尾文案 (Polite Closing Message)
+					</label>
+					<input
+						id="chat-rejection-reply-input"
+						type="text"
+						maxlength="200"
+						bind:value={chatAck.rejection_reply_text}
+						placeholder="收到 谢谢"
+						class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:outline-none focus:border-cyan-500"
+					/>
+					<p class="text-[11px] text-slate-500 mt-1">
+						留空将回退为默认文案「收到 谢谢」；仅在明确拒信会话中发送，面试邀约永不触发
+					</p>
+				</div>
+
+				<div>
+					<label for="chat-max-scan-depth-input" class="block text-xs font-medium text-slate-300 mb-1.5">
+						单次最大扫描条数 (Max Scan Depth)
+					</label>
+					<input
+						id="chat-max-scan-depth-input"
+						type="number"
+						min="1"
+						max="500"
+						bind:value={chatAck.max_scan_depth}
+						class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs font-mono text-slate-200 focus:outline-none focus:border-cyan-500"
+					/>
+					<p class="text-[11px] text-slate-500 mt-1">单次 CHECK_CHAT 任务最多判定的消息条数，防止无限扫描</p>
+				</div>
+			</div>
+
+			<div class="p-2.5 bg-slate-950/60 border border-slate-800/60 rounded-xl text-[11px] text-slate-400 flex items-center justify-between">
+				<span class="flex items-center gap-1.5">
+					<span class="text-cyan-400">🧹</span>
+					<span>定时清扫请前往「搜索策略库」创建目标操作为「收件箱清理 (check_chat)」的定时策略</span>
+				</span>
+				<a href="/searches" class="text-cyan-400 hover:text-cyan-300 transition shrink-0">策略库 →</a>
 			</div>
 		</div>
 

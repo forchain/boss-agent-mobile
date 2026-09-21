@@ -13,6 +13,7 @@ from typing import Any
 
 from boss_agent.broker.models import AutomationTask, TaskType
 from boss_agent.broker.pocketbase_adapter import BaseTaskBroker
+from boss_agent.settings import resolve_chat_acknowledgment_settings
 
 logger = logging.getLogger("boss_agent.scheduler")
 
@@ -180,6 +181,34 @@ class AutomationScheduler:
                     pass
 
             # Resolve target task type and action
+            if search.target_task_type == "CHECK_CHAT" or search.target_action == "check_chat":
+                # Inbox rejection cleanup is keyword-independent: it carries the
+                # resolved acknowledgment settings instead of a search strategy.
+                ack_settings = resolve_chat_acknowledgment_settings()
+                task = await self.broker.create_task(
+                    task_type=TaskType.CHECK_CHAT,
+                    payload={
+                        "saved_search_id": search.id,
+                        "search_id": search.id,
+                        "search_name": search.name,
+                        "dry_run": False,
+                        "rejection_reply_text": ack_settings.rejection_reply_text,
+                        "max_scan_depth": ack_settings.max_scan_depth,
+                        "scheduled": True,
+                    },
+                )
+                dispatched_tasks.append(task)
+
+                search.last_run_at = now.isoformat()
+                await self.broker.save_saved_search(search)
+                logger.info(
+                    "Scheduled CHECK_CHAT task %s dispatched for inbox cleanup strategy %s (%s)",
+                    task.id,
+                    search.id,
+                    search.name,
+                )
+                continue
+
             action = search.target_action or (
                 "auto_apply" if search.target_task_type == "AUTO_APPLY" else "save_jd"
             )

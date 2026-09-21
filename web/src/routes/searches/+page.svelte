@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import { resolveTargetAction, type SavedSearch } from '$lib/types';
+	import { isChatCleanupStrategy, resolveTargetAction, type SavedSearch } from '$lib/types';
 	import {
 		pb,
 		checkPocketBaseHealth,
@@ -44,8 +44,8 @@
 		keyword: string;
 		enable_search: boolean;
 		enable_filter: boolean;
-		target_task_type: 'AUTO_APPLY' | 'SCRAPE_JOBS';
-		target_action: 'save_jd' | 'auto_apply';
+		target_task_type: 'AUTO_APPLY' | 'SCRAPE_JOBS' | 'CHECK_CHAT';
+		target_action: 'save_jd' | 'auto_apply' | 'check_chat';
 		max_jobs: number;
 		cron_expression: string;
 		is_enabled: boolean;
@@ -264,8 +264,14 @@
 			keyword: search.keyword || '',
 			enable_search: search.enable_search !== false,
 			enable_filter: search.enable_filter !== false,
-			target_task_type: (search.target_task_type === 'SCRAPE_JOBS' ? 'SCRAPE_JOBS' : 'AUTO_APPLY'),
-			target_action: search.target_action || (search.target_task_type === 'SCRAPE_JOBS' ? 'save_jd' : 'auto_apply'),
+			target_task_type: isChatCleanupStrategy(search)
+				? 'CHECK_CHAT'
+				: search.target_task_type === 'SCRAPE_JOBS'
+					? 'SCRAPE_JOBS'
+					: 'AUTO_APPLY',
+			target_action: isChatCleanupStrategy(search)
+				? 'check_chat'
+				: search.target_action || (search.target_task_type === 'SCRAPE_JOBS' ? 'save_jd' : 'auto_apply'),
 			max_jobs: search.max_jobs ?? 30,
 			cron_expression: search.cron_expression || '',
 			is_enabled: !!search.is_enabled,
@@ -326,13 +332,18 @@
 		isSaving = true;
 		formError = '';
 		try {
-			const derivedTaskType = modalForm.target_action === 'auto_apply' ? 'AUTO_APPLY' : 'SCRAPE_JOBS';
+			const isChatCleanup = modalForm.target_action === 'check_chat';
+			const derivedTaskType = isChatCleanup
+				? 'CHECK_CHAT'
+				: modalForm.target_action === 'auto_apply'
+					? 'AUTO_APPLY'
+					: 'SCRAPE_JOBS';
 			const payload: any = {
 				name: modalForm.name.trim(),
 				description: modalForm.description.trim(),
-				keyword: modalForm.keyword.trim(),
-				enable_search: modalForm.enable_search,
-				enable_filter: modalForm.enable_filter,
+				keyword: isChatCleanup ? '' : modalForm.keyword.trim(),
+				enable_search: isChatCleanup ? false : modalForm.enable_search,
+				enable_filter: isChatCleanup ? false : modalForm.enable_filter,
 				target_task_type: derivedTaskType,
 				target_action: modalForm.target_action,
 				max_jobs: Number(modalForm.max_jobs) > 0 ? Number(modalForm.max_jobs) : 30,
@@ -391,7 +402,28 @@
 		}
 	}
 
-	async function onTriggerSearch(search: SavedSearch, action: 'save_jd' | 'auto_apply') {
+	async function onTriggerSearch(search: SavedSearch, action: 'save_jd' | 'auto_apply' | 'check_chat') {
+		if (action === 'check_chat') {
+			triggerStatus[search.id] = '正在下发 [收件箱清理] 任务...';
+			try {
+				const task = await createAutomationTask('CHECK_CHAT', {
+					saved_search_id: search.id,
+					search_id: search.id,
+					search_name: search.name,
+					dry_run: false
+				});
+				triggerStatus[search.id] = `✅ 已派发 [收件箱清理]: ${task.id}`;
+				triggerTaskIds[search.id] = task.id;
+				setTimeout(() => {
+					delete triggerStatus[search.id];
+					delete triggerTaskIds[search.id];
+				}, 8000);
+			} catch (err: any) {
+				triggerStatus[search.id] = `❌ 派发失败: ${err?.message || err}`;
+			}
+			return;
+		}
+
 		const taskType = action === 'auto_apply' ? 'AUTO_APPLY' : 'SCRAPE_JOBS';
 		const label = action === 'auto_apply' ? '自动沟通' : '深度存JD';
 		triggerStatus[search.id] = `正在下发 [${label}] 任务...`;
@@ -517,6 +549,7 @@
 		<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
 			{#each searches as search (search.id)}
 				{@const currentAction = resolveTargetAction(search)}
+				{@const isChatCleanup = isChatCleanupStrategy(search)}
 				<div class="bg-slate-900/80 border border-slate-800 hover:border-slate-700 rounded-2xl p-6 shadow-xl space-y-4 flex flex-col justify-between transition-all">
 					<div class="space-y-3">
 						<!-- Card Header: Title & Badges -->
@@ -533,7 +566,11 @@
 								{/if}
 							</div>
 							<div class="flex flex-col sm:flex-row items-end sm:items-center gap-1.5 shrink-0">
-								{#if currentAction === 'auto_apply'}
+								{#if isChatCleanup}
+									<span class="text-[10px] px-2.5 py-1 rounded-full font-mono font-medium bg-violet-950 text-violet-300 border border-violet-800">
+										🧹 收件箱清理
+									</span>
+								{:else if currentAction === 'auto_apply'}
 									<span class="text-[10px] px-2.5 py-1 rounded-full font-mono font-medium bg-emerald-950 text-emerald-300 border border-emerald-800">
 										🚀 自动沟通
 									</span>
@@ -551,10 +588,14 @@
 						<!-- Keyword Badge & Mode Indicators -->
 						<div class="flex flex-wrap items-center justify-between gap-2 bg-slate-950/80 border border-slate-800/80 px-3 py-2 rounded-xl text-xs">
 							<div class="flex items-center space-x-2">
-								<span class="text-slate-400 font-medium">目标关键词:</span>
-								<span class="font-mono font-bold {search.enable_search === false ? 'text-amber-400' : 'text-cyan-300'}">
-									{search.enable_search === false ? '(直接浏览推荐)' : search.keyword || '(全量推荐)'}
-								</span>
+								<span class="text-slate-400 font-medium">{isChatCleanup ? '扫描范围:' : '目标关键词:'}</span>
+								{#if isChatCleanup}
+									<span class="font-mono font-bold text-violet-300">新招呼收件箱 (未回复的招聘方消息)</span>
+								{:else}
+									<span class="font-mono font-bold {search.enable_search === false ? 'text-amber-400' : 'text-cyan-300'}">
+										{search.enable_search === false ? '(直接浏览推荐)' : search.keyword || '(全量推荐)'}
+									</span>
+								{/if}
 							</div>
 							<div class="flex items-center gap-1.5">
 								{#if search.enable_search === false}
@@ -675,6 +716,17 @@
 						{/if}
 						<div class="flex items-center justify-between gap-2">
 							<div class="flex flex-wrap items-center gap-1.5">
+								{#if isChatCleanup}
+									<button
+										type="button"
+										onclick={() => onTriggerSearch(search, 'check_chat')}
+										class="px-2.5 py-1.5 rounded-lg text-xs font-medium transition flex items-center space-x-1 bg-violet-600 hover:bg-violet-500 text-white shadow ring-1 ring-violet-400/50"
+										title="立即执行此策略：扫描「新招呼」收件箱，礼貌回复拒信并标记不感兴趣"
+									>
+										<span>🧹</span>
+										<span>立即清扫收件箱</span>
+									</button>
+								{:else}
 								<button
 									type="button"
 									onclick={() => onTriggerSearch(search, 'save_jd')}
@@ -703,6 +755,7 @@
 										<span class="text-[9px] opacity-80">(默认)</span>
 									{/if}
 								</button>
+								{/if}
 							</div>
 
 							<div class="flex items-center space-x-2 text-xs">
@@ -772,6 +825,14 @@
 							class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-cyan-500 font-medium"
 						/>
 					</div>
+					{#if modalForm.target_action === 'check_chat'}
+					<div>
+						<span class="block font-medium text-slate-400 mb-1">搜索关键词</span>
+						<p class="text-[11px] text-slate-500 leading-relaxed">
+							收件箱清理策略不使用关键词；调度时直接进入「新招呼」收件箱扫描未回复的招聘方消息。
+						</p>
+					</div>
+					{:else}
 					<div>
 						<label for="form-search-keyword" class="block font-medium text-slate-400 mb-1">
 							搜索关键词 {modalForm.enable_search ? '(留空为全量推荐)' : '(已关闭搜索，将直接浏览推荐)'}
@@ -785,8 +846,10 @@
 							class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-cyan-500 font-mono disabled:opacity-50 disabled:cursor-not-allowed"
 						/>
 					</div>
+					{/if}
 				</div>
 
+				{#if modalForm.target_action !== 'check_chat'}
 				<!-- Search & Filter Controls -->
 				<div class="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-slate-950/70 border border-slate-800/80 p-3 rounded-xl">
 					<label class="flex items-start space-x-2.5 cursor-pointer select-none">
@@ -816,6 +879,7 @@
 						</div>
 					</label>
 				</div>
+				{/if}
 
 				<div>
 					<label for="form-search-desc" class="block font-medium text-slate-400 mb-1">策略描述与定位说明</label>
@@ -847,11 +911,14 @@
 							>
 								<option value="save_jd">📖 深度存JD (save_jd) - 点开卡片保存详情页岗位职责全文</option>
 								<option value="auto_apply">🚀 自动打招呼 (auto_apply) - 深度存JD并进行AI匹配与发送</option>
+								<option value="check_chat">🧹 收件箱清理 (check_chat) - 扫描「新招呼」拒信并礼貌收尾</option>
 							</select>
 							<span class="text-[10px] text-slate-500 block mt-1">
 								{modalForm.target_action === 'auto_apply'
 									? '调度时自动派发 AUTO_APPLY 智能投递任务，生成招呼语并沟通'
-									: '调度时自动派发 SCRAPE_JOBS 职位抓取任务，不主动发起沟通'}
+									: modalForm.target_action === 'check_chat'
+										? '调度时自动派发 CHECK_CHAT 任务，清理收件箱拒信，不使用关键词与筛选条件'
+										: '调度时自动派发 SCRAPE_JOBS 职位抓取任务，不主动发起沟通'}
 							</span>
 						</div>
 						<div>
@@ -909,6 +976,7 @@
 					</div>
 				</div>
 
+				{#if modalForm.target_action !== 'check_chat'}
 				<!-- Detailed Filter Rules -->
 				<div class="border-t border-slate-800/80 pt-4 space-y-4">
 					<h3 class="text-xs font-bold text-slate-200 flex items-center space-x-1.5">
@@ -1048,6 +1116,7 @@
 						</div>
 					</div>
 				</div>
+				{/if}
 			</div>
 
 			<!-- Modal Footer -->

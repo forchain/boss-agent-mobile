@@ -116,6 +116,16 @@ export interface SystemSettings {
 	company_blacklist?: string[];
 	jd_blacklist?: string[];
 	channel_preference?: 'all' | 'direct_only' | 'headhunter_only';
+
+	// New Greeting Inbox rejection auto-acknowledgment (issue #208)
+	chat?: ChatAcknowledgmentConfig;
+}
+
+export interface ChatAcknowledgmentConfig {
+	/** Polite closing message sent to a recruiter who explicitly rejected the candidate. */
+	rejection_reply_text: string;
+	/** Maximum number of inbox messages one CHECK_CHAT run may classify. */
+	max_scan_depth: number;
 }
 
 export interface MatchEvaluateRequest {
@@ -214,6 +224,17 @@ export interface SavedSearch {
 	target_task_type?: 'AUTO_APPLY' | 'SCRAPE_JOBS' | string;
 	created?: string;
 	updated?: string;
+}
+
+/**
+ * True for strategies that run New Greeting Inbox rejection cleanup (issue #208)
+ * instead of a keyword search. Such strategies carry no keyword or filter payload.
+ */
+export function isChatCleanupStrategy(search: {
+	target_action?: string;
+	target_task_type?: string;
+}): boolean {
+	return search.target_action === 'check_chat' || search.target_task_type === 'CHECK_CHAT';
 }
 
 export function resolveTargetAction(search: { target_action?: TargetAction | string; target_task_type?: string }): TargetAction {

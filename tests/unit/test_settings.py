@@ -11,6 +11,7 @@ from unittest.mock import patch
 from boss_agent.broker.pocketbase_adapter import PocketBaseTaskBroker
 from boss_agent.settings import (
     load_settings,
+    resolve_chat_acknowledgment_settings,
     resolve_pocketbase_data_dir,
     resolve_pocketbase_db_path,
     resolve_pocketbase_url,
@@ -471,3 +472,94 @@ def test_load_settings_legacy_llm_fallback(tmp_path: Path, monkeypatch):
 
 
 
+
+
+# ---------------------------------------------------------------------------
+# Chat acknowledgment settings (Issue #208)
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_chat_acknowledgment_settings_defaults():
+    """Nothing configured: polite closing text and scan bound fall back to defaults."""
+    with patch.dict("os.environ", {}, clear=True):
+        resolved = resolve_chat_acknowledgment_settings(settings={})
+
+    assert resolved.rejection_reply_text == "收到 谢谢"
+    assert resolved.max_scan_depth == 30
+
+
+def test_resolve_chat_acknowledgment_settings_reads_nested_chat_block(monkeypatch):
+    with patch.dict("os.environ", {}, clear=True):
+        resolved = resolve_chat_acknowledgment_settings(
+            settings={"chat": {"rejection_reply_text": "谢谢，祝招聘顺利", "max_scan_depth": 12}}
+        )
+
+    assert resolved.rejection_reply_text == "谢谢，祝招聘顺利"
+    assert resolved.max_scan_depth == 12
+
+
+def test_resolve_chat_acknowledgment_settings_reads_flat_keys():
+    """Flat aliases keep the setting readable for callers that flatten settings."""
+    with patch.dict("os.environ", {}, clear=True):
+        resolved = resolve_chat_acknowledgment_settings(
+            settings={"chat_rejection_reply_text": "多谢", "chat_max_scan_depth": 7}
+        )
+
+    assert resolved.rejection_reply_text == "多谢"
+    assert resolved.max_scan_depth == 7
+
+
+def test_resolve_chat_acknowledgment_settings_env_overrides_files(monkeypatch):
+    monkeypatch.setenv("CHAT_REJECTION_REPLY_TEXT", "感谢您的回复")
+    monkeypatch.setenv("CHAT_MAX_SCAN_DEPTH", "5")
+
+    resolved = resolve_chat_acknowledgment_settings(
+        settings={"chat": {"rejection_reply_text": "ignored", "max_scan_depth": 99}}
+    )
+
+    assert resolved.rejection_reply_text == "感谢您的回复"
+    assert resolved.max_scan_depth == 5
+
+
+def test_resolve_chat_acknowledgment_settings_ignores_invalid_values():
+    """A corrupt config must degrade to the safe default, never to 0 or a blank reply."""
+    with patch.dict("os.environ", {}, clear=True):
+        resolved = resolve_chat_acknowledgment_settings(
+            settings={"chat": {"rejection_reply_text": "   ", "max_scan_depth": "not-a-number"}}
+        )
+        zero_depth = resolve_chat_acknowledgment_settings(
+            settings={"chat": {"max_scan_depth": 0}}
+        )
+
+    assert resolved.rejection_reply_text == "收到 谢谢"
+    assert resolved.max_scan_depth == 30
+    assert zero_depth.max_scan_depth == 30
+
+
+def test_load_settings_preserves_nested_chat_block(tmp_path: Path):
+    custom_yaml = tmp_path / "settings.local.yaml"
+    custom_yaml.write_text(
+        "chat:\n  rejection_reply_text: '多谢'\n  max_scan_depth: 9\n", encoding="utf-8"
+    )
+
+    with patch.dict("os.environ", {}, clear=True):
+        merged = load_settings(config_path=custom_yaml)
+        resolved = resolve_chat_acknowledgment_settings(config_path=custom_yaml)
+
+    assert merged["chat"]["rejection_reply_text"] == "多谢"
+    assert resolved.rejection_reply_text == "多谢"
+    assert resolved.max_scan_depth == 9
+
+
+def test_settings_example_declares_chat_acknowledgment_defaults():
+    """The shipped template must document the configurable reply text and scan bound."""
+    example = Path("config/settings.example.yaml")
+    assert example.is_file(), "config/settings.example.yaml is missing"
+
+    with patch.dict("os.environ", {}, clear=True):
+        declared = resolve_chat_acknowledgment_settings(
+            settings=load_settings(config_path=example)
+        )
+
+    assert declared.rejection_reply_text == "收到 谢谢"
+    assert declared.max_scan_depth == 30

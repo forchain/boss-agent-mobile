@@ -1027,8 +1027,13 @@ class SavedSearch:
             self.search.enable_search = self.enable_search
         if hasattr(self, "filter") and self.filter is not None:
             self.filter.enable_filter = self.enable_filter
-        # Bidirectional sync between target_action and target_task_type
-        if not self.target_action or self.target_action == "digest_only":
+        # Bidirectional sync between target_action and target_task_type.
+        # CHECK_CHAT (inbox rejection cleanup) is keyword-independent, so it is
+        # resolved first and never falls through to a search target.
+        if self.target_task_type == "CHECK_CHAT" or self.target_action == "check_chat":
+            self.target_task_type = "CHECK_CHAT"
+            self.target_action = "check_chat"
+        elif not self.target_action or self.target_action == "digest_only":
             self.target_action = (
                 "auto_apply" if self.target_task_type == "AUTO_APPLY" else "save_jd"
             )
@@ -1159,7 +1164,10 @@ class SavedSearch:
         target_task_type = data.get("target_task_type", "AUTO_APPLY")
         target_action = data.get("target_action")
         if not target_action:
-            target_action = "auto_apply" if target_task_type == "AUTO_APPLY" else "save_jd"
+            if target_task_type == "CHECK_CHAT":
+                target_action = "check_chat"
+            else:
+                target_action = "auto_apply" if target_task_type == "AUTO_APPLY" else "save_jd"
 
         return cls(
             id=sid,

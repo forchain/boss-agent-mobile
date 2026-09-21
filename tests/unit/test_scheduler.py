@@ -136,3 +136,75 @@ async def test_scheduler_run_once():
     assert len(afternoon_tasks) == 1
     assert afternoon_tasks[0].task_type == TaskType.SCRAPE_JOBS
     assert afternoon_tasks[0].payload["saved_search_id"] == "search_other_3"
+
+
+@pytest.mark.asyncio
+async def test_scheduler_dispatches_check_chat_task_for_inbox_cleanup_strategy():
+    """#208: a CHECK_CHAT SavedSearch dispatches a rejection-acknowledgment task."""
+    from unittest.mock import patch
+
+    from boss_agent.rejection import ChatAcknowledgmentSettings
+
+    broker = InMemoryTaskBroker()
+    await broker.save_saved_search(
+        SavedSearch(
+            id="inbox_cleanup",
+            name="收件箱拒信清扫",
+            cron_expression="0 21 * * *",
+            is_enabled=True,
+            target_task_type="CHECK_CHAT",
+            target_action="check_chat",
+        )
+    )
+
+    scheduler = AutomationScheduler(broker=broker)
+    now = datetime(2026, 9, 7, 21, 0, 0, tzinfo=UTC)
+
+    with patch(
+        "boss_agent.scheduler.resolve_chat_acknowledgment_settings",
+        return_value=ChatAcknowledgmentSettings(
+            rejection_reply_text="谢谢，祝招聘顺利", max_scan_depth=7
+        ),
+    ):
+        tasks = await scheduler.run_once(now=now)
+
+    assert len(tasks) == 1
+    task = tasks[0]
+    assert task.task_type == TaskType.CHECK_CHAT
+    assert task.payload["scheduled"] is True
+    assert task.payload["dry_run"] is False
+    assert task.payload["rejection_reply_text"] == "谢谢，祝招聘顺利"
+    assert task.payload["max_scan_depth"] == 7
+    assert task.payload["saved_search_id"] == "inbox_cleanup"
+
+    # A CHECK_CHAT strategy carries no search keyword or filter payload.
+    assert "keyword" not in task.payload
+    assert "filter" not in task.payload
+
+    # The same-minute guard applies to inbox cleanup too.
+    duplicate = await scheduler.run_once(now=datetime(2026, 9, 7, 21, 0, 30, tzinfo=UTC))
+    assert duplicate == []
+
+
+def test_saved_search_check_chat_target_round_trips():
+    search = SavedSearch(id="inbox_cleanup", target_task_type="CHECK_CHAT")
+
+    assert search.target_task_type == "CHECK_CHAT"
+    assert search.target_action == "check_chat"
+    assert search.to_dict()["target_task_type"] == "CHECK_CHAT"
+    assert search.to_dict()["target_action"] == "check_chat"
+
+    restored = SavedSearch.from_dict("inbox_cleanup", {"target_task_type": "CHECK_CHAT"})
+    assert restored.target_task_type == "CHECK_CHAT"
+    assert restored.target_action == "check_chat"
+
+
+def test_saved_search_search_targets_are_unchanged_by_chat_support():
+    """Adding CHECK_CHAT must not disturb the existing two target derivations."""
+    auto = SavedSearch(id="a", target_task_type="AUTO_APPLY")
+    scrape = SavedSearch(id="s", target_task_type="SCRAPE_JOBS")
+    explicit = SavedSearch(id="e", target_action="save_jd")
+
+    assert (auto.target_action, auto.target_task_type) == ("auto_apply", "AUTO_APPLY")
+    assert (scrape.target_action, scrape.target_task_type) == ("save_jd", "SCRAPE_JOBS")
+    assert (explicit.target_action, explicit.target_task_type) == ("save_jd", "SCRAPE_JOBS")
