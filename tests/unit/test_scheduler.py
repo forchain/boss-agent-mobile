@@ -191,6 +191,7 @@ def test_saved_search_check_chat_target_round_trips():
 
     assert search.target_task_type == "CHECK_CHAT"
     assert search.target_action == "check_chat"
+    assert search.is_chat_cleanup is True
     assert search.to_dict()["target_task_type"] == "CHECK_CHAT"
     assert search.to_dict()["target_action"] == "check_chat"
 
@@ -208,3 +209,6 @@ def test_saved_search_search_targets_are_unchanged_by_chat_support():
     assert (auto.target_action, auto.target_task_type) == ("auto_apply", "AUTO_APPLY")
     assert (scrape.target_action, scrape.target_task_type) == ("save_jd", "SCRAPE_JOBS")
     assert (explicit.target_action, explicit.target_task_type) == ("save_jd", "SCRAPE_JOBS")
+    assert not auto.is_chat_cleanup
+    assert not scrape.is_chat_cleanup
+    assert not explicit.is_chat_cleanup

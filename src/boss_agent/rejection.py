@@ -65,11 +65,18 @@ class ChatAcknowledgmentSettings:
 
         return ChatAcknowledgmentSettings(
             rejection_reply_text=reply_text,
-            max_scan_depth=_positive_int(payload.get("max_scan_depth"), self.max_scan_depth),
+            max_scan_depth=coerce_positive_int(
+                payload.get("max_scan_depth"), self.max_scan_depth
+            ),
         )
 
 
-def _positive_int(value: Any, default: int) -> int:
+def coerce_positive_int(value: Any, default: int) -> int:
+    """Parse `value` as a strictly positive int, falling back to `default`.
+
+    Single clamp shared by the config resolver and the per-task payload overrides,
+    so a corrupt or partial setting can never disable a scan bound.
+    """
     try:
         parsed = int(value)
     except (TypeError, ValueError):

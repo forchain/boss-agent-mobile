@@ -97,11 +97,11 @@ class Harness:
         self.events.append(f"open:{message.message_text}")
         return True
 
-    def mark_disinterest(self, reason: str = DISINTEREST_REASON, timeout_sec: float = 3.0) -> bool:
+    def mark_disinterest(self, timeout_sec: float = 3.0) -> bool:
         if not self.mark_disinterest_ok:
             self.events.append("disinterest:failed")
             return False
-        self.events.append(f"disinterest:{reason}")
+        self.events.append(f"disinterest:{DISINTEREST_REASON}")
         # The platform drops the conversation from the inbox on success.
         for message in self.messages:
             if message.message_text in self.currently_opened:
@@ -367,6 +367,7 @@ async def test_llm_failure_preserves_message_conservatively(broker, context):
 
     assert result.output["preserved"] == 1
     assert result.output["acknowledged"] == 0
+    assert result.output["rejections"] == 0
     assert not [e for e in harness.events if e.startswith(("open:", "send:", "disinterest:"))]
 
 
@@ -404,6 +405,21 @@ async def test_handler_processes_single_item_through_real_inbox_page(broker, con
     assert result.success is True
     assert result.output["acknowledged"] == 1
     chat_double.send_message.assert_called_once_with(DEFAULT_REJECTION_REPLY_TEXT, timeout_sec=5.0)
+
+
+@pytest.mark.asyncio
+async def test_scan_stops_when_the_platform_never_returns_to_the_inbox(broker, context):
+    """Reading cards off an unknown screen could click an unrelated control."""
+    harness = Harness([REJECTION_TEXT, INVITATION_TEXT], return_to_inbox_ok=False)
+    handler = make_handler(classifier=FakeClassifier({REJECTION_TEXT: True}))
+
+    result, task = await _run_async(broker, context, harness, handler)
+
+    assert result.output["stop_reason"] == "lost_inbox"
+    assert result.output["acknowledged"] == 1
+    # The invitation was never reached, because the scan stopped at the lost inbox.
+    assert result.output["preserved"] == 0
+    assert any("终止本次扫描" in log for log in task.logs)
 
 
 def test_handler_declares_check_chat_task_type():

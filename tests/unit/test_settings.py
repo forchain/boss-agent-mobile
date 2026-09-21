@@ -498,17 +498,6 @@ def test_resolve_chat_acknowledgment_settings_reads_nested_chat_block(monkeypatc
     assert resolved.max_scan_depth == 12
 
 
-def test_resolve_chat_acknowledgment_settings_reads_flat_keys():
-    """Flat aliases keep the setting readable for callers that flatten settings."""
-    with patch.dict("os.environ", {}, clear=True):
-        resolved = resolve_chat_acknowledgment_settings(
-            settings={"chat_rejection_reply_text": "多谢", "chat_max_scan_depth": 7}
-        )
-
-    assert resolved.rejection_reply_text == "多谢"
-    assert resolved.max_scan_depth == 7
-
-
 def test_resolve_chat_acknowledgment_settings_env_overrides_files(monkeypatch):
     monkeypatch.setenv("CHAT_REJECTION_REPLY_TEXT", "感谢您的回复")
     monkeypatch.setenv("CHAT_MAX_SCAN_DEPTH", "5")
@@ -549,6 +538,28 @@ def test_load_settings_preserves_nested_chat_block(tmp_path: Path):
     assert merged["chat"]["rejection_reply_text"] == "多谢"
     assert resolved.rejection_reply_text == "多谢"
     assert resolved.max_scan_depth == 9
+
+
+def test_partial_chat_override_keeps_the_sibling_setting(tmp_path: Path):
+    """A hand-edited block with only one key must not drop the other (ADR 0010)."""
+    example = tmp_path / "settings.example.yaml"
+    example.write_text(
+        "chat:\n  rejection_reply_text: '收到 谢谢'\n  max_scan_depth: 30\n", encoding="utf-8"
+    )
+    partial = tmp_path / "settings.local.yaml"
+    partial.write_text("chat:\n  rejection_reply_text: '多谢'\n", encoding="utf-8")
+
+    with (
+        patch.dict("os.environ", {}, clear=True),
+        patch(
+            "boss_agent.settings.DEFAULT_CONFIG_SEARCH_PATHS",
+            [partial, example],
+        ),
+    ):
+        resolved = resolve_chat_acknowledgment_settings()
+
+    assert resolved.rejection_reply_text == "多谢"
+    assert resolved.max_scan_depth == 30
 
 
 def test_settings_example_declares_chat_acknowledgment_defaults():

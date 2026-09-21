@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { resolveTargetAction, type AutomationTask, type SavedSearch, type TaskType, type TargetAction } from '$lib/types';
 	import { listSavedSearches, createAutomationTask, getCandidateProfile } from '$lib/pocketbase';
+	import { DEFAULT_CHAT_ACKNOWLEDGMENT, normalizeChatAcknowledgment } from '$lib/chatAcknowledgment';
 
 	let {
 		isOpen = false,
@@ -30,17 +31,14 @@
 	// New Greeting Inbox rejection cleanup (issue #208). Dry-run defaults ON so a
 	// one-click trigger can never send real messages by accident.
 	let chatDryRun = $state(true);
-	let chatReplyText = $state('收到 谢谢');
-	let chatMaxScanDepth = $state<number>(30);
+	let chat = $state({ ...DEFAULT_CHAT_ACKNOWLEDGMENT });
 
 	async function loadChatAcknowledgmentDefaults() {
 		try {
 			const res = await fetch('/api/settings');
 			if (!res.ok) return;
 			const conf = await res.json();
-			chatReplyText = conf.chat?.rejection_reply_text || '收到 谢谢';
-			const depth = Number(conf.chat?.max_scan_depth);
-			chatMaxScanDepth = depth > 0 ? depth : 30;
+			chat = normalizeChatAcknowledgment(conf.chat);
 		} catch (e) {}
 	}
 
@@ -137,9 +135,8 @@
 		errorMessage = '';
 		try {
 			const task = await createAutomationTask('CHECK_CHAT', {
-				dry_run: chatDryRun,
-				rejection_reply_text: chatReplyText.trim() || '收到 谢谢',
-				max_scan_depth: Number(chatMaxScanDepth) > 0 ? Number(chatMaxScanDepth) : 30
+				...normalizeChatAcknowledgment(chat),
+				dry_run: chatDryRun
 			});
 			onTaskCreated(task);
 			onClose();
@@ -437,8 +434,8 @@
 										id="chat-cleanup-reply-input"
 										type="text"
 										maxlength="200"
-										bind:value={chatReplyText}
-										placeholder="收到 谢谢"
+										bind:value={chat.rejection_reply_text}
+										placeholder={DEFAULT_CHAT_ACKNOWLEDGMENT.rejection_reply_text}
 										class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-cyan-500 text-xs"
 									/>
 								</div>
@@ -451,7 +448,7 @@
 										type="number"
 										min="1"
 										max="500"
-										bind:value={chatMaxScanDepth}
+										bind:value={chat.max_scan_depth}
 										class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-cyan-500 font-mono text-xs"
 									/>
 								</div>

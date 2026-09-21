@@ -9,7 +9,8 @@ are suppressed (Issues #205-#207).
 
 import logging
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from enum import StrEnum
 from typing import Any
 
 from boss_agent.broker.models import AutomationTask, TaskStatus, TaskType
@@ -21,12 +22,6 @@ from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.handlers.base import BaseTaskHandler, HandlerResult
 
 logger = logging.getLogger(__name__)
-
-#: Triage outcome codes, counted per run for structured task telemetry.
-PRESERVED = "preserved"
-ACKNOWLEDGED = "acknowledged"
-DRY_RUN = "dry_run"
-FAILED = "failed"
 
 #: Consecutive scrolls yielding no new inbox content before the traversal gives up.
 MAX_STALLED_SCROLLS = 3
@@ -41,12 +36,25 @@ PREVIEW_CHARS = 40
 PAGE_TIMEOUT_SEC = 5.0
 
 
-@dataclass(frozen=True)
-class TriageOutcome:
+class TriageKind(StrEnum):
     """What the handler did with one inbox message."""
 
-    kind: str
+    PRESERVED = "preserved"
+    ACKNOWLEDGED = "acknowledged"
+    DRY_RUN = "dry_run"
+    FAILED = "failed"
+
+
+@dataclass(frozen=True)
+class TriageOutcome:
+    """Result of triaging one inbox message, for per-run task telemetry."""
+
+    kind: TriageKind
+    is_rejection: bool = False
     navigated: bool = False
+    #: Set when the platform never returned to the inbox; the scan must stop
+    #: rather than read cards off an unknown screen.
+    lost_inbox: bool = False
 
 
 class CheckChatHandler(BaseTaskHandler):
@@ -111,6 +119,7 @@ class CheckChatHandler(BaseTaskHandler):
         await broker.append_log(task.id, "📥 [Inbox] 已进入新招呼收件箱，开始扫描未回复消息")
 
         counters: Counter[str] = Counter()
+        detected_rejections = 0
         visited_keys: set[str] = set()
         scanned = 0
         stalled_scrolls = 0
@@ -149,6 +158,7 @@ class CheckChatHandler(BaseTaskHandler):
 
             stalled_scrolls = 0
             navigated = False
+            lost_inbox = False
             for message in pending:
                 if scanned >= max_scan_depth:
                     break
@@ -164,12 +174,19 @@ class CheckChatHandler(BaseTaskHandler):
                     reply_text=reply_text,
                 )
                 counters[outcome.kind] += 1
+                detected_rejections += int(outcome.is_rejection)
                 if outcome.navigated:
                     # The platform shifted the remaining cards up: abandon this
                     # viewport snapshot and re-read before continuing.
                     navigated = True
+                    lost_inbox = outcome.lost_inbox
                     break
 
+            if lost_inbox:
+                # We are no longer looking at the inbox; reading cards here could
+                # interact with an unrelated screen, so stop instead.
+                stop_reason = "lost_inbox"
+                break
             if scanned >= max_scan_depth:
                 stop_reason = "max_scan_depth"
                 break
@@ -177,11 +194,12 @@ class CheckChatHandler(BaseTaskHandler):
                 continue
             inbox.scroll_inbox()
 
-        rejections = counters[DRY_RUN] + counters[ACKNOWLEDGED] + counters[FAILED]
         summary = (
             f"Finished CHECK_CHAT: scanned {scanned} message(s), "
-            f"{rejections} rejection(s) detected, {counters[ACKNOWLEDGED]} acknowledged, "
-            f"{counters[PRESERVED]} preserved, {counters[FAILED]} failed "
+            f"{detected_rejections} rejection(s) detected, "
+            f"{counters[TriageKind.ACKNOWLEDGED]} acknowledged, "
+            f"{counters[TriageKind.PRESERVED]} preserved, "
+            f"{counters[TriageKind.FAILED]} failed "
             f"(stop_reason={stop_reason}, dry_run={dry_run})"
         )
         await broker.append_log(task.id, summary)
@@ -192,10 +210,10 @@ class CheckChatHandler(BaseTaskHandler):
                 "reply_text": reply_text,
                 "max_scan_depth": max_scan_depth,
                 "scanned": scanned,
-                "rejections": rejections,
-                "acknowledged": counters[ACKNOWLEDGED],
-                "preserved": counters[PRESERVED],
-                "failed": counters[FAILED],
+                "rejections": detected_rejections,
+                "acknowledged": counters[TriageKind.ACKNOWLEDGED],
+                "preserved": counters[TriageKind.PRESERVED],
+                "failed": counters[TriageKind.FAILED],
                 "stop_reason": stop_reason,
                 "visited_keys": sorted(visited_keys),
             },
@@ -223,7 +241,7 @@ class CheckChatHandler(BaseTaskHandler):
                 task.id,
                 f"⏭️ [正常消息] '{sender}': {preview} {note}— 保留，不处理",
             )
-            return TriageOutcome(kind=PRESERVED)
+            return TriageOutcome(kind=TriageKind.PRESERVED)
 
         await broker.append_log(
             task.id,
@@ -237,11 +255,12 @@ class CheckChatHandler(BaseTaskHandler):
                 f"🧪 [DRY-RUN] 拟回复 '{reply_text}' 并将该会话标记为不感兴趣（重复推荐），"
                 "本次演练不执行任何实际操作",
             )
-            return TriageOutcome(kind=DRY_RUN)
+            return TriageOutcome(kind=TriageKind.DRY_RUN, is_rejection=True)
 
-        return await self._acknowledge_rejection(
+        outcome = await self._acknowledge_rejection(
             task, broker, inbox, chat_page, message, sender, reply_text
         )
+        return replace(outcome, is_rejection=True)
 
     async def _acknowledge_rejection(
         self,
@@ -258,14 +277,14 @@ class CheckChatHandler(BaseTaskHandler):
             await broker.append_log(
                 task.id, f"❌ [Chat Open Error] 无法打开与 '{sender}' 的会话，已跳过"
             )
-            return TriageOutcome(kind=FAILED)
+            return TriageOutcome(kind=TriageKind.FAILED)
 
         if not chat_page.send_message(reply_text, timeout_sec=PAGE_TIMEOUT_SEC):
             await broker.append_log(
                 task.id, f"❌ [Send Error] 向 '{sender}' 发送礼貌回复失败，回退到收件箱"
             )
             chat_page.navigate_back(timeout_sec=PAGE_TIMEOUT_SEC)
-            return TriageOutcome(kind=FAILED, navigated=True)
+            return TriageOutcome(kind=TriageKind.FAILED, navigated=True)
 
         await broker.append_log(task.id, f"✅ [Reply Sent] 已向 '{sender}' 发送 '{reply_text}'")
 
@@ -276,7 +295,7 @@ class CheckChatHandler(BaseTaskHandler):
                 "已放弃本次标记并回退到收件箱",
             )
             chat_page.navigate_back(timeout_sec=PAGE_TIMEOUT_SEC)
-            return TriageOutcome(kind=FAILED, navigated=True)
+            return TriageOutcome(kind=TriageKind.FAILED, navigated=True)
 
         await broker.append_log(
             task.id, f"🗑️ [Disinterest] 已将 '{sender}' 标记为不感兴趣（重复推荐）"
@@ -284,10 +303,12 @@ class CheckChatHandler(BaseTaskHandler):
 
         if not inbox.wait_for_inbox_return(timeout_sec=PAGE_TIMEOUT_SEC):
             await broker.append_log(
-                task.id, "⚠️ [Navigation] 标记后未能确认返回收件箱列表，继续扫描"
+                task.id,
+                "⚠️ [Navigation] 标记后未能确认返回收件箱列表；为避免在未知页面上误操作，终止本次扫描",
             )
+            return TriageOutcome(kind=TriageKind.ACKNOWLEDGED, navigated=True, lost_inbox=True)
 
-        return TriageOutcome(kind=ACKNOWLEDGED, navigated=True)
+        return TriageOutcome(kind=TriageKind.ACKNOWLEDGED, navigated=True)
 
 
 def _preview(text: str) -> str:

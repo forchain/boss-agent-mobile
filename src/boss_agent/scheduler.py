@@ -13,6 +13,7 @@ from typing import Any
 
 from boss_agent.broker.models import AutomationTask, TaskType
 from boss_agent.broker.pocketbase_adapter import BaseTaskBroker
+from boss_agent.models import SavedSearch, TargetAction, TargetTaskType
 from boss_agent.settings import resolve_chat_acknowledgment_settings
 
 logger = logging.getLogger("boss_agent.scheduler")
@@ -180,61 +181,8 @@ class AutomationScheduler:
                 except Exception:
                     pass
 
-            # Resolve target task type and action
-            if search.target_task_type == "CHECK_CHAT" or search.target_action == "check_chat":
-                # Inbox rejection cleanup is keyword-independent: it carries the
-                # resolved acknowledgment settings instead of a search strategy.
-                ack_settings = resolve_chat_acknowledgment_settings()
-                task = await self.broker.create_task(
-                    task_type=TaskType.CHECK_CHAT,
-                    payload={
-                        "saved_search_id": search.id,
-                        "search_id": search.id,
-                        "search_name": search.name,
-                        "dry_run": False,
-                        "rejection_reply_text": ack_settings.rejection_reply_text,
-                        "max_scan_depth": ack_settings.max_scan_depth,
-                        "scheduled": True,
-                    },
-                )
-                dispatched_tasks.append(task)
-
-                search.last_run_at = now.isoformat()
-                await self.broker.save_saved_search(search)
-                logger.info(
-                    "Scheduled CHECK_CHAT task %s dispatched for inbox cleanup strategy %s (%s)",
-                    task.id,
-                    search.id,
-                    search.name,
-                )
-                continue
-
-            action = search.target_action or (
-                "auto_apply" if search.target_task_type == "AUTO_APPLY" else "save_jd"
-            )
-            if action not in ("auto_apply", "save_jd"):
-                action = "save_jd"
-            task_type = TaskType.AUTO_APPLY if action == "auto_apply" else TaskType.SCRAPE_JOBS
-
-            search_dict = search.to_dict()
-            payload: dict[str, Any] = {
-                "saved_search_id": search.id,
-                "search_id": search.id,
-                "search_name": search.name,
-                "keyword": search_dict.get("keyword") or "",
-                "enable_search": search.enable_search,
-                "enable_filter": search.enable_filter,
-                "filter": search_dict.get("filter") or {},
-                "target_action": action,
-                "max_jobs": search.max_jobs or 30,
-                "min_score": 70,
-                "preview_only": False,
-                "auto_send": False,
-                "preview_timeout_sec": 3.0,
-                "scheduled": True,
-            }
-            if search_dict.get("screening_policy"):
-                payload["screening_policy"] = search_dict.get("screening_policy")
+            # Resolve what this strategy dispatches
+            task_type, payload = self._build_dispatch(search)
 
             task = await self.broker.create_task(
                 task_type=task_type,
@@ -246,13 +194,64 @@ class AutomationScheduler:
             search.last_run_at = now.isoformat()
             await self.broker.save_saved_search(search)
             logger.info(
-                "Scheduled task %s dispatched for search %s (%s)",
+                "Scheduled %s task %s dispatched for search %s (%s)",
+                task_type.value,
                 task.id,
                 search.id,
                 search.name,
             )
 
         return dispatched_tasks
+
+    def _build_dispatch(self, search: SavedSearch) -> tuple[TaskType, dict[str, Any]]:
+        """Resolve the worker task a strategy dispatches, and its payload.
+
+        Inbox cleanup is keyword-independent: it carries the resolved
+        acknowledgment settings instead of a search strategy.
+        """
+        if search.is_chat_cleanup:
+            ack = resolve_chat_acknowledgment_settings()
+            return TaskType.CHECK_CHAT, {
+                "saved_search_id": search.id,
+                "search_id": search.id,
+                "search_name": search.name,
+                "dry_run": False,
+                "rejection_reply_text": ack.rejection_reply_text,
+                "max_scan_depth": ack.max_scan_depth,
+                "scheduled": True,
+            }
+
+        action = search.target_action or (
+            TargetAction.AUTO_APPLY
+            if search.target_task_type == TargetTaskType.AUTO_APPLY
+            else TargetAction.SAVE_JD
+        )
+        if action not in (TargetAction.AUTO_APPLY, TargetAction.SAVE_JD):
+            action = TargetAction.SAVE_JD
+        task_type = (
+            TaskType.AUTO_APPLY if action == TargetAction.AUTO_APPLY else TaskType.SCRAPE_JOBS
+        )
+
+        search_dict = search.to_dict()
+        payload: dict[str, Any] = {
+            "saved_search_id": search.id,
+            "search_id": search.id,
+            "search_name": search.name,
+            "keyword": search_dict.get("keyword") or "",
+            "enable_search": search.enable_search,
+            "enable_filter": search.enable_filter,
+            "filter": search_dict.get("filter") or {},
+            "target_action": action,
+            "max_jobs": search.max_jobs or 30,
+            "min_score": 70,
+            "preview_only": False,
+            "auto_send": False,
+            "preview_timeout_sec": 3.0,
+            "scheduled": True,
+        }
+        if search_dict.get("screening_policy"):
+            payload["screening_policy"] = search_dict.get("screening_policy")
+        return task_type, payload
 
     async def run_forever(self) -> None:
         """Background continuous scheduler loop."""

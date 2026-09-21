@@ -157,15 +157,20 @@ system_dialog:
     - "//*[@text='SKIP' or @text='Skip' or @text='跳过' or @text='CANCEL' or @text='Cancel' or @text='取消' or @text='稍后']"
 
 chat_inbox:
-  # Bottom navigation "消息" tab that hosts the New Greeting Inbox (新招呼).
+  # NOTE: this whole block is anchored on accessibility TEXT, not on measured
+  # resource-ids, and has not yet been verified against a live device. These are
+  # the first selectors to re-check when running CHECK_CHAT on hardware.
+  # Bottom navigation "消息" tab that leads to the New Greeting Inbox (新招呼).
   entry_tab:
     - "com.hpbr.bosszhipin:id/tv_tab_3"
     - "//*[@resource-id='com.hpbr.bosszhipin:id/tv_tab_3']"
     - "//*[@text='消息']"
   # The 新招呼 sub-tab is both the inbox entry point and its on-screen anchor.
+  # Deliberately not nested under tv_tab_3: that node is the bottom 消息 tab, and
+  # 新招呼 lives on the screen it navigates to, not inside it.
   new_greeting_tab:
-    - "//*[@resource-id='com.hpbr.bosszhipin:id/tv_tab_3']//*[@text='新招呼']"
     - "//*[@text='新招呼']"
+    - "//*[contains(@text, '新招呼')]"
   message_card:
     - "com.hpbr.bosszhipin:id/view_chat_item"
     - "//*[contains(@resource-id, 'chat_item') or contains(@resource-id, 'item_chat') or contains(@resource-id, 'msg_item') or contains(@resource-id, 'message_item')]"

@@ -13,6 +13,7 @@ from .rejection import (
     DEFAULT_MAX_SCAN_DEPTH,
     DEFAULT_REJECTION_REPLY_TEXT,
     ChatAcknowledgmentSettings,
+    coerce_positive_int,
 )
 
 try:
@@ -47,8 +48,7 @@ def resolve_chat_acknowledgment_settings(
     Precedence:
       1. `CHAT_REJECTION_REPLY_TEXT` / `CHAT_MAX_SCAN_DEPTH` environment variables
       2. The nested `chat:` block of the merged settings files
-      3. Flat `chat_rejection_reply_text` / `chat_max_scan_depth` keys
-      4. Built-in defaults ("收到 谢谢", 30)
+      3. Built-in defaults ("收到 谢谢", 30)
 
     Pass `settings` to resolve from an already-loaded mapping (used by callers
     that have one, and by tests that must stay independent of local config).
@@ -57,8 +57,8 @@ def resolve_chat_acknowledgment_settings(
     chat_block = merged.get("chat")
     chat: dict[str, Any] = chat_block if isinstance(chat_block, dict) else {}
 
-    reply_text = chat.get("rejection_reply_text", merged.get("chat_rejection_reply_text"))
-    scan_depth = chat.get("max_scan_depth", merged.get("chat_max_scan_depth"))
+    reply_text = chat.get("rejection_reply_text")
+    scan_depth = chat.get("max_scan_depth")
 
     env_reply = os.getenv("CHAT_REJECTION_REPLY_TEXT")
     if env_reply and env_reply.strip():
@@ -67,20 +67,11 @@ def resolve_chat_acknowledgment_settings(
     if env_depth and env_depth.strip():
         scan_depth = env_depth.strip()
 
+    reply_str = str(reply_text).strip() if reply_text is not None else ""
     return ChatAcknowledgmentSettings(
-        rejection_reply_text=(
-            str(reply_text).strip() if reply_text is not None and str(reply_text).strip() else DEFAULT_REJECTION_REPLY_TEXT
-        ),
-        max_scan_depth=_resolve_scan_depth(scan_depth),
+        rejection_reply_text=reply_str or DEFAULT_REJECTION_REPLY_TEXT,
+        max_scan_depth=coerce_positive_int(scan_depth, DEFAULT_MAX_SCAN_DEPTH),
     )
-
-
-def _resolve_scan_depth(value: Any) -> int:
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        return DEFAULT_MAX_SCAN_DEPTH
-    return parsed if parsed > 0 else DEFAULT_MAX_SCAN_DEPTH
 
 
 def resolve_pocketbase_url(
@@ -294,7 +285,15 @@ def load_settings(config_path: str | Path | None = None) -> dict[str, Any]:
                     loaded = json.loads(content)
                 if isinstance(loaded, dict):
                     for k, v in loaded.items():
-                        if v is not None:
+                        if v is None:
+                            continue
+                        if k == "chat" and isinstance(v, dict):
+                            # Nested block: merge per-key so a partial local override
+                            # (e.g. only rejection_reply_text) does not drop the
+                            # sibling max_scan_depth that the example declared. The
+                            # Web settings writer deep-merges the same way (ADR 0010).
+                            merged["chat"] = {**(merged.get("chat") or {}), **v}
+                        else:
                             merged[k] = v
                     if "pb_url" in loaded and loaded["pb_url"] is not None:
                         merged["pocketbase_url"] = loaded["pb_url"]

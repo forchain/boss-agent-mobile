@@ -108,6 +108,23 @@ describe('Chat acknowledgment settings (issue #208)', () => {
 		expect(reloaded.chat?.max_scan_depth).toBe(30);
 	});
 
+	it('still coerces quoted scalars and flat lists (pre-existing parser contract)', async () => {
+		const { parseSimpleYaml } = await import('../lib/server/settings');
+
+		const scalars = parseSimpleYaml('max_tokens: "262144"\ntemperature: "0.2"\nflag: "true"\nempty: ""\n');
+		expect(scalars.max_tokens).toBe(262144);
+		expect(scalars.temperature).toBeCloseTo(0.2);
+		expect(scalars.flag).toBe(true);
+		expect(scalars.empty).toBe('');
+
+		const list = parseSimpleYaml('title_blacklist:\n  - "销售"\n  - 电销\n');
+		expect(list.title_blacklist).toEqual(['销售', '电销']);
+
+		// A bare key followed by indented `k: v` is a map, not an empty list.
+		const nested = parseSimpleYaml('chat:\n  max_scan_depth: 9\n');
+		expect(nested.chat).toEqual({ max_scan_depth: 9 });
+	});
+
 	it('left the real settings file untouched', () => {
 		sandbox.assertRealConfigUntouched();
 	});

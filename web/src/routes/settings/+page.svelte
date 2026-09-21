@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import type { SystemSettings, ScreeningPolicy, ChatAcknowledgmentConfig } from '$lib/types';
 	import { validateCanBlacklistCompany } from '$lib/screening';
+	import { DEFAULT_CHAT_ACKNOWLEDGMENT, normalizeChatAcknowledgment } from '$lib/chatAcknowledgment';
 
 	let settings = $state<SystemSettings>({
 		device: 'emulator-5554',
@@ -21,10 +22,7 @@
 		daily_greeting_limit: 20,
 		preview_timeout_sec: 3.0,
 		enable_greeting: true,
-		chat: {
-			rejection_reply_text: '收到 谢谢',
-			max_scan_depth: 30
-		}
+		chat: { ...DEFAULT_CHAT_ACKNOWLEDGMENT }
 	});
 
 	let isEditingApiKey = $state(false);
@@ -74,10 +72,7 @@
 
 	// New Greeting Inbox rejection auto-acknowledgment (issue #208). Mirrors the
 	// nested `chat:` block; synced into `settings.chat` on save.
-	let chatAck = $state<ChatAcknowledgmentConfig>({
-		rejection_reply_text: '收到 谢谢',
-		max_scan_depth: 30
-	});
+	let chatAck = $state<ChatAcknowledgmentConfig>({ ...DEFAULT_CHAT_ACKNOWLEDGMENT });
 
 	let newTitleWhitelist = $state('');
 	let newTitleBlacklist = $state('');
@@ -113,6 +108,7 @@
 			const res = await fetch('/api/settings');
 			if (res.ok) {
 				const conf = await res.json();
+				const resolvedChat = normalizeChatAcknowledgment(conf.chat);
 				settings = {
 					device: conf.device || 'emulator-5554',
 					avd_name: conf.avd_name || 'boss_avd_arm64',
@@ -131,17 +127,9 @@
 					daily_greeting_limit: conf.daily_greeting_limit ?? 20,
 					preview_timeout_sec: conf.preview_timeout_sec ?? 3.0,
 					enable_greeting: conf.enable_greeting !== false,
-					chat: {
-						rejection_reply_text: conf.chat?.rejection_reply_text || '收到 谢谢',
-						max_scan_depth:
-							Number(conf.chat?.max_scan_depth) > 0 ? Number(conf.chat.max_scan_depth) : 30
-					}
+					chat: resolvedChat
 				};
-				chatAck = {
-					rejection_reply_text: conf.chat?.rejection_reply_text || '收到 谢谢',
-					max_scan_depth:
-						Number(conf.chat?.max_scan_depth) > 0 ? Number(conf.chat.max_scan_depth) : 30
-				};
+				chatAck = { ...resolvedChat };
 				isEditingApiKey = !conf.api_key;
 				isEditingLangsmithKey = !conf.langsmith_api_key;
 
@@ -303,10 +291,7 @@
 		settings.jd_blacklist = screeningPolicy.jd_blacklist;
 
 		// Sync the rejection acknowledgment block (nested `chat:` config)
-		settings.chat = {
-			rejection_reply_text: chatAck.rejection_reply_text || '收到 谢谢',
-			max_scan_depth: Number(chatAck.max_scan_depth) > 0 ? Number(chatAck.max_scan_depth) : 30
-		};
+		settings.chat = normalizeChatAcknowledgment(chatAck);
 
 		isSaving = true;
 		saveSuccessMessage = '';

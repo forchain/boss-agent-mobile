@@ -53,6 +53,27 @@ def test_inbox_message_key_is_stable_and_sender_scoped():
     assert first.key != other_text.key
 
 
+def test_inbox_message_key_disambiguates_rows_without_a_sender_node():
+    """Two recruiters sending identical rejection text must not share one key.
+
+    Sender extraction is a locator lookup that can miss; falling back to a constant
+    would collapse every such row onto a single key and silently skip the rest.
+    """
+    first = ChatInboxMessage(
+        sender_name="", message_text="抱歉，暂不匹配", row_text="李女士\n抱歉，暂不匹配"
+    )
+    second = ChatInboxMessage(
+        sender_name="", message_text="抱歉，暂不匹配", row_text="王先生\n抱歉，暂不匹配"
+    )
+
+    assert first.key != second.key
+
+
+def test_inbox_message_key_is_stable_without_a_sender_node():
+    kwargs = {"sender_name": "", "message_text": "抱歉，暂不匹配", "row_text": "李女士\n抱歉"}
+    assert ChatInboxMessage(**kwargs).key == ChatInboxMessage(**kwargs).key
+
+
 def test_is_on_inbox_detects_new_greeting_marker():
     driver = MagicMock()
     page = ChatInboxPage(driver)

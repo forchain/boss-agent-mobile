@@ -399,6 +399,20 @@ class TargetAction(StrEnum):
     AUTO_APPLY = "auto_apply"
 
 
+#: SavedSearch target_action value for inbox cleanup strategies.
+CHECK_CHAT_ACTION: str = "check_chat"
+
+
+class TargetTaskType(StrEnum):
+    """Worker task a strategy dispatches. `CHECK_CHAT` is deliberately outside
+    :class:`TargetAction`: it is keyword-independent inbox cleanup, not a search
+    depth, so it never takes part in the target-action rank ladder."""
+
+    SCRAPE_JOBS = "SCRAPE_JOBS"
+    AUTO_APPLY = "AUTO_APPLY"
+    CHECK_CHAT = "CHECK_CHAT"
+
+
 class ChannelPreference(StrEnum):
     """Recruitment channel target for App-Enforced Filters (Boss offers no native filter)."""
 
@@ -1030,17 +1044,27 @@ class SavedSearch:
         # Bidirectional sync between target_action and target_task_type.
         # CHECK_CHAT (inbox rejection cleanup) is keyword-independent, so it is
         # resolved first and never falls through to a search target.
-        if self.target_task_type == "CHECK_CHAT" or self.target_action == "check_chat":
-            self.target_task_type = "CHECK_CHAT"
-            self.target_action = "check_chat"
+        if self.is_chat_cleanup:
+            self.target_task_type = TargetTaskType.CHECK_CHAT
+            self.target_action = CHECK_CHAT_ACTION
         elif not self.target_action or self.target_action == "digest_only":
             self.target_action = (
-                "auto_apply" if self.target_task_type == "AUTO_APPLY" else "save_jd"
+                TargetAction.AUTO_APPLY
+                if self.target_task_type == TargetTaskType.AUTO_APPLY
+                else TargetAction.SAVE_JD
             )
-        elif self.target_action == "auto_apply":
-            self.target_task_type = "AUTO_APPLY"
+        elif self.target_action == TargetAction.AUTO_APPLY:
+            self.target_task_type = TargetTaskType.AUTO_APPLY
         else:
-            self.target_task_type = "SCRAPE_JOBS"
+            self.target_task_type = TargetTaskType.SCRAPE_JOBS
+
+    @property
+    def is_chat_cleanup(self) -> bool:
+        """True when this strategy runs New Greeting Inbox cleanup, not a search."""
+        return (
+            self.target_task_type == TargetTaskType.CHECK_CHAT
+            or self.target_action == CHECK_CHAT_ACTION
+        )
 
     @property
     def keyword(self) -> str:
@@ -1161,13 +1185,17 @@ class SavedSearch:
 
         screening_policy = ScreeningPolicy.from_dict(policy_data)
 
-        target_task_type = data.get("target_task_type", "AUTO_APPLY")
+        target_task_type = data.get("target_task_type", TargetTaskType.AUTO_APPLY)
         target_action = data.get("target_action")
         if not target_action:
-            if target_task_type == "CHECK_CHAT":
-                target_action = "check_chat"
+            if target_task_type == TargetTaskType.CHECK_CHAT:
+                target_action = CHECK_CHAT_ACTION
             else:
-                target_action = "auto_apply" if target_task_type == "AUTO_APPLY" else "save_jd"
+                target_action = (
+                    TargetAction.AUTO_APPLY
+                    if target_task_type == TargetTaskType.AUTO_APPLY
+                    else TargetAction.SAVE_JD
+                )
 
         return cls(
             id=sid,

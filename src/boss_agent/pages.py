@@ -127,16 +127,26 @@ class JobCardBrief:
             )
 
 
-def compute_inbox_message_key(sender_name: str, message_text: str) -> str:
+def _whitespace_digest(text: str) -> str:
+    normalized = re.sub(r"\s+", "", text or "")
+    return hashlib.sha1(normalized.encode("utf-8")).hexdigest()[:12]
+
+
+def compute_inbox_message_key(sender_name: str, message_text: str, row_text: str = "") -> str:
     """Signature identifying one inbox message for in-memory visited-set deduplication.
 
     Sender plus a whitespace-insensitive hash of the message text: stable across
     re-reads of the same card, and distinct for two recruiters sending identical text.
+
+    When the sender node cannot be read, the row's own rendered text stands in for
+    it. Falling back to a constant would collapse identical rejection templates
+    from different recruiters onto one key, silently skipping the later ones.
     """
-    sender = re.sub(r"\s+", "", sender_name or "").strip() or "未知招聘者"
-    normalized = re.sub(r"\s+", "", message_text or "")
-    digest = hashlib.sha1(normalized.encode("utf-8")).hexdigest()[:12]
-    return f"{sender}:{digest}"
+    sender = re.sub(r"\s+", "", sender_name or "").strip()
+    if not sender:
+        source = re.sub(r"\s+", "", row_text or "") or re.sub(r"\s+", "", message_text or "")
+        sender = f"row-{hashlib.sha1(source.encode('utf-8')).hexdigest()[:8]}"
+    return f"{sender}:{_whitespace_digest(message_text)}"
 
 
 @dataclass
@@ -146,12 +156,14 @@ class ChatInboxMessage:
     sender_name: str
     message_text: str
     element: Any = None
-    index: int = 0
+    row_text: str = ""
     key: str = ""
 
     def __post_init__(self) -> None:
         if not self.key:
-            self.key = compute_inbox_message_key(self.sender_name, self.message_text)
+            self.key = compute_inbox_message_key(
+                self.sender_name, self.message_text, self.row_text
+            )
 
 
 def parse_recruiter_info(raw_text: str) -> tuple[str, str, bool]:
@@ -1642,12 +1654,13 @@ class ChatInboxPage(BaseBossPage):
             return []
 
         messages: list[ChatInboxMessage] = []
-        for idx, card in enumerate(self._find_message_cards()[:max_items]):
+        for card in self._find_message_cards()[:max_items]:
+            row_text = (getattr(card, "text", "") or "").strip()
             sender = self._extract_card_field_text(card, "chat_inbox.sender_name")
             text = self._extract_card_field_text(card, "chat_inbox.message_text")
             if not text:
                 # A card may itself be the message node (fallback locator path).
-                text = (getattr(card, "text", "") or "").strip()
+                text = row_text
             if not text:
                 continue
             messages.append(
@@ -1655,7 +1668,7 @@ class ChatInboxPage(BaseBossPage):
                     sender_name=sender,
                     message_text=text,
                     element=card,
-                    index=idx,
+                    row_text=row_text,
                 )
             )
         return messages
@@ -1679,16 +1692,14 @@ class ChatInboxPage(BaseBossPage):
         self.gestures.human_click(message.element)
         return True
 
-    def mark_disinterest(
-        self,
-        reason: str = DISINTEREST_REASON,
-        timeout_sec: float = 3.0,
-    ) -> bool:
-        """Submit disinterest feedback with the standardized reason.
+    def mark_disinterest(self, timeout_sec: float = 3.0) -> bool:
+        """Submit disinterest feedback with the standardized 重复推荐 reason.
 
         Fails fast rather than guessing: if either the 不感兴趣 button or the
-        configured reason option does not appear, the sequence aborts without a
-        second click so the caller can report the unexpected UI.
+        reason option does not appear, the sequence aborts without a second click
+        so the caller can report the unexpected UI. The reason is deliberately not
+        a parameter: the platform feedback category is standardized and never
+        branched on.
         """
         button = self.find_by_key("chat.disinterest_btn", timeout_sec=timeout_sec)
         if not button:
@@ -1698,7 +1709,7 @@ class ChatInboxPage(BaseBossPage):
         option = self.find_by_key(
             "chat.disinterest_reason_option",
             timeout_sec=timeout_sec,
-            format_args={"reason": reason},
+            format_args={"reason": DISINTEREST_REASON},
         )
         if not option:
             return False

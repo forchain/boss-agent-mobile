@@ -1,10 +1,17 @@
 import { getProjectRoot } from '$lib/server/pythonRunner';
 import path from 'path';
 import fs from 'fs';
+import { DEFAULT_CHAT_ACKNOWLEDGMENT, normalizeChatAcknowledgment } from '$lib/chatAcknowledgment';
 import type { SystemSettings } from '$lib/types';
 
-function coerceScalar(val: string, wasQuoted: boolean): any {
-	if (wasQuoted) return val;
+export { DEFAULT_CHAT_ACKNOWLEDGMENT, normalizeChatAcknowledgment };
+
+/**
+ * Interpret a YAML scalar. Callers pass the value with surrounding quotes
+ * already stripped, so a quoted `"30"` still coerces to a number exactly as it
+ * did before the nested-block support was added.
+ */
+function coerceScalar(val: string): any {
 	if (val.toLowerCase() === 'true') return true;
 	if (val.toLowerCase() === 'false') return false;
 	if (/^-?\d+$/.test(val)) return parseInt(val, 10);
@@ -95,7 +102,7 @@ export function parseSimpleYaml(content: string): Record<string, any> {
 				block[key] = kind === 'map' ? {} : [];
 				if (kind === 'list') targetPath = [...targetPath, key];
 			} else {
-				block[key] = coerceScalar(val.replace(/^["']|["']$/g, ''), wasQuoted);
+				block[key] = coerceScalar(val.replace(/^["']|["']$/g, ''));
 			}
 			continue;
 		}
@@ -134,7 +141,7 @@ export function parseSimpleYaml(content: string): Record<string, any> {
 		}
 
 		targetPath = null;
-		result[key] = coerceScalar(val.replace(/^["']|["']$/g, ''), wasQuoted);
+		result[key] = coerceScalar(val.replace(/^["']|["']$/g, ''));
 	}
 	return result;
 }
@@ -195,32 +202,6 @@ export function sanitizeLlmSettingsForRunner(settings: any): any {
 		}
 	}
 	return cleaned;
-}
-
-export const DEFAULT_CHAT_ACKNOWLEDGMENT = {
-	rejection_reply_text: '收到 谢谢',
-	max_scan_depth: 30
-} as const;
-
-/**
- * Clamp the chat acknowledgment block. A blank reply text or a non-positive scan
- * bound degrades to the documented default rather than disabling the workflow or
- * letting the worker scan unbounded.
- */
-export function normalizeChatAcknowledgment(raw: any): {
-	rejection_reply_text: string;
-	max_scan_depth: number;
-} {
-	const candidate = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
-	const reply = typeof candidate.rejection_reply_text === 'string' ? candidate.rejection_reply_text.trim() : '';
-	const depth = Number(candidate.max_scan_depth);
-	return {
-		rejection_reply_text: reply || DEFAULT_CHAT_ACKNOWLEDGMENT.rejection_reply_text,
-		max_scan_depth:
-			Number.isFinite(depth) && depth > 0
-				? Math.floor(depth)
-				: DEFAULT_CHAT_ACKNOWLEDGMENT.max_scan_depth
-	};
 }
 
 /** Merge a parsed settings file, deep-merging the nested `chat:` block. */
