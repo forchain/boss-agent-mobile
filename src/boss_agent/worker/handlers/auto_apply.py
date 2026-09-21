@@ -1,10 +1,20 @@
+from datetime import UTC, datetime
 from typing import Any
 
 from boss_agent.broker.models import AutomationTask, TaskStatus, TaskType
 from boss_agent.broker.pocketbase_adapter import BaseTaskBroker
 from boss_agent.graph import run_job_application_graph
 from boss_agent.memory import StructuredCandidateProfile
-from boss_agent.models import FilterConfig, JobRecordStatus, ScreeningPolicy
+from boss_agent.models import (
+    APPLIED_SOURCE_AGENT,
+    APPLIED_SOURCE_PLATFORM_HISTORICAL,
+    EXPIRED_POSTING_REASON,
+    ChatButtonState,
+    FilterConfig,
+    JobRecordStatus,
+    ScreeningPolicy,
+    is_masked_company_name,
+)
 from boss_agent.pages import (
     ChatPage,
     FilterDialogPage,
@@ -15,6 +25,7 @@ from boss_agent.pages import (
     SearchPage,
     StartupDialogPage,
 )
+from boss_agent.settings import resolve_communication_cooldown_days
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.handlers.base import BaseTaskHandler, HandlerResult
 from boss_agent.worker.handlers.search_entry import run_search_entry
@@ -126,6 +137,35 @@ class AutoApplyHandler(BaseTaskHandler):
                     },
                 )
 
+        # 1.7. Enterprise-level direct-hire exclusion (直招同企避嫌): a shared in-house HR candidate
+        # pool means a second contact under the same employer is redundant. Fail open when the
+        # recruitment channel is unknown, and let the cool-down window release stale contacts.
+        target_is_headhunter = payload.get("is_headhunter")
+        if target_is_headhunter is None and existing_rec:
+            target_is_headhunter = existing_rec.get("is_headhunter")
+        if (
+            target_company
+            and target_is_headhunter is False
+            and not is_masked_company_name(target_company.strip())
+        ):
+            excluded_companies = await broker.get_applied_direct_companies(
+                cooldown_days=resolve_communication_cooldown_days(payload)
+            )
+            if target_company.strip() in excluded_companies:
+                await broker.append_log(
+                    task.id,
+                    f"⏭️ [同企已沟通避嫌] '{target_title}' @ '{target_company}' 所属直招企业已有沟通记录，"
+                    f"已自动取消本次投递以保护每日沟通额度。如需复投，请在 Web 面板清除该企业沟通状态。",
+                )
+                return HandlerResult(
+                    success=True,
+                    output={
+                        "applied": False,
+                        "status": "skipped_enterprise_exclusion",
+                        "reason": f"直招企业 '{target_company}' 已有沟通记录，处于避嫌冷却期内",
+                    },
+                )
+
         # 2. Reset / Dismiss Startup Dialogs
         startup_page = StartupDialogPage(driver)
         if startup_page.is_dialog_present():
@@ -189,6 +229,37 @@ class AutoApplyHandler(BaseTaskHandler):
 
         detail_page = JobDetailPage(driver)
         chat_page = ChatPage(driver)
+
+        # 4.5. Zero-cost backout: consult the call-to-action button before drafting or sending
+        chat_state = detail_page.get_chat_button_state()
+        if chat_state in (ChatButtonState.COMMUNICATED, ChatButtonState.CLOSED):
+            if direct_job_id and existing_rec:
+                updated_data = dict(existing_rec)
+                if chat_state == ChatButtonState.COMMUNICATED:
+                    updated_data["status"] = JobRecordStatus.APPLIED.value
+                    updated_data["applied_source"] = APPLIED_SOURCE_PLATFORM_HISTORICAL
+                    await broker.append_log(
+                        task.id,
+                        f"⏭️ [既有沟通] '{existing_rec.get('title')}' @ '{existing_rec.get('company_name')}' 平台已沟通，终止招呼语生成与发送",
+                    )
+                else:
+                    updated_data["status"] = JobRecordStatus.IGNORED.value
+                    updated_data["screened_reason"] = EXPIRED_POSTING_REASON
+                    await broker.append_log(
+                        task.id,
+                        f"🛑 [岗位失效] '{existing_rec.get('title')}' @ '{existing_rec.get('company_name')}' 已停止招聘/下线，终止投递",
+                    )
+                await broker.upsert_job_record(updated_data)
+            else:
+                await broker.append_log(
+                    task.id,
+                    f"⏭️ [既有沟通] 当前屏幕岗位平台已沟通/已失效（{chat_state.value}），终止投递",
+                )
+            detail_page.navigate_back()
+            return HandlerResult(
+                success=True,
+                output={"applied": False, "status": chat_state.value},
+            )
 
         try:
             job_posting = detail_page.extract_job_posting(timeout_sec=5.0)
@@ -412,7 +483,7 @@ class AutoApplyHandler(BaseTaskHandler):
 
                     if detail_page.open_chat(timeout_sec=5.0):
                         chat_page.type_greeting_message(greeting_message, timeout_sec=5.0)
-                        chat_page.click_send(timeout_sec=3.0)
+                        dispatched = chat_page.click_send(timeout_sec=3.0)
                         applied = True
                         await broker.append_log(
                             task.id,
@@ -428,6 +499,10 @@ class AutoApplyHandler(BaseTaskHandler):
                                 "location": job_posting.location or "",
                                 "job_description": job_posting.job_description,
                                 "status": JobRecordStatus.APPLIED,
+                                "applied_at": datetime.now(UTC).isoformat()
+                                if dispatched
+                                else None,
+                                "applied_source": APPLIED_SOURCE_AGENT,
                                 "match_score": match_score,
                                 "greeting_message": greeting_message,
                                 "jd_key_requirements": match_reasons,

@@ -59,6 +59,10 @@ daily_greeting_limit: 20
 # Duration (seconds) to pause and preview greeting message in chat box before navigating back
 preview_timeout_sec: 3.0
 
+# 复投冷却时效（天）：已沟通岗位/直招企业避嫌在超过该天数后自动放宽，允许重新评估与投递。
+# 0 表示永久避嫌，直到在 Web 界面手动解除。
+communication_cooldown_days: 30
+
 # Set to false to disable LLM match scoring and greeting drafting
 enable_greeting: true
 

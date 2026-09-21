@@ -5,6 +5,7 @@ Centralized configuration loading and PocketBase URL/database path resolution.
 """
 
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,8 @@ try:
     import yaml
 except ImportError:
     yaml = None  # type: ignore[assignment]
+
+logger = logging.getLogger("boss_agent.settings")
 
 DEFAULT_CONFIG_SEARCH_PATHS: list[Path] = [
     Path("config/settings.local.yaml"),
@@ -189,6 +192,30 @@ def resolve_pocketbase_data_dir(
     return fallback
 
 
+def resolve_communication_cooldown_days(overrides: dict[str, Any] | None = None) -> int:
+    """Resolve the re-application cool-down window in days.
+
+    Task payload overrides win over system settings; 0 explicitly means permanent suppression
+    and must never be confused with "unset".
+    """
+    from boss_agent.models import DEFAULT_COMMUNICATION_COOLDOWN_DAYS
+
+    raw = (overrides or {}).get("communication_cooldown_days")
+    if raw is None:
+        raw = load_settings().get("communication_cooldown_days")
+    if raw is None:
+        return DEFAULT_COMMUNICATION_COOLDOWN_DAYS
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "Invalid communication_cooldown_days value %r; falling back to default %d",
+            raw,
+            DEFAULT_COMMUNICATION_COOLDOWN_DAYS,
+        )
+        return DEFAULT_COMMUNICATION_COOLDOWN_DAYS
+
+
 def load_settings(config_path: str | Path | None = None) -> dict[str, Any]:
     """Load merged settings from configuration files with lowest to highest priority."""
     search_paths: list[Path] = []
@@ -217,6 +244,7 @@ def load_settings(config_path: str | Path | None = None) -> dict[str, Any]:
         "daily_greeting_limit": 20,
         "preview_timeout_sec": 3.0,
         "enable_greeting": True,
+        "communication_cooldown_days": 30,
     }
 
     # Load from lowest to highest priority so higher priority files overwrite

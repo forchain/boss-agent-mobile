@@ -108,6 +108,7 @@ export interface SystemSettings {
 	daily_greeting_limit: number;
 	preview_timeout_sec: number;
 	enable_greeting: boolean;
+	communication_cooldown_days: number;
 
 	// Preliminary Screening Policy & Blacklists
 	enable_screening?: boolean;
@@ -182,11 +183,31 @@ export interface JobRecord {
 	screened_reason?: string;
 	relaxed_by_whitelist?: boolean;
 	screening_audit?: string;
+	applied_at?: string | null;
+	applied_source?: 'agent_auto_send' | 'platform_historical' | '' | null;
 	source_task_id?: string;
 	first_seen_at?: string;
 	last_seen_at?: string;
 	created?: string;
 	updated?: string;
+}
+
+/** Per-employer view of the direct-hire communication exclusion pool (Issue #203). */
+export interface AppliedCompanySummary {
+	name: string;
+	applied_count: number;
+	last_applied_at: string | null;
+	expired: boolean;
+}
+
+export interface CommunicationSummary {
+	success?: boolean;
+	cooldown_days?: number;
+	total_applied: number;
+	excluded_count: number;
+	expired_count: number;
+	companies: AppliedCompanySummary[];
+	error?: string;
 }
 
 export interface SavedSearchFilter {
