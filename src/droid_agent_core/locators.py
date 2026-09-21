@@ -226,13 +226,19 @@ def wait_until(
     poll_interval: float = 0.4,
     error_message: str = "Timed out waiting for condition",
 ) -> T:
-    """Poll a callable condition until it returns a truthy value or timeout expires."""
+    """Poll a callable condition until it returns a truthy value or timeout expires.
+
+    A blocking condition call cannot be preempted (one Appium query can cost
+    seconds), so the budget is checked *between* calls: once it is spent the loop
+    exits without adding a trailing poll sleep, which would otherwise make a
+    short timeout overshoot by a fixed amount.
+    """
     start_time = time.time()
     last_exception: Exception | None = None
     max_retries = max(int(timeout_sec / max(poll_interval, 0.001)), 1)
     retries = 0
 
-    while (time.time() - start_time < timeout_sec) and (retries < max_retries):
+    while retries < max_retries:
         retries += 1
         try:
             res = condition()
@@ -240,7 +246,11 @@ def wait_until(
                 return res
         except Exception as e:
             last_exception = e
-        time.sleep(poll_interval)
+
+        remaining = timeout_sec - (time.time() - start_time)
+        if remaining <= 0:
+            break
+        time.sleep(min(poll_interval, remaining))
 
     msg = f"{error_message} after {timeout_sec:.1f}s"
     if last_exception:

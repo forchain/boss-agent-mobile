@@ -31,6 +31,12 @@ class JobApplicationState(TypedDict, total=False):
     keyword_pass: bool
     keyword_reason: str
 
+    # Intermediate / Output: App-Enforced Filter & Whitelist Relaxation (added in Ticket #189)
+    app_rule_pass: bool
+    app_rule_violation: str
+    relaxed_by_whitelist: bool
+    relaxation_reason: str
+
     # Intermediate / Output: JD Semantic Screener (added in Ticket 2)
     deep_screen_pass: bool
     deep_screen_reason: str
@@ -41,12 +47,16 @@ class JobApplicationState(TypedDict, total=False):
     match_reasons: list[str]
 
     # Global status & execution audit
-    status: str  # "pending", "filtered_by_keyword", "keyword_passed", "filtered_by_deep_screen", "greeting_drafted", "applied", "error"
+    status: str  # "pending", "filtered_by_keyword", "keyword_passed", "filtered_by_app_rule", "relaxed_by_whitelist", "filtered_by_deep_screen", "greeting_drafted", "applied", "error"
     error_message: str
 
 
 class JDSemanticScreenerAgent:
-    """Token-optimized LLM agent evaluating JD against blacklist/whitelist constraints without resume."""
+    """Token-optimized LLM agent evaluating JD against blacklist constraints without resume.
+
+    The whitelist has zero veto power at the JD stage: it exists only as App-Enforced
+    Filter relaxation tokens and never appears in the screening prompt.
+    """
 
     def __init__(self, llm_client: Any | None = None) -> None:
         self.llm_client = llm_client
@@ -69,25 +79,22 @@ class JDSemanticScreenerAgent:
         if not jd_text or not jd_text.strip():
             return True, "无详细JD文本，跳过语义精筛"
 
-        blacklist = list(set(policy.jd_blacklist + policy.title_blacklist))
-        whitelist = list(set(policy.title_whitelist))
+        blacklist = sorted(set(b.strip() for b in policy.jd_blacklist + policy.title_blacklist if b and b.strip()))
 
-        if not blacklist and not whitelist:
-            return True, "未配置黑白名单，默认精筛通过"
+        if not blacklist:
+            return True, "未配置黑名单，JD语义精筛默认放行（白名单对JD正文零否决权）"
 
         system_prompt = (
-            "你是一名严谨的岗位精筛助手。你的唯一任务是依据【筛选准则】，深度阅读招聘岗位详情(JD)，"
+            "你是一名严谨的岗位精筛助手。你的唯一任务是依据【黑名单筛选准则】，深度阅读招聘岗位详情(JD)，"
             "判断该岗位是否应当被淘汰。\n"
             "【筛选准则】：\n"
-            f"- 黑名单关键词(一票否决): {blacklist if blacklist else '无'}\n"
-            f"- 白名单目标关键词: {whitelist if whitelist else '无'}\n\n"
+            f"- 黑名单关键词(语义一票否决): {blacklist}\n\n"
             "【判决规则】：\n"
             "1. 黑名单关键词主要用于过滤岗位核心性质与主技术栈（如岗位本质是纯Java开发、微服务业务架构、销售外包或人力驻场等）。"
             "若黑名单关键词仅在长篇JD中作为协作方、技术背景提及、次要了解项或否定句出现（如“配合Java团队”、“了解微服务者优先”但主体是Agent/Python岗位），"
-            "严禁误伤，应判决 pass: true；只有当黑名单关键词构成了该岗位的核心职责或主要属性时，才判决 pass: false。\n"
-            "2. 若配置了白名单且JD正文与目标方向完全无关(挂羊头卖狗肉)，判决 pass: false。\n"
-            "3. 岗位未触犯黑名单且核心工作内容符合方向时，判决 pass: true。\n"
-            "4. 严格输出标准 JSON 格式：{\"pass\": true或false, \"reason\": \"50字以内的判定简述\"}。"
+            "严禁误伤，应判决 pass: true；只有当黑名单主题构成了该岗位的核心职责或主要技术栈时，才判决 pass: false。\n"
+            "2. 判决仅依据上述黑名单语义评估：JD未触犯黑名单即判决 pass: true，无需JD与任何白名单或兴趣方向词相关联。\n"
+            "3. 严格输出标准 JSON 格式：{\"pass\": true或false, \"reason\": \"50字以内的判定简述\"}。"
         )
 
         user_prompt = (
@@ -139,6 +146,93 @@ def keyword_screener_node(state: JobApplicationState) -> dict[str, Any]:
         "keyword_pass": passed,
         "keyword_reason": reason,
         "status": "keyword_passed" if passed else "filtered_by_keyword",
+    }
+
+
+def _card_facets(state: JobApplicationState) -> dict[str, Any]:
+    """Extract compact card facets (title, company, tags, digest) from graph state."""
+    card_dict = state.get("card") or {}
+    return {
+        "title": card_dict.get("title", ""),
+        "company_name": card_dict.get("company_name", ""),
+        "tags": card_dict.get("tags") or [],
+        "digest": card_dict.get("digest") or card_dict.get("snippet", ""),
+    }
+
+
+@traceable(name="app_enforced_filter_node", run_type="tool")
+def app_enforced_filter_node(state: JobApplicationState) -> dict[str, Any]:
+    """Deterministic node evaluating App-Enforced Filters (e.g. recruitment channel).
+
+    These are constraints the Boss platform cannot express in its native search UI
+    and must be judged app-side after card retrieval. Violations are not final:
+    the downstream whitelist_relaxer router may still grant an exemption.
+    """
+    card_dict = state.get("card") or {}
+    policy_dict = state.get("screening_policy") or {}
+    policy = ScreeningPolicy.from_dict(policy_dict)
+
+    passed, violation = policy.evaluate_app_enforced_filters(
+        is_headhunter=bool(card_dict.get("is_headhunter", False))
+    )
+
+    return {
+        "app_rule_pass": passed,
+        "app_rule_violation": violation,
+    }
+
+
+@traceable(name="whitelist_relaxer", run_type="tool")
+def whitelist_relaxer(state: JobApplicationState) -> str:
+    """Conditional edge router applying Whitelist Relaxation after the App-Enforced Filter.
+
+    - Satisfied jobs bypass relaxation and proceed directly to JD evaluation.
+    - Violated jobs whose card facets hit a whitelist token (candidate core passion or
+      deep competence) are rescued via the relaxation branch.
+    - Violated jobs without a whitelist hit are cleanly rejected.
+    """
+    if state.get("app_rule_pass", True):
+        return "proceed"
+
+    policy_dict = state.get("screening_policy") or {}
+    policy = ScreeningPolicy.from_dict(policy_dict)
+
+    is_relaxed, _matched_token = policy.evaluate_whitelist_relaxation(
+        **_card_facets(state),
+    )
+    if is_relaxed:
+        return "relax"
+    return "reject"
+
+
+@traceable(name="apply_relaxation_node", run_type="tool")
+def apply_relaxation_node(state: JobApplicationState) -> dict[str, Any]:
+    """Grant the whitelist exemption: tag the job and record the relaxation audit trail."""
+    policy_dict = state.get("screening_policy") or {}
+    policy = ScreeningPolicy.from_dict(policy_dict)
+
+    is_relaxed, matched_token = policy.evaluate_whitelist_relaxation(**_card_facets(state))
+    violation = state.get("app_rule_violation", "")
+    reason = (
+        f"【白名单放宽】命中兴趣/专长关键词 '{matched_token}'，"
+        f"豁免 App 端强制过滤违例: {violation}"
+        if is_relaxed
+        else ""
+    )
+
+    return {
+        "relaxed_by_whitelist": bool(is_relaxed),
+        "relaxation_reason": reason,
+        "status": "relaxed_by_whitelist" if is_relaxed else state.get("status", "pending"),
+    }
+
+
+@traceable(name="record_rejection_node", run_type="tool")
+def record_rejection_node(state: JobApplicationState) -> dict[str, Any]:
+    """Cleanly record an unredeemable App-Enforced Filter rejection."""
+    return {
+        "status": "filtered_by_app_rule",
+        "relaxed_by_whitelist": False,
     }
 
 
@@ -202,6 +296,7 @@ class GreetingDrafterAgent:
         card: dict[str, Any],
         jd_text: str,
         candidate_profile: Any | None = None,
+        policy: ScreeningPolicy | None = None,
     ) -> Any:
         from .memory import StructuredCandidateProfile
         from .models import JobPosting
@@ -222,7 +317,9 @@ class GreetingDrafterAgent:
         elif isinstance(candidate_profile, dict) and candidate_profile:
             profile_obj = StructuredCandidateProfile.from_dict(candidate_profile)
 
-        return self.matching_service.evaluate_and_draft_greeting(job=posting, profile=profile_obj)
+        return self.matching_service.evaluate_and_draft_greeting(
+            job=posting, profile=profile_obj, screening_policy=policy
+        )
 
 
 def make_greeting_drafter_node(agent: GreetingDrafterAgent):
@@ -232,12 +329,14 @@ def make_greeting_drafter_node(agent: GreetingDrafterAgent):
         card = state.get("card") or {}
         jd_text = state.get("jd_text") or ""
         profile_dict = state.get("candidate_profile") or {}
+        policy = ScreeningPolicy.from_dict(state.get("screening_policy") or {})
 
         try:
             match_res = agent.draft(
                 card=card,
                 jd_text=jd_text,
                 candidate_profile=profile_dict,
+                policy=policy,
             )
             return {
                 "greeting_message": match_res.greeting_message,
@@ -270,6 +369,9 @@ def build_job_application_graph(
 
     # 1. Register nodes
     builder.add_node("keyword_screener", keyword_screener_node)
+    builder.add_node("app_enforced_filter", app_enforced_filter_node)
+    builder.add_node("apply_relaxation", apply_relaxation_node)
+    builder.add_node("record_rejection", record_rejection_node)
     builder.add_node(
         "jd_semantic_screener",
         make_jd_semantic_screener_node(screener_agent),
@@ -282,15 +384,30 @@ def build_job_application_graph(
     # 2. Edges
     builder.add_edge(START, "keyword_screener")
 
-    # If keyword screener passes, advance to jd_semantic_screener; otherwise terminate at END
+    # If keyword screener passes, advance to app-enforced filtering; otherwise terminate at END
     builder.add_conditional_edges(
         "keyword_screener",
         should_continue_after_keyword,
         {
-            "continue": "jd_semantic_screener",
+            "continue": "app_enforced_filter",
             "end": END,
         },
     )
+
+    # App-Enforced Filter verdict routes through the whitelist relaxer:
+    # satisfied -> JD evaluation; violated but whitelist-hit -> relaxation rescue -> JD
+    # evaluation; violated and unrescued -> recorded rejection.
+    builder.add_conditional_edges(
+        "app_enforced_filter",
+        whitelist_relaxer,
+        {
+            "proceed": "jd_semantic_screener",
+            "relax": "apply_relaxation",
+            "reject": "record_rejection",
+        },
+    )
+    builder.add_edge("apply_relaxation", "jd_semantic_screener")
+    builder.add_edge("record_rejection", END)
 
     # If semantic screener passes, advance to greeting_drafter; otherwise terminate at END
     builder.add_conditional_edges(
@@ -330,11 +447,13 @@ def run_job_application_graph(
             "title": card.title,
             "company_name": card.company_name,
             "recruiter_name": card.recruiter_name,
+            "recruiter_title": card.recruiter_title,
             "salary_range": card.salary_range,
             "location": card.location,
             "tags": card.tags,
             "digest": card.digest or card.snippet,
             "snippet": card.snippet or card.digest,
+            "is_headhunter": card.is_headhunter,
         }
     else:
         card_dict = dict(card)

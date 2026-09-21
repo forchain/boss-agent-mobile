@@ -23,6 +23,7 @@ with contextlib.suppress(ImportError):
 from .models import (
     AuthStatus,
     CandidateProfile,
+    ChannelPreference,
     FilterConfig,
     JobPosting,
     SavedSearch,
@@ -73,6 +74,7 @@ __all__ = [
     "AuthStatus",
     "BaseBossPage",
     "CandidateProfile",
+    "ChannelPreference",
     "ChatPage",
     "FilterConfig",
     "FilterDialogPage",

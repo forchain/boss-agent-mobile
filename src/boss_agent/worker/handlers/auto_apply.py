@@ -17,6 +17,7 @@ from boss_agent.pages import (
 )
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.handlers.base import BaseTaskHandler, HandlerResult
+from boss_agent.worker.handlers.search_entry import run_search_entry
 
 
 class AutoApplyHandler(BaseTaskHandler):
@@ -131,37 +132,19 @@ class AutoApplyHandler(BaseTaskHandler):
             startup_page.dismiss_dialog()
 
         list_page = JobListPage(driver)
-        list_page.navigate_to_home()
 
         # 3. Search Keyword if specified
         enable_search = bool(payload.get("enable_search", True))
         if enable_search and keyword:
-            search_page = SearchPage(driver)
-            search_success = False
-            for attempt in range(2):
-                if not search_page.is_search_page():
-                    list_page.open_search(timeout_sec=5.0)
-                if search_page.search(keyword, timeout_sec=10.0):
-                    search_success = True
-                    break
-                await broker.append_log(
-                    task.id,
-                    f"⚠️ 第 {attempt + 1} 次尝试进入搜索页面并搜索 '{keyword}' 失败，正在重试...",
-                )
-                list_page.navigate_to_home()
-
-            if search_success:
+            if await run_search_entry(broker, task.id, list_page, SearchPage(driver), keyword):
                 await broker.append_log(task.id, f"Navigated to search results for '{keyword}'")
             else:
-                await broker.append_log(
-                    task.id,
-                    f"❌ 未能进入搜索页面或执行关键词搜索: '{keyword}'，终止任务以避免误操作推荐流",
-                )
                 return HandlerResult(
                     success=False,
                     output={"error": f"Failed to execute search for keyword '{keyword}'"},
                 )
         elif not enable_search:
+            list_page.navigate_to_home()
             await broker.append_log(
                 task.id,
                 "enable_search is False; browsing home recommendations without search keyword",
@@ -229,6 +212,8 @@ class AutoApplyHandler(BaseTaskHandler):
             title=job_posting.title,
             company_name=job_posting.company_name,
             recruiter_name=job_posting.recruiter_name or "",
+            recruiter_title=job_posting.recruiter_title or "",
+            is_headhunter=job_posting.is_headhunter,
             salary_range=job_posting.salary_range,
             location=job_posting.location or "",
             tags=job_posting.tags,
@@ -244,6 +229,17 @@ class AutoApplyHandler(BaseTaskHandler):
 
         keyword_pass = graph_result.get("keyword_pass", True)
         deep_pass = graph_result.get("deep_screen_pass", True)
+        app_rule_pass = bool(graph_result.get("app_rule_pass", True))
+        relaxed = bool(graph_result.get("relaxed_by_whitelist", False))
+        app_rule_violation = graph_result.get("app_rule_violation") or ""
+        relaxation_reason = graph_result.get("relaxation_reason") or ""
+
+        audit_parts: list[str] = []
+        if app_rule_violation:
+            audit_parts.append(f"App端强制过滤违例: {app_rule_violation}")
+        if relaxation_reason:
+            audit_parts.append(relaxation_reason)
+        screening_audit = "；".join(audit_parts)
 
         if not keyword_pass:
             reason = graph_result.get("keyword_reason", "未通过关键字初筛")
@@ -259,6 +255,8 @@ class AutoApplyHandler(BaseTaskHandler):
                     "job_description": job_posting.job_description,
                     "status": JobRecordStatus.IGNORED.value,
                     "screened_reason": reason,
+                    "relaxed_by_whitelist": relaxed,
+                    "screening_audit": screening_audit,
                     "search_keywords": [keyword] if keyword else [],
                     "source_task_id": task.id,
                 }
@@ -276,6 +274,47 @@ class AutoApplyHandler(BaseTaskHandler):
                 },
             )
 
+        if not app_rule_pass and not relaxed:
+            reason = app_rule_violation or "未通过App端强制过滤"
+            await broker.append_log(task.id, f"🛑 [App端强制过滤] '{job_posting.title}': {reason}")
+            await broker.upsert_job_record(
+                {
+                    "fingerprint": card.fingerprint,
+                    "title": job_posting.title,
+                    "company_name": job_posting.company_name,
+                    "recruiter_name": job_posting.recruiter_name or "",
+                    "recruiter_title": job_posting.recruiter_title or "",
+                    "is_headhunter": job_posting.is_headhunter,
+                    "salary_range": job_posting.salary_range,
+                    "location": job_posting.location or "",
+                    "job_description": job_posting.job_description,
+                    "status": JobRecordStatus.IGNORED.value,
+                    "screened_reason": reason,
+                    "relaxed_by_whitelist": False,
+                    "screening_audit": screening_audit,
+                    "search_keywords": [keyword] if keyword else [],
+                    "source_task_id": task.id,
+                }
+            )
+            return HandlerResult(
+                success=True,
+                output={
+                    "applied": False,
+                    "status": "filtered_by_app_rule",
+                    "reason": reason,
+                    "job": {
+                        "title": job_posting.title,
+                        "company_name": job_posting.company_name,
+                    },
+                },
+            )
+
+        if relaxed:
+            await broker.append_log(
+                task.id,
+                f"🎗️ [白名单放宽] '{job_posting.title}' 获豁免继续评估: {relaxation_reason}",
+            )
+
         if not deep_pass:
             reason = graph_result.get("deep_screen_reason", "未通过JD语义精筛")
             await broker.append_log(task.id, f"⏭️ [精筛淘汰] '{job_posting.title}': {reason}")
@@ -290,6 +329,8 @@ class AutoApplyHandler(BaseTaskHandler):
                     "job_description": job_posting.job_description,
                     "status": JobRecordStatus.IGNORED.value,
                     "screened_reason": reason,
+                    "relaxed_by_whitelist": relaxed,
+                    "screening_audit": screening_audit,
                     "search_keywords": [keyword] if keyword else [],
                     "source_task_id": task.id,
                 }
@@ -353,6 +394,8 @@ class AutoApplyHandler(BaseTaskHandler):
                             "match_score": match_score,
                             "greeting_message": greeting_message,
                             "jd_key_requirements": match_reasons,
+                            "relaxed_by_whitelist": relaxed,
+                            "screening_audit": screening_audit,
                             "search_keywords": [keyword] if keyword else [],
                             "source_task_id": task.id,
                         }
@@ -434,6 +477,8 @@ class AutoApplyHandler(BaseTaskHandler):
                     "match_score": match_score,
                     "greeting_message": greeting_message,
                     "jd_key_requirements": match_reasons,
+                    "relaxed_by_whitelist": relaxed,
+                    "screening_audit": screening_audit,
                     "search_keywords": [keyword] if keyword else [],
                     "source_task_id": task.id,
                 }

@@ -29,7 +29,9 @@ from boss_agent.settings import resolve_pocketbase_url
 
 logger = logging.getLogger("boss_agent.broker")
 
-INVALID_JOB_TITLES: frozenset[str] = frozenset({"", "未注明职位", "未注明岗位", "未知职位", "未知岗位"})
+INVALID_JOB_TITLES: frozenset[str] = frozenset(
+    {"", "未注明职位", "未注明岗位", "未知职位", "未知岗位"}
+)
 INVALID_COMPANY_NAMES: frozenset[str] = frozenset({"", "未注明公司", "未知公司"})
 
 
@@ -284,7 +286,12 @@ class InMemoryTaskBroker(BaseTaskBroker):
         async with self._lock:
             existing_id = self._job_fingerprints.get(fingerprint) if fingerprint else None
             # Fallback dedup: if no exact fingerprint match and recruiter is generic placeholder, check if company + title already exists
-            if not existing_id and comp_name and title and record_data.get("recruiter_name") in ("", "招聘者"):
+            if (
+                not existing_id
+                and comp_name
+                and title
+                and record_data.get("recruiter_name") in ("", "招聘者")
+            ):
                 for cand_id, cand_rec in self._job_records.items():
                     if (
                         cand_rec.get("company_name", "").strip() == comp_name
@@ -318,7 +325,9 @@ class InMemoryTaskBroker(BaseTaskBroker):
                     company_name=comp_name,
                     title=title,
                 )
-            if "jd_key_requirements" in record_data and isinstance(record_data["jd_key_requirements"], list):
+            if "jd_key_requirements" in record_data and isinstance(
+                record_data["jd_key_requirements"], list
+            ):
                 record_data["jd_key_requirements"] = sanitize_tags(
                     record_data["jd_key_requirements"],
                     recruiter_name=r_name,
@@ -352,7 +361,14 @@ class InMemoryTaskBroker(BaseTaskBroker):
 
                     cur_rank = STATE_RANK.get(rec.get("status", ""), 0)
                     new_rank = STATE_RANK.get(status_val, 0)
-                    if new_rank > cur_rank or status_val == "ignored":
+                    if (
+                        new_rank > cur_rank
+                        or status_val == "ignored"
+                        or (
+                            status_val == "jd_saved"
+                            and rec.get("status") in ("unmatched", "digest_only")
+                        )
+                    ):
                         rec["status"] = status_val
                 if record_data.get("company_scale") and not rec.get("company_scale"):
                     rec["company_scale"] = record_data["company_scale"]
@@ -376,6 +392,10 @@ class InMemoryTaskBroker(BaseTaskBroker):
                     rec["jd_key_requirements"] = record_data["jd_key_requirements"]
                 if "screened_reason" in record_data:
                     rec["screened_reason"] = record_data["screened_reason"]
+                if "relaxed_by_whitelist" in record_data:
+                    rec["relaxed_by_whitelist"] = bool(record_data["relaxed_by_whitelist"])
+                if record_data.get("screening_audit"):
+                    rec["screening_audit"] = record_data["screening_audit"]
                 rec["updated"] = now
                 return dict(rec)
 
@@ -400,6 +420,8 @@ class InMemoryTaskBroker(BaseTaskBroker):
                 "job_description": record_data.get("job_description", ""),
                 "status": status_val or "unmatched",
                 "screened_reason": record_data.get("screened_reason", ""),
+                "relaxed_by_whitelist": bool(record_data.get("relaxed_by_whitelist", False)),
+                "screening_audit": record_data.get("screening_audit", ""),
                 "match_score": record_data.get("match_score"),
                 "jd_key_requirements": record_data.get("jd_key_requirements", []),
                 "greeting_message": record_data.get("greeting_message", ""),
@@ -1324,7 +1346,9 @@ class PocketBaseTaskBroker(BaseTaskBroker):
                 company_name=comp_name,
                 title=title,
             )
-        if "jd_key_requirements" in record_data and isinstance(record_data["jd_key_requirements"], list):
+        if "jd_key_requirements" in record_data and isinstance(
+            record_data["jd_key_requirements"], list
+        ):
             record_data["jd_key_requirements"] = sanitize_tags(
                 record_data["jd_key_requirements"],
                 recruiter_name=r_name,
@@ -1351,7 +1375,12 @@ class PocketBaseTaskBroker(BaseTaskBroker):
             if check_resp.status_code == 200:
                 items = check_resp.json().get("items", [])
                 # Fallback dedup: if no exact fingerprint match and recruiter is generic placeholder, check if company + title already exists
-                if not items and comp_name and title and record_data.get("recruiter_name") in ("", "招聘者"):
+                if (
+                    not items
+                    and comp_name
+                    and title
+                    and record_data.get("recruiter_name") in ("", "招聘者")
+                ):
                     fb_filter = f'company_name="{comp_name}" && title="{title}"'
                     fb_resp = await loop.run_in_executor(
                         None,
@@ -1375,11 +1404,7 @@ class PocketBaseTaskBroker(BaseTaskBroker):
                         "last_seen_at": now,
                         "search_keywords": merged_kw,
                     }
-                    if (
-                        title
-                        and title not in INVALID_JOB_TITLES
-                        and title != existing.get("title")
-                    ):
+                    if title and title not in INVALID_JOB_TITLES and title != existing.get("title"):
                         patch_body["title"] = title
                     new_recruiter = record_data.get("recruiter_name")
                     if (
@@ -1400,7 +1425,14 @@ class PocketBaseTaskBroker(BaseTaskBroker):
 
                         cur_rank = STATE_RANK.get(existing.get("status", ""), 0)
                         new_rank = STATE_RANK.get(status_val, 0)
-                        if new_rank > cur_rank or status_val == "ignored":
+                        if (
+                            new_rank > cur_rank
+                            or status_val == "ignored"
+                            or (
+                                status_val == "jd_saved"
+                                and existing.get("status") in ("unmatched", "digest_only")
+                            )
+                        ):
                             patch_body["status"] = status_val
                     if record_data.get("company_scale") and not existing.get("company_scale"):
                         patch_body["company_scale"] = record_data["company_scale"]
@@ -1422,10 +1454,19 @@ class PocketBaseTaskBroker(BaseTaskBroker):
                         patch_body["greeting_message"] = record_data["greeting_message"]
                     if record_data.get("match_score") is not None:
                         patch_body["match_score"] = record_data["match_score"]
-                    if "jd_key_requirements" in record_data and record_data["jd_key_requirements"] is not None:
+                    if (
+                        "jd_key_requirements" in record_data
+                        and record_data["jd_key_requirements"] is not None
+                    ):
                         patch_body["jd_key_requirements"] = record_data["jd_key_requirements"]
                     if "screened_reason" in record_data:
                         patch_body["screened_reason"] = record_data["screened_reason"]
+                    if "relaxed_by_whitelist" in record_data:
+                        patch_body["relaxed_by_whitelist"] = bool(
+                            record_data["relaxed_by_whitelist"]
+                        )
+                    if record_data.get("screening_audit"):
+                        patch_body["screening_audit"] = record_data["screening_audit"]
 
                     patch_url = f"{url}/{rec_id}"
                     patch_resp = await loop.run_in_executor(
@@ -1480,6 +1521,8 @@ class PocketBaseTaskBroker(BaseTaskBroker):
             "job_description": record_data.get("job_description", ""),
             "status": status_val or "unmatched",
             "screened_reason": record_data.get("screened_reason", ""),
+            "relaxed_by_whitelist": bool(record_data.get("relaxed_by_whitelist", False)),
+            "screening_audit": record_data.get("screening_audit", ""),
             "match_score": record_data.get("match_score"),
             "jd_key_requirements": record_data.get("jd_key_requirements", []),
             "greeting_message": record_data.get("greeting_message", ""),

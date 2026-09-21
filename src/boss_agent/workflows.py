@@ -263,6 +263,8 @@ class SmokeHarness:
                     title=posting.title,
                     company_name=posting.company_name,
                     recruiter_name=posting.recruiter_name or "",
+                    recruiter_title=posting.recruiter_title or "",
+                    is_headhunter=posting.is_headhunter,
                     salary_range=posting.salary_range,
                     location=posting.location or "",
                     tags=posting.tags,
@@ -281,11 +283,22 @@ class SmokeHarness:
                     console.print(
                         f"[yellow]⏭️  Job rejected by KeywordScreener: {graph_state.get('keyword_reason')}[/yellow]"
                     )
+                elif not graph_state.get("app_rule_pass", True) and not graph_state.get(
+                    "relaxed_by_whitelist", False
+                ):
+                    console.print(
+                        f"[yellow]🛑  Job rejected by App-Enforced Filter: {graph_state.get('app_rule_violation')}[/yellow]"
+                    )
                 elif not graph_state.get("deep_screen_pass", True):
                     console.print(
                         f"[yellow]⏭️  Job rejected by JDSemanticScreener: {graph_state.get('deep_screen_reason')}[/yellow]"
                     )
                 else:
+                    if graph_state.get("relaxed_by_whitelist"):
+                        console.print(
+                            f"🎗️  [bold cyan]Whitelist Relaxation rescue:[/bold cyan] "
+                            f"{graph_state.get('relaxation_reason')}"
+                        )
                     greeting_message = graph_state.get("greeting_message", "")
                     match_result = MatchGreetingResult(
                         match_score=graph_state.get("match_score", 80),

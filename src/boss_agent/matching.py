@@ -15,7 +15,7 @@ from droid_agent_core.llm import LLMDecisionClient, OpenAIChatClient
 
 from .greeting_prompt import load_greeting_prompt
 from .memory import StructuredCandidateProfile
-from .models import JobPosting
+from .models import JobPosting, ScreeningPolicy
 
 console = Console(stderr=True)
 
@@ -86,14 +86,42 @@ class JobMatchGreetingService:
             "【严格 JSON 输出】：严格以标准合法的 JSON 格式输出。字符串内容中严禁出现未转义的英文字符双引号（若需引用或书名请使用中文书名号《》或中文引号“”）。"
         )
 
+    @staticmethod
+    def _build_blacklist_constraint_section(screening_policy: ScreeningPolicy | None) -> str:
+        """Render the dynamic negative-constraint block injected from the active ScreeningPolicy."""
+        if not screening_policy or not screening_policy.enable_screening:
+            return ""
+        tokens = list(
+            dict.fromkeys(
+                t.strip()
+                for t in (screening_policy.jd_blacklist + screening_policy.title_blacklist)
+                if t and t.strip()
+            )
+        )
+        if not tokens:
+            return ""
+        return (
+            "\n\n【黑名单消极约束（动态注入自当前筛选策略 ScreeningPolicy）】：\n"
+            f"以下关键词/主题是求职者明确拉黑的负面清单：{tokens}\n"
+            "1. 严禁在匹配论证与破冰文案中迎合、夸赞或主动罗列上述黑名单主题；"
+            "不得将求职者经历中与之相关的部分包装成匹配亮点。\n"
+            "2. 若目标岗位的核心职责恰以黑名单主题为主体（例如挂名Agent平台实为纯Java开发），"
+            "应判定为实质不匹配：显著调低 match_score，保持中性表述，避免任何赞美话术。\n"
+        )
+
     @traceable(name="JobMatchGreetingService.evaluate_and_draft_greeting", run_type="chain")
     def evaluate_and_draft_greeting(
         self,
         job: JobPosting,
         profile: StructuredCandidateProfile | None = None,
         greeting_prompt: str | None = None,
+        screening_policy: ScreeningPolicy | None = None,
     ) -> MatchGreetingResult:
-        """Evaluate match score and generate personalized greeting message based on JD and profile."""
+        """Evaluate match score and generate personalized greeting message based on JD and profile.
+
+        The active ScreeningPolicy blacklists are dynamically injected as negative
+        disqualification constraints so the draft never pitches or praises disallowed stacks.
+        """
         if profile:
             self.set_candidate_profile(profile)
 
@@ -106,6 +134,7 @@ class JobMatchGreetingService:
             )
 
         system_prompt = self._build_system_prompt(greeting_prompt=greeting_prompt)
+        system_prompt += self._build_blacklist_constraint_section(screening_policy)
 
         user_prompt = (
             "请深入分析以下招聘岗位(JD)，提炼其核心诉求，评估契合度并生成针对该 JD 定制的破冰打招呼文案：\n\n"
@@ -168,7 +197,7 @@ class JobMatchGreetingService:
             "\n\n【微调优化特别说明】：\n"
             "求职者对当前招呼语提出了具体的修改建议或批注。你必须充分吸纳求职者的反馈，"
             "重新生成一版契合 JD、满足求职者要求、且符合反套路和精炼原则（80-150字）的破冰打招呼语。\n"
-            "请严格以 JSON 格式输出：{\"revised_greeting\": \"重写后的破冰招呼语全文\"}"
+            '请严格以 JSON 格式输出：{"revised_greeting": "重写后的破冰招呼语全文"}'
         )
 
         user_content = (
@@ -209,6 +238,7 @@ class JobMatchGreetingService:
         # stdout. console.print defaults to stdout which causes the API
         # endpoint's JSON parser to fail with "Bad control character".
         import sys
+
         sys.stderr.write(f"❌ LLM greeting refinement error: {llm_error}\n")
         sys.stderr.flush()
 
@@ -242,7 +272,7 @@ class JobMatchGreetingService:
             "2. 【通用化】：把本次实例中的具体经验改写为适用于所有同类岗位的通用写作准则，严禁绑定具体公司名称或单一职位。\n"
             "3. 【理解并转化批注意图】：求职者的批注可能口语化、零散，必须真正理解其意图并转化为可执行的写作指令，而不是逐字照搬原话。\n"
             "4. 【保持既有 Markdown 散文结构】：延续当前文档的人设句与【打招呼破冰铁律与原则】编号条目风格，输出仍然是一份可直接使用的完整提示词。\n"
-            "5. 【严格 JSON 输出】：{\"prompt\": \"改进后的完整提示词全文\"}"
+            '5. 【严格 JSON 输出】：{"prompt": "改进后的完整提示词全文"}'
         )
 
         jd_snippet = (job.job_description or "")[:350]
@@ -254,7 +284,7 @@ class JobMatchGreetingService:
             f"【本次实例】\n修改前招呼语:\n{original_greeting}\n\n"
             f"求职者批注:\n{critique or '用户手动修改'}\n\n"
             f"修改后满意招呼语:\n{revised_greeting}\n\n"
-            "请结合上述实例整篇重写 Greeting Prompt，严格输出 JSON：{\"prompt\": \"改进后的完整提示词全文\"}"
+            '请结合上述实例整篇重写 Greeting Prompt，严格输出 JSON：{"prompt": "改进后的完整提示词全文"}'
         )
 
         messages = [
@@ -273,7 +303,7 @@ class JobMatchGreetingService:
             import sys
 
             sys.stderr.write(f"❌ Greeting Prompt refinement error: {e}\n")
-            raise RuntimeError(f"提示词打磨失败，无法生成改进版 Greeting Prompt：{e}")
+            raise RuntimeError(f"提示词打磨失败，无法生成改进版 Greeting Prompt：{e}") from e
 
     def render_match_card(self, job: JobPosting, result: MatchGreetingResult) -> None:
         """Render a formatted Rich card in the console showing match breakdown and greeting text."""

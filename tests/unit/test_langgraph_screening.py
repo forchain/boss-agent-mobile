@@ -72,7 +72,9 @@ def test_keyword_screener_company_blacklist_rejection():
     assert "软通动力" in state["keyword_reason"]
 
 
-def test_keyword_screener_whitelist_not_hit():
+def test_keyword_screener_whitelist_miss_no_longer_rejects():
+    """Whitelist is no longer an inclusion gate (issue #188): a card missing all whitelist
+    tokens passes the keyword stage and continues down the pipeline for normal evaluation."""
     policy = ScreeningPolicy(
         title_whitelist=["Agent", "大模型", "Python"],
     )
@@ -82,10 +84,19 @@ def test_keyword_screener_whitelist_not_hit():
         recruiter_name="王五",
         tags=["K8s", "Docker"],
     )
-    state = run_job_application_graph(card, policy=policy)
-    assert state["keyword_pass"] is False
-    assert state["status"] == "filtered_by_keyword"
-    assert "未命中任何职位白名单" in state["keyword_reason"]
+    mock_llm = MagicMock()
+    mock_llm.chat_completion_json.side_effect = [
+        {"pass": True, "reason": "云原生架构岗位，未触犯任何黑名单"},
+        {
+            "match_score": 70,
+            "greeting_message": "您好，看到贵司在招聘云原生架构师...",
+        },
+    ]
+    jd_text = "岗位职责：负责容器平台与云原生基础设施建设，精通 Go 与 Kubernetes。"
+    state = run_job_application_graph(card, policy=policy, jd_text=jd_text, llm_client=mock_llm)
+    assert state["keyword_pass"] is True
+    assert state["keyword_reason"] == "通过卡片初筛"
+    assert state["status"] == "greeting_drafted"
 
 
 def test_keyword_screener_whitelist_hit_and_pass():
@@ -382,6 +393,237 @@ def test_keyword_screener_in_graph_evaluates_digest():
     assert "驻场" in state["keyword_reason"]
     # LLM should never be called when card fails keyword screener
     mock_llm.chat_completion_json.assert_not_called()
+
+
+# ----------------------------------------------------------------------------
+# App-Enforced Filter node & Whitelist Relaxer routing (Ticket #189, Spec #187)
+# ----------------------------------------------------------------------------
+
+
+def test_job_application_state_declares_relaxation_fields():
+    """JobApplicationState must carry the App-Enforced Filter and relaxation facets."""
+    from boss_agent.graph import JobApplicationState
+
+    annotations = JobApplicationState.__annotations__
+    for key in ("app_rule_pass", "app_rule_violation", "relaxed_by_whitelist", "relaxation_reason"):
+        assert key in annotations, f"missing state field: {key}"
+
+
+def test_app_filter_direct_only_rejects_headhunter_without_whitelist():
+    """Headhunter card under direct_only with no whitelist rescue exits at filtered_by_app_rule,
+    short-circuiting before any JD fetching or LLM invocation."""
+    policy = ScreeningPolicy(
+        channel_preference="direct_only",
+        jd_blacklist=["外包"],
+    )
+    card = JobCardBrief(
+        title="AI Agent 后端工程师",
+        company_name="某人力资源服务公司",
+        recruiter_name="钟先生 · 猎头顾问",
+    )
+    assert card.is_headhunter is True
+
+    mock_llm = MagicMock()
+    jd_text = "岗位职责：负责智能体平台后端开发。"
+    state = run_job_application_graph(card=card, policy=policy, jd_text=jd_text, llm_client=mock_llm)
+
+    assert state["keyword_pass"] is True
+    assert state["app_rule_pass"] is False
+    assert "direct_only" in state["app_rule_violation"]
+    assert state.get("relaxed_by_whitelist", False) is False
+    assert state["status"] == "filtered_by_app_rule"
+    # Rejected jobs must never reach the JD semantic screener / drafter
+    mock_llm.chat_completion_json.assert_not_called()
+
+
+def test_app_filter_headhunter_only_rejects_direct_posting():
+    """Direct posting violates headhunter_only and is recorded as filtered_by_app_rule."""
+    policy = ScreeningPolicy(channel_preference="headhunter_only")
+    card = JobCardBrief(
+        title="Agent 平台工程师",
+        company_name="智元创新",
+        recruiter_name="周先生 · 技术总监",
+    )
+    assert card.is_headhunter is False
+
+    mock_llm = MagicMock()
+    state = run_job_application_graph(
+        card=card,
+        policy=policy,
+        jd_text="负责智能体平台建设。",
+        llm_client=mock_llm,
+    )
+    assert state["app_rule_pass"] is False
+    assert "headhunter_only" in state["app_rule_violation"]
+    assert state["status"] == "filtered_by_app_rule"
+    mock_llm.chat_completion_json.assert_not_called()
+
+
+def test_app_filter_violation_rescued_by_whitelist_relaxation():
+    """Headhunter card violating direct_only is rescued when card facets hit a whitelist
+    token: relaxed_by_whitelist=True, relaxation recorded, pipeline continues to drafter."""
+    policy = ScreeningPolicy(
+        channel_preference="direct_only",
+        title_whitelist=["大模型"],
+        jd_blacklist=["外包"],
+    )
+    card = JobCardBrief(
+        title="大模型应用架构师",
+        company_name="某人力资源服务公司",
+        recruiter_name="林女士 · 资深猎头顾问",
+        tags=["LLM"],
+    )
+    assert card.is_headhunter is True
+
+    mock_llm = MagicMock()
+    mock_llm.chat_completion_json.side_effect = [
+        {"pass": True, "reason": "岗位核心是大模型应用架构，未触犯黑名单"},
+        {"match_score": 88, "greeting_message": "您好，看到贵司大模型架构师岗位，我在LLM应用落地有深厚积累..."},
+    ]
+    jd_text = (
+        "岗位职责：主导企业级大模型应用与Agent工作流平台建设，负责LLM推理链编排、"
+        "向量检索体系优化以及多智能体协同框架的架构设计与落地。"
+    )
+    state = run_job_application_graph(card=card, policy=policy, jd_text=jd_text, llm_client=mock_llm)
+
+    assert state["keyword_pass"] is True
+    assert state["app_rule_pass"] is False
+    assert "direct_only" in state["app_rule_violation"]
+    assert state["relaxed_by_whitelist"] is True
+    assert "大模型" in state["relaxation_reason"]
+    assert state["deep_screen_pass"] is True
+    assert state["status"] == "greeting_drafted"
+    assert state["greeting_message"] != ""
+    # Rescued job must continue into the LLM stages
+    mock_llm.chat_completion_json.assert_called()
+
+
+def test_app_filter_clean_job_bypasses_relaxation():
+    """Non-violated jobs bypass whitelist relaxation entirely, even with a whitelist set."""
+    policy = ScreeningPolicy(
+        channel_preference="direct_only",
+        title_whitelist=["量子计算"],
+        jd_blacklist=["驻场"],
+    )
+    card = JobCardBrief(
+        title="Agent 平台工程师",
+        company_name="智元创新",
+        recruiter_name="周先生 · 技术总监",
+    )
+
+    mock_llm = MagicMock()
+    mock_llm.chat_completion_json.side_effect = [
+        {"pass": True, "reason": "岗位契合，未触犯黑名单"},
+        {"match_score": 90, "greeting_message": "您好，我对贵司Agent平台岗位很感兴趣..."},
+    ]
+    jd_text = "岗位职责：负责Agent编排平台研发，要求精通Python。"
+    state = run_job_application_graph(card=card, policy=policy, jd_text=jd_text, llm_client=mock_llm)
+
+    assert state["app_rule_pass"] is True
+    assert state["app_rule_violation"] == ""
+    assert state.get("relaxed_by_whitelist", False) is False
+    assert state.get("relaxation_reason", "") == ""
+    assert state["status"] == "greeting_drafted"
+
+
+# ----------------------------------------------------------------------------
+# Agent prompt precision (Ticket #190, Spec #187)
+# ----------------------------------------------------------------------------
+
+
+def _extract_system_prompt(mock_llm, call_index: int) -> str:
+    """Pull the system message content from the nth chat_completion_json call."""
+    messages = mock_llm.chat_completion_json.call_args_list[call_index].args[0]
+    system_msgs = [m for m in messages if m.get("role") == "system"]
+    assert system_msgs, "expected a system prompt in LLM messages"
+    return str(system_msgs[0].get("content", ""))
+
+
+def test_semantic_screener_prompt_has_zero_whitelist_veto():
+    """JD semantic screening prompt must be stripped of the legacy whitelist rejection rule:
+    whitelist tokens never appear as judging criteria at the JD stage."""
+    policy = ScreeningPolicy(
+        title_whitelist=["Agent", "大模型"],
+        jd_blacklist=["Java"],
+    )
+    mock_llm = MagicMock()
+    mock_llm.chat_completion_json.return_value = {"pass": True, "reason": "未触犯黑名单"}
+
+    agent = JDSemanticScreenerAgent(llm_client=mock_llm)
+    passed, _reason = agent.evaluate(
+        jd_text="岗位职责：负责Agent编排平台建设，配合Java数据团队提供接口支持。",
+        card_title="AI Agent 平台工程师",
+        policy=policy,
+    )
+    assert passed is True
+    mock_llm.chat_completion_json.assert_called_once()
+
+    system_prompt = _extract_system_prompt(mock_llm, 0)
+    assert "白名单目标关键词" not in system_prompt, (
+        "legacy whitelist criteria line must be stripped from the JD screening prompt"
+    )
+    assert "大模型" not in system_prompt, "whitelist tokens must not leak into the JD screening prompt"
+    assert "与目标方向完全无关" not in system_prompt, "legacy whitelist rejection rule must be deleted"
+    assert "Java" in system_prompt, "blacklist criteria must remain"
+    # Core-vs-secondary-mention distinction guidance stays central to the prompt
+    assert "协作" in system_prompt or "背景" in system_prompt
+    assert "核心职责" in system_prompt or "主技术栈" in system_prompt
+
+
+def test_semantic_screener_whitelist_only_policy_passes_without_llm():
+    """With no blacklist configured, the screener has zero veto material: it must pass
+    the job deterministically without burning an LLM call, whitelist or not."""
+    policy = ScreeningPolicy(title_whitelist=["Agent"])
+    mock_llm = MagicMock()
+
+    agent = JDSemanticScreenerAgent(llm_client=mock_llm)
+    passed, reason = agent.evaluate(
+        jd_text="岗位职责：负责云原生容器平台建设，要求精通Go与Kubernetes。",
+        card_title="云原生平台工程师",
+        policy=policy,
+    )
+    assert passed is True
+    mock_llm.chat_completion_json.assert_not_called()
+
+
+def test_greeting_drafter_injects_active_blacklists_into_prompt():
+    """The greeting drafter prompt dynamically carries jd/title blacklist tokens as
+    negative disqualification constraints, preventing praise of disallowed stacks."""
+    policy = ScreeningPolicy(
+        jd_blacklist=["Java", "微服务"],
+        title_blacklist=["外包"],
+    )
+    card = JobCardBrief(
+        title="AI Agent 平台工程师",
+        company_name="智元创新",
+        recruiter_name="周先生 · 技术总监",
+        tags=["Python"],
+    )
+    jd_text = (
+        "岗位职责：主导多智能体协同平台建设；任职要求：精通Python与LangGraph，"
+        "熟悉MySQL等传统后端组件，有微服务治理经验，配合Java中台团队交付接口。"
+    )
+
+    mock_llm = MagicMock()
+    mock_llm.chat_completion_json.side_effect = [
+        {"pass": True, "reason": "黑名单仅为协作提及，岗位主体是Agent平台"},
+        {
+            "match_score": 91,
+            "jd_key_requirements": ["Multi-Agent编排", "LangGraph落地"],
+            "match_reasons": ["具备LangGraph多智能体实战经验"],
+            "greeting_message": "周总您好，看到贵司在招Agent平台工程师，我在LangGraph多智能体协同平台有成熟落地经验...",
+        },
+    ]
+
+    state = run_job_application_graph(card=card, policy=policy, jd_text=jd_text, llm_client=mock_llm)
+    assert state["deep_screen_pass"] is True
+    assert state["status"] == "greeting_drafted"
+
+    # Second LLM call is the greeting drafter
+    drafter_prompt = _extract_system_prompt(mock_llm, 1)
+    for token in ("Java", "微服务", "外包"):
+        assert token in drafter_prompt, f"blacklist token '{token}' missing from drafter prompt"
+    assert "严禁" in drafter_prompt
 
 
 

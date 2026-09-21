@@ -100,6 +100,23 @@ describe('Settings persistence isolation (issue #185)', () => {
 		expect(loadMergedSettings().api_key).toBe('sk-seed-initial-key-9876');
 	});
 
+	// Spec #187 / Ticket #191: channel preference (App-Enforced Filter config) must
+	// survive web settings saves even though the UI card set does not edit it yet.
+	it('channel_preference survives save round-trips and partial saves', async () => {
+		const { saveSettingsToLocalYaml, loadMergedSettings } = await import('../lib/server/settings');
+
+		saveSettingsToLocalYaml({ ...loadMergedSettings(), channel_preference: 'direct_only' } as any);
+		expect(loadMergedSettings().channel_preference).toBe('direct_only');
+
+		// A screening-only partial save must not reset the stored channel preference.
+		saveSettingsToLocalYaml({ title_whitelist: ['大模型'] } as any);
+		expect(loadMergedSettings().channel_preference).toBe('direct_only');
+
+		// Invalid values fall back to the safe default 'all'.
+		saveSettingsToLocalYaml({ ...loadMergedSettings(), channel_preference: 'vip_only' } as any);
+		expect(loadMergedSettings().channel_preference).toBe('all');
+	});
+
 	// Byte-guard against issue #185 recurrences: runs after every save above.
 	it('left the developer settings file untouched', () => sandbox.assertRealConfigUntouched());
 });

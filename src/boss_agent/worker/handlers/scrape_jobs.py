@@ -10,12 +10,14 @@ from typing import Any
 from boss_agent.broker.models import AutomationTask, TaskStatus, TaskType
 from boss_agent.broker.pocketbase_adapter import BaseTaskBroker
 from boss_agent.models import (
+    INVALID_COMPANY_NAMES,
     STATE_RANK,
     TARGET_ACTION_RANK,
     FilterConfig,
     JobRecordStatus,
     ScreeningPolicy,
     TargetAction,
+    is_invalid_company_name,
 )
 from boss_agent.pages import (
     FilterDialogPage,
@@ -27,6 +29,7 @@ from boss_agent.pages import (
 )
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.handlers.base import BaseTaskHandler, HandlerResult
+from boss_agent.worker.handlers.search_entry import run_search_entry
 
 logger = logging.getLogger(__name__)
 
@@ -75,36 +78,18 @@ class ScrapeJobsHandler(BaseTaskHandler):
             startup_page.dismiss_dialog()
 
         list_page = JobListPage(driver)
-        list_page.navigate_to_home()
 
         enable_search = bool(payload.get("enable_search", True))
         if enable_search and keyword:
-            search_page = SearchPage(driver)
-            search_success = False
-            for attempt in range(2):
-                if not search_page.is_search_page():
-                    list_page.open_search(timeout_sec=5.0)
-                if search_page.search(keyword, timeout_sec=10.0):
-                    search_success = True
-                    break
-                await broker.append_log(
-                    task.id,
-                    f"⚠️ 第 {attempt + 1} 次尝试进入搜索页面并搜索 '{keyword}' 失败，正在重试...",
-                )
-                list_page.navigate_to_home()
-
-            if search_success:
+            if await run_search_entry(broker, task.id, list_page, SearchPage(driver), keyword):
                 await broker.append_log(task.id, f"Executed search for keyword '{keyword}'")
             else:
-                await broker.append_log(
-                    task.id,
-                    f"❌ 未能进入搜索页面或执行关键词搜索: '{keyword}'，终止任务以避免误操作推荐流",
-                )
                 return HandlerResult(
                     success=False,
                     output={"error": f"Failed to execute search for keyword '{keyword}'"},
                 )
         elif not enable_search:
+            list_page.navigate_to_home()
             await broker.append_log(
                 task.id,
                 "enable_search is False; browsing home recommendations without search keyword",
@@ -235,7 +220,15 @@ class ScrapeJobsHandler(BaseTaskHandler):
                         continue
 
                     cur_rank = STATE_RANK.get(existing_status, 1)
-                    if cur_rank >= required_rank:
+                    has_full_jd = bool((existing_record.get("job_description") or "").strip())
+                    is_already_progressed = cur_rank > TARGET_ACTION_RANK.get(
+                        TargetAction.SAVE_JD, 1
+                    )
+                    if cur_rank >= required_rank and (
+                        is_already_progressed
+                        or target_action != TargetAction.SAVE_JD
+                        or has_full_jd
+                    ):
                         skipped_count += 1
                         await broker.append_log(
                             task.id,
@@ -281,6 +274,8 @@ class ScrapeJobsHandler(BaseTaskHandler):
                         "jd_key_requirements": card_tags,
                         "status": JobRecordStatus.IGNORED.value,
                         "screened_reason": reason,
+                        "relaxed_by_whitelist": False,
+                        "screening_audit": "",
                         "search_keywords": [keyword] if keyword else [],
                         "source_task_id": task.id,
                     }
@@ -290,6 +285,57 @@ class ScrapeJobsHandler(BaseTaskHandler):
                         f"⏭️ [初筛淘汰] '{card.title}' @ '{card.company_name}': {reason}",
                     )
                     continue
+
+                # 4.5 App-Enforced Filters (platform-inexpressible constraints, e.g. recruitment
+                # channel) with Whitelist Relaxation rescue before detail navigation.
+                app_pass, app_violation = policy.evaluate_app_enforced_filters(
+                    is_headhunter=getattr(card, "is_headhunter", False)
+                )
+                is_relaxed = False
+                screening_audit = ""
+                if not app_pass:
+                    is_relaxed, relax_token = policy.evaluate_whitelist_relaxation(
+                        title=card.title,
+                        company_name=card.company_name,
+                        tags=card_tags,
+                        digest=digest_text,
+                    )
+                    screening_audit = f"App端强制过滤违例: {app_violation}"
+                    if not is_relaxed:
+                        skipped_count += 1
+                        app_ignored_record = {
+                            "fingerprint": card.fingerprint,
+                            "title": card.title,
+                            "company_name": card.company_name,
+                            "recruiter_name": card.recruiter_name,
+                            "recruiter_title": getattr(card, "recruiter_title", "") or "",
+                            "is_headhunter": getattr(card, "is_headhunter", False),
+                            "company_scale": getattr(card, "company_scale", "") or "",
+                            "industry": getattr(card, "industry", "") or "",
+                            "tags": card_tags,
+                            "salary_range": getattr(card, "salary_range", "") or "",
+                            "location": getattr(card, "location", "") or "",
+                            "digest": digest_text,
+                            "job_description": "",
+                            "jd_key_requirements": card_tags,
+                            "status": JobRecordStatus.IGNORED.value,
+                            "screened_reason": app_violation,
+                            "relaxed_by_whitelist": False,
+                            "screening_audit": screening_audit,
+                            "search_keywords": [keyword] if keyword else [],
+                            "source_task_id": task.id,
+                        }
+                        await broker.upsert_job_record(app_ignored_record)
+                        await broker.append_log(
+                            task.id,
+                            f"🛑 [App端强制过滤] '{card.title}' @ '{card.company_name}': {app_violation}",
+                        )
+                        continue
+                    screening_audit += f"；【白名单放宽】命中关键词 '{relax_token}'，予以豁免"
+                    await broker.append_log(
+                        task.id,
+                        f"🎗️ [白名单放宽] '{card.title}' 命中 '{relax_token}' 豁免渠道限制，继续采集",
+                    )
 
                 # 5. Execute Action based on target_action
                 rec_type = "[猎头]" if getattr(card, "is_headhunter", False) else "[直招]"
@@ -310,7 +356,11 @@ class ScrapeJobsHandler(BaseTaskHandler):
                     if existing_record
                     else "",
                     "jd_key_requirements": card_tags,
-                    "status": JobRecordStatus.JD_SAVED.value,
+                    "status": JobRecordStatus.JD_SAVED.value
+                    if (existing_record and (existing_record.get("job_description") or "").strip())
+                    else JobRecordStatus.UNMATCHED.value,
+                    "relaxed_by_whitelist": is_relaxed,
+                    "screening_audit": screening_audit,
                     "search_keywords": [keyword] if keyword else [],
                     "source_task_id": task.id,
                 }
@@ -335,7 +385,11 @@ class ScrapeJobsHandler(BaseTaskHandler):
 
                 if clicked:
                     try:
-                        job_posting = detail_page.extract_job_posting(timeout_sec=4.0)
+                        job_posting = detail_page.extract_job_posting(
+                            timeout_sec=4.0,
+                            fallback_company=card.company_name,
+                            fallback_title=card.title,
+                        )
                         post_title = (job_posting.title or "").strip()
                         card_title = (card.title or "").strip()
                         effective_title = (
@@ -360,12 +414,22 @@ class ScrapeJobsHandler(BaseTaskHandler):
                             )
                             continue
 
+                        post_company = (job_posting.company_name or "").strip()
+                        card_company = (card.company_name or "").strip()
+                        effective_company = (
+                            post_company
+                            if (
+                                post_company
+                                and post_company not in INVALID_COMPANY_NAMES
+                                and not is_invalid_company_name(post_company)
+                            )
+                            else card_company
+                        )
+
                         enriched_data = {
                             "fingerprint": card.fingerprint,
                             "title": effective_title,
-                            "company_name": (
-                                job_posting.company_name or card.company_name or ""
-                            ).strip(),
+                            "company_name": effective_company,
                             "recruiter_name": card.recruiter_name
                             or job_posting.recruiter_name
                             or "招聘者",
@@ -386,27 +450,42 @@ class ScrapeJobsHandler(BaseTaskHandler):
                             "job_description": job_posting.job_description
                             or card_record.get("job_description", ""),
                             "status": JobRecordStatus.JD_SAVED.value,
+                            "relaxed_by_whitelist": is_relaxed,
+                            "screening_audit": screening_audit,
                             "search_keywords": [keyword] if keyword else [],
                             "source_task_id": task.id,
                         }
                         persisted = await broker.upsert_job_record(enriched_data)
-                        scraped_jobs[-1] = persisted
-                        hh_tag = "[猎头]" if enriched_data["is_headhunter"] else "[直招]"
-                        if "查看更多" in (persisted.get("job_description") or ""):
+                        if not persisted:
                             logger.error(
-                                "Incomplete JD: '查看更多' still present in extracted JD for %s '%s'",
-                                hh_tag,
-                                persisted.get("title", ""),
+                                "Failed to persist enriched job record: title='%s', company='%s'",
+                                effective_title,
+                                effective_company,
                             )
                             await broker.append_log(
                                 task.id,
-                                f"❌ [Incomplete JD Error] '查看更多' was detected in extracted JD for {hh_tag} '{persisted['title']}'",
+                                f"❌ [Enrich Error] Failed to persist enriched job record for '{effective_title}' @ '{effective_company}'",
                             )
                         else:
-                            await broker.append_log(
-                                task.id,
-                                f"✨ [Enriched Detail] Extracted full JD for {hh_tag} '{persisted['title']}' ({len(persisted.get('job_description', ''))} chars)",
-                            )
+                            scraped_jobs[-1] = persisted
+                            hh_tag = "[猎头]" if enriched_data["is_headhunter"] else "[直招]"
+                            persisted_desc = persisted.get("job_description") or ""
+                            persisted_title = persisted.get("title", effective_title)
+                            if "查看更多" in persisted_desc:
+                                logger.error(
+                                    "Incomplete JD: '查看更多' still present in extracted JD for %s '%s'",
+                                    hh_tag,
+                                    persisted_title,
+                                )
+                                await broker.append_log(
+                                    task.id,
+                                    f"❌ [Incomplete JD Error] '查看更多' was detected in extracted JD for {hh_tag} '{persisted_title}'",
+                                )
+                            else:
+                                await broker.append_log(
+                                    task.id,
+                                    f"✨ [Enriched Detail] Extracted full JD for {hh_tag} '{persisted_title}' ({len(persisted_desc)} chars)",
+                                )
                     except Exception as e:
                         logger.error(
                             "Failed to extract detail for '%s': %s",
@@ -498,7 +577,8 @@ class ScrapeJobsHandler(BaseTaskHandler):
                                 "title": post_title,
                                 "company_name": post_company,
                                 "recruiter_name": job_posting.recruiter_name or "招聘者",
-                                "recruiter_title": getattr(job_posting, "recruiter_title", "") or "",
+                                "recruiter_title": getattr(job_posting, "recruiter_title", "")
+                                or "",
                                 "is_headhunter": getattr(job_posting, "is_headhunter", False),
                                 "company_scale": getattr(job_posting, "company_scale", "") or "",
                                 "industry": getattr(job_posting, "industry", "") or "",
