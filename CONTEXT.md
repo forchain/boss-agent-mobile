@@ -201,3 +201,16 @@ _Avoid_: UI logging, debug prints, action trace
 **Daily Greeting Limit**:
 The system safety threshold restricting outbound mobile greeting volume per calendar day to protect user accounts from platform rate limits and anti-bot challenges, automatically degrading `auto_apply` to `save_jd` upon exhaustion.
 _Avoid_: daily quota, message cap, max chats
+
+**New Greeting Inbox**:
+The dedicated unhandled incoming message queue in the Boss mobile app representing conversations where a recruiter replied or messaged and the candidate has not yet answered.
+_Avoid_: 未读消息列表, 聊天大厅, 全部消息
+
+**Rejection Auto-Acknowledgment**:
+The automated response and feedback sequence that sends a polite closing reply to an explicit recruiter rejection and marks the role as disinterested to prune the conversation and suppress future recommendation noise.
+_Avoid_: 自动删消息, 拒信回复脚本, 自动拒聊
+
+**Disinterest Reason**:
+The feedback category selected during the platform disinterest workflow, standardized strictly to "重复推荐" to enforce recommendation suppression without manual category branching.
+_Avoid_: 拒绝原因, 反馈理由
+
