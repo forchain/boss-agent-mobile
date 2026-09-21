@@ -6,6 +6,7 @@
  */
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/svelte';
+import { RecordService } from 'pocketbase';
 import JobsPage from '../routes/jobs/+page.svelte';
 
 const APPLIED_DIRECT_JOB = {
@@ -59,33 +60,21 @@ function stubFetch(record: Record<string, any> = APPLIED_DIRECT_JOB) {
 	return calls;
 }
 
-class FakeEventSource {
-	static instances: FakeEventSource[] = [];
-	url: string;
-	readyState = 0;
-	onmessage: ((ev: any) => void) | null = null;
-	onerror: ((ev: any) => void) | null = null;
-	onopen: ((ev: any) => void) | null = null;
-	constructor(url: string) {
-		this.url = url;
-		FakeEventSource.instances.push(this);
-	}
-	addEventListener() {}
-	removeEventListener() {}
-	close() {}
-}
+// The page opens a PocketBase realtime SSE subscription from an async onMount. Left live that
+// connection outlives the test: `connect()` only builds its EventSource once the earlier awaited
+// fetches settle, which can be after a per-test hook has already torn the environment down,
+// rejecting the whole run. These tests exercise the clearance controls, which update local state
+// from the API response, so the realtime layer stays stubbed for the life of the file.
+vi.spyOn(RecordService.prototype, 'subscribe').mockResolvedValue(async () => {});
+vi.spyOn(RecordService.prototype, 'unsubscribe').mockResolvedValue(undefined);
 
 beforeEach(() => {
 	vi.stubGlobal('confirm', () => true);
-	// PocketBase realtime needs EventSource, which jsdom does not implement; without this the
-	// subscription rejects asynchronously and destabilises the mount.
-	vi.stubGlobal('EventSource', FakeEventSource);
 });
 
 afterEach(() => {
 	cleanup();
 	vi.unstubAllGlobals();
-	vi.restoreAllMocks();
 });
 
 describe('Jobs dashboard communication clearance controls', () => {
