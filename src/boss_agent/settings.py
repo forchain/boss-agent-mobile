@@ -9,6 +9,12 @@ import os
 from pathlib import Path
 from typing import Any
 
+from .rejection import (
+    DEFAULT_MAX_SCAN_DEPTH,
+    DEFAULT_REJECTION_REPLY_TEXT,
+    ChatAcknowledgmentSettings,
+)
+
 try:
     import yaml
 except ImportError:
@@ -30,6 +36,51 @@ DEFAULT_SERVER_URL: str = "http://127.0.0.1:4723"
 def normalize_url(url: str) -> str:
     """Normalize URL by stripping surrounding whitespace and trailing slashes."""
     return url.strip().rstrip("/")
+
+
+def resolve_chat_acknowledgment_settings(
+    settings: dict[str, Any] | None = None,
+    config_path: str | Path | None = None,
+) -> ChatAcknowledgmentSettings:
+    """Resolve the rejection auto-acknowledgment settings.
+
+    Precedence:
+      1. `CHAT_REJECTION_REPLY_TEXT` / `CHAT_MAX_SCAN_DEPTH` environment variables
+      2. The nested `chat:` block of the merged settings files
+      3. Flat `chat_rejection_reply_text` / `chat_max_scan_depth` keys
+      4. Built-in defaults ("收到 谢谢", 30)
+
+    Pass `settings` to resolve from an already-loaded mapping (used by callers
+    that have one, and by tests that must stay independent of local config).
+    """
+    merged = settings if settings is not None else load_settings(config_path=config_path)
+    chat_block = merged.get("chat")
+    chat: dict[str, Any] = chat_block if isinstance(chat_block, dict) else {}
+
+    reply_text = chat.get("rejection_reply_text", merged.get("chat_rejection_reply_text"))
+    scan_depth = chat.get("max_scan_depth", merged.get("chat_max_scan_depth"))
+
+    env_reply = os.getenv("CHAT_REJECTION_REPLY_TEXT")
+    if env_reply and env_reply.strip():
+        reply_text = env_reply.strip()
+    env_depth = os.getenv("CHAT_MAX_SCAN_DEPTH")
+    if env_depth and env_depth.strip():
+        scan_depth = env_depth.strip()
+
+    return ChatAcknowledgmentSettings(
+        rejection_reply_text=(
+            str(reply_text).strip() if reply_text is not None and str(reply_text).strip() else DEFAULT_REJECTION_REPLY_TEXT
+        ),
+        max_scan_depth=_resolve_scan_depth(scan_depth),
+    )
+
+
+def _resolve_scan_depth(value: Any) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return DEFAULT_MAX_SCAN_DEPTH
+    return parsed if parsed > 0 else DEFAULT_MAX_SCAN_DEPTH
 
 
 def resolve_pocketbase_url(

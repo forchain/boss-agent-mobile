@@ -1,4 +1,5 @@
 import contextlib
+import hashlib
 import logging
 import re
 import time
@@ -32,6 +33,7 @@ from .models import (
     is_likely_location,
     sanitize_tags,
 )
+from .rejection import DISINTEREST_REASON
 
 logger = logging.getLogger("boss_agent.pages")
 ui_logger = logging.getLogger("droid_agent_core.ui")
@@ -123,6 +125,33 @@ class JobCardBrief:
                 title=self.title,
                 recruiter_name=self.recruiter_name,
             )
+
+
+def compute_inbox_message_key(sender_name: str, message_text: str) -> str:
+    """Signature identifying one inbox message for in-memory visited-set deduplication.
+
+    Sender plus a whitespace-insensitive hash of the message text: stable across
+    re-reads of the same card, and distinct for two recruiters sending identical text.
+    """
+    sender = re.sub(r"\s+", "", sender_name or "").strip() or "未知招聘者"
+    normalized = re.sub(r"\s+", "", message_text or "")
+    digest = hashlib.sha1(normalized.encode("utf-8")).hexdigest()[:12]
+    return f"{sender}:{digest}"
+
+
+@dataclass
+class ChatInboxMessage:
+    """One unreplied message card read from the New Greeting Inbox list view."""
+
+    sender_name: str
+    message_text: str
+    element: Any = None
+    index: int = 0
+    key: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.key:
+            self.key = compute_inbox_message_key(self.sender_name, self.message_text)
 
 
 def parse_recruiter_info(raw_text: str) -> tuple[str, str, bool]:
@@ -277,6 +306,47 @@ class BaseBossPage:
             if elems:
                 return elems[0]
         return None
+
+    def _find_elements_by_key(self, key: str, format_args: dict[str, Any] | None = None) -> list[Any]:
+        """Return every element matched by the first locator for `key` that hits anything."""
+        if not self.driver:
+            return []
+        for sel in self.locators.get_selectors(key, format_args=format_args):
+            started_at = time.monotonic()
+            try:
+                elems = self.driver.find_elements(by=sel.by.value, value=sel.value)
+            except Exception as exc:
+                _log_selector_lookup(sel, f"error:{exc}", started_at)
+                continue
+            _log_selector_lookup(sel, "match" if elems else "none", started_at)
+            if elems:
+                return list(elems)
+        return []
+
+    def _extract_card_field_text(self, card_elem: Any, key: str) -> str:
+        """Extract text from a sub-element inside a list card using configured selectors."""
+        selectors = self.locators.get_selectors(key)
+        for sel in selectors:
+            try:
+                if sel.by.value == "id":
+                    elems = card_elem.find_elements(by="id", value=sel.value)
+                elif sel.by.value == "xpath":
+                    val = sel.value
+                    if not val.startswith("."):
+                        val = "." + val
+                    elems = card_elem.find_elements(by="xpath", value=val)
+                else:
+                    elems = card_elem.find_elements(by=sel.by.value, value=sel.value)
+                if elems:
+                    for el in elems:
+                        raw_t = getattr(el, "text", None)
+                        if raw_t is not None:
+                            txt = str(raw_t).strip()
+                            if txt and txt not in ("猎", "新", "急", "热", "置顶"):
+                                return txt
+            except Exception:
+                continue
+        return ""
 
     def find_by_key(
         self,
@@ -567,31 +637,6 @@ class JobListPage(BaseBossPage):
             self.gestures.human_click(elem)
             return True
         return False
-
-    def _extract_card_field_text(self, card_elem: Any, key: str) -> str:
-        """Extract text from a sub-element inside a job card using configured selectors."""
-        selectors = self.locators.get_selectors(key)
-        for sel in selectors:
-            try:
-                if sel.by.value == "id":
-                    elems = card_elem.find_elements(by="id", value=sel.value)
-                elif sel.by.value == "xpath":
-                    val = sel.value
-                    if not val.startswith("."):
-                        val = "." + val
-                    elems = card_elem.find_elements(by="xpath", value=val)
-                else:
-                    elems = card_elem.find_elements(by=sel.by.value, value=sel.value)
-                if elems:
-                    for el in elems:
-                        raw_t = getattr(el, "text", None)
-                        if raw_t is not None:
-                            txt = str(raw_t).strip()
-                            if txt and txt not in ("猎", "新", "急", "热", "置顶"):
-                                return txt
-            except Exception:
-                continue
-        return ""
 
     def extract_visible_job_cards(self, max_cards: int = 10) -> list[JobCardBrief]:
         """Extract visible job card briefs (title, company, recruiter, salary, location, tags, snippet)."""
@@ -1530,6 +1575,19 @@ class ChatPage(BaseBossPage):
             return True
         return False
 
+    def send_message(self, message: str, timeout_sec: float = 5.0) -> bool:
+        """Type and send a chat message in one step.
+
+        Only ever reached for messages already judged safe to send (e.g. a
+        rejection acknowledgment). Blank text is refused so an empty input box
+        can never be submitted.
+        """
+        if not (message or "").strip():
+            return False
+        if not self.type_greeting_message(message, timeout_sec=timeout_sec):
+            return False
+        return self.click_send(timeout_sec=timeout_sec)
+
     def navigate_back(self, timeout_sec: float = 3.0) -> bool:
         """Click back button from chat dialog."""
         elem = self.find_by_key("chat.back_btn", timeout_sec=timeout_sec)
@@ -1542,3 +1600,107 @@ class ChatPage(BaseBossPage):
             return True
         except Exception:
             return False
+
+
+class ChatInboxPage(BaseBossPage):
+    """Page Object for the New Greeting Inbox (新招呼) unreplied message queue.
+
+    Messages are read straight off the list item's `tv_msg` node, so classifying
+    a message never requires opening its chat (spec #205).
+    """
+
+    def is_on_inbox(self, timeout_sec: float = 2.0) -> bool:
+        """Check whether the New Greeting Inbox is currently displayed."""
+        return self.find_by_key("chat_inbox.new_greeting_tab", timeout_sec=timeout_sec) is not None
+
+    def wait_for_inbox_return(self, timeout_sec: float = 5.0) -> bool:
+        """Wait for the platform to drop the conversation and land back on the inbox."""
+        return self.is_on_inbox(timeout_sec=timeout_sec)
+
+    def open_inbox(self, timeout_sec: float = 5.0) -> bool:
+        """Navigate into the New Greeting Inbox: bottom message tab -> 新招呼 sub-tab."""
+        tab = self.find_by_key("chat_inbox.entry_tab", timeout_sec=timeout_sec)
+        if tab:
+            self.gestures.human_click(tab)
+
+        sub_tab = self.find_by_key("chat_inbox.new_greeting_tab", timeout_sec=timeout_sec)
+        if not sub_tab:
+            return False
+        self.gestures.human_click(sub_tab)
+        return True
+
+    def _find_message_cards(self) -> list[Any]:
+        """Locate inbox rows, falling back to the message nodes themselves."""
+        cards = self._find_elements_by_key("chat_inbox.message_card")
+        if cards:
+            return cards
+        return self._find_elements_by_key("chat_inbox.message_text")
+
+    def extract_visible_messages(self, max_items: int = 10) -> list[ChatInboxMessage]:
+        """Extract the sender and full message text of every visible inbox card."""
+        if not self.driver:
+            return []
+
+        messages: list[ChatInboxMessage] = []
+        for idx, card in enumerate(self._find_message_cards()[:max_items]):
+            sender = self._extract_card_field_text(card, "chat_inbox.sender_name")
+            text = self._extract_card_field_text(card, "chat_inbox.message_text")
+            if not text:
+                # A card may itself be the message node (fallback locator path).
+                text = (getattr(card, "text", "") or "").strip()
+            if not text:
+                continue
+            messages.append(
+                ChatInboxMessage(
+                    sender_name=sender,
+                    message_text=text,
+                    element=card,
+                    index=idx,
+                )
+            )
+        return messages
+
+    def scroll_inbox(self) -> None:
+        """Perform a humanized swipe up to reveal older inbox cards."""
+        if not self.driver:
+            return
+        size = self._get_window_size()
+        w, h = size["width"], size["height"]
+
+        start = Point(w * 0.5, h * 0.75)
+        end = Point(w * 0.5, h * 0.25)
+        self.gestures.human_swipe(start, end, duration_ms=500)
+        self.gestures.random_sleep(0.3, 0.6)
+
+    def open_message(self, message: ChatInboxMessage) -> bool:
+        """Click an inbox card to enter its chat dialog."""
+        if message.element is None:
+            return False
+        self.gestures.human_click(message.element)
+        return True
+
+    def mark_disinterest(
+        self,
+        reason: str = DISINTEREST_REASON,
+        timeout_sec: float = 3.0,
+    ) -> bool:
+        """Submit disinterest feedback with the standardized reason.
+
+        Fails fast rather than guessing: if either the 不感兴趣 button or the
+        configured reason option does not appear, the sequence aborts without a
+        second click so the caller can report the unexpected UI.
+        """
+        button = self.find_by_key("chat.disinterest_btn", timeout_sec=timeout_sec)
+        if not button:
+            return False
+        self.gestures.human_click(button)
+
+        option = self.find_by_key(
+            "chat.disinterest_reason_option",
+            timeout_sec=timeout_sec,
+            format_args={"reason": reason},
+        )
+        if not option:
+            return False
+        self.gestures.human_click(option)
+        return True

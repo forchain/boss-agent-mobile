@@ -16,6 +16,7 @@ from boss_agent.worker.config import WorkerConfig
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.daemon import AutomationWorker
 from boss_agent.worker.handlers.auto_apply import AutoApplyHandler
+from boss_agent.worker.handlers.check_chat import CheckChatHandler
 from boss_agent.worker.handlers.check_login import CheckLoginHandler
 from boss_agent.worker.handlers.scrape_jobs import ScrapeJobsHandler
 from droid_agent_core.driver import AppiumSession, DriverConfig
@@ -93,6 +94,7 @@ def main() -> None:
         CheckLoginHandler(),
         ScrapeJobsHandler(),
         AutoApplyHandler(),
+        CheckChatHandler(),
     ]
 
     worker = AutomationWorker(
