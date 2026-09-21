@@ -484,11 +484,18 @@ class AutoApplyHandler(BaseTaskHandler):
                     if detail_page.open_chat(timeout_sec=5.0):
                         chat_page.type_greeting_message(greeting_message, timeout_sec=5.0)
                         dispatched = chat_page.click_send(timeout_sec=3.0)
-                        applied = True
-                        await broker.append_log(
-                            task.id,
-                            f"✅ [AUTO_SEND] Dispatched greeting message to {job_posting.title} @ {job_posting.company_name} ({today_applied + 1}/{daily_limit} today)",
-                        )
+                        applied = dispatched
+                        if dispatched:
+                            await broker.append_log(
+                                task.id,
+                                f"✅ [AUTO_SEND] Dispatched greeting message to {job_posting.title} @ {job_posting.company_name} ({today_applied + 1}/{daily_limit} today)",
+                            )
+                        else:
+                            await broker.append_log(
+                                task.id,
+                                f"⚠️ [AUTO_SEND] Could not send greeting to {job_posting.title} @ {job_posting.company_name}: "
+                                "send control unavailable. Kept as a matched draft for manual sending.",
+                            )
                         await broker.upsert_job_record(
                             {
                                 "fingerprint": card.fingerprint,
@@ -498,11 +505,14 @@ class AutoApplyHandler(BaseTaskHandler):
                                 "salary_range": job_posting.salary_range,
                                 "location": job_posting.location or "",
                                 "job_description": job_posting.job_description,
-                                "status": JobRecordStatus.APPLIED,
-                                "applied_at": datetime.now(UTC).isoformat()
+                                # Only a message that actually left the app counts as applied;
+                                # otherwise the employer would become a same-company exclusion
+                                # anchor without ever having been contacted.
+                                "status": JobRecordStatus.APPLIED
                                 if dispatched
-                                else None,
-                                "applied_source": APPLIED_SOURCE_AGENT,
+                                else JobRecordStatus.MATCHED,
+                                "applied_at": datetime.now(UTC).isoformat() if dispatched else None,
+                                "applied_source": APPLIED_SOURCE_AGENT if dispatched else "",
                                 "match_score": match_score,
                                 "greeting_message": greeting_message,
                                 "jd_key_requirements": match_reasons,

@@ -22,6 +22,7 @@ from boss_agent.worker.config import WorkerConfig
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.daemon import AutomationWorker
 from boss_agent.worker.handlers.auto_apply import AutoApplyHandler
+from droid_agent_core.locators import get_global_locator_registry
 
 
 def test_job_records_schema_declares_applied_at():
@@ -311,3 +312,77 @@ async def test_auto_apply_draft_only_mode_leaves_applied_at_empty(broker, mock_d
     assert len(records) == 1
     assert not records[0].get("applied_at")
     assert await broker.count_today_applied_jobs() == 0
+
+
+def _hide_locator_keys(mock_driver: MagicMock, *keys: str) -> None:
+    """Make the given locator keys unresolvable, leaving every other lookup intact."""
+    registry = get_global_locator_registry()
+    hidden = {
+        (selector.by.value, selector.value)
+        for key in keys
+        for selector in (registry.get_selectors(key) or [])
+    }
+    inner = mock_driver.find_elements.side_effect
+
+    def mock_find(by, value):
+        if (by, value) in hidden:
+            return []
+        return inner(by, value)
+
+    mock_driver.find_elements.side_effect = mock_find
+
+
+@pytest.mark.asyncio
+async def test_auto_apply_does_not_record_applied_when_send_button_is_missing(broker, mock_driver):
+    """A greeting that never leaves the app must not be recorded as an application.
+
+    Recording it as `applied` would both consume the daily quota and plant a same-company
+    exclusion anchor against an employer we never actually contacted.
+    """
+    _wire_job_detail_mocks(mock_driver)
+    _hide_locator_keys(mock_driver, "chat.send_btn")
+
+    config = WorkerConfig(worker_id="test-worker-send-failure", poll_interval_sec=0.01)
+    context = WorkerContext(config=config, driver=mock_driver)
+
+    worker = AutomationWorker(
+        config=config,
+        broker=broker,
+        context=context,
+        handlers=[AutoApplyHandler(llm_client=_mock_llm_client())],
+    )
+
+    task = await broker.create_task(
+        task_type=TaskType.AUTO_APPLY,
+        payload={
+            "keyword": "Python",
+            "min_score": 75,
+            "preview_only": False,
+            "auto_send": True,
+            "candidate_profile": {
+                "name": "Candidate",
+                "years_of_experience": 6,
+                "core_skills": ["Python", "Agents"],
+            },
+        },
+    )
+
+    assert await worker.run_once() is True
+
+    assert await broker.list_job_records(status="applied") == [], (
+        "An unsent greeting must not leave an `applied` record behind; it would seed a false "
+        "same-company exclusion anchor with no applied_at to age out of."
+    )
+
+    records = await broker.list_job_records(status="matched")
+    assert len(records) == 1, "The tailored greeting should survive as a draft for manual sending."
+    assert records[0].get("greeting_message")
+    assert not records[0].get("applied_at")
+    assert not records[0].get("applied_source")
+    assert await broker.count_today_applied_jobs() == 0
+
+    finished = await broker.get_task(task.id)
+    assert finished is not None
+    assert not any("Dispatched greeting message" in line for line in finished.logs), (
+        "A failed dispatch must not be reported as a successful send."
+    )
