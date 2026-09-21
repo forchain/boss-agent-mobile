@@ -131,37 +131,42 @@ class AutoApplyHandler(BaseTaskHandler):
             startup_page.dismiss_dialog()
 
         list_page = JobListPage(driver)
-        list_page.navigate_to_home()
 
         # 3. Search Keyword if specified
         enable_search = bool(payload.get("enable_search", True))
         if enable_search and keyword:
             search_page = SearchPage(driver)
+            max_attempts = 2
             search_success = False
-            for attempt in range(2):
+            # No pre-navigation: open_search() unwinds subpages itself (two anchors +
+            # hardware Back), so navigating home first only added blind probing delay.
+            for attempt in range(max_attempts):
                 if not search_page.is_search_page():
                     list_page.open_search(timeout_sec=5.0)
                 if search_page.search(keyword, timeout_sec=10.0):
                     search_success = True
                     break
-                await broker.append_log(
-                    task.id,
-                    f"⚠️ 第 {attempt + 1} 次尝试进入搜索页面并搜索 '{keyword}' 失败，正在重试...",
-                )
-                list_page.navigate_to_home()
+                if attempt < max_attempts - 1:
+                    await broker.append_log(
+                        task.id,
+                        f"⚠️ 第 {attempt + 1}/{max_attempts} 次进入搜索页面并搜索 '{keyword}' 失败，"
+                        f"准备第 {attempt + 2} 次尝试...",
+                    )
 
             if search_success:
                 await broker.append_log(task.id, f"Navigated to search results for '{keyword}'")
             else:
                 await broker.append_log(
                     task.id,
-                    f"❌ 未能进入搜索页面或执行关键词搜索: '{keyword}'，终止任务以避免误操作推荐流",
+                    f"❌ 已尝试 {max_attempts} 次仍未能进入搜索页面或执行关键词搜索: '{keyword}'，"
+                    f"重试次数已耗尽，终止任务以避免误操作推荐流",
                 )
                 return HandlerResult(
                     success=False,
                     output={"error": f"Failed to execute search for keyword '{keyword}'"},
                 )
         elif not enable_search:
+            list_page.navigate_to_home()
             await broker.append_log(
                 task.id,
                 "enable_search is False; browsing home recommendations without search keyword",
