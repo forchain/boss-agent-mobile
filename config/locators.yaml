@@ -29,14 +29,13 @@ job_list:
     - "//*[@resource-id='com.hpbr.bosszhipin:id/main_tab_layout_view']//*[@text='职位']"
     - "//*[contains(@resource-id, 'main_tab_layout')]//*[@text='职位']"
     - "//*[@text='职位']"
+  # Verified single-anchor XPath. Deliberately NOT a fallback list: every extra
+  # candidate XPath costs a full accessibility-tree scan (~1s) on each miss,
+  # which is what made home/search detection take tens of seconds.
+  # The home screen search entry is also the home-page state anchor for
+  # JobListPage.is_on_home_page().
   search_icon:
-    - "//*[@resource-id='com.hpbr.bosszhipin:id/ly_menu']/*[2]"
-    - "//*[@resource-id='com.hpbr.bosszhipin:id/ly_menu']/*[2]//android.widget.ImageView"
-    - "//*[@resource-id='com.hpbr.bosszhipin:id/ly_menu']/android.widget.RelativeLayout[2]"
-    - "(//*[@resource-id='com.hpbr.bosszhipin:id/ly_menu']//android.widget.ImageView)[2]"
-    - "//android.widget.LinearLayout[@resource-id='com.hpbr.bosszhipin:id/ly_menu']/*[@clickable='true'][last()]"
-    - "//android.widget.LinearLayout[@resource-id='com.hpbr.bosszhipin:id/ly_menu']/*[last()]"
-    - "//*[@content-desc='搜索']"
+    - "//android.widget.LinearLayout[@resource-id=\"com.hpbr.bosszhipin:id/ly_menu\"]/android.widget.RelativeLayout[2]/android.widget.ImageView[@resource-id=\"com.hpbr.bosszhipin:id/img_icon\"]"
   job_card:
     - "com.hpbr.bosszhipin:id/view_job_card"
     - "//*[contains(@resource-id, 'view_job_card') or contains(@resource-id, 'cl_card_container') or contains(@resource-id, 'cl_position')]"

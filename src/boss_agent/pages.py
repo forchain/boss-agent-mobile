@@ -400,58 +400,32 @@ class JobListPage(BaseBossPage):
             with contextlib.suppress(Exception):
                 self.driver.back()
 
-    def navigate_to_home(self, max_attempts: int = 6) -> bool:
-        """Ensure the app navigates back to the primary Job Recommendation Home page.
+    def navigate_to_home(self, max_attempts: int = 6, back_interval_sec: float = 0.5) -> bool:
+        """Return to the Job Recommendation home page by pressing Back only.
 
-        If not currently on the home page, repeatedly dismiss dialogs, click
-        visible back buttons, or press the Android back key until returning to the home screen.
+        The home page state is defined by a single anchor: the search entry icon.
+        Each attempt therefore does exactly one fast selector query — no probing of
+        dialog close buttons, chat/detail back buttons or bottom tabs, which used to
+        cost 20-40 seconds per call.
         """
         for _ in range(max_attempts):
             if self.is_on_home_page():
-                self.ensure_job_tab()
                 return True
-
-            # Dismiss open filter / industry dialogs if present
-            close_dialog_btn = self.find_by_key("filter.close_btn", timeout_sec=0.3)
-            if close_dialog_btn:
-                self.gestures.human_click(close_dialog_btn)
-                time.sleep(0.4)
-                continue
-
-            cancel_industry_btn = self.find_by_key("industry.cancel_btn", timeout_sec=0.3)
-            if cancel_industry_btn:
-                self.gestures.human_click(cancel_industry_btn)
-                time.sleep(0.4)
-                continue
-
-            # Look for explicit back button (search, job_detail, chat, navigation)
-            back_elem = self.find_by_key("search.back_btn", timeout_sec=0.3)
-            if not back_elem:
-                back_elem = self.find_by_key("job_detail.back_btn", timeout_sec=0.3)
-            if not back_elem:
-                back_elem = self.find_by_key("chat.back_btn", timeout_sec=0.3)
-            if not back_elem:
-                back_elem = self.find_by_key("navigation.back_btn", timeout_sec=0.3)
-
-            if back_elem:
-                self.gestures.human_click(back_elem)
-                time.sleep(0.8)
-            else:
-                self.press_back()
-                time.sleep(0.8)
-
-            # Check if back action reached home page
-            if self.is_on_home_page():
-                self.ensure_job_tab()
-                return True
-
-            # If bottom job tab is visible (e.g. switched to message/mine tab), click it
-            job_tab_elem = self.find_by_key("job_list.job_tab", timeout_sec=0.3)
-            if job_tab_elem:
-                self.gestures.human_click(job_tab_elem)
-                time.sleep(0.5)
-
+            self._ensure_foreground()
+            self.press_back()
+            time.sleep(back_interval_sec)
         return self.is_on_home_page()
+
+    def _ensure_foreground(self) -> None:
+        """Re-activate the Boss app if a Back press escaped it (e.g. to the launcher)."""
+        if not self.driver:
+            return
+        package = getattr(self.driver, "current_package", None)
+        if isinstance(package, str) and package and package != self.BOSS_PACKAGE_NAME:
+            logger.warning(
+                "Foreground package is '%s' instead of Boss; re-activating app", package
+            )
+            self.activate_app()
 
     def ensure_job_tab(self) -> bool:
         """Ensure the user is on the primary '职位' (Job) navigation tab."""
@@ -461,42 +435,36 @@ class JobListPage(BaseBossPage):
             return True
         return False
 
-    def open_search(self, timeout_sec: float = 10.0) -> bool:
-        """Click the search icon in the top header to enter the search page."""
-        search_page = SearchPage(self.driver)
-        if search_page.is_search_page():
-            return True
+    def open_search(
+        self,
+        timeout_sec: float = 10.0,
+        max_back_attempts: int = 10,
+        back_interval_sec: float = 0.5,
+    ) -> bool:
+        """Enter the search input screen using exactly two anchors.
 
-        # If not currently on home page, press back to return to home first!
-        if not self.is_on_home_page():
-            self.navigate_to_home()
+        1. Search input box already on screen -> we are done (no navigation at all).
+        2. Home search entry icon on screen   -> click it, then wait for the input box.
+        3. Neither                            -> press hardware Back and re-evaluate,
+           up to ``max_back_attempts`` times, so a deep subpage unwinds quickly
+           instead of scanning every dialog/detail/chat close button in the tree.
+        """
+        search_page = SearchPage(self.driver)
+
+        for _ in range(max_back_attempts):
             if search_page.is_search_page():
                 return True
 
-        elem = self.find_by_key("job_list.search_icon", timeout_sec=timeout_sec)
-        if elem:
-            self.gestures.human_click(elem)
-            if search_page.wait_for_search_page(timeout_sec=3.0):
-                return True
+            entry = self.find_by_key("job_list.search_icon", timeout_sec=0.0)
+            if entry:
+                self.gestures.human_click(entry)
+                if search_page.wait_for_search_page(timeout_sec=timeout_sec):
+                    return True
+                continue
 
-        # Fallback: find ly_menu directly and tap on the right side (search icon)
-        try:
-            if self.driver:
-                menus = self.driver.find_elements(
-                    by="xpath", value="//*[@resource-id='com.hpbr.bosszhipin:id/ly_menu']"
-                )
-                if menus:
-                    menu_elem = menus[0]
-                    loc = getattr(menu_elem, "location", None) or getattr(menu_elem, "rect", None)
-                    size = getattr(menu_elem, "size", None) or getattr(menu_elem, "rect", None)
-                    if loc and size:
-                        target_x = (loc.get("x", 0) or 0) + (size.get("width", 0) or 0) * 0.75
-                        target_y = (loc.get("y", 0) or 0) + (size.get("height", 0) or 0) * 0.5
-                        self.gestures.human_click_at_point(target_x, target_y, jitter_px=3.0)
-                        if search_page.wait_for_search_page(timeout_sec=3.0):
-                            return True
-        except Exception:
-            pass
+            self._ensure_foreground()
+            self.press_back()
+            time.sleep(back_interval_sec)
 
         return search_page.is_search_page()
 
