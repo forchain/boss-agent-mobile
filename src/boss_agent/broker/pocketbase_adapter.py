@@ -37,6 +37,11 @@ INVALID_JOB_TITLES: frozenset[str] = frozenset(
 )
 INVALID_COMPANY_NAMES: frozenset[str] = frozenset({"", "未注明公司", "未知公司"})
 
+# Same trade-off as the web dashboard's MAX_PAGES walk: enough pages for any realistic
+# contact history, bounded so a runaway collection cannot stall the worker.
+APPLIED_POOL_PAGE_SIZE = 200
+APPLIED_POOL_MAX_PAGES = 25
+
 
 class BaseTaskBroker(ABC):
     """Abstract interface for the State Stream Task Broker."""
@@ -1363,21 +1368,40 @@ class PocketBaseTaskBroker(BaseTaskBroker):
         return 0
 
     async def get_applied_direct_companies(self, cooldown_days: int = 0) -> set[str]:
+        """Collect every direct-hire company with an unexpired communication.
+
+        The pool is walked page by page: a candidate with more than one page of lifetime
+        contacts would otherwise lose the older anchors and be re-contacted at a company
+        they have already approached.
+        """
         url = self._jobs_collection_url()
-        params = {
-            "filter": "status='applied' && is_headhunter!=true",
-            "perPage": "200",
-            "fields": "company_name,applied_at,created",
-        }
         loop = asyncio.get_running_loop()
+
+        items: list[dict[str, Any]] = []
         try:
-            resp = await loop.run_in_executor(
-                None,
-                lambda: self.session.get(url, params=params, headers=self._headers()),
-            )
-            if resp.status_code != 200:
-                return set()
-            items = resp.json().get("items", [])
+            for page in range(1, APPLIED_POOL_MAX_PAGES + 1):
+                params = {
+                    "filter": "status='applied' && is_headhunter!=true",
+                    "page": str(page),
+                    "perPage": str(APPLIED_POOL_PAGE_SIZE),
+                    # is_headhunter has to be projected: the guard below reads it per record.
+                    "fields": "company_name,is_headhunter,applied_at,created",
+                }
+                resp = await loop.run_in_executor(
+                    None,
+                    lambda p=params: self.session.get(url, params=p, headers=self._headers()),
+                )
+                if resp.status_code != 200:
+                    logger.warning(
+                        "PocketBase get_applied_direct_companies stopped at page %d (%d)",
+                        page,
+                        resp.status_code,
+                    )
+                    break
+                batch = resp.json().get("items", [])
+                items.extend(batch)
+                if len(batch) < APPLIED_POOL_PAGE_SIZE:
+                    break
         except Exception as e:
             logger.warning("PocketBase get_applied_direct_companies failed: %s", e)
             return set()

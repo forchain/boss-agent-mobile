@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from boss_agent.broker.models import TaskType
-from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
+from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker, PocketBaseTaskBroker
 from boss_agent.models import ChatButtonState, is_communication_expired
 from boss_agent.pages import JobCardBrief
 from boss_agent.worker.config import WorkerConfig
@@ -717,3 +717,64 @@ async def test_permanent_cooldown_keeps_excluding_old_communications(broker, moc
         assert await worker.run_once() is True
 
         mock_detail.get_chat_button_state.assert_not_called()
+
+
+# --------------------------------------------------------------------------------------
+# PocketBase adapter: exclusion pool assembly
+# --------------------------------------------------------------------------------------
+
+
+def _applied(company: str, is_headhunter: bool = False, days_ago: int = 2) -> dict[str, object]:
+    return {
+        "company_name": company,
+        "is_headhunter": is_headhunter,
+        "applied_at": _iso_days_ago(days_ago),
+    }
+
+
+def _paged_session(pages: list[list[dict[str, object]]], per_page: int = 200) -> MagicMock:
+    """Fake a PocketBase collection endpoint serving the given pages in order."""
+    session = MagicMock()
+
+    def mock_get(url, params=None, headers=None):
+        page = int((params or {}).get("page", 1))
+        items = pages[page - 1] if page - 1 < len(pages) else []
+        return MagicMock(
+            status_code=200,
+            json=lambda: {
+                "items": items,
+                "page": page,
+                "perPage": per_page,
+                "totalItems": sum(len(p) for p in pages),
+                "totalPages": len(pages),
+            },
+        )
+
+    session.get.side_effect = mock_get
+    return session
+
+
+@pytest.mark.asyncio
+async def test_applied_companies_walk_every_page_of_the_collection():
+    """A single page silently truncates the pool once a candidate exceeds one page of contacts."""
+    session = _paged_session([[_applied(f"企业{i}") for i in range(200)], [_applied("深至科技")]])
+    broker = PocketBaseTaskBroker(base_url="http://mock-pb:8090", session=session)
+
+    companies = await broker.get_applied_direct_companies(cooldown_days=30)
+
+    assert "深至科技" in companies, "Companies beyond the first page must still anchor exclusion."
+    assert len(companies) == 201
+    assert session.get.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_applied_companies_request_projects_is_headhunter():
+    """Dropping is_headhunter from `fields` silently turns the headhunter guard into a no-op."""
+    session = _paged_session([[_applied("深至科技"), _applied("精英猎头", is_headhunter=True)]])
+    broker = PocketBaseTaskBroker(base_url="http://mock-pb:8090", session=session)
+
+    companies = await broker.get_applied_direct_companies(cooldown_days=30)
+
+    fields = session.get.call_args_list[0].kwargs["params"]["fields"]
+    assert "is_headhunter" in fields
+    assert companies == {"深至科技"}
