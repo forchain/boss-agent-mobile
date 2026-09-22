@@ -10,7 +10,8 @@ import type {
 	GetJobRecordsResult,
 	PaginatedJobRecordsResponse,
 	PaginatedTasksResponse,
-	JobRecordsCounts
+	JobRecordsCounts,
+	CommunicationSummary
 } from './types';
 
 let currentPbUrl = '';
@@ -720,7 +721,7 @@ export async function getJobRecords(
 
 export async function updateJobRecord(
 	recordId: string,
-	data: Partial<JobRecord>
+	data: Partial<JobRecord> & { clear_communication?: boolean }
 ): Promise<JobRecord | null> {
 	if (typeof window !== 'undefined') {
 		try {
@@ -740,6 +741,43 @@ export async function updateJobRecord(
 		const updated = await pb.collection('job_records').update(recordId, data);
 		return updated as unknown as JobRecord;
 	} catch (err) {
+		return null;
+	}
+}
+
+/**
+ * Clear the communication state of a single job: back to `jd_saved` with `applied_at`
+ * nullified, keeping the extracted JD so the job can be re-evaluated and re-applied.
+ */
+export async function clearJobCommunication(recordId: string): Promise<JobRecord | null> {
+	return updateJobRecord(recordId, { clear_communication: true });
+}
+
+export async function getCommunicationSummary(): Promise<CommunicationSummary | null> {
+	try {
+		const res = await fetch('/api/jobs/communication');
+		if (!res.ok) return null;
+		return await res.json();
+	} catch (e) {
+		return null;
+	}
+}
+
+/** Release enterprise-level suppression: `clear_company` for one employer, `clear_expired` for aged records. */
+export async function postCommunicationAction(
+	action: 'clear_company' | 'clear_expired',
+	companyName?: string
+): Promise<{ success: boolean; cleared?: number; notice?: string; error?: string } | null> {
+	try {
+		const res = await fetch('/api/jobs/communication', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(
+				action === 'clear_company' ? { action, company_name: companyName } : { action }
+			)
+		});
+		return await res.json();
+	} catch (e) {
 		return null;
 	}
 }

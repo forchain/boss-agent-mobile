@@ -10,13 +10,18 @@ from typing import Any
 from boss_agent.broker.models import AutomationTask, TaskStatus, TaskType
 from boss_agent.broker.pocketbase_adapter import BaseTaskBroker
 from boss_agent.models import (
+    APPLIED_SOURCE_PLATFORM_HISTORICAL,
+    EXPIRED_POSTING_REASON,
     INVALID_COMPANY_NAMES,
     STATE_RANK,
     TARGET_ACTION_RANK,
+    ChatButtonState,
     FilterConfig,
     JobRecordStatus,
     ScreeningPolicy,
     TargetAction,
+    is_communication_expired,
+    is_direct_hire_company,
     is_invalid_company_name,
 )
 from boss_agent.pages import (
@@ -27,6 +32,7 @@ from boss_agent.pages import (
     SearchPage,
     StartupDialogPage,
 )
+from boss_agent.settings import resolve_communication_cooldown_days
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.handlers.base import BaseTaskHandler, HandlerResult
 from boss_agent.worker.handlers.search_entry import run_search_entry
@@ -142,6 +148,16 @@ class ScrapeJobsHandler(BaseTaskHandler):
             ScreeningPolicy.from_dict(policy_raw) if policy_raw else ScreeningPolicy.load_default()
         )
 
+        cooldown_days = resolve_communication_cooldown_days(payload)
+        applied_direct_companies = await broker.get_applied_direct_companies(
+            cooldown_days=cooldown_days
+        )
+        if applied_direct_companies:
+            await broker.append_log(
+                task.id,
+                f"🏢 [避嫌池] 已加载 {len(applied_direct_companies)} 家已沟通直招企业（冷却期 {cooldown_days or '永久'}）",
+            )
+
         while len(scanned_fingerprints) < max_jobs:
             # 0. Check if task was cancelled by user
             cur_task = await broker.get_task(task.id)
@@ -207,7 +223,20 @@ class ScrapeJobsHandler(BaseTaskHandler):
                     )
                     continue
 
-                # 3. State Machine Check against existing database record
+                # 3. Enterprise-level direct-hire exclusion (直招同企避嫌): a shared in-house HR
+                # candidate pool means one contact suppresses the company's other postings.
+                if (
+                    is_direct_hire_company(comp_name, getattr(card, "is_headhunter", False))
+                    and comp_name in applied_direct_companies
+                ):
+                    skipped_count += 1
+                    await broker.append_log(
+                        task.id,
+                        f"⏭️ [同企已沟通避嫌] '{card.title}' @ '{comp_name}' 直招企业已有沟通，跳过该企业其他岗位",
+                    )
+                    continue
+
+                # 4. State Machine Check against existing database record
                 existing_record = await broker.get_job_record_by_fingerprint(card.fingerprint)
                 if existing_record:
                     existing_status = existing_record.get("status", "unmatched")
@@ -219,12 +248,39 @@ class ScrapeJobsHandler(BaseTaskHandler):
                         )
                         continue
 
+                    is_released = False
+                    if existing_status == JobRecordStatus.APPLIED:
+                        is_released = is_communication_expired(existing_record, cooldown_days)
+                        if not is_released:
+                            skipped_count += 1
+                            await broker.append_log(
+                                task.id,
+                                f"⏭️ [已沟通岗位] '{card.title}' @ '{card.company_name}' 冷却期内已沟通，跳过详情页",
+                            )
+                            await broker.upsert_job_record(
+                                {
+                                    "fingerprint": card.fingerprint,
+                                    "company_name": card.company_name,
+                                    "title": card.title,
+                                    "recruiter_name": card.recruiter_name,
+                                    "search_keywords": [keyword] if keyword else [],
+                                }
+                            )
+                            continue
+                        # Transition back to jd_saved so fresh evaluation can persist a new state
+                        # while the previously extracted JD is preserved.
+                        await broker.clear_job_communication(existing_record["id"])
+                        await broker.append_log(
+                            task.id,
+                            f"♻️ [冷却放宽] '{card.title}' @ '{card.company_name}' 距上次沟通已超过 {cooldown_days} 天，已释放回待评估流",
+                        )
+
                     cur_rank = STATE_RANK.get(existing_status, 1)
                     has_full_jd = bool((existing_record.get("job_description") or "").strip())
                     is_already_progressed = cur_rank > TARGET_ACTION_RANK.get(
                         TargetAction.SAVE_JD, 1
                     )
-                    if cur_rank >= required_rank and (
+                    if not is_released and cur_rank >= required_rank and (
                         is_already_progressed
                         or target_action != TargetAction.SAVE_JD
                         or has_full_jd
@@ -245,7 +301,7 @@ class ScrapeJobsHandler(BaseTaskHandler):
                         )
                         continue
 
-                # 4. Preliminary screening (zero-token gatekeeper)
+                # 5. Preliminary screening (zero-token gatekeeper)
                 digest_text = getattr(card, "digest", "") or getattr(card, "snippet", "") or ""
                 card_tags = getattr(card, "tags", []) or []
 
@@ -286,7 +342,7 @@ class ScrapeJobsHandler(BaseTaskHandler):
                     )
                     continue
 
-                # 4.5 App-Enforced Filters (platform-inexpressible constraints, e.g. recruitment
+                # 5.5 App-Enforced Filters (platform-inexpressible constraints, e.g. recruitment
                 # channel) with Whitelist Relaxation rescue before detail navigation.
                 app_pass, app_violation = policy.evaluate_app_enforced_filters(
                     is_headhunter=getattr(card, "is_headhunter", False)
@@ -337,7 +393,7 @@ class ScrapeJobsHandler(BaseTaskHandler):
                         f"🎗️ [白名单放宽] '{card.title}' 命中 '{relax_token}' 豁免渠道限制，继续采集",
                     )
 
-                # 5. Execute Action based on target_action
+                # 6. Execute Action based on target_action
                 rec_type = "[猎头]" if getattr(card, "is_headhunter", False) else "[直招]"
                 card_record = {
                     "fingerprint": card.fingerprint,
@@ -384,6 +440,40 @@ class ScrapeJobsHandler(BaseTaskHandler):
                     clicked = list_page.select_first_job(timeout_sec=2.0)
 
                 if clicked:
+                    # Zero-cost backout: consult the detail page call-to-action button before
+                    # spending any time on description expansion or JD extraction.
+                    chat_state = detail_page.get_chat_button_state()
+                    if chat_state in (ChatButtonState.COMMUNICATED, ChatButtonState.CLOSED):
+                        # Drop the optimistic card-level record appended above; this card is a
+                        # skip, not a scraped JD.
+                        if scraped_jobs and scraped_jobs[-1] is persisted:
+                            scraped_jobs.pop()
+                        skipped_count += 1
+                        if chat_state == ChatButtonState.COMMUNICATED:
+                            terminal_record = dict(card_record)
+                            terminal_record["status"] = JobRecordStatus.APPLIED.value
+                            terminal_record["applied_source"] = APPLIED_SOURCE_PLATFORM_HISTORICAL
+                            await broker.upsert_job_record(terminal_record)
+                            if is_direct_hire_company(
+                                comp_name, terminal_record.get("is_headhunter")
+                            ):
+                                applied_direct_companies.add(comp_name)
+                            await broker.append_log(
+                                task.id,
+                                f"⏭️ [既有沟通] '{card.title}' @ '{card.company_name}' 平台已沟通，免提 JD 直接退出",
+                            )
+                        else:
+                            terminal_record = dict(card_record)
+                            terminal_record["status"] = JobRecordStatus.IGNORED.value
+                            terminal_record["screened_reason"] = EXPIRED_POSTING_REASON
+                            await broker.upsert_job_record(terminal_record)
+                            await broker.append_log(
+                                task.id,
+                                f"🛑 [岗位失效] '{card.title}' @ '{card.company_name}' 已停止招聘/下线，跳过",
+                            )
+                        detail_page.navigate_back()
+                        continue
+
                     try:
                         job_posting = detail_page.extract_job_posting(
                             timeout_sec=4.0,
@@ -499,7 +589,7 @@ class ScrapeJobsHandler(BaseTaskHandler):
                     finally:
                         detail_page.navigate_back()
 
-            # 6. Post-screen checks: Reached max_jobs or empty scrolls safeguard
+            # 7. Post-screen checks: Reached max_jobs or empty scrolls safeguard
             if len(scanned_fingerprints) >= max_jobs:
                 await broker.append_log(
                     task.id,
@@ -518,7 +608,7 @@ class ScrapeJobsHandler(BaseTaskHandler):
             else:
                 consecutive_empty_scrolls = 0
 
-            # 7. Check bottom marker before scrolling
+            # 8. Check bottom marker before scrolling
             if bottom_elem is not None or list_page.is_feed_bottom_reached() is True:
                 await broker.append_log(
                     task.id,
@@ -526,7 +616,7 @@ class ScrapeJobsHandler(BaseTaskHandler):
                 )
                 break
 
-            # 8. Perform humanized scroll
+            # 9. Perform humanized scroll
             list_page.scroll_job_list()
         if is_cancelled:
             total_scanned = len(scanned_fingerprints)

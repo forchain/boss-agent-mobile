@@ -15,6 +15,7 @@ from droid_agent_core.gestures import (
     calculate_probe_coordinate,
 )
 from droid_agent_core.locators import (
+    By,
     LocatorRegistry,
     UISelector,
     get_global_locator_registry,
@@ -25,8 +26,10 @@ from .models import (
     KNOWN_CITIES,
     RECRUITER_TITLE_KEYWORDS,
     AuthStatus,
+    ChatButtonState,
     FilterConfig,
     JobPosting,
+    classify_chat_button,
     clean_job_title,
     compute_job_fingerprint,
     is_invalid_company_name,
@@ -1634,6 +1637,32 @@ class JobDetailPage(BaseBossPage):
             salary_range=salary or "面议",
             job_description=desc or "无详细岗位描述",
         )
+
+    def get_chat_button_state(self, timeout_sec: float = 2.0) -> ChatButtonState:
+        """Read the engagement state of the detail page call-to-action button (`btn_chat`).
+
+        Returns UNKNOWN when the button is absent or its text is unrecognised, so callers keep
+        their normal extraction flow instead of skipping a possibly live posting.
+        """
+        elem = self.find_optional_element(
+            UISelector(By.ID, "com.hpbr.bosszhipin:id/btn_chat", description="btn_chat"),
+            timeout_sec=0.0,
+        ) or self.find_by_key("job_detail.chat_btn", timeout_sec=timeout_sec)
+        if not elem:
+            return ChatButtonState.UNKNOWN
+
+        text = getattr(elem, "text", "") or ""
+        enabled = True
+        try:
+            raw_enabled = elem.get_attribute("enabled")
+        except Exception:
+            raw_enabled = None
+        if isinstance(raw_enabled, str):
+            enabled = raw_enabled.strip().lower() not in ("false", "0")
+        elif raw_enabled is not None:
+            enabled = bool(raw_enabled)
+
+        return classify_chat_button(text, enabled=enabled)
 
     def open_chat(self, timeout_sec: float = 5.0) -> bool:
         """Click '立即沟通' / chat entry button to open chat dialog from job detail screen."""

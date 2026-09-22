@@ -7,6 +7,7 @@ Domain dataclasses for Boss 直聘 entities.
 import json
 import re
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
@@ -412,6 +413,97 @@ class TargetTaskType(StrEnum):
     SCRAPE_JOBS = "SCRAPE_JOBS"
     AUTO_APPLY = "AUTO_APPLY"
     CHECK_CHAT = "CHECK_CHAT"
+
+
+class ChatButtonState(StrEnum):
+    """Engagement state reported by the detail page call-to-action button (`btn_chat`)."""
+
+    UNCONTACTED = "uncontacted"
+    COMMUNICATED = "communicated"
+    CLOSED = "closed"
+    UNKNOWN = "unknown"
+
+
+COMMUNICATED_BUTTON_TEXTS: tuple[str, ...] = ("继续沟通",)
+CLOSED_BUTTON_TEXTS: tuple[str, ...] = ("停止招聘", "职位已关闭", "已下线")
+UNCONTACTED_BUTTON_TEXTS: tuple[str, ...] = ("立即沟通", "聊一聊", "去沟通", "发消息")
+
+
+def classify_chat_button(button_text: str | None, enabled: bool = True) -> ChatButtonState:
+    """Classify the `btn_chat` call-to-action text into an engagement state.
+
+    Fail-open by design: unrecognised, missing, or disabled controls yield UNKNOWN so that the
+    caller keeps its normal evaluation flow rather than silently burying a live posting.
+    """
+    text = (button_text or "").strip()
+    if not text:
+        return ChatButtonState.UNKNOWN
+    if any(marker in text for marker in COMMUNICATED_BUTTON_TEXTS):
+        return ChatButtonState.COMMUNICATED
+    if any(marker in text for marker in CLOSED_BUTTON_TEXTS):
+        return ChatButtonState.CLOSED
+    if any(marker in text for marker in UNCONTACTED_BUTTON_TEXTS):
+        return ChatButtonState.UNCONTACTED if enabled else ChatButtonState.UNKNOWN
+    return ChatButtonState.UNKNOWN
+
+
+# Provenance of an `applied` record: agent-dispatched greeting vs. pre-existing platform contact.
+APPLIED_SOURCE_AGENT = "agent_auto_send"
+APPLIED_SOURCE_PLATFORM_HISTORICAL = "platform_historical"
+
+EXPIRED_POSTING_REASON = "岗位已失效/停止招聘"
+
+DEFAULT_COMMUNICATION_COOLDOWN_DAYS = 30
+
+
+def is_direct_hire_company(company_name: str | None, is_headhunter: bool | None) -> bool:
+    """Whether a posting belongs to a genuine direct-hire enterprise for同企避嫌 purposes.
+
+    Headhunter channels represent disparate clients and masked/confidential employer names
+    cannot be reliably attributed, so neither ever participates in company-wide exclusion.
+    """
+    if is_headhunter:
+        return False
+    name = (company_name or "").strip()
+    return bool(name) and not is_masked_company_name(name)
+
+
+def parse_utc_timestamp(raw: Any) -> datetime | None:
+    """Parse an ISO-8601 timestamp (with or without trailing 'Z') into an aware UTC datetime."""
+    if not isinstance(raw, str):
+        return None
+    text = raw.strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def is_communication_expired(
+    record: dict[str, Any],
+    cooldown_days: int,
+    now: datetime | None = None,
+) -> bool:
+    """Whether a past communication has aged out of the re-application cool-down window.
+
+    `cooldown_days <= 0` means permanent suppression: nothing ever expires automatically.
+    Platform historical contacts carry no `applied_at`, so their ingestion date (`created`)
+    governs expiry instead. Records without any usable timestamp never expire by accident.
+    """
+    if cooldown_days <= 0:
+        return False
+    communicated_at = parse_utc_timestamp(record.get("applied_at")) or parse_utc_timestamp(
+        record.get("created")
+    )
+    if communicated_at is None:
+        return False
+    reference = now or datetime.now(UTC)
+    return (reference - communicated_at) > timedelta(days=cooldown_days)
 
 
 class ChannelPreference(StrEnum):

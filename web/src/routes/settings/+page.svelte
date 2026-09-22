@@ -1,8 +1,10 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import type { SystemSettings, ScreeningPolicy, ChatAcknowledgmentConfig } from '$lib/types';
+	import type { SystemSettings, ScreeningPolicy, ChatAcknowledgmentConfig, CommunicationSummary } from '$lib/types';
 	import { validateCanBlacklistCompany } from '$lib/screening';
 	import { DEFAULT_CHAT_ACKNOWLEDGMENT, normalizeChatAcknowledgment } from '$lib/chatAcknowledgment';
+	import { getCommunicationSummary, postCommunicationAction } from '$lib/pocketbase';
+
 
 	let settings = $state<SystemSettings>({
 		device: 'emulator-5554',
@@ -22,8 +24,41 @@
 		daily_greeting_limit: 20,
 		preview_timeout_sec: 3.0,
 		enable_greeting: true,
-		chat: { ...DEFAULT_CHAT_ACKNOWLEDGMENT }
+		chat: { ...DEFAULT_CHAT_ACKNOWLEDGMENT },
+		communication_cooldown_days: 30
 	});
+
+	// Communication exclusion management (Issue #203)
+	let communicationSummary = $state<CommunicationSummary | null>(null);
+	let isLoadingCommunication = $state(false);
+	let isClearingExpired = $state(false);
+	let communicationActionNotice = $state('');
+
+	async function loadCommunicationSummary() {
+		isLoadingCommunication = true;
+		try {
+			communicationSummary = await getCommunicationSummary();
+		} finally {
+			isLoadingCommunication = false;
+		}
+	}
+
+	async function handleClearExpiredExclusions() {
+		isClearingExpired = true;
+		communicationActionNotice = '';
+		try {
+			const data = await postCommunicationAction('clear_expired');
+			if (!data || !data.success) {
+				throw new Error(data?.error || '清理超期避嫌记录失败');
+			}
+			communicationActionNotice = `✅ ${data.notice || '已清理超期避嫌记录'}`;
+			await loadCommunicationSummary();
+		} catch (e: any) {
+			communicationActionNotice = '❌ ' + (e?.message || '清理超期避嫌记录失败');
+		} finally {
+			isClearingExpired = false;
+		}
+	}
 
 	let isEditingApiKey = $state(false);
 	let newApiKeyInput = $state('');
@@ -127,7 +162,8 @@
 					daily_greeting_limit: conf.daily_greeting_limit ?? 20,
 					preview_timeout_sec: conf.preview_timeout_sec ?? 3.0,
 					enable_greeting: conf.enable_greeting !== false,
-					chat: resolvedChat
+					chat: resolvedChat,
+					communication_cooldown_days: conf.communication_cooldown_days ?? 30
 				};
 				chatAck = { ...resolvedChat };
 				isEditingApiKey = !conf.api_key;
@@ -164,6 +200,8 @@
 		} catch (e) {
 			console.warn('Failed to load screening policy:', e);
 		}
+
+		await loadCommunicationSummary();
 
 		try {
 			const gpRes = await fetch('/api/greeting/prompt');
@@ -1184,6 +1222,23 @@
 					<p class="text-[11px] text-slate-500 mt-1">打招呼文案填入输入框后的视觉检视停留时间</p>
 				</div>
 
+				<div>
+					<label for="communication-cooldown-input" class="block text-xs font-medium text-slate-300 mb-1.5">
+						复投冷却时效 (天)
+					</label>
+					<input
+						id="communication-cooldown-input"
+						type="number"
+						min="0"
+						max="3650"
+						bind:value={settings.communication_cooldown_days}
+						class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs font-mono text-slate-200 focus:outline-none focus:border-cyan-500"
+					/>
+					<p class="text-[11px] text-slate-500 mt-1">
+						已沟通岗位/直招企业避嫌超过该天数自动放宽，允许重新评估与投递；0 表示永久避嫌
+					</p>
+				</div>
+
 				<div class="flex flex-col justify-between">
 					<span class="block text-xs font-medium text-slate-300 mb-1.5">
 						AI 打招呼开关
@@ -1206,7 +1261,108 @@
 			</div>
 		</div>
 
-		<!-- Section 7: 仅沟通 Rejection Triage & Company Blacklisting Card -->
+		<!-- Section 7: Communication Exclusion Management Card (Issue #203) -->
+		<div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-5">
+			<div class="flex items-center justify-between border-b border-slate-800/80 pb-4">
+				<div class="flex items-center space-x-2.5">
+					<span class="text-xl">🏢</span>
+					<div>
+						<h2 class="font-semibold text-sm text-slate-100">沟通避嫌管理 (Communication Exclusion)</h2>
+						<p class="text-[11px] text-slate-400 mt-0.5">
+							直招企业同企避嫌池：已沟通企业下的其他岗位会被自动跳过，超期后可手动释放
+						</p>
+					</div>
+				</div>
+				<button
+					onclick={loadCommunicationSummary}
+					disabled={isLoadingCommunication}
+					class="text-[11px] px-2.5 py-1 rounded-full bg-slate-950 text-slate-300 border border-slate-700 hover:border-cyan-600 hover:text-cyan-300 transition font-mono disabled:opacity-50"
+				>
+					{isLoadingCommunication ? '刷新中...' : '🔄 刷新'}
+				</button>
+			</div>
+
+			<div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+				<div class="bg-slate-950/70 border border-slate-800 rounded-xl p-3.5">
+					<p class="text-[11px] text-slate-400">当前避嫌企业</p>
+					<p class="text-lg font-bold text-amber-300 font-mono">
+						{communicationSummary?.excluded_count ?? 0}
+						<span class="text-xs font-normal text-slate-500">家</span>
+					</p>
+				</div>
+				<div class="bg-slate-950/70 border border-slate-800 rounded-xl p-3.5">
+					<p class="text-[11px] text-slate-400">已超期可释放</p>
+					<p class="text-lg font-bold text-cyan-300 font-mono">
+						{communicationSummary?.expired_count ?? 0}
+						<span class="text-xs font-normal text-slate-500">家</span>
+					</p>
+				</div>
+				<div class="bg-slate-950/70 border border-slate-800 rounded-xl p-3.5">
+					<p class="text-[11px] text-slate-400">已沟通岗位总数</p>
+					<p class="text-lg font-bold text-slate-200 font-mono">
+						{communicationSummary?.total_applied ?? 0}
+						<span class="text-xs font-normal text-slate-500">个</span>
+					</p>
+				</div>
+				<div class="bg-slate-950/70 border border-slate-800 rounded-xl p-3.5">
+					<p class="text-[11px] text-slate-400">冷却时效</p>
+					<p class="text-lg font-bold text-emerald-300 font-mono">
+						{settings.communication_cooldown_days}
+						<span class="text-xs font-normal text-slate-500">天</span>
+					</p>
+				</div>
+			</div>
+
+			{#if communicationSummary?.companies?.length}
+				<div class="flex flex-wrap gap-2">
+					{#each communicationSummary.companies as company}
+						<span
+							class="text-[11px] px-2.5 py-1 rounded-lg border font-mono {company.expired
+								? 'border-cyan-800/80 bg-cyan-950/40 text-cyan-300'
+								: 'border-amber-800/70 bg-amber-950/30 text-amber-200'}"
+							title={company.expired ? '已超过冷却期，可被重新评估' : `冷却期内，最近沟通: ${company.last_applied_at || '未知'}`}
+						>
+							{company.name} · {company.applied_count}岗{company.expired ? ' · 已超期' : ''}
+						</span>
+					{/each}
+				</div>
+			{:else}
+				<p class="text-[11px] text-slate-500">当前没有处于避嫌状态的直招企业</p>
+			{/if}
+
+			<div class="flex flex-wrap items-center gap-3">
+				<button
+					onclick={handleClearExpiredExclusions}
+					disabled={isClearingExpired}
+					class="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 hover:text-slate-100 px-4 py-2 rounded-xl text-xs transition flex items-center space-x-1.5 disabled:opacity-50"
+				>
+					{#if isClearingExpired}
+						<span class="animate-spin">🌀</span>
+						<span>清理中...</span>
+					{:else}
+						<span>🧹 清理超期避嫌记录</span>
+					{/if}
+				</button>
+				<span class="text-[11px] text-slate-500">
+					将超过冷却期的已沟通岗位重置为待评估状态，保留已提取的 JD
+				</span>
+			</div>
+
+			{#if communicationActionNotice}
+				<div class="p-2.5 bg-slate-950/90 border {communicationActionNotice.startsWith('✅') ? 'border-emerald-800 text-emerald-300' : 'border-rose-800 text-rose-300'} rounded-xl text-xs flex items-center justify-between">
+					<span>{communicationActionNotice}</span>
+					<button
+						onclick={() => (communicationActionNotice = '')}
+						class="text-slate-500 hover:text-slate-300 ml-2"
+						title="关闭提示"
+					>
+						✕
+					</button>
+				</div>
+			{/if}
+		</div>
+
+		<!-- Section 8: 仅沟通 Rejection Triage & Company Blacklisting Card -->
 		<div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-5">
 			<div class="flex items-center justify-between border-b border-slate-800/80 pb-4">
 				<div class="flex items-center space-x-2.5">

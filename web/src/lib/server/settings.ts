@@ -235,6 +235,7 @@ export function loadMergedSettings(): SystemSettings {
 		daily_greeting_limit: 20,
 		preview_timeout_sec: 3.0,
 		enable_greeting: true,
+		communication_cooldown_days: 30,
 		enable_screening: true,
 		channel_preference: 'all',
 		title_whitelist: [],
@@ -328,6 +329,12 @@ export function loadMergedSettings(): SystemSettings {
 	settings.chat = normalizeChatAcknowledgment(settings.chat);
 
 	return settings;
+}
+
+export function resolveCooldownDays(raw: unknown): number {
+	const parsed = typeof raw === 'number' ? raw : parseInt(String(raw ?? ''), 10);
+	if (!Number.isFinite(parsed) || parsed < 0 || parsed > 3650) return 30;
+	return Math.floor(parsed);
 }
 
 export function saveSettingsToLocalYaml(
@@ -427,6 +434,9 @@ export function saveSettingsToLocalYaml(
 		`daily_greeting_limit: ${parseInt(String(merged.daily_greeting_limit ?? 20), 10) || 20}`,
 		`preview_timeout_sec: ${parseFloat(String(merged.preview_timeout_sec ?? 3.0)) || 3.0}`,
 		`enable_greeting: ${merged.enable_greeting !== false}`,
+		// Re-application cool-down: 0 is a meaningful value (permanent suppression), so it must
+		// never be swallowed by a falsy fallback the way the greeting limit can be.
+		`communication_cooldown_days: ${resolveCooldownDays(merged.communication_cooldown_days)}`,
 		``,
 		`# ------------------------------------------------------------------------------`,
 		`# 6. Preliminary Job Screening Policy & Blacklist/Whitelist Rules`,

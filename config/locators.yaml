@@ -146,6 +146,10 @@ job_detail:
     - "//*[contains(@resource-id, 'tv_description') or contains(@resource-id, 'tv_job_desc') or contains(@resource-id, 'job_description')]"
   expand_btn:
     - "//*[@text='查看全部' or @text='展开全文']"
+  chat_btn:
+    - "com.hpbr.bosszhipin:id/btn_chat"
+    - "//*[@resource-id='com.hpbr.bosszhipin:id/btn_chat']"
+    - "//*[@text='立即沟通' or @text='继续沟通' or @text='聊一聊' or @text='去沟通' or @text='发消息' or @text='停止招聘' or @text='职位已关闭' or @text='已下线']"
   back_btn:
     - "//*[@content-desc='返回' or contains(@resource-id, 'iv_back')]"
 
