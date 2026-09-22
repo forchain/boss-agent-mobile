@@ -237,3 +237,11 @@ _Avoid_: auto-block, recruiter kicker, 拒信拉黑脚本
 The company-name-derived protection that keeps staffing and recruitment agencies (人力资源, 劳务派遣, 人才服务, 猎头, 企业管理咨询 …) out of the company blacklist. A rejection card carries no recruiter title, so the 猎头 signal that card-level screening uses is unavailable and the agency must be recognised from its own registered name instead. Deliberately narrow: industry words real employers also carry (咨询, 科技) never trigger it, because the guardrail exists to protect the many employers an agency represents, and a false positive can never be undone by the rejected conversation.
 _Avoid_: agency filter, blacklist whitelist, 猎头豁免
 
+**仅沟通 List Recovery (仅沟通自愈导航)**:
+The bounded multi-tier navigation that lands a dispatched `CHECK_CHAT` on the 仅沟通 list from whatever screen the app happens to be on. Each step prefers an on-screen back affordance (`iv_back` / `iv_back_ai`) over the hardware Back key, clicks `消息` → `仅沟通` the moment the column is reachable, re-activates Boss if a Back press escaped it, and pauses between actions; exhausting the step budget is the only way the task reports an unreachable list (ADR 0013).
+_Avoid_: back-button scanning, navigation cascade, retry loop
+
+**Startup Rejection Cleanup Barrier (开服清扫闸门)**:
+The startup rule that a service queues one marked `CHECK_CHAT` before anything else and holds every search task (`SCRAPE_JOBS` / `AUTO_APPLY`) until it reaches a terminal state, so employers that already rejected the candidate are in the company blacklist before the first search or greeting is dispatched. Derived from the pending queue rather than from process memory, so a cleanup queued by the Automation Scheduler binds the Automation Worker too, and any terminal outcome releases the barrier instead of deadlocking the pipeline (ADR 0013).
+_Avoid_: startup lock, init mutex, 启动检查
+
