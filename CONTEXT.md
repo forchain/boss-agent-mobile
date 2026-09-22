@@ -202,15 +202,11 @@ _Avoid_: UI logging, debug prints, action trace
 The system safety threshold restricting outbound mobile greeting volume per calendar day to protect user accounts from platform rate limits and anti-bot challenges, automatically degrading `auto_apply` to `save_jd` upon exhaustion.
 _Avoid_: daily quota, message cap, max chats
 
-**New Greeting Inbox**:
-The dedicated unhandled incoming message queue in the Boss mobile app representing conversations where a recruiter replied or messaged and the candidate has not yet answered.
-_Avoid_: 未读消息列表, 聊天大厅, 全部消息
+**Outbound Message Indicator**:
+The deterministic status badge (`iv_msg_status` displaying `[送达]` or `[已读]`) prefixed to a conversation card in the communication list, signalling that the candidate sent the last message and allowing automation to instantly bypass threads awaiting recruiter reply.
+_Avoid_: message badge, read tag, delivery marker
 
-**Rejection Auto-Acknowledgment**:
-The automated response and feedback sequence that sends a polite closing reply to an explicit recruiter rejection and marks the role as disinterested to prune the conversation and suppress future recommendation noise.
-_Avoid_: 自动删消息, 拒信回复脚本, 自动拒聊
-
-**Disinterest Reason**:
-The feedback category selected during the platform disinterest workflow, standardized strictly to "重复推荐" to enforce recommendation suppression without manual category branching.
-_Avoid_: 拒绝原因, 反馈理由
+**Rejection Blacklist Ingestion**:
+The automated triage workflow that detects explicit recruiter rejections in the communication list, extracts the employer, and commits it into the active `ScreeningPolicy` company blacklist under existing guardrails to prevent future wasted daily applications.
+_Avoid_: auto-block, recruiter kicker, 拒信拉黑脚本
 
