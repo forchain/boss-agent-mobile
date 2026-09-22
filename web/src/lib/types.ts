@@ -120,6 +120,10 @@ export interface SystemSettings {
 
 	// New Greeting Inbox rejection auto-acknowledgment (issue #208)
 	chat?: ChatAcknowledgmentConfig;
+
+	// Startup 拒信清扫 barrier: queue a CHECK_CHAT before the first search of a
+	// service startup and hold search tasks until it settles (issue #230).
+	run_cleanup_on_startup?: boolean;
 }
 
 export interface ChatAcknowledgmentConfig {

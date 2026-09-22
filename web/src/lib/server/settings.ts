@@ -242,6 +242,7 @@ export function loadMergedSettings(): SystemSettings {
 		title_blacklist: ['销售', '电话销售', '电销', '管培生', '实习', '助理', '讲师', '课程顾问', '客服'],
 		company_blacklist: [],
 		jd_blacklist: ['驻场', '外包', '电销', '无底薪', '纯提成'],
+		run_cleanup_on_startup: true,
 		chat: { ...DEFAULT_CHAT_ACKNOWLEDGMENT }
 	};
 
@@ -457,6 +458,9 @@ export function saveSettingsToLocalYaml(
 		`# ------------------------------------------------------------------------------`,
 		`# 7. 「仅沟通」列表 · 拒信清扫与公司拉黑 (Rejection Triage & Company Blacklisting)`,
 		`# ------------------------------------------------------------------------------`,
+		// Startup barrier (issue #230). Only an explicit false disables it, so a
+		// partial save that omits the switch can never turn the barrier off.
+		`run_cleanup_on_startup: ${merged.run_cleanup_on_startup !== false}`,
 		`chat:`,
 		`  rejection_reply_text: ${JSON.stringify(chat.rejection_reply_text)}`,
 		`  max_scan_depth: ${chat.max_scan_depth}`,

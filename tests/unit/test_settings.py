@@ -16,6 +16,7 @@ from boss_agent.settings import (
     resolve_pocketbase_data_dir,
     resolve_pocketbase_db_path,
     resolve_pocketbase_url,
+    resolve_run_cleanup_on_startup,
     resolve_server_url,
 )
 from boss_agent.worker.config import WorkerConfig
@@ -613,3 +614,39 @@ def test_settings_example_declares_chat_acknowledgment_defaults():
 
     assert declared.rejection_reply_text == "收到 谢谢"
     assert declared.max_scan_depth == 30
+
+
+# ---------------------------------------------------------------------------
+# Startup 拒信清扫 gating (issue #230)
+# ---------------------------------------------------------------------------
+
+
+def test_settings_example_declares_the_startup_cleanup_switch():
+    """The shipped template must document the 开服清扫 switch and its safe default."""
+    example = Path("config/settings.example.yaml")
+    assert example.is_file(), "config/settings.example.yaml is missing"
+
+    with patch.dict("os.environ", {}, clear=True):
+        declared = load_settings(config_path=example)
+
+    assert declared["run_cleanup_on_startup"] is True
+
+
+def test_run_cleanup_on_startup_defaults_on_when_config_is_silent():
+    """Searching before the blacklist is refreshed is the failure this prevents."""
+    with patch.dict("os.environ", {}, clear=True):
+        assert resolve_run_cleanup_on_startup(settings={}) is True
+
+
+def test_run_cleanup_on_startup_reads_a_disabled_setting(monkeypatch):
+    monkeypatch.delenv("RUN_CLEANUP_ON_STARTUP", raising=False)
+
+    assert resolve_run_cleanup_on_startup(settings={"run_cleanup_on_startup": False}) is False
+    # YAML and shell spellings agree, so `false` in a file is not a truthy string.
+    assert resolve_run_cleanup_on_startup(settings={"run_cleanup_on_startup": "false"}) is False
+
+
+def test_run_cleanup_on_startup_env_overrides_the_file(monkeypatch):
+    monkeypatch.setenv("RUN_CLEANUP_ON_STARTUP", "0")
+
+    assert resolve_run_cleanup_on_startup(settings={"run_cleanup_on_startup": True}) is False

@@ -13,6 +13,7 @@ from boss_agent.scheduler import (
     is_cron_match,
     parse_cron_field,
 )
+from boss_agent.startup_cleanup import STARTUP_CLEANUP_MARKER, StartupCleanupGate
 
 
 def test_parse_cron_field():
@@ -64,6 +65,37 @@ def test_get_next_cron_run():
     base_dt = datetime(2026, 9, 7, 9, 5, 0, tzinfo=UTC)
     next_run = get_next_cron_run("0 10 * * *", after=base_dt)
     assert next_run == datetime(2026, 9, 7, 10, 0, 0, tzinfo=UTC)
+
+
+# ---------------------------------------------------------------------------
+# Startup 拒信清扫 gating (issue #230)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_scheduler_queues_the_startup_cleanup_once():
+    """#230: a starting scheduler queues one CHECK_CHAT, never one per poll."""
+    broker = InMemoryTaskBroker()
+    scheduler = AutomationScheduler(broker=broker, startup_gate=StartupCleanupGate(broker))
+
+    await scheduler.run_once(now=datetime(2026, 9, 7, 9, 0, tzinfo=UTC))
+    await scheduler.run_once(now=datetime(2026, 9, 7, 9, 1, tzinfo=UTC))
+
+    pending = await broker.list_pending_tasks()
+    assert [task.task_type for task in pending] == [TaskType.CHECK_CHAT]
+    assert pending[0].payload[STARTUP_CLEANUP_MARKER] is True
+
+
+@pytest.mark.asyncio
+async def test_scheduler_queues_nothing_when_the_startup_cleanup_is_disabled():
+    broker = InMemoryTaskBroker()
+    scheduler = AutomationScheduler(
+        broker=broker, startup_gate=StartupCleanupGate(broker, enabled=False)
+    )
+
+    await scheduler.run_once(now=datetime(2026, 9, 7, 9, 0, tzinfo=UTC))
+
+    assert await broker.list_pending_tasks() == []
 
 
 @pytest.mark.asyncio

@@ -84,6 +84,28 @@ def resolve_chat_acknowledgment_settings(
     )
 
 
+def resolve_run_cleanup_on_startup(
+    settings: dict[str, Any] | None = None,
+    config_path: str | Path | None = None,
+) -> bool:
+    """Resolve whether a starting service queues a 拒信清扫 task before searching.
+
+    Precedence:
+      1. `RUN_CLEANUP_ON_STARTUP` environment variable
+      2. The `run_cleanup_on_startup` settings key
+      3. Built-in default: True. Searching with a stale company blacklist is the
+         failure this exists to prevent, so the safe default is to clean first.
+    """
+    merged = settings if settings is not None else load_settings(config_path=config_path)
+    raw: Any = merged.get("run_cleanup_on_startup")
+
+    env_value = os.getenv("RUN_CLEANUP_ON_STARTUP")
+    if env_value and env_value.strip():
+        raw = env_value.strip()
+
+    return coerce_bool(raw, default=True)
+
+
 def resolve_pocketbase_url(
     explicit_url: str | None = None,
     config_path: str | Path | None = None,

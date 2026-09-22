@@ -14,7 +14,8 @@ from typing import Any
 from boss_agent.broker.models import AutomationTask, TaskType
 from boss_agent.broker.pocketbase_adapter import BaseTaskBroker
 from boss_agent.models import SavedSearch, TargetAction, TargetTaskType
-from boss_agent.settings import resolve_chat_acknowledgment_settings
+from boss_agent.settings import resolve_chat_acknowledgment_settings, resolve_run_cleanup_on_startup
+from boss_agent.startup_cleanup import StartupCleanupGate
 
 logger = logging.getLogger("boss_agent.scheduler")
 
@@ -134,13 +135,24 @@ class AutomationScheduler:
         self,
         broker: BaseTaskBroker,
         poll_interval_sec: float = 30.0,
+        startup_gate: StartupCleanupGate | None = None,
     ) -> None:
         self.broker = broker
         self.poll_interval_sec = poll_interval_sec
+        self.startup_gate = startup_gate or StartupCleanupGate(
+            broker, enabled=resolve_run_cleanup_on_startup()
+        )
         self._running = False
 
     async def run_once(self, now: datetime | None = None) -> list[AutomationTask]:
-        """Evaluate all enabled saved searches and dispatch tasks for matching schedules."""
+        """Evaluate all enabled saved searches and dispatch tasks for matching schedules.
+
+        The startup 拒信清扫 is queued first (#230). The gate queues it once per
+        process and no-ops when the worker daemon already queued one, so the two
+        services cannot double-dispatch it.
+        """
+        await self.startup_gate.arm()
+
         if now is None:
             now = datetime.now(UTC)
 
