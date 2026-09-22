@@ -206,6 +206,10 @@ _Avoid_: daily quota, message cap, max chats
 The deterministic status badge (`iv_msg_status` displaying `[送达]` or `[已读]`) prefixed to a conversation card in the communication list, signalling that the candidate sent the last message and allowing automation to instantly bypass threads awaiting recruiter reply.
 _Avoid_: message badge, read tag, delivery marker
 
+**Communication-Only Filter ("仅沟通")**:
+The dedicated sub-tab/filter within the message screen (`tv_tab_3` -> `tv_title` matching "仅沟通") that isolates active reciprocal conversations, cleanly separating candidate-sent waiting items from unhandled incoming recruiter responses.
+_Avoid_: 新招呼, 全部消息, 互动标签
+
 **Rejection Blacklist Ingestion**:
 The automated triage workflow that detects explicit recruiter rejections in the communication list, extracts the employer, and commits it into the active `ScreeningPolicy` company blacklist under existing guardrails to prevent future wasted daily applications.
 _Avoid_: auto-block, recruiter kicker, 拒信拉黑脚本
