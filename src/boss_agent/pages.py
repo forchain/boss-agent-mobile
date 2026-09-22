@@ -47,6 +47,18 @@ BACK_INTERVAL_SEC: tuple[float, float] = (0.35, 0.65)
 #: Separator in a communication card's `[Company] | [Position]` descriptor.
 CARD_DESCRIPTOR_SEPARATOR: str = "|"
 
+#: Fullwidth vertical bar (U+FF5C). The divider is a rendered glyph rather than a
+#: protocol value, so both forms are accepted: a build or font that emits the
+#: fullwidth bar would otherwise yield no employer on any card, and the blacklist
+#: would silently never be populated.
+FULLWIDTH_CARD_DESCRIPTOR_SEPARATOR: str = "｜"
+
+
+def _normalize_card_descriptors(text: str) -> str:
+    """Collapse fullwidth vertical bars onto the ASCII card-descriptor separator."""
+    return (text or "").replace(FULLWIDTH_CARD_DESCRIPTOR_SEPARATOR, CARD_DESCRIPTOR_SEPARATOR)
+
+
 #: Badge texts the platform renders in `iv_msg_status` for a thread whose last
 #: message is the candidate's own (spec #205). Matched explicitly rather than
 #: keyed on the node's mere presence: a future badge with different wording would
@@ -141,11 +153,23 @@ def _whitespace_digest(text: str) -> str:
     return hashlib.sha1(normalized.encode("utf-8")).hexdigest()[:12]
 
 
-def compute_card_key(sender_name: str, message_text: str, row_text: str = "") -> str:
+def compute_card_key(
+    sender_name: str,
+    message_text: str,
+    row_text: str = "",
+    descriptor: str = "",
+) -> str:
     """Signature identifying one communication card for visited-set deduplication.
 
-    Sender plus a whitespace-insensitive hash of the message text: stable across
-    re-reads of the same card, and distinct for two recruiters sending identical text.
+    Sender, the card's employer descriptor, and a whitespace-insensitive hash of the
+    message text: stable across re-reads of the same card, and distinct for two
+    recruiters sending identical text.
+
+    The descriptor earns its place because platform rejection templates are canned
+    and generic sender names ('李女士', 'HR', '招聘负责人') repeat across employers:
+    sender plus text alone collapses two different companies onto one key, and the
+    later card is skipped as already-visited -- silently costing it its blacklist
+    entry, which is the one durable action this path takes.
 
     When the sender node cannot be read, the row's own rendered text stands in for
     it. Falling back to a constant would collapse identical rejection templates
@@ -155,7 +179,8 @@ def compute_card_key(sender_name: str, message_text: str, row_text: str = "") ->
     if not sender:
         source = re.sub(r"\s+", "", row_text or "") or re.sub(r"\s+", "", message_text or "")
         sender = f"row-{hashlib.sha1(source.encode('utf-8')).hexdigest()[:8]}"
-    return f"{sender}:{_whitespace_digest(message_text)}"
+    employer = _normalize_card_descriptors(descriptor)
+    return f"{sender}:{_whitespace_digest(employer)}:{_whitespace_digest(message_text)}"
 
 
 def parse_company_from_descriptor(descriptor: str, sender_name: str = "") -> str:
@@ -164,20 +189,31 @@ def parse_company_from_descriptor(descriptor: str, sender_name: str = "") -> str
     Examples:
         "传音控股 | 算法工程师"        -> "传音控股"
         "严胜 传音控股 | 算法工程师"   -> "传音控股"   (sender_name="严胜")
+        "小米集团 | 算法工程师"        -> "小米集团"   (sender_name="小米")
         "我们感谢您的投递"            -> ""            (no separator)
 
     Anything after the first separator is the position and is discarded: only the
-    employer is ever blacklisted. A leading recruiter name is stripped because the
-    row-text fallback can glue it onto the descriptor.
+    employer is ever blacklisted.
+
+    A leading recruiter name is stripped because the row-text fallback can glue it
+    onto the descriptor -- but only when a delimiter actually separates the two.
+    This value feeds a substring-matched *global* blacklist, so a sender whose
+    nickname merely prefixes the employer must leave it intact: stripping "小米"
+    off "小米集团" leaves the generic token "集团", which would then reject every
+    集团 employer in the country. An undelimited prefix is left alone deliberately:
+    the worst case is an employer name that matches nothing, against a worst case of
+    blacklisting an entire class of employers.
     """
-    text = (descriptor or "").strip()
+    text = _normalize_card_descriptors(descriptor).strip()
     if CARD_DESCRIPTOR_SEPARATOR not in text:
         return ""
 
     company = text.split(CARD_DESCRIPTOR_SEPARATOR, 1)[0].strip()
     sender = (sender_name or "").strip()
-    if sender and company.startswith(sender):
-        company = company[len(sender) :].strip()
+    if sender and company != sender:
+        glued = re.match(rf"^{re.escape(sender)}[\s·•・:：\-—－]+(?P<employer>.+)$", company)
+        if glued:
+            company = glued.group("employer").strip()
     return company
 
 
@@ -202,7 +238,12 @@ class CommunicationCard:
 
     def __post_init__(self) -> None:
         if not self.key:
-            self.key = compute_card_key(self.sender_name, self.message_text, self.row_text)
+            self.key = compute_card_key(
+                self.sender_name,
+                self.message_text,
+                self.row_text,
+                descriptor=self.company_position,
+            )
 
     @property
     def has_outbound_indicator(self) -> bool:
@@ -1748,19 +1789,25 @@ class CommunicationListPage(BaseBossPage):
         The sender, the message and the rendered row are all excluded: a rejection
         message may itself contain a `|`, and mistaking the message for an employer
         would blacklist a company that was never named on the card.
+
+        Fullwidth bars are folded onto the ASCII separator before every comparison --
+        the separator is a rendered glyph, and normalising only the configured field
+        would leave the node scan blind on a device that draws `｜`.
         """
-        descriptor = self._extract_card_field_text(card, "communication_list.company_position")
+        descriptor = _normalize_card_descriptors(
+            self._extract_card_field_text(card, "communication_list.company_position")
+        )
         if CARD_DESCRIPTOR_SEPARATOR in descriptor:
             return descriptor
 
-        message = (message_text or "").strip()
+        message = _normalize_card_descriptors((message_text or "").strip())
         sender = (sender or "").strip()
         try:
             children = card.find_elements(by="xpath", value=".//android.widget.TextView")
         except Exception:
             return ""
         for child in children:
-            candidate = (getattr(child, "text", "") or "").strip()
+            candidate = _normalize_card_descriptors((getattr(child, "text", "") or "").strip())
             if not candidate or candidate == sender:
                 continue
             if message and (candidate in message or message in candidate):

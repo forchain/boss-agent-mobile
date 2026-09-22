@@ -42,6 +42,38 @@ def test_descriptor_parsing_strips_a_leading_sender_name():
         parse_company_from_descriptor("严胜 传音控股 | 算法工程师", sender_name="严胜")
         == "传音控股"
     )
+    assert (
+        parse_company_from_descriptor("严胜·传音控股 | 算法工程师", sender_name="严胜")
+        == "传音控股"
+    )
+
+
+def test_descriptor_parsing_keeps_a_company_that_starts_with_the_sender_name():
+    """A sender nickname that prefixes the employer must not truncate the employer.
+
+    Stripping an undelimited prefix turned '小米集团' into the generic token
+    '集团', and company_blacklist matching is a substring test -- one card would
+    then reject every 集团 employer nationwide.
+    """
+    assert parse_company_from_descriptor("小米集团 | 算法工程师", sender_name="小米") == "小米集团"
+    assert parse_company_from_descriptor("得物App | 运营", sender_name="得物") == "得物App"
+    assert (
+        parse_company_from_descriptor("华为技术有限公司 | 后端", sender_name="华")
+        == "华为技术有限公司"
+    )
+
+
+def test_descriptor_parsing_keeps_the_employer_when_the_sender_is_the_company():
+    """An official company account's display name equals its own employer name."""
+    assert (
+        parse_company_from_descriptor("小米集团 | 算法工程师", sender_name="小米集团") == "小米集团"
+    )
+
+
+def test_descriptor_parsing_accepts_a_fullwidth_separator():
+    """Some builds render the divider as a fullwidth bar (U+FF5C), not '|'."""
+    assert parse_company_from_descriptor("传音控股｜算法工程师") == "传音控股"
+    assert parse_company_from_descriptor("磐基技术 ｜ 技术总监") == "磐基技术"
 
 
 def test_descriptor_parsing_returns_empty_without_a_separator():
@@ -283,3 +315,26 @@ def test_persist_reports_nothing_written_when_the_store_is_not_writable(tmp_path
 
     assert policy.persist_company_blacklist("传音控股") is None
     assert not (tmp_path / "fallback.local.yaml").exists()
+
+
+def test_the_suite_never_resolves_a_write_target_inside_the_checkout():
+    """Every unpathed write must land in the test sandbox, not the developer's repo.
+
+    `resolve_writable_screening_config_path()` with no root resolves through the git
+    common root, which in a worktree is the *shared main checkout*. A single test
+    that forgets to pass a path would then edit the host's `settings.local.yaml`,
+    which is exactly the leak `tests/conftest.py` exists to make impossible.
+
+    Asserted through the module rather than the name imported at the top of this
+    file: the appenders look the function up as a module global at call time, so
+    `boss_agent.models` is the attribute the sandbox patches and the one a write
+    actually goes through.
+    """
+    from boss_agent import models
+    from boss_agent.settings import resolve_git_common_root
+
+    resolved = models.resolve_writable_screening_config_path()
+
+    assert not str(resolved).startswith(str(resolve_git_common_root())), (
+        f"Screening config writes resolve to {resolved}, inside the checkout."
+    )

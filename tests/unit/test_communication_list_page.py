@@ -61,7 +61,7 @@ def test_disinterest_reason_locator_formats_the_standardized_reason(registry):
     assert any(DISINTEREST_REASON in sel.value for sel in selectors)
 
 
-def test_inbox_message_key_is_stable_and_sender_scoped():
+def test_message_key_is_stable_and_sender_scoped():
     first = CommunicationCard(sender_name="李女士", message_text="抱歉，暂不匹配")
     same = CommunicationCard(sender_name="李女士", message_text="抱歉，暂不匹配")
     other_sender = CommunicationCard(sender_name="王先生", message_text="抱歉，暂不匹配")
@@ -72,7 +72,7 @@ def test_inbox_message_key_is_stable_and_sender_scoped():
     assert first.key != other_text.key
 
 
-def test_inbox_message_key_disambiguates_rows_without_a_sender_node():
+def test_message_key_disambiguates_rows_without_a_sender_node():
     """Two recruiters sending identical rejection text must not share one key.
 
     Sender extraction is a locator lookup that can miss; falling back to a constant
@@ -88,7 +88,37 @@ def test_inbox_message_key_disambiguates_rows_without_a_sender_node():
     assert first.key != second.key
 
 
-def test_inbox_message_key_is_stable_without_a_sender_node():
+def test_message_key_distinguishes_two_employers_sharing_a_generic_sender_name():
+    """Generic names ('李女士') plus one canned rejection template repeat across employers.
+
+    Sender and text alone would collide, and the later card is then skipped as
+    already-visited -- so its company is never blacklisted.
+    """
+    first = CommunicationCard(
+        sender_name="李女士",
+        message_text="您好，感谢关注，但您的经历与该岗位不太匹配",
+        company_position="甲科技 | 后端开发",
+    )
+    second = CommunicationCard(
+        sender_name="李女士",
+        message_text="您好，感谢关注，但您的经历与该岗位不太匹配",
+        company_position="乙科技 | 后端开发",
+    )
+
+    assert first.key != second.key
+
+
+def test_message_key_is_stable_across_rereads_of_the_same_card():
+    kwargs = {
+        "sender_name": "李女士",
+        "message_text": "暂不匹配",
+        "company_position": "征图新视 | 算法工程师",
+    }
+
+    assert CommunicationCard(**kwargs).key == CommunicationCard(**kwargs).key
+
+
+def test_message_key_is_stable_without_a_sender_node():
     kwargs = {"sender_name": "", "message_text": "抱歉，暂不匹配", "row_text": "李女士\n抱歉"}
     assert CommunicationCard(**kwargs).key == CommunicationCard(**kwargs).key
 
@@ -146,7 +176,7 @@ def test_card_without_a_descriptor_exposes_no_employer():
 # ---------------------------------------------------------------------------
 
 
-def test_is_on_inbox_detects_the_communication_tab_marker():
+def test_is_on_list_detects_the_communication_tab_marker():
     driver = MagicMock()
     page = CommunicationListPage(driver)
     page.find_by_key = MagicMock(return_value=MagicMock())  # type: ignore[method-assign]
@@ -155,7 +185,7 @@ def test_is_on_inbox_detects_the_communication_tab_marker():
     page.find_by_key.assert_called_with("communication_list.communication_tab", timeout_sec=0.1)
 
 
-def test_open_inbox_clicks_message_tab_then_communication_tab():
+def test_open_list_clicks_message_tab_then_communication_tab():
     driver = MagicMock()
     page = CommunicationListPage(driver)
     marker = MagicMock()
@@ -172,7 +202,7 @@ def test_open_inbox_clicks_message_tab_then_communication_tab():
     assert page.gestures.human_click.call_count == 2
 
 
-def test_open_inbox_reports_failure_without_communication_tab():
+def test_open_list_reports_failure_without_communication_tab():
     driver = MagicMock()
     page = CommunicationListPage(driver)
     page.find_by_key = MagicMock(  # type: ignore[method-assign]
@@ -252,6 +282,33 @@ def test_extract_visible_messages_reads_the_company_position_descriptor():
     assert messages[0].company_name == "传音控股"
 
 
+def test_extract_visible_messages_reads_a_fullwidth_separator_descriptor():
+    """The divider is a rendered glyph: some builds emit '｜' (U+FF5C), not '|'.
+
+    Both the field lookup and the child-node scan gate on the separator, so an
+    unnormalised fullwidth bar yields no employer for every card on such a device.
+    """
+    card = _message_card("严胜", "我们感谢您的投递", descriptor="传音控股｜算法工程师")
+    page = _page_with_cards([card])
+
+    messages = page.extract_visible_messages()
+
+    assert messages[0].company_name == "传音控股"
+
+
+def test_child_descriptor_scan_accepts_a_fullwidth_separator():
+    card = _message_card("严胜", "我们感谢您的投递")
+    descriptor_node = MagicMock(text="磐基技术｜技术总监")
+    card.find_elements.side_effect = lambda by, value: (
+        [descriptor_node] if "TextView" in value else []
+    )
+    page = _page_with_cards([card])
+
+    messages = page.extract_visible_messages()
+
+    assert messages[0].company_name == "磐基技术"
+
+
 def test_extract_visible_messages_falls_back_to_a_child_descriptor_node():
     """The descriptor has no measured resource-id, so a text scan backs it up."""
     card = _message_card("严胜", "我们感谢您的投递")
@@ -293,7 +350,7 @@ def test_extract_visible_messages_skips_cards_without_text():
     assert [m.message_text for m in messages] == ["岗位已招满，感谢关注"]
 
 
-def test_scroll_inbox_swipes_upward():
+def test_scroll_list_swipes_upward():
     page = _page_with_cards([])
     page.gestures.human_swipe = MagicMock()  # type: ignore[method-assign]
     page.gestures.random_sleep = MagicMock()  # type: ignore[method-assign]
