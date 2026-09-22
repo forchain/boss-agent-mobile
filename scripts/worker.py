@@ -8,7 +8,10 @@ CLI entrypoint for running the out-of-process Automation Worker daemon.
 import argparse
 import asyncio
 import logging
+import signal
 import sys
+from collections.abc import Coroutine, Sequence
+from typing import Any
 
 from boss_agent.broker.pocketbase_adapter import PocketBaseTaskBroker
 from boss_agent.settings import resolve_pocketbase_url, resolve_server_url
@@ -19,6 +22,70 @@ from boss_agent.worker.handlers.auto_apply import AutoApplyHandler
 from boss_agent.worker.handlers.check_login import CheckLoginHandler
 from boss_agent.worker.handlers.scrape_jobs import ScrapeJobsHandler
 from droid_agent_core.driver import AppiumSession, DriverConfig
+
+logger = logging.getLogger("worker_main")
+
+TERMINATION_SIGNALS = (signal.SIGTERM, signal.SIGINT)
+
+
+async def run_services(
+    worker: AutomationWorker,
+    extra_services: Sequence[Coroutine[Any, Any, None]] = (),
+) -> None:
+    """Supervise the worker loop and any auxiliary service loops until shutdown completes.
+
+    Resolves on SIGTERM/SIGINT. It also resolves when every supervised service loop has
+    finished on its own, so the daemon can never wait forever for a signal that is not
+    coming; the worker is still shut down through its normal protocol either way.
+    """
+    loop = asyncio.get_running_loop()
+    stop_signal: asyncio.Future[str] = loop.create_future()
+
+    def _request_shutdown(signame: str) -> None:
+        # Signal-handler callbacks must stay trivial: just wake the supervisor.
+        if not stop_signal.done():
+            stop_signal.set_result(signame)
+
+    registered_signals: list[signal.Signals] = []
+    for sig in TERMINATION_SIGNALS:
+        try:
+            loop.add_signal_handler(sig, _request_shutdown, sig.name)
+            registered_signals.append(sig)
+        except (NotImplementedError, RuntimeError) as e:
+            logger.warning("Cannot install handler for %s: %s", sig.name, e)
+    if registered_signals:
+        logger.info(
+            "🧷 Termination signal handlers installed: %s",
+            ", ".join(s.name for s in registered_signals),
+        )
+
+    service_tasks = [asyncio.create_task(coro) for coro in (worker.start(), *extra_services)]
+
+    async def supervise_shutdown() -> None:
+        async def await_signal() -> None:
+            await stop_signal
+
+        # Resolve on whichever comes first: a termination signal, or every service loop ending.
+        signal_task = asyncio.create_task(await_signal())
+        await asyncio.wait([signal_task, *service_tasks], return_when=asyncio.FIRST_COMPLETED)
+        if stop_signal.done():
+            await worker.shutdown(stop_signal.result())
+        else:
+            logger.warning("⚠️ All service loops exited on their own; shutting down.")
+            await worker.shutdown("service exit")
+        for task in [*service_tasks, signal_task]:
+            task.cancel()
+
+    supervisor = asyncio.create_task(supervise_shutdown())
+    try:
+        results = await asyncio.gather(*service_tasks, supervisor, return_exceptions=True)
+    finally:
+        for sig in registered_signals:
+            loop.remove_signal_handler(sig)
+
+    for task, result in zip([*service_tasks, supervisor], results, strict=True):
+        if isinstance(result, BaseException) and not isinstance(result, asyncio.CancelledError):
+            logger.error("Service task '%s' terminated unexpectedly: %s", task.get_name(), result)
 
 
 def main() -> None:
@@ -76,7 +143,6 @@ def main() -> None:
 
     broker = PocketBaseTaskBroker(base_url=resolved_pb_url)
 
-
     def driver_factory():
         logger.info("Initializing Appium driver session for device %s", config.device_id)
         driver_cfg = DriverConfig(
@@ -109,18 +175,16 @@ def main() -> None:
         config.pocketbase_url,
     )
 
-    async def run_services():
-        coros = [worker.start()]
-        if args.enable_scheduler:
-            from boss_agent.scheduler import AutomationScheduler
+    service_coros: list[Coroutine[Any, Any, None]] = []
+    if args.enable_scheduler:
+        from boss_agent.scheduler import AutomationScheduler
 
-            scheduler = AutomationScheduler(broker=broker, poll_interval_sec=30.0)
-            logger.info("Integrated Cron scheduler enabled")
-            coros.append(scheduler.run_forever())
-        await asyncio.gather(*coros)
+        scheduler = AutomationScheduler(broker=broker, poll_interval_sec=30.0)
+        logger.info("Integrated Cron scheduler enabled")
+        service_coros.append(scheduler.run_forever())
 
     try:
-        asyncio.run(run_services())
+        asyncio.run(run_services(worker, service_coros))
     except KeyboardInterrupt:
         logger.info("Worker interrupted by user, exiting gracefully.")
         sys.exit(0)

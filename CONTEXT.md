@@ -60,6 +60,14 @@ _Avoid_: In-process background task, Celery pool, worker thread
 The polymorphic workflow dispatch within the Automation Worker that executes concrete automation jobs (`CHECK_LOGIN`, `SCRAPE_JOBS`, `AUTO_APPLY`, `CHECK_CHAT`) without inter-process device contention.
 _Avoid_: Multi-worker router, sub-worker cluster
 
+**Graceful Shutdown Protocol**:
+The POSIX signal contract by which the Automation Worker and the Web Dashboard runner stop cooperatively: acknowledge the termination signal in their own log stream, halt the polling loop, abort or release in-flight resources (State Stream Broker task cancellation, Virtual Device Session release, port release), then confirm completion — so supervisors and test fixtures never have to rely on arbitrary sleeps or force-kills.
+_Avoid_: hard stop, force quit, kill -9 policy
+
+**E2E Pre-Test Teardown Gate**:
+The session-scoped test fixture that, before any end-to-end test runs, stops residual Automation Worker and Web Dashboard instances located through the shared runtime directory and verifies their shutdown feedback, guaranteeing exclusive use of the Virtual Device Session and the dashboard port. Shared infrastructure (State Stream Broker, Appium, AVD) is deliberately out of its scope.
+_Avoid_: test cleanup hook, pre-test reset script, teardown helper
+
 **Job Record**:
 The persisted entity representing a job posting discovered from mobile search results or scraping workflows in the Boss app.
 _Avoid_: Scraped item, raw post, search card

@@ -90,12 +90,41 @@ uv run python scripts/bootstrap.py
 
 ### 2. 运行测试
 ```bash
-# 运行单元与集成测试套件
+# 运行单元与集成测试套件（默认排除 live 真机用例，绝不唤醒模拟器 UI）
 uv run --extra dev pytest
+
+# 运行 live 真机 / 模拟器用例（需显式指定 live marker，会真实驱动 AVD）
+uv run --extra dev pytest -m live
 
 # 运行真机 / 模拟器冒烟测试
 uv run python scripts/run_live_test.py
 ```
+
+> ⚠️ **默认隔离约定**：`pyproject.toml` 中的 `addopts = "-m 'not live'"` 保证任何未加参数的 `pytest`
+> 调用都会跳过 `@pytest.mark.live` 用例。设备用例只可能在显式 `-m live` 时运行——多 worktree / 多 Agent
+> 并行开发时，请勿在共享 AVD 上无意触发真机交互。
+
+#### 🧹 服务关停与 E2E 前置隔离门禁（Graceful Shutdown Gate）
+
+后台的 **Automation Worker**（占用虚拟设备会话）与 **Web Dashboard**（占用 5173 端口）会在 E2E 用例开跑前被自动关停，
+避免与测试争抢设备与端口。该行为由 `tests/e2e/conftest.py` 的 session fixture 驱动：
+
+```bash
+# 手动关停
+./run.sh stop          # 向 Automation Worker 发送 SIGTERM：Worker 优雅退出并释放 Appium 会话
+./run.sh web stop      # 关停 Web Dashboard：写入 web.log 并确认 5173 端口释放后才返回
+
+# 运行 E2E：测试前自动清理残留服务，并校验其关停日志
+uv run --extra dev pytest tests/e2e
+BOSS_AGENT_SKIP_SERVICE_GATE=1 uv run --extra dev pytest tests/e2e   # 跳过门禁（逃生舱）
+```
+
+- 门禁只关停 Worker / Web Dashboard，**绝不触碰** PocketBase、Appium 与 AVD 模拟器等共享基础设施。
+- `./run.sh stop` 发送 SIGTERM 后立即返回，Worker 会把自己的关停反馈写入 `worker.log`；
+  `./run.sh web stop` 则同步等待进程退出与端口释放。二者的关停反馈校验由下述 E2E 门禁负责。
+- 关停后服务保持停止状态（不会自动重启），需要时用 `./run.sh worker` / `./run.sh web` 重新拉起。
+- 若残留服务无法在超时内优雅退出（例如仍在运行旧版本代码的 Worker），门禁会强制终止并**明确报错**，
+  提示重新拉起服务后重试。
 
 ---
 

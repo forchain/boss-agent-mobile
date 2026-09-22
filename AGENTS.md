@@ -18,3 +18,7 @@ Single-context layout at repo root (`CONTEXT.md` + `docs/adr/`). See `docs/agent
 
 Zero git history bloat rule: NEVER commit binary media files (`.mp4`, `.mov`, `.gif`, etc.) directly into code branches. See `docs/agents/demo-assets.md`.
 
+### Test guidelines
+
+Device tests require the explicit `live` marker; E2E runs stop residual Worker / Web Dashboard instances first. See `docs/agents/testing.md`.
+
