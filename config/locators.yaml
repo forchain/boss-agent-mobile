@@ -103,12 +103,15 @@ filter:
     - "//*[starts-with(@text, '筛选') or contains(@text, '筛选')]"
     - "//*[@resource-id='com.hpbr.bosszhipin:id/tv_title' and (starts-with(@text, '筛选') or contains(@text, '筛选'))]"
   confirm_btn:
-
     - "com.hpbr.bosszhipin:id/btn_confirm"
+    - "//android.widget.Button[@resource-id='com.hpbr.bosszhipin:id/btn_confirm']"
     - "//*[@text='确定']"
   reset_btn:
     - "com.hpbr.bosszhipin:id/btn_reset"
+    - "//android.widget.Button[@resource-id='com.hpbr.bosszhipin:id/btn_reset']"
     - "//*[@text='清除']"
+    - "//*[@text='清空']"
+    - "//*[@text='重置']"
   close_btn:
     - "com.hpbr.bosszhipin:id/iv_back"
     - "com.hpbr.bosszhipin:id/iv_close"

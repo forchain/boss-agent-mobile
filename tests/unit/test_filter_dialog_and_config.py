@@ -1,6 +1,6 @@
 """Unit tests for FilterConfig and FilterDialogPage."""
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from boss_agent.models import FilterConfig
 from boss_agent.pages import FilterDialogPage
@@ -74,7 +74,10 @@ def test_filter_dialog_page_interactions():
             return [mock_close_btn]
         if "筛选" in value:
             return [mock_filter_btn]
-        if any(opt in value for opt in ["硕士", "5万元以上", "10年以上", "今日活跃", "100-499人", "应届生"]):
+        if any(
+            opt in value
+            for opt in ["硕士", "5万元以上", "10年以上", "今日活跃", "100-499人", "应届生"]
+        ):
             return [mock_option_elem]
         return []
 
@@ -103,6 +106,9 @@ def test_filter_dialog_page_interactions():
     # Close dialog
     assert page.close_dialog() is True
 
+    # Clear filters directly
+    assert page.clear_filters() is True
+
     # Apply full filter configuration with standard 50K以上
     cfg = FilterConfig(
         education="硕士",
@@ -112,6 +118,94 @@ def test_filter_dialog_page_interactions():
         company_scales=["100-499人"],
     )
     assert page.apply_filters(cfg) is True
+
+
+def test_apply_filters_resets_first_and_handles_empty_config():
+    mock_driver = MagicMock()
+    mock_driver.get_window_size.return_value = {"width": 1080, "height": 2400}
+
+    mock_filter_btn = MagicMock()
+    mock_filter_btn.rect = {"x": 500, "y": 100, "width": 80, "height": 40}
+
+    mock_confirm_btn = MagicMock()
+    mock_confirm_btn.rect = {"x": 400, "y": 1750, "width": 600, "height": 80}
+
+    mock_reset_btn = MagicMock()
+    mock_reset_btn.rect = {"x": 50, "y": 1750, "width": 300, "height": 80}
+
+    actions = []
+
+    def mock_find_elements(by, value):
+        if "btn_confirm" in value or "确定" in value:
+            return [mock_confirm_btn]
+        if "btn_reset" in value or "清除" in value:
+            return [mock_reset_btn]
+        if "筛选" in value:
+            return [mock_filter_btn]
+        if "硕士" in value:
+            mock_opt = MagicMock()
+            mock_opt.rect = {"x": 300, "y": 500, "width": 200, "height": 60}
+            return [mock_opt]
+        return []
+
+    mock_driver.find_elements.side_effect = mock_find_elements
+
+    page = FilterDialogPage(mock_driver)
+
+    with patch.object(page.gestures, "human_click") as mock_click:
+
+        def record_click(elem):
+            if elem == mock_reset_btn:
+                actions.append("reset")
+            elif elem == mock_confirm_btn:
+                actions.append("confirm")
+            elif elem == mock_filter_btn:
+                actions.append("open")
+            else:
+                actions.append("option")
+
+        mock_click.side_effect = record_click
+
+        cfg = FilterConfig(
+            education="硕士",
+            salary=None,
+            experience=None,
+            activity=None,
+            company_scales=[],
+        )
+        assert page.apply_filters(cfg) is True
+
+        # Assert reset was clicked BEFORE option was selected
+        assert "reset" in actions
+        assert "option" in actions
+        assert actions.index("reset") < actions.index("option")
+        assert actions[-1] == "confirm"
+
+    # Now test apply_filters with empty config (has_filters=False) clears filters
+    actions.clear()
+    with patch.object(page.gestures, "human_click") as mock_click:
+
+        def record_click(elem):
+            if elem == mock_reset_btn:
+                actions.append("reset")
+            elif elem == mock_confirm_btn:
+                actions.append("confirm")
+            elif elem == mock_filter_btn:
+                actions.append("open")
+            else:
+                actions.append("option")
+
+        mock_click.side_effect = record_click
+
+        empty_cfg = FilterConfig(
+            education=None,
+            salary=None,
+            experience=None,
+            activity=None,
+            company_scales=[],
+        )
+        assert page.apply_filters(empty_cfg) is True
+        assert actions == ["reset", "confirm"]
 
 
 def test_smoke_harness_with_filter_config():
@@ -146,3 +240,46 @@ def test_smoke_harness_with_filter_config():
 
     job = harness.run_smoke_test()
     assert isinstance(job, JobPosting)
+
+
+def test_smoke_harness_clears_filters_when_no_filter_config():
+    from boss_agent.models import FilterConfig, JobPosting, SearchConfig
+    from boss_agent.workflows import SmokeHarness, TakeoverHandler
+
+    mock_driver = MagicMock()
+    mock_driver.get_window_size.return_value = {"width": 1080, "height": 2400}
+
+    mock_btn = MagicMock()
+    mock_btn.rect = {"x": 50, "y": 50, "width": 100, "height": 50}
+
+    mock_title_elem = MagicMock()
+    mock_title_elem.text = "资深 Agent 架构师"
+
+    def mock_find_elements(by, value):
+        if "tv_job_name" in value:
+            return [mock_title_elem]
+        if "chat" in value or "editText_with_scrollbar" in value or "btn_chat" in value:
+            return []
+        return [mock_btn]
+
+    mock_driver.find_elements.side_effect = mock_find_elements
+
+    takeover = TakeoverHandler(mock_driver, auto_confirm_for_test=True)
+    empty_cfg = FilterConfig(
+        education=None,
+        salary=None,
+        experience=None,
+        activity=None,
+        company_scales=[],
+    )
+    harness = SmokeHarness(
+        driver=mock_driver,
+        takeover_handler=takeover,
+        search_config=SearchConfig(keyword="agent"),
+        filter_config=empty_cfg,
+    )
+
+    with patch.object(harness.filter_dialog, "clear_filters") as mock_clear:
+        job = harness.run_smoke_test()
+        assert isinstance(job, JobPosting)
+        mock_clear.assert_called_once()

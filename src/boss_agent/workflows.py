@@ -242,6 +242,11 @@ class SmokeHarness:
             # Wait until filtered job list reloads
             if not self.list_page.wait_for_jobs_loaded(timeout_sec=15.0):
                 raise RuntimeError("Timed out waiting for filtered job list to load")
+        else:
+            console.print(
+                "🧹 [dim]No general filters configured; ensuring filters are cleared...[/dim]"
+            )
+            self.filter_dialog.clear_filters(timeout_sec=5.0)
 
         # 5. Scroll job list
         self.list_page.scroll_job_list()

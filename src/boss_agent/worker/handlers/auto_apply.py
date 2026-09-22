@@ -152,6 +152,7 @@ class AutoApplyHandler(BaseTaskHandler):
 
         enable_filter = bool(payload.get("enable_filter", True))
         filter_raw = payload.get("filter")
+        filter_cfg: FilterConfig | None = None
         if enable_filter and isinstance(filter_raw, dict):
             filter_cfg = FilterConfig(
                 education=filter_raw.get("education"),
@@ -162,28 +163,34 @@ class AutoApplyHandler(BaseTaskHandler):
                 industries=filter_raw.get("industries", []),
                 enable_filter=True,
             )
-            if filter_cfg.has_industry_filters:
-                industry_page = IndustryFilterDialogPage(driver)
-                await broker.append_log(
-                    task.id, f"Applying industry filter: {filter_cfg.industries}"
-                )
-                try:
-                    industry_page.apply_industry_filters(filter_cfg.industries, timeout_sec=5.0)
-                except Exception as ex:
-                    await broker.append_log(task.id, f"Notice applying industry filter: {ex}")
 
-            if filter_cfg.has_filters:
-                filter_page = FilterDialogPage(driver)
-                await broker.append_log(
-                    task.id,
-                    f"Applying general filters: education={filter_cfg.education}, salary={filter_cfg.salary}, experience={filter_cfg.experience}",
-                )
-                try:
-                    filter_page.apply_filters(filter_cfg, timeout_sec=5.0)
-                except Exception as ex:
-                    await broker.append_log(task.id, f"Notice applying general filters: {ex}")
-        elif not enable_filter:
-            await broker.append_log(task.id, "enable_filter is False; skipped job filtering")
+        if filter_cfg and filter_cfg.has_industry_filters:
+            industry_page = IndustryFilterDialogPage(driver)
+            await broker.append_log(task.id, f"Applying industry filter: {filter_cfg.industries}")
+            try:
+                industry_page.apply_industry_filters(filter_cfg.industries, timeout_sec=5.0)
+            except Exception as ex:
+                await broker.append_log(task.id, f"Notice applying industry filter: {ex}")
+
+        filter_page = FilterDialogPage(driver)
+        if filter_cfg and filter_cfg.has_filters:
+            await broker.append_log(
+                task.id,
+                f"Applying general filters: education={filter_cfg.education}, salary={filter_cfg.salary}, experience={filter_cfg.experience}",
+            )
+            try:
+                filter_page.apply_filters(filter_cfg, timeout_sec=5.0)
+            except Exception as ex:
+                await broker.append_log(task.id, f"Notice applying general filters: {ex}")
+        else:
+            await broker.append_log(
+                task.id,
+                "No active general filters configured; actively clearing filter dialog conditions",
+            )
+            try:
+                filter_page.clear_filters(timeout_sec=5.0)
+            except Exception as ex:
+                await broker.append_log(task.id, f"Notice clearing general filters: {ex}")
 
         # 4. Extract Job Posting
 
