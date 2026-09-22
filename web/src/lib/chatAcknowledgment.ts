@@ -8,13 +8,16 @@ import type { ChatAcknowledgmentConfig } from './types';
  */
 export const DEFAULT_CHAT_ACKNOWLEDGMENT: ChatAcknowledgmentConfig = {
 	rejection_reply_text: '收到 谢谢',
-	max_scan_depth: 30
+	max_scan_depth: 30,
+	dry_run: false
 };
 
 /**
  * Clamp a chat acknowledgment block. A blank reply text or a non-positive scan
  * bound degrades to the documented default rather than disabling the workflow
- * or letting the worker scan unbounded.
+ * or letting the worker scan unbounded. Anything that is not explicitly true
+ * leaves dry-run off, so a malformed value can never silently stop the worker
+ * from blacklisting the employers it identifies.
  */
 export function normalizeChatAcknowledgment(raw: any): ChatAcknowledgmentConfig {
 	const candidate = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
@@ -26,6 +29,7 @@ export function normalizeChatAcknowledgment(raw: any): ChatAcknowledgmentConfig 
 		max_scan_depth:
 			Number.isFinite(depth) && depth > 0
 				? Math.floor(depth)
-				: DEFAULT_CHAT_ACKNOWLEDGMENT.max_scan_depth
+				: DEFAULT_CHAT_ACKNOWLEDGMENT.max_scan_depth,
+		dry_run: candidate.dry_run === true
 	};
 }

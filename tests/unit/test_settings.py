@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from boss_agent.broker.pocketbase_adapter import PocketBaseTaskBroker
+from boss_agent.rejection import ChatAcknowledgmentSettings
 from boss_agent.settings import (
     load_settings,
     resolve_chat_acknowledgment_settings,
@@ -538,6 +539,44 @@ def test_load_settings_preserves_nested_chat_block(tmp_path: Path):
     assert merged["chat"]["rejection_reply_text"] == "多谢"
     assert resolved.rejection_reply_text == "多谢"
     assert resolved.max_scan_depth == 9
+
+
+def test_resolve_chat_settings_defaults_to_a_live_run():
+    """dry_run must stay off unless it is explicitly configured."""
+    with patch.dict("os.environ", {}, clear=True):
+        resolved = resolve_chat_acknowledgment_settings(settings={})
+
+    assert resolved.dry_run is False
+
+
+def test_resolve_chat_settings_reads_the_dry_run_toggle(monkeypatch):
+    with patch.dict("os.environ", {}, clear=True):
+        from_config = resolve_chat_acknowledgment_settings(settings={"chat": {"dry_run": True}})
+
+    monkeypatch.setenv("CHAT_DRY_RUN", "1")
+    from_env = resolve_chat_acknowledgment_settings(settings={"chat": {"dry_run": False}})
+
+    assert from_config.dry_run is True
+    assert from_env.dry_run is True
+
+
+def test_resolve_chat_settings_ignores_an_unparsable_dry_run():
+    with patch.dict("os.environ", {}, clear=True):
+        resolved = resolve_chat_acknowledgment_settings(settings={"chat": {"dry_run": "maybe"}})
+
+    assert resolved.dry_run is False
+
+
+def test_payload_overrides_can_re_enable_a_live_run():
+    """A scheduled drill must still be promotable per task."""
+    configured = ChatAcknowledgmentSettings(dry_run=True)
+
+    assert configured.with_overrides({"dry_run": False}).dry_run is False
+    assert configured.with_overrides({}).dry_run is True
+    assert ChatAcknowledgmentSettings().with_overrides({"dry_run": True}).dry_run is True
+    # A stringified "false" must not read as truthy.
+    assert configured.with_overrides({"dry_run": "false"}).dry_run is False
+    assert ChatAcknowledgmentSettings().with_overrides({"dry_run": "maybe"}).dry_run is False
 
 
 def test_partial_chat_override_keeps_the_sibling_setting(tmp_path: Path):

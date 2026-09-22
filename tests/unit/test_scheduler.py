@@ -186,6 +186,38 @@ async def test_scheduler_dispatches_check_chat_task_for_inbox_cleanup_strategy()
     assert duplicate == []
 
 
+@pytest.mark.asyncio
+async def test_scheduled_chat_cleanup_honours_the_configured_drill_mode():
+    """A drill configured in settings must not be overridden into a live run."""
+    from unittest.mock import patch
+
+    from boss_agent.rejection import ChatAcknowledgmentSettings
+
+    broker = InMemoryTaskBroker()
+    await broker.save_saved_search(
+        SavedSearch(
+            id="inbox_cleanup",
+            name="仅沟通拒信清扫",
+            cron_expression="0 21 * * *",
+            is_enabled=True,
+            target_task_type="CHECK_CHAT",
+            target_action="check_chat",
+        )
+    )
+
+    scheduler = AutomationScheduler(broker=broker)
+    now = datetime(2026, 9, 7, 21, 0, 0, tzinfo=UTC)
+
+    with patch(
+        "boss_agent.scheduler.resolve_chat_acknowledgment_settings",
+        return_value=ChatAcknowledgmentSettings(dry_run=True),
+    ):
+        tasks = await scheduler.run_once(now=now)
+
+    assert len(tasks) == 1
+    assert tasks[0].payload["dry_run"] is True
+
+
 def test_saved_search_check_chat_target_round_trips():
     search = SavedSearch(id="inbox_cleanup", target_task_type="CHECK_CHAT")
 

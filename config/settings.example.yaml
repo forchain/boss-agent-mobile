@@ -89,13 +89,17 @@ company_blacklist: []
 jd_blacklist: ["驻场", "外包", "电销", "无底薪", "纯提成"]
 
 # ------------------------------------------------------------------------------
-# 7. 新招呼收件箱 · 拒信自动回复（Rejection Auto-Acknowledgment）
+# 7. 「仅沟通」列表 · 拒信清扫与公司拉黑（Rejection Triage & Company Blacklisting）
 # ------------------------------------------------------------------------------
 chat:
   # 识别到招聘者明确拒信后发送的礼貌收尾文案（env: CHAT_REJECTION_REPLY_TEXT）
   rejection_reply_text: "收到 谢谢"
 
-  # 单次 CHECK_CHAT 任务最多判定的收件箱消息条数，防止在消息堆积时无限扫描
-  # （env: CHAT_MAX_SCAN_DEPTH）
+  # 单次 CHECK_CHAT 任务最多交给大模型判定的消息条数，防止在消息堆积时无限扫描。
+  # 带「送达/已读」状态标签的出站等待消息不消耗该额度（env: CHAT_MAX_SCAN_DEPTH）
   max_scan_depth: 30
+
+  # 演练模式：只识别拒信并记录拟拉黑的企业，不改写筛选配置、不发送任何消息
+  # （env: CHAT_DRY_RUN）
+  dry_run: false
 

@@ -206,8 +206,8 @@ class AutomationScheduler:
     def _build_dispatch(self, search: SavedSearch) -> tuple[TaskType, dict[str, Any]]:
         """Resolve the worker task a strategy dispatches, and its payload.
 
-        Inbox cleanup is keyword-independent: it carries the resolved
-        acknowledgment settings instead of a search strategy.
+        Rejection cleanup is keyword-independent: it carries the resolved
+        triage settings instead of a search strategy.
         """
         if search.is_chat_cleanup:
             ack = resolve_chat_acknowledgment_settings()
@@ -215,7 +215,9 @@ class AutomationScheduler:
                 "saved_search_id": search.id,
                 "search_id": search.id,
                 "search_name": search.name,
-                "dry_run": False,
+                # Carried explicitly so a scheduled run honours the configured
+                # drill mode rather than silently going live.
+                "dry_run": ack.dry_run,
                 "rejection_reply_text": ack.rejection_reply_text,
                 "max_scan_depth": ack.max_scan_depth,
                 "scheduled": True,

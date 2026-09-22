@@ -214,3 +214,7 @@ _Avoid_: 新招呼, 全部消息, 互动标签
 The automated triage workflow that detects explicit recruiter rejections in the communication list, extracts the employer, and commits it into the active `ScreeningPolicy` company blacklist under existing guardrails to prevent future wasted daily applications.
 _Avoid_: auto-block, recruiter kicker, 拒信拉黑脚本
 
+**Headhunter Agency Guardrail**:
+The company-name-derived protection that keeps staffing and recruitment agencies (人力资源, 劳务派遣, 人才服务, 猎头, 企业管理咨询 …) out of the company blacklist. A rejection card carries no recruiter title, so the 猎头 signal that card-level screening uses is unavailable and the agency must be recognised from its own registered name instead. Deliberately narrow: industry words real employers also carry (咨询, 科技) never trigger it, because the guardrail exists to protect the many employers an agency represents, and a false positive can never be undone by the rejected conversation.
+_Avoid_: agency filter, blacklist whitelist, 猎头豁免
+

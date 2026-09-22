@@ -64,6 +64,30 @@ describe('Chat acknowledgment settings (issue #208)', () => {
 
 		expect(settings.chat?.rejection_reply_text).toBe('收到 谢谢');
 		expect(settings.chat?.max_scan_depth).toBe(30);
+		// Dry-run is off unless configured: a default-on drill would silently stop
+		// the worker from blacklisting anyone.
+		expect(settings.chat?.dry_run).toBe(false);
+	});
+
+	it('round-trips the dry-run toggle and keeps it when other fields are saved', async () => {
+		const { saveSettingsToLocalYaml, loadMergedSettings } = await import('../lib/server/settings');
+
+		saveSettingsToLocalYaml({ chat: { dry_run: true } } as any);
+		expect(loadMergedSettings().chat?.dry_run).toBe(true);
+
+		// A partial payload must not silently flip the drill back off.
+		saveSettingsToLocalYaml({ chat: { rejection_reply_text: '多谢' } } as any);
+		const reloaded = loadMergedSettings();
+		expect(reloaded.chat?.dry_run).toBe(true);
+		expect(reloaded.chat?.rejection_reply_text).toBe('多谢');
+	});
+
+	it('treats a non-boolean dry-run value as off', async () => {
+		const { normalizeChatAcknowledgment } = await import('../lib/chatAcknowledgment');
+
+		expect(normalizeChatAcknowledgment({ dry_run: 'yes' }).dry_run).toBe(false);
+		expect(normalizeChatAcknowledgment({ dry_run: 1 }).dry_run).toBe(false);
+		expect(normalizeChatAcknowledgment({ dry_run: true }).dry_run).toBe(true);
 	});
 
 	it('persists a customized reply text and scan bound', async () => {

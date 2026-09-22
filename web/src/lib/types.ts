@@ -124,8 +124,13 @@ export interface SystemSettings {
 export interface ChatAcknowledgmentConfig {
 	/** Polite closing message sent to a recruiter who explicitly rejected the candidate. */
 	rejection_reply_text: string;
-	/** Maximum number of inbox messages one CHECK_CHAT run may classify. */
+	/**
+	 * Maximum number of messages one CHECK_CHAT run may hand to the LLM. Cards
+	 * carrying the outbound status badge are skipped for free and do not count.
+	 */
 	max_scan_depth: number;
+	/** Drill mode: log proposed blacklist additions without writing any config. */
+	dry_run: boolean;
 }
 
 export interface MatchEvaluateRequest {

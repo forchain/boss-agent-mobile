@@ -445,11 +445,12 @@ export function saveSettingsToLocalYaml(
 		`jd_blacklist: ${JSON.stringify(merged.jd_blacklist || [])}`,
 		``,
 		`# ------------------------------------------------------------------------------`,
-		`# 7. 新招呼收件箱 · 拒信自动回复 (Rejection Auto-Acknowledgment)`,
+		`# 7. 「仅沟通」列表 · 拒信清扫与公司拉黑 (Rejection Triage & Company Blacklisting)`,
 		`# ------------------------------------------------------------------------------`,
 		`chat:`,
 		`  rejection_reply_text: ${JSON.stringify(chat.rejection_reply_text)}`,
 		`  max_scan_depth: ${chat.max_scan_depth}`,
+		`  dry_run: ${chat.dry_run ? 'true' : 'false'}`,
 		``
 	].join('\n');
 

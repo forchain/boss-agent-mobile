@@ -13,6 +13,7 @@ from .rejection import (
     DEFAULT_MAX_SCAN_DEPTH,
     DEFAULT_REJECTION_REPLY_TEXT,
     ChatAcknowledgmentSettings,
+    coerce_bool,
     coerce_positive_int,
 )
 
@@ -43,12 +44,13 @@ def resolve_chat_acknowledgment_settings(
     settings: dict[str, Any] | None = None,
     config_path: str | Path | None = None,
 ) -> ChatAcknowledgmentSettings:
-    """Resolve the rejection auto-acknowledgment settings.
+    """Resolve the rejection triage settings.
 
     Precedence:
-      1. `CHAT_REJECTION_REPLY_TEXT` / `CHAT_MAX_SCAN_DEPTH` environment variables
+      1. `CHAT_REJECTION_REPLY_TEXT` / `CHAT_MAX_SCAN_DEPTH` / `CHAT_DRY_RUN`
+         environment variables
       2. The nested `chat:` block of the merged settings files
-      3. Built-in defaults ("收到 谢谢", 30)
+      3. Built-in defaults ("收到 谢谢", 30, false)
 
     Pass `settings` to resolve from an already-loaded mapping (used by callers
     that have one, and by tests that must stay independent of local config).
@@ -59,6 +61,7 @@ def resolve_chat_acknowledgment_settings(
 
     reply_text = chat.get("rejection_reply_text")
     scan_depth = chat.get("max_scan_depth")
+    dry_run = chat.get("dry_run")
 
     env_reply = os.getenv("CHAT_REJECTION_REPLY_TEXT")
     if env_reply and env_reply.strip():
@@ -66,11 +69,15 @@ def resolve_chat_acknowledgment_settings(
     env_depth = os.getenv("CHAT_MAX_SCAN_DEPTH")
     if env_depth and env_depth.strip():
         scan_depth = env_depth.strip()
+    env_dry_run = os.getenv("CHAT_DRY_RUN")
+    if env_dry_run and env_dry_run.strip():
+        dry_run = env_dry_run.strip()
 
     reply_str = str(reply_text).strip() if reply_text is not None else ""
     return ChatAcknowledgmentSettings(
         rejection_reply_text=reply_str or DEFAULT_REJECTION_REPLY_TEXT,
         max_scan_depth=coerce_positive_int(scan_depth, DEFAULT_MAX_SCAN_DEPTH),
+        dry_run=coerce_bool(dry_run, default=False),
     )
 
 
@@ -350,7 +357,9 @@ def load_settings(config_path: str | Path | None = None) -> dict[str, Any]:
     if env_pb_db_path and env_pb_db_path.strip():
         merged["pocketbase_db_path"] = env_pb_db_path.strip()
 
-    env_llm_key = os.getenv("LLM_API_KEY") or os.getenv("MINIMAX_API_KEY") or os.getenv("OPENAI_API_KEY")
+    env_llm_key = (
+        os.getenv("LLM_API_KEY") or os.getenv("MINIMAX_API_KEY") or os.getenv("OPENAI_API_KEY")
+    )
     if env_llm_key and env_llm_key.strip():
         merged["api_key"] = env_llm_key.strip()
 

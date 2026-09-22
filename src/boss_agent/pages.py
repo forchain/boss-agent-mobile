@@ -44,6 +44,15 @@ console = Console()
 # signature the humanized-interaction policy (ADR-0005) exists to avoid.
 BACK_INTERVAL_SEC: tuple[float, float] = (0.35, 0.65)
 
+#: Separator in a communication card's `[Company] | [Position]` descriptor.
+CARD_DESCRIPTOR_SEPARATOR: str = "|"
+
+#: Badge texts the platform renders in `iv_msg_status` for a thread whose last
+#: message is the candidate's own (spec #205). Matched explicitly rather than
+#: keyed on the node's mere presence: a future badge with different wording would
+#: otherwise silently stop every rejection from being detected.
+OUTBOUND_STATUS_MARKERS: tuple[str, ...] = ("送达", "已读")
+
 
 def _log_selector_lookup(selector: UISelector, outcome: str, started_at: float) -> None:
     """Emit one UI telemetry line for a single selector query."""
@@ -132,8 +141,8 @@ def _whitespace_digest(text: str) -> str:
     return hashlib.sha1(normalized.encode("utf-8")).hexdigest()[:12]
 
 
-def compute_inbox_message_key(sender_name: str, message_text: str, row_text: str = "") -> str:
-    """Signature identifying one inbox message for in-memory visited-set deduplication.
+def compute_card_key(sender_name: str, message_text: str, row_text: str = "") -> str:
+    """Signature identifying one communication card for visited-set deduplication.
 
     Sender plus a whitespace-insensitive hash of the message text: stable across
     re-reads of the same card, and distinct for two recruiters sending identical text.
@@ -149,21 +158,68 @@ def compute_inbox_message_key(sender_name: str, message_text: str, row_text: str
     return f"{sender}:{_whitespace_digest(message_text)}"
 
 
+def parse_company_from_descriptor(descriptor: str, sender_name: str = "") -> str:
+    """Extract the employer from a card's `[Company] | [Position]` descriptor.
+
+    Examples:
+        "传音控股 | 算法工程师"        -> "传音控股"
+        "严胜 传音控股 | 算法工程师"   -> "传音控股"   (sender_name="严胜")
+        "我们感谢您的投递"            -> ""            (no separator)
+
+    Anything after the first separator is the position and is discarded: only the
+    employer is ever blacklisted. A leading recruiter name is stripped because the
+    row-text fallback can glue it onto the descriptor.
+    """
+    text = (descriptor or "").strip()
+    if CARD_DESCRIPTOR_SEPARATOR not in text:
+        return ""
+
+    company = text.split(CARD_DESCRIPTOR_SEPARATOR, 1)[0].strip()
+    sender = (sender_name or "").strip()
+    if sender and company.startswith(sender):
+        company = company[len(sender) :].strip()
+    return company
+
+
 @dataclass
-class ChatInboxMessage:
-    """One unreplied message card read from the New Greeting Inbox list view."""
+class CommunicationCard:
+    """One conversation card read from the 仅沟通 communication list.
+
+    Everything the triage needs is on the card itself: the outbound indicator
+    says whether the thread is waiting on the recruiter, and the descriptor
+    carries the employer.
+    """
 
     sender_name: str
     message_text: str
     element: Any = None
     row_text: str = ""
     key: str = ""
+    #: Raw Outbound Message Indicator text (`iv_msg_status`), e.g. "[送达]".
+    outbound_status: str = ""
+    #: The card's `[Company] | [Position]` descriptor, e.g. "传音控股 | 算法工程师".
+    company_position: str = ""
 
     def __post_init__(self) -> None:
         if not self.key:
-            self.key = compute_inbox_message_key(
-                self.sender_name, self.message_text, self.row_text
-            )
+            self.key = compute_card_key(self.sender_name, self.message_text, self.row_text)
+
+    @property
+    def has_outbound_indicator(self) -> bool:
+        """Whether the candidate sent the last message and the recruiter has not replied.
+
+        True only for a badge carrying a known marker (``[送达]`` / ``[已读]``). An
+        unrecognised badge is treated as an inbound message instead of being
+        skipped: a missed skip costs one LLM call, while a wrong skip would stop
+        every rejection from ever being blacklisted, silently and invisibly.
+        """
+        status = (self.outbound_status or "").strip()
+        return any(marker in status for marker in OUTBOUND_STATUS_MARKERS)
+
+    @property
+    def company_name(self) -> str:
+        """Employer parsed from the card descriptor, or "" when unavailable."""
+        return parse_company_from_descriptor(self.company_position, self.sender_name)
 
 
 def parse_recruiter_info(raw_text: str) -> tuple[str, str, bool]:
@@ -319,7 +375,9 @@ class BaseBossPage:
                 return elems[0]
         return None
 
-    def _find_elements_by_key(self, key: str, format_args: dict[str, Any] | None = None) -> list[Any]:
+    def _find_elements_by_key(
+        self, key: str, format_args: dict[str, Any] | None = None
+    ) -> list[Any]:
         """Return every element matched by the first locator for `key` that hits anything."""
         if not self.driver:
             return []
@@ -1614,67 +1672,105 @@ class ChatPage(BaseBossPage):
             return False
 
 
-class ChatInboxPage(BaseBossPage):
-    """Page Object for the New Greeting Inbox (新招呼) unreplied message queue.
+class CommunicationListPage(BaseBossPage):
+    """Page Object for the 仅沟通 communication list under the 消息 tab.
 
-    Messages are read straight off the list item's `tv_msg` node, so classifying
-    a message never requires opening its chat (spec #205).
+    Cards carry everything the triage needs — the Outbound Message Indicator, the
+    `[Company] | [Position]` descriptor and the last message text — so neither
+    classification nor employer extraction ever requires opening a chat (spec #205).
     """
 
-    def is_on_inbox(self, timeout_sec: float = 2.0) -> bool:
-        """Check whether the New Greeting Inbox is currently displayed."""
-        return self.find_by_key("chat_inbox.new_greeting_tab", timeout_sec=timeout_sec) is not None
+    def is_on_list(self, timeout_sec: float = 2.0) -> bool:
+        """Check whether the 仅沟通 communication list is currently displayed."""
+        return (
+            self.find_by_key("communication_list.communication_tab", timeout_sec=timeout_sec)
+            is not None
+        )
 
-    def wait_for_inbox_return(self, timeout_sec: float = 5.0) -> bool:
-        """Wait for the platform to drop the conversation and land back on the inbox."""
-        return self.is_on_inbox(timeout_sec=timeout_sec)
+    def wait_for_list_return(self, timeout_sec: float = 5.0) -> bool:
+        """Wait for the platform to drop the conversation and land back on the list."""
+        return self.is_on_list(timeout_sec=timeout_sec)
 
-    def open_inbox(self, timeout_sec: float = 5.0) -> bool:
-        """Navigate into the New Greeting Inbox: bottom message tab -> 新招呼 sub-tab."""
-        tab = self.find_by_key("chat_inbox.entry_tab", timeout_sec=timeout_sec)
+    def open_list(self, timeout_sec: float = 5.0) -> bool:
+        """Navigate into the 仅沟通 list: bottom 消息 tab -> 仅沟通 sub-tab."""
+        tab = self.find_by_key("communication_list.entry_tab", timeout_sec=timeout_sec)
         if tab:
             self.gestures.human_click(tab)
 
-        sub_tab = self.find_by_key("chat_inbox.new_greeting_tab", timeout_sec=timeout_sec)
+        sub_tab = self.find_by_key("communication_list.communication_tab", timeout_sec=timeout_sec)
         if not sub_tab:
             return False
         self.gestures.human_click(sub_tab)
         return True
 
     def _find_message_cards(self) -> list[Any]:
-        """Locate inbox rows, falling back to the message nodes themselves."""
-        cards = self._find_elements_by_key("chat_inbox.message_card")
+        """Locate communication rows, falling back to the message nodes themselves."""
+        cards = self._find_elements_by_key("communication_list.message_card")
         if cards:
             return cards
-        return self._find_elements_by_key("chat_inbox.message_text")
+        return self._find_elements_by_key("communication_list.message_text")
 
-    def extract_visible_messages(self, max_items: int = 10) -> list[ChatInboxMessage]:
-        """Extract the sender and full message text of every visible inbox card."""
+    def extract_visible_messages(self, max_items: int = 10) -> list[CommunicationCard]:
+        """Extract every visible card's sender, outbound badge, descriptor and text."""
         if not self.driver:
             return []
 
-        messages: list[ChatInboxMessage] = []
+        cards: list[CommunicationCard] = []
         for card in self._find_message_cards()[:max_items]:
             row_text = (getattr(card, "text", "") or "").strip()
-            sender = self._extract_card_field_text(card, "chat_inbox.sender_name")
-            text = self._extract_card_field_text(card, "chat_inbox.message_text")
+            sender = self._extract_card_field_text(card, "communication_list.sender_name")
+            text = self._extract_card_field_text(card, "communication_list.message_text")
             if not text:
                 # A card may itself be the message node (fallback locator path).
                 text = row_text
             if not text:
                 continue
-            messages.append(
-                ChatInboxMessage(
+            cards.append(
+                CommunicationCard(
                     sender_name=sender,
                     message_text=text,
                     element=card,
                     row_text=row_text,
+                    outbound_status=self._extract_card_field_text(
+                        card, "communication_list.outbound_status"
+                    ),
+                    company_position=self._extract_company_position(card, sender, text),
                 )
             )
-        return messages
+        return cards
 
-    def scroll_inbox(self) -> None:
-        """Perform a humanized swipe up to reveal older inbox cards."""
+    def _extract_company_position(self, card: Any, sender: str, message_text: str) -> str:
+        """Read the `[Company] | [Position]` descriptor off a card.
+
+        Falls back to the card's own child nodes when the configured resource-ids
+        miss, because the descriptor node has no measured id on a live device.
+
+        The sender, the message and the rendered row are all excluded: a rejection
+        message may itself contain a `|`, and mistaking the message for an employer
+        would blacklist a company that was never named on the card.
+        """
+        descriptor = self._extract_card_field_text(card, "communication_list.company_position")
+        if CARD_DESCRIPTOR_SEPARATOR in descriptor:
+            return descriptor
+
+        message = (message_text or "").strip()
+        sender = (sender or "").strip()
+        try:
+            children = card.find_elements(by="xpath", value=".//android.widget.TextView")
+        except Exception:
+            return ""
+        for child in children:
+            candidate = (getattr(child, "text", "") or "").strip()
+            if not candidate or candidate == sender:
+                continue
+            if message and (candidate in message or message in candidate):
+                continue
+            if CARD_DESCRIPTOR_SEPARATOR in candidate:
+                return candidate
+        return ""
+
+    def scroll_list(self) -> None:
+        """Perform a humanized swipe up to reveal older communication cards."""
         if not self.driver:
             return
         size = self._get_window_size()
@@ -1685,8 +1781,8 @@ class ChatInboxPage(BaseBossPage):
         self.gestures.human_swipe(start, end, duration_ms=500)
         self.gestures.random_sleep(0.3, 0.6)
 
-    def open_message(self, message: ChatInboxMessage) -> bool:
-        """Click an inbox card to enter its chat dialog."""
+    def open_message(self, message: CommunicationCard) -> bool:
+        """Click a communication card to enter its chat dialog."""
         if message.element is None:
             return False
         self.gestures.human_click(message.element)

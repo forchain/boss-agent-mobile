@@ -590,7 +590,7 @@
 							<div class="flex items-center space-x-2">
 								<span class="text-slate-400 font-medium">{isChatCleanup ? '扫描范围:' : '目标关键词:'}</span>
 								{#if isChatCleanup}
-									<span class="font-mono font-bold text-violet-300">新招呼收件箱 (未回复的招聘方消息)</span>
+									<span class="font-mono font-bold text-violet-300">「仅沟通」列表 (无出站标签的待处理消息)</span>
 								{:else}
 									<span class="font-mono font-bold {search.enable_search === false ? 'text-amber-400' : 'text-cyan-300'}">
 										{search.enable_search === false ? '(直接浏览推荐)' : search.keyword || '(全量推荐)'}
@@ -721,10 +721,10 @@
 										type="button"
 										onclick={() => onTriggerSearch(search, 'check_chat')}
 										class="px-2.5 py-1.5 rounded-lg text-xs font-medium transition flex items-center space-x-1 bg-violet-600 hover:bg-violet-500 text-white shadow ring-1 ring-violet-400/50"
-										title="立即执行此策略：扫描「新招呼」收件箱，礼貌回复拒信并标记不感兴趣"
+										title="立即执行此策略：扫描「仅沟通」列表，拉黑拒信企业并礼貌收尾"
 									>
 										<span>🧹</span>
-										<span>立即清扫收件箱</span>
+										<span>立即清扫仅沟通</span>
 									</button>
 								{:else}
 								<button
@@ -829,7 +829,7 @@
 					<div>
 						<span class="block font-medium text-slate-400 mb-1">搜索关键词</span>
 						<p class="text-[11px] text-slate-500 leading-relaxed">
-							收件箱清理策略不使用关键词；调度时直接进入「新招呼」收件箱扫描未回复的招聘方消息。
+							仅沟通清扫策略不使用关键词；调度时直接进入「仅沟通」列表，扫描无出站标签的招聘方消息。
 						</p>
 					</div>
 					{:else}
@@ -911,13 +911,13 @@
 							>
 								<option value="save_jd">📖 深度存JD (save_jd) - 点开卡片保存详情页岗位职责全文</option>
 								<option value="auto_apply">🚀 自动打招呼 (auto_apply) - 深度存JD并进行AI匹配与发送</option>
-								<option value="check_chat">🧹 收件箱清理 (check_chat) - 扫描「新招呼」拒信并礼貌收尾</option>
+								<option value="check_chat">🧹 仅沟通清扫 (check_chat) - 拉黑拒信企业并礼貌收尾</option>
 							</select>
 							<span class="text-[10px] text-slate-500 block mt-1">
 								{modalForm.target_action === 'auto_apply'
 									? '调度时自动派发 AUTO_APPLY 智能投递任务，生成招呼语并沟通'
 									: modalForm.target_action === 'check_chat'
-										? '调度时自动派发 CHECK_CHAT 任务，清理收件箱拒信，不使用关键词与筛选条件'
+										? '调度时自动派发 CHECK_CHAT 任务，清扫「仅沟通」拒信并拉黑企业，不使用关键词与筛选条件'
 										: '调度时自动派发 SCRAPE_JOBS 职位抓取任务，不主动发起沟通'}
 							</span>
 						</div>

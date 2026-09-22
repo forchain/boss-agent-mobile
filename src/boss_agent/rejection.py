@@ -1,9 +1,9 @@
 """
 src/boss_agent/rejection.py
 ===========================
-Rejection Auto-Acknowledgment domain: classifying explicit recruiter rejections
-inside the New Greeting Inbox so they can be politely closed and marked as
-disinterested (Issue #205).
+Rejection triage domain: classifying explicit recruiter rejections found in the
+仅沟通 communication list so the employer can be blacklisted and the conversation
+politely closed (Issues #205-#208).
 """
 
 from collections.abc import Mapping
@@ -18,7 +18,9 @@ DISINTEREST_REASON: str = "重复推荐"
 #: Polite closing message sent to a recruiter who explicitly rejected the candidate.
 DEFAULT_REJECTION_REPLY_TEXT: str = "收到 谢谢"
 
-#: Upper bound on how many inbox messages one CHECK_CHAT run may classify.
+#: Upper bound on how many messages one CHECK_CHAT run may hand to the LLM.
+#: Cards carrying the Outbound Message Indicator are skipped for free and do not
+#: consume this budget.
 DEFAULT_MAX_SCAN_DEPTH: int = 30
 
 REJECTION_CLASSIFIER_SYSTEM_PROMPT: str = (
@@ -37,7 +39,7 @@ REJECTION_CLASSIFIER_SYSTEM_PROMPT: str = (
     "只有当招聘者的意思**明确无误**为拒绝时才判定为拒信；任何不确定的情况都必须判定为非拒信。"
     "误判会造成真实机会的丢失，因此宁可漏判，不可错判。\n\n"
     "只输出 JSON，字段如下：\n"
-    '- is_rejection: 布尔值，是否为明确拒信\n'
+    "- is_rejection: 布尔值，是否为明确拒信\n"
     "- confidence: 0 到 1 之间的置信度数字\n"
     "- rationale: 一句话中文说明判断依据\n"
 )
@@ -45,10 +47,11 @@ REJECTION_CLASSIFIER_SYSTEM_PROMPT: str = (
 
 @dataclass(frozen=True)
 class ChatAcknowledgmentSettings:
-    """Resolved configuration for the rejection auto-acknowledgment workflow."""
+    """Resolved configuration for the rejection triage workflow."""
 
     rejection_reply_text: str = DEFAULT_REJECTION_REPLY_TEXT
     max_scan_depth: int = DEFAULT_MAX_SCAN_DEPTH
+    dry_run: bool = False
 
     def with_overrides(self, payload: Mapping[str, Any] | None) -> "ChatAcknowledgmentSettings":
         """Layer per-task payload overrides on top of the configured defaults.
@@ -63,12 +66,34 @@ class ChatAcknowledgmentSettings:
         if not reply_text:
             reply_text = self.rejection_reply_text
 
+        raw_dry_run = payload.get("dry_run")
+
         return ChatAcknowledgmentSettings(
             rejection_reply_text=reply_text,
-            max_scan_depth=coerce_positive_int(
-                payload.get("max_scan_depth"), self.max_scan_depth
-            ),
+            max_scan_depth=coerce_positive_int(payload.get("max_scan_depth"), self.max_scan_depth),
+            # Coerced, not `bool(...)`: a payload of "false" must not read as True.
+            dry_run=coerce_bool(raw_dry_run, default=self.dry_run),
         )
+
+
+def coerce_bool(value: Any, default: bool = False) -> bool:
+    """Coerce a config/env value to bool, falling back to `default` when unparsable.
+
+    Accepts the spellings that appear in YAML and shell alike ("true"/"1"/"yes"),
+    so `CHAT_DRY_RUN=1` and `dry_run: true` agree.
+    """
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in ("1", "true", "yes", "on", "y"):
+        return True
+    if text in ("0", "false", "no", "off", "n", ""):
+        return False
+    return default
 
 
 def coerce_positive_int(value: Any, default: int) -> int:

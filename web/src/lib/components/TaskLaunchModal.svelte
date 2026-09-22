@@ -418,9 +418,9 @@
 							<div class="flex items-center space-x-2">
 								<span class="text-xl">💬</span>
 								<div>
-									<div class="font-bold text-slate-200">新招呼拒信清扫 (CHECK_CHAT)</div>
+									<div class="font-bold text-slate-200">「仅沟通」拒信清扫 (CHECK_CHAT)</div>
 									<p class="text-[11px] text-slate-500 mt-0.5">
-										扫描「新招呼」收件箱，识别明确拒信后礼貌收尾并标记“不感兴趣（重复推荐）”。
+										扫描「仅沟通」列表，跳过带「送达/已读」出站标签的会话，识别明确拒信后拉黑该企业并礼貌收尾。
 									</p>
 								</div>
 							</div>
@@ -477,7 +477,7 @@
 									<span class="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
 									<span>下发中...</span>
 								{:else}
-									<span>{chatDryRun ? '🧪 下发演练扫描' : '🧹 下发收件箱清扫'}</span>
+									<span>{chatDryRun ? '🧪 下发演练扫描' : '🧹 下发仅沟通清扫'}</span>
 								{/if}
 							</button>
 						</div>
