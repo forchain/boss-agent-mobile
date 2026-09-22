@@ -60,6 +60,18 @@ _Avoid_: In-process background task, Celery pool, worker thread
 The polymorphic workflow dispatch within the Automation Worker that executes concrete automation jobs (`CHECK_LOGIN`, `SCRAPE_JOBS`, `AUTO_APPLY`, `CHECK_CHAT`) without inter-process device contention.
 _Avoid_: Multi-worker router, sub-worker cluster
 
+**Task Provenance (`source`)**:
+The first-class lifecycle origin attribute on an `AutomationTask` (`manual`, `test`, `scheduler`) determining execution priority, dashboard visibility, and worker startup reclamation rules.
+_Avoid_: task kind, is_test flag, task origin tag
+
+**Automated Test Task (`source="test"`)**:
+An automation task instantiated by test suites (`pytest`, `vitest`) during verification. Excluded from live Automation Worker execution and automatically cancelled upon worker startup sweep to prevent mobile device contention.
+_Avoid_: test job, mock task, fake run, 测试用例任务
+
+**Manual Task (`source="manual"`)**:
+An automation task triggered intentionally by the user via the Task Management Dashboard or CLI for live job discovery or application workflows.
+_Avoid_: user test, real task, active test, 主动测试
+
 **Job Record**:
 The persisted entity representing a job posting discovered from mobile search results or scraping workflows in the Boss app.
 _Avoid_: Scraped item, raw post, search card
