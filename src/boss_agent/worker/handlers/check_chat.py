@@ -146,11 +146,16 @@ class CheckChatHandler(BaseTaskHandler):
         comm_list = CommunicationListPage(driver)
         chat_page = ChatPage(driver)
 
-        if not comm_list.is_on_list(timeout_sec=1.0) and not comm_list.open_list(
-            timeout_sec=PAGE_TIMEOUT_SEC
-        ):
-            await broker.append_log(task.id, "❌ [List] 无法进入「仅沟通」列表，任务终止")
-            return HandlerResult(success=False, error_message="Failed to open 仅沟通 list")
+        if not comm_list.is_on_list(timeout_sec=1.0):
+            # The dispatch can land while the app sits on a job detail, an open chat,
+            # a filter sheet or even the launcher, so the list is navigated to rather
+            # than assumed (issue #228).
+            await broker.append_log(
+                task.id, "🔄 [Navigation] 当前不在「仅沟通」列表，启动自愈导航返回「消息」栏目"
+            )
+            if not comm_list.open_list(timeout_sec=PAGE_TIMEOUT_SEC):
+                await broker.append_log(task.id, "❌ [List] 无法进入「仅沟通」列表，任务终止")
+                return HandlerResult(success=False, error_message="Failed to open 仅沟通 list")
 
         await broker.append_log(task.id, "📥 [List] 已进入「仅沟通」列表，开始扫描无状态标签的消息")
 

@@ -5,6 +5,7 @@ Unit tests for the 仅沟通 communication list page object, the chat disinteres
 sequence, and the communication-list locator configuration (Issues #205, #206).
 """
 
+import time
 from unittest.mock import MagicMock
 
 import pytest
@@ -185,21 +186,113 @@ def test_is_on_list_detects_the_communication_tab_marker():
     page.find_by_key.assert_called_with("communication_list.communication_tab", timeout_sec=0.1)
 
 
-def test_open_list_clicks_message_tab_then_communication_tab():
-    driver = MagicMock()
+BOSS_PACKAGE = "com.hpbr.bosszhipin"
+LAUNCHER_PACKAGE = "com.android.launcher3"
+
+#: A stack deep enough that no bounded recovery loop can ever unwind it.
+UNREACHABLE_DEPTH = 99
+
+
+class _Element:
+    """Stand-in for an Appium node: identity is what the click assertions compare."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"<{self.name}>"
+
+
+class _NavDriver:
+    """Fake Appium driver modelling a bounded back stack over the Boss app.
+
+    ``depth`` counts the screens stacked above the 消息 column: unwinding it to zero
+    lands on the 仅沟通 list (the platform keeps the filter selected), while a Back
+    press past the app root leaves Boss for the launcher — the failure the recovery
+    loop exists to guard against.
+    """
+
+    def __init__(self, *, depth: int = 0, back_button: bool = True, on_list: bool = False):
+        self.depth = depth
+        self.back_button = back_button
+        self.on_list = on_list
+        self.package = BOSS_PACKAGE
+        self.keycodes: list[int] = []
+        self.activated: list[str] = []
+
+    @property
+    def current_package(self) -> str:
+        return self.package
+
+    def press_keycode(self, code: int) -> None:
+        self.keycodes.append(code)
+        self._unwind()
+
+    def activate_app(self, package: str) -> None:
+        self.activated.append(package)
+        self.package = package
+
+    def _unwind(self) -> None:
+        self.depth -= 1
+        if self.depth < 0:
+            self.package = LAUNCHER_PACKAGE
+        elif self.depth == 0:
+            self.on_list = True
+
+
+def _recovery_page(driver: _NavDriver) -> CommunicationListPage:
+    """Wire a page object's probes onto the fake driver's screen state."""
     page = CommunicationListPage(driver)
-    marker = MagicMock()
-    page.find_by_key = MagicMock(return_value=marker)  # type: ignore[method-assign]
-    page.gestures.human_click = MagicMock()  # type: ignore[method-assign]
+    message_tab, communication_tab, back_btn = (
+        _Element("消息"),
+        _Element("仅沟通"),
+        _Element("iv_back"),
+    )
+
+    def find(key, **_):
+        if key == "communication_list.communication_tab":
+            return communication_tab if driver.on_list else None
+        if key == "communication_list.entry_tab":
+            if driver.depth == 0 and driver.package == BOSS_PACKAGE:
+                return message_tab
+            return None
+        if key == "communication_list.back_btn":
+            if driver.back_button and driver.depth > 0:
+                return back_btn
+            return None
+        return None
+
+    def click(elem):
+        if elem is back_btn:
+            driver._unwind()
+        elif elem is message_tab:
+            driver.on_list = True
+
+    page.find_by_key = MagicMock(side_effect=find)  # type: ignore[method-assign]
+    page.gestures.human_click = MagicMock(side_effect=click)  # type: ignore[method-assign]
+    page.gestures.random_sleep = MagicMock()  # type: ignore[method-assign]
+    return page
+
+
+def test_open_list_returns_immediately_when_already_on_the_list():
+    """#228: a worker already on the list must not touch the screen at all."""
+    driver = _NavDriver(on_list=True)
+    page = _recovery_page(driver)
+
+    assert page.open_list(timeout_sec=0.1) is True
+    assert page.gestures.human_click.call_count == 0
+    assert driver.keycodes == []
+
+
+def test_open_list_clicks_message_tab_then_communication_tab():
+    driver = _NavDriver(on_list=False)
+    page = _recovery_page(driver)
 
     assert page.open_list(timeout_sec=0.1) is True
 
-    clicked_keys = [call.args[0] for call in page.find_by_key.call_args_list]
-    assert clicked_keys == [
-        "communication_list.entry_tab",
-        "communication_list.communication_tab",
-    ]
-    assert page.gestures.human_click.call_count == 2
+    clicked = [call.args[0].name for call in page.gestures.human_click.call_args_list]
+    assert clicked == ["消息", "仅沟通"]
+    assert driver.keycodes == []
 
 
 def test_open_list_reports_failure_without_communication_tab():
@@ -209,7 +302,73 @@ def test_open_list_reports_failure_without_communication_tab():
         side_effect=lambda key, **_: MagicMock() if key == "communication_list.entry_tab" else None
     )
 
-    assert page.open_list(timeout_sec=0.1) is False
+    assert page.open_list(timeout_sec=0.1, max_steps=2) is False
+
+
+def test_recovery_prefers_the_on_screen_back_button_over_the_hardware_key():
+    """#228: Back-button clicks keep the app inside Boss; the key can walk out of it."""
+    driver = _NavDriver(depth=2)
+    page = _recovery_page(driver)
+
+    assert page.open_list(timeout_sec=0.1, max_steps=4) is True
+    assert driver.keycodes == [], "an on-screen back button was available the whole way"
+    assert [c.args[0].name for c in page.gestures.human_click.call_args_list] == [
+        "iv_back",
+        "iv_back",
+    ]
+
+
+def test_recovery_falls_back_to_the_hardware_back_key():
+    driver = _NavDriver(depth=1, back_button=False)
+    page = _recovery_page(driver)
+
+    assert page.open_list(timeout_sec=0.1, max_steps=4) is True
+    assert driver.keycodes == [4]
+
+
+def test_recovery_reactivates_boss_when_back_escapes_to_the_launcher():
+    driver = _NavDriver(depth=0, back_button=False)
+    driver.package = LAUNCHER_PACKAGE
+    page = _recovery_page(driver)
+
+    assert page.open_list(timeout_sec=0.1, max_steps=2) is False
+    assert driver.activated == [BOSS_PACKAGE, BOSS_PACKAGE]
+
+
+def test_recovery_loop_is_bounded_by_the_step_budget():
+    driver = _NavDriver(depth=UNREACHABLE_DEPTH, back_button=False)
+    page = _recovery_page(driver)
+
+    assert page.open_list(timeout_sec=0.1, max_steps=3) is False
+    assert driver.keycodes == [4, 4, 4]
+
+
+def test_recovery_steps_never_wait_out_the_element_timeout():
+    """Each step is a fast-fail probe: polling the full budget per step would stall a run.
+
+    Wired against the real locator lookup (one accessibility query per candidate) rather
+    than the scripted screen fake, because the cost being asserted *is* the lookup's.
+    """
+    driver = MagicMock()
+    driver.find_elements.return_value = []
+    page = CommunicationListPage(driver)
+    page.gestures.human_click = MagicMock()  # type: ignore[method-assign]
+    page.gestures.random_sleep = MagicMock()  # type: ignore[method-assign]
+    page.press_back = MagicMock()  # type: ignore[method-assign]
+
+    started = time.monotonic()
+    assert page.open_list(timeout_sec=5.0, max_steps=3) is False
+
+    assert time.monotonic() - started < 2.0
+
+
+def test_back_button_locator_targets_the_boss_page_back_affordances(registry):
+    """#228: the recovery probe must resolve the measured in-app back buttons first."""
+    selectors = registry.get_selectors("communication_list.back_btn")
+    assert selectors
+    values = [sel.value for sel in selectors]
+    assert values[0] == "com.hpbr.bosszhipin:id/iv_back"
+    assert "com.hpbr.bosszhipin:id/iv_back_ai" in values
 
 
 # ---------------------------------------------------------------------------

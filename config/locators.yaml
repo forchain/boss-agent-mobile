@@ -202,6 +202,15 @@ communication_list:
   outbound_status:
     - "com.hpbr.bosszhipin:id/iv_msg_status"
     - "//*[@resource-id='com.hpbr.bosszhipin:id/iv_msg_status']"
+  # On-screen back affordance, probed once per recovery step *before* the hardware
+  # Back key (issue #228): a page back button always stays inside Boss, where a
+  # hardware Back from a chat room or the message column can walk out to the
+  # launcher. Deliberately a short list — ADR 0011 measured every missed candidate
+  # at roughly one accessibility-tree scan (~1s), and this probe runs per step.
+  back_btn:
+    - "com.hpbr.bosszhipin:id/iv_back"
+    - "com.hpbr.bosszhipin:id/iv_back_ai"
+    - "//*[@content-desc='返回']"
 
 chat:
   disinterest_btn:

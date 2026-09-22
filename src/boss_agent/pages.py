@@ -56,6 +56,12 @@ CARD_DESCRIPTOR_SEPARATOR: str = "|"
 #: would silently never be populated.
 FULLWIDTH_CARD_DESCRIPTOR_SEPARATOR: str = "｜"
 
+#: Locator key of the on-screen back affordance tried before the hardware Back key.
+BACK_BUTTON_KEY: str = "communication_list.back_btn"
+
+#: Bounded recovery steps the 仅沟通 list navigation may spend unwinding the app.
+LIST_RECOVERY_MAX_STEPS: int = 6
+
 
 def _normalize_card_descriptors(text: str) -> str:
     """Collapse fullwidth vertical bars onto the ASCII card-descriptor separator."""
@@ -1761,17 +1767,64 @@ class CommunicationListPage(BaseBossPage):
         """Wait for the platform to drop the conversation and land back on the list."""
         return self.is_on_list(timeout_sec=timeout_sec)
 
-    def open_list(self, timeout_sec: float = 5.0) -> bool:
-        """Navigate into the 仅沟通 list: bottom 消息 tab -> 仅沟通 sub-tab."""
-        tab = self.find_by_key("communication_list.entry_tab", timeout_sec=timeout_sec)
-        if tab:
-            self.gestures.human_click(tab)
+    def open_list(self, timeout_sec: float = 5.0, max_steps: int = LIST_RECOVERY_MAX_STEPS) -> bool:
+        """Navigate into the 仅沟通 list from whatever screen the app is currently on.
+
+        The first check means an app already showing the list is never clicked at all.
+        From anywhere else the loop spends at most ``max_steps`` screens trying to
+        reach the message column, then clicks 消息 -> 仅沟通 and confirms the landing.
+
+        A CHECK_CHAT dispatch can arrive while the app sits on a job detail, an open
+        chat, a filter sheet or the launcher, so "the 消息 tab is right there" cannot
+        be assumed: unwinding first, and clicking the column the moment it appears,
+        is what makes the navigation self-healing instead of an instant task failure.
+
+        The per-step probes fast-fail; only the landing confirmation inside
+        `_open_message_column` spends the caller's ``timeout_sec``, because polling
+        out the full element budget on each of ``max_steps`` screens turns one
+        unreachable list into a multi-minute stall.
+        """
+        for step in range(max_steps + 1):
+            if self.is_on_list(timeout_sec=0.0):
+                return True
+            if self._open_message_column(timeout_sec=timeout_sec):
+                return True
+            if step == max_steps:
+                break
+            ui_logger.debug("[UI] 仅沟通 recovery step %d/%d", step + 1, max_steps)
+            self._recover_one_step()
+        return False
+
+    def _open_message_column(self, timeout_sec: float) -> bool:
+        """Click the bottom 消息 tab then the 仅沟通 sub-tab; True once landed on the list."""
+        tab = self.find_now("communication_list.entry_tab")
+        if not tab:
+            return False
+        self.gestures.human_click(tab)
 
         sub_tab = self.find_by_key("communication_list.communication_tab", timeout_sec=timeout_sec)
         if not sub_tab:
             return False
         self.gestures.human_click(sub_tab)
-        return True
+        return self.is_on_list(timeout_sec=timeout_sec)
+
+    def _recover_one_step(self) -> None:
+        """Unwind exactly one screen: on-screen back button first, hardware key second.
+
+        The on-screen affordance is preferred because it keeps the app inside Boss,
+        whereas a hardware Back from a chat room or the message column can leave the
+        app entirely. The probe stays a single short locator list on purpose (ADR
+        0011 measured each missed candidate at ~1s), the foreground guard re-activates
+        Boss if a Back press did escape, and the settle pause after either action is
+        what stops the loop degenerating into a runaway burst of clicks.
+        """
+        self._ensure_foreground()
+        back = self.find_now(BACK_BUTTON_KEY)
+        if back:
+            self.gestures.human_click(back)
+        else:
+            self.press_back()
+        self.gestures.random_sleep(*BACK_INTERVAL_SEC)
 
     def _find_message_cards(self) -> list[Any]:
         """Locate communication rows, falling back to the message nodes themselves."""

@@ -350,9 +350,11 @@ async def test_outbound_cards_are_skipped_without_any_llm_call(broker, context, 
 @pytest.mark.asyncio
 async def test_an_unrecognised_badge_is_evaluated_rather_than_skipped(broker, context, policy):
     """A wording change on the platform must not silently disable triage."""
-    harness = Harness([
-        card(REJECTION_TEXT, sender="严胜", status="[未读]", descriptor=DESCRIPTOR),
-    ])
+    harness = Harness(
+        [
+            card(REJECTION_TEXT, sender="严胜", status="[未读]", descriptor=DESCRIPTOR),
+        ]
+    )
     classifier = FakeClassifier({REJECTION_TEXT: True})
     handler = make_handler(classifier=classifier, policy=policy)
 
@@ -661,6 +663,19 @@ async def test_unreachable_list_fails_the_task(broker, context, policy):
 
     assert result.success is False
     assert any("仅沟通" in log for log in task.logs)
+
+
+@pytest.mark.asyncio
+async def test_recovers_into_the_list_from_an_arbitrary_screen(broker, context, policy):
+    """#228: a dispatch that lands mid-app navigates itself onto the list and scans."""
+    harness = Harness([card(REJECTION_TEXT, sender="严胜", descriptor=DESCRIPTOR)], on_list=False)
+    handler = make_handler(classifier=FakeClassifier({REJECTION_TEXT: True}), policy=policy)
+
+    result, task = await _run_async(broker, context, harness, handler)
+
+    assert result.success is True
+    assert result.output["rejections"] == 1
+    assert any("自愈导航" in log for log in task.logs)
 
 
 def test_handler_declares_check_chat_task_type():
