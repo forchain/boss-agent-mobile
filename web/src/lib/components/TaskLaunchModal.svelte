@@ -14,7 +14,10 @@
 		onTaskCreated: (task: AutomationTask) => void;
 	} = $props();
 
-	let activeTab = $state<'template' | 'diagnostic'>('template');
+	// 拒信清扫 is a first-class category (issue #229): the rejection triage has its own
+	// panel and never shares a tab with the diagnostics, so a one-click cleanup can no
+	// longer be reached by someone looking for a system check.
+	let activeTab = $state<'template' | 'chat_cleanup' | 'diagnostic'>('template');
 	let isSubmitting = $state(false);
 	let errorMessage = $state('');
 
@@ -186,6 +189,14 @@
 						: 'border-transparent text-slate-400 hover:text-slate-200'}"
 				>
 					🔍 搜索策略任务
+				</button>
+				<button
+					onclick={() => (activeTab = 'chat_cleanup')}
+					class="pb-2.5 px-2 font-medium transition border-b-2 {activeTab === 'chat_cleanup'
+						? 'border-cyan-400 text-cyan-300 font-semibold'
+						: 'border-transparent text-slate-400 hover:text-slate-200'}"
+				>
+					🧹 拒信清扫
 				</button>
 				<button
 					onclick={() => (activeTab = 'diagnostic')}
@@ -391,27 +402,11 @@
 							</div>
 						{/if}
 					</div>
-				{:else if activeTab === 'diagnostic'}
+				{:else if activeTab === 'chat_cleanup'}
 					<div class="space-y-3">
-						<p class="text-slate-400">下发系统级检测任务与收件箱清扫任务，验证移动端模拟器与 Boss 直聘状态，不触发职位投递：</p>
-						<div class="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-							<button
-								type="button"
-								onclick={() => handleLaunchDiagnostic('CHECK_LOGIN')}
-								disabled={isSubmitting}
-								class="p-4 rounded-xl bg-slate-950 hover:bg-slate-800/60 border border-slate-800 text-left transition flex flex-col justify-between space-y-2 group"
-							>
-								<div class="flex items-center space-x-2">
-									<span class="text-xl">🛡️</span>
-									<span class="font-bold text-slate-200 group-hover:text-cyan-400 transition">
-										检查登录状态 (CHECK_LOGIN)
-									</span>
-								</div>
-								<p class="text-[11px] text-slate-500">
-									启动 App，跳过广告与权限弹窗，检测当前是否处于登录就绪状态。
-								</p>
-							</button>
-						</div>
+						<p class="text-slate-400">
+							扫描「仅沟通」列表，跳过带「送达/已读」出站标签的会话，识别明确拒信后拉黑该企业并礼貌收尾，不触发任何职位投递：
+						</p>
 
 						<!-- New Greeting Inbox rejection cleanup (issue #208) -->
 						<div class="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3">
@@ -420,7 +415,7 @@
 								<div>
 									<div class="font-bold text-slate-200">「仅沟通」拒信清扫 (CHECK_CHAT)</div>
 									<p class="text-[11px] text-slate-500 mt-0.5">
-										扫描「仅沟通」列表，跳过带「送达/已读」出站标签的会话，识别明确拒信后拉黑该企业并礼貌收尾。
+										识别明确拒信后拉黑该企业并礼貌收尾，受直招保护守卫与猎头机构守卫约束。
 									</p>
 								</div>
 							</div>
@@ -479,6 +474,28 @@
 								{:else}
 									<span>{chatDryRun ? '🧪 下发演练扫描' : '🧹 下发仅沟通清扫'}</span>
 								{/if}
+							</button>
+						</div>
+					</div>
+				{:else}
+					<div class="space-y-3">
+						<p class="text-slate-400">下发系统级检测任务，验证移动端模拟器与 Boss 直聘状态，不触发职位投递：</p>
+						<div class="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+							<button
+								type="button"
+								onclick={() => handleLaunchDiagnostic('CHECK_LOGIN')}
+								disabled={isSubmitting}
+								class="p-4 rounded-xl bg-slate-950 hover:bg-slate-800/60 border border-slate-800 text-left transition flex flex-col justify-between space-y-2 group"
+							>
+								<div class="flex items-center space-x-2">
+									<span class="text-xl">🛡️</span>
+									<span class="font-bold text-slate-200 group-hover:text-cyan-400 transition">
+										检查登录状态 (CHECK_LOGIN)
+									</span>
+								</div>
+								<p class="text-[11px] text-slate-500">
+									启动 App，跳过广告与权限弹窗，检测当前是否处于登录就绪状态。
+								</p>
 							</button>
 						</div>
 					</div>
