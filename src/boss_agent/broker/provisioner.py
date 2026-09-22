@@ -96,6 +96,8 @@ JOB_RECORDS_FIELDS = [
     {"name": "screened_reason", "type": "text", "required": False},
     {"name": "relaxed_by_whitelist", "type": "bool", "required": False},
     {"name": "screening_audit", "type": "text", "required": False},
+    {"name": "applied_at", "type": "date", "required": False},
+    {"name": "applied_source", "type": "text", "required": False},
     {"name": "first_seen_at", "type": "date", "required": False},
     {"name": "last_seen_at", "type": "date", "required": False},
     {"name": "source_task_id", "type": "text", "required": False},
@@ -366,6 +368,8 @@ def provision_sqlite_database(
                     screened_reason TEXT,
                     relaxed_by_whitelist BOOLEAN DEFAULT FALSE,
                     screening_audit TEXT,
+                    applied_at TEXT,
+                    applied_source TEXT,
                     first_seen_at TEXT,
                     last_seen_at TEXT,
                     source_task_id TEXT,
@@ -396,6 +400,8 @@ def provision_sqlite_database(
                 ("screened_reason", "TEXT"),
                 ("relaxed_by_whitelist", "BOOLEAN DEFAULT FALSE"),
                 ("screening_audit", "TEXT"),
+                ("applied_at", "TEXT"),
+                ("applied_source", "TEXT"),
             ]
             for col_name, col_type in new_job_cols:
                 if col_name not in job_cols:
