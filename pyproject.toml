@@ -41,6 +41,9 @@ packages = ["src/droid_agent_core", "src/boss_agent"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Default test isolation: live device tests drive the shared Android emulator, so they
+# stay out of every unadorned run. Opt in deliberately with `pytest -m live`.
+addopts = "-m 'not live'"
 asyncio_mode = "strict"
 markers = [
     "live: marks tests requiring live Android device or emulator",

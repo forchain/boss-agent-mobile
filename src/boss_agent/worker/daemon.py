@@ -19,12 +19,35 @@ from boss_agent.worker.handlers.base import BaseTaskHandler, HandlerResult
 
 logger = logging.getLogger("boss_agent.worker")
 
+# Acknowledgment marker emitted the instant a termination signal is received. Supervisors and
+# test harnesses match on this line to prove the worker accepted the signal — never reword it
+# without updating the callers that verify it (see boss_agent.services.teardown).
+SHUTDOWN_ACK_MARKER = "[Worker] Received shutdown signal"
+
+# Reason recorded in the State Stream Broker when a termination signal aborts an in-flight task.
+SHUTDOWN_CANCEL_REASON = "Worker shutdown signal received"
+
+# Upper bound for closing the Virtual Device Session. A wedged Appium server must not be
+# able to hold worker shutdown (and therefore the E2E pre-test gate) hostage.
+DEVICE_RELEASE_TIMEOUT_SEC = 3.0
+
+# Statuses that mean the task's outcome is already decided and must not be overwritten by an
+# abort racing the handler's own completion.
+_TERMINAL_TASK_STATUSES: frozenset[TaskStatus] = frozenset(
+    {TaskStatus.SUCCESS, TaskStatus.FAILED, TaskStatus.CANCELLED}
+)
+
 
 def _format_payload_for_logging(
     obj: Any,
     max_str_len: int = 120,
     max_list_items: int = 5,
-    large_doc_keys: tuple[str, ...] = ("profile_document", "job_description", "raw_html", "resume_text"),
+    large_doc_keys: tuple[str, ...] = (
+        "profile_document",
+        "job_description",
+        "raw_html",
+        "resume_text",
+    ),
 ) -> Any:
     """Recursively truncate payload structures for readable, non-bloated console logging."""
     if isinstance(obj, dict):
@@ -33,7 +56,9 @@ def _format_payload_for_logging(
             if str(k) in large_doc_keys and isinstance(v, str) and len(v) > 50:
                 truncated[k] = f"<{len(v)} chars: {v[:40].strip()}...>"
             else:
-                truncated[k] = _format_payload_for_logging(v, max_str_len, max_list_items, large_doc_keys)
+                truncated[k] = _format_payload_for_logging(
+                    v, max_str_len, max_list_items, large_doc_keys
+                )
         return truncated
 
     if isinstance(obj, list):
@@ -45,8 +70,7 @@ def _format_payload_for_logging(
             items.append(f"... (+{len(obj) - max_list_items} more items)")
             return items
         return [
-            _format_payload_for_logging(x, max_str_len, max_list_items, large_doc_keys)
-            for x in obj
+            _format_payload_for_logging(x, max_str_len, max_list_items, large_doc_keys) for x in obj
         ]
 
     if isinstance(obj, str):
@@ -91,6 +115,10 @@ class AutomationWorker:
                 self.register_handler(h)
 
         self._running = False
+        self._stop_event = asyncio.Event()
+        self._shutting_down = False
+        self._inflight_task_id: str | None = None
+        self._inflight_exec_task: asyncio.Task[None] | None = None
 
     def register_handler(self, handler: BaseTaskHandler) -> None:
         """Register a polymorphic task handler."""
@@ -148,49 +176,14 @@ class AutomationWorker:
                 error_message=result.error_message,
             )
 
-    async def run_once(self) -> bool:
-        """Attempt to claim and process one pending task."""
-        pending_tasks = await self.broker.list_pending_tasks(limit=5)
-        if not pending_tasks:
-            return False
-
-        claimed_task: AutomationTask | None = None
-        for task in pending_tasks:
-            claimed = await self.broker.claim_task(task.id, worker_id=self.config.worker_id)
-            if claimed:
-                claimed_task = claimed
-                break
-
-        if not claimed_task:
-            return False
-
-        task_type_str = claimed_task.task_type.value
-        preview_payload = _format_payload_for_logging(claimed_task.payload or {})
-        logger.info(
-            "📥 Claimed task %s [type=%s] for device %s (payload=%s)",
-            claimed_task.id,
-            task_type_str,
-            self.config.device_id,
-            preview_payload,
-        )
+    async def _execute_claimed_task(
+        self,
+        claimed_task: AutomationTask,
+        handler: BaseTaskHandler,
+        task_type_str: str,
+    ) -> None:
+        """Execute one claimed task with heartbeat renewal, then record its outcome."""
         start_time = time.monotonic()
-
-        handler = self._handlers.get(claimed_task.task_type)
-        if not handler:
-            logger.error(
-                "❌ No handler registered for task type %s (task_id=%s)",
-                task_type_str,
-                claimed_task.id,
-            )
-            await self.broker.append_log(
-                claimed_task.id, f"No handler registered for task type {claimed_task.task_type}"
-            )
-            await self.broker.update_task_status(
-                claimed_task.id,
-                status=TaskStatus.FAILED,
-                error_message=f"Unsupported task type: {claimed_task.task_type}",
-            )
-            return True
 
         # Non-mutating broker proxy that mirrors handler append_log calls to worker console
         handler_broker = cast(BaseTaskBroker, _TaskLoggingBrokerProxy(self.broker))
@@ -200,6 +193,16 @@ class AutomationWorker:
         try:
             result = await handler.handle(claimed_task, handler_broker, self.context)
             await self._finalize_task_outcome(claimed_task, task_type_str, start_time, result)
+        except asyncio.CancelledError:
+            # Shutdown aborted this task; broker bookkeeping is owned by the shutdown path.
+            duration = time.monotonic() - start_time
+            logger.warning(
+                "⚠️ Task %s [%s] aborted after %.2fs (worker shutting down)",
+                claimed_task.id,
+                task_type_str,
+                duration,
+            )
+            raise
         except Exception as e:
             duration = time.monotonic() - start_time
             cur = await self.broker.get_task(claimed_task.id)
@@ -229,7 +232,149 @@ class AutomationWorker:
             with contextlib.suppress(asyncio.CancelledError):
                 await heartbeat_task
 
+    async def run_once(self) -> bool:
+        """Attempt to claim and process one pending task."""
+        pending_tasks = await self.broker.list_pending_tasks(limit=5)
+        if not pending_tasks:
+            return False
+
+        claimed_task: AutomationTask | None = None
+        for task in pending_tasks:
+            claimed = await self.broker.claim_task(task.id, worker_id=self.config.worker_id)
+            if claimed:
+                claimed_task = claimed
+                break
+
+        if not claimed_task:
+            return False
+
+        task_type_str = claimed_task.task_type.value
+        preview_payload = _format_payload_for_logging(claimed_task.payload or {})
+        logger.info(
+            "📥 Claimed task %s [type=%s] for device %s (payload=%s)",
+            claimed_task.id,
+            task_type_str,
+            self.config.device_id,
+            preview_payload,
+        )
+
+        handler = self._handlers.get(claimed_task.task_type)
+        if not handler:
+            logger.error(
+                "❌ No handler registered for task type %s (task_id=%s)",
+                task_type_str,
+                claimed_task.id,
+            )
+            await self.broker.append_log(
+                claimed_task.id, f"No handler registered for task type {claimed_task.task_type}"
+            )
+            await self.broker.update_task_status(
+                claimed_task.id,
+                status=TaskStatus.FAILED,
+                error_message=f"Unsupported task type: {claimed_task.task_type}",
+            )
+            return True
+
+        # Track the in-flight execution so a termination signal can abort it promptly.
+        exec_task: asyncio.Task[None] = asyncio.create_task(
+            self._execute_claimed_task(claimed_task, handler, task_type_str)
+        )
+        self._inflight_task_id = claimed_task.id
+        self._inflight_exec_task = exec_task
+        try:
+            await exec_task
+        finally:
+            self._inflight_task_id = None
+            self._inflight_exec_task = None
+
         return True
+
+    async def _sleep_or_stop(self, seconds: float) -> None:
+        """Sleep for `seconds`, waking early as soon as a shutdown has been requested."""
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(self._stop_event.wait(), timeout=seconds)
+
+    async def _release_device_session(self) -> None:
+        """Close the active Appium session, bounded so a wedged server cannot stall shutdown."""
+        if not self.context.has_device_session():
+            return
+        try:
+            released = await asyncio.wait_for(
+                asyncio.to_thread(self.context.release_device_session),
+                timeout=DEVICE_RELEASE_TIMEOUT_SEC,
+            )
+        except TimeoutError:
+            logger.warning(
+                "⏱️ Device session release exceeded %.1fs; abandoning the session and continuing.",
+                DEVICE_RELEASE_TIMEOUT_SEC,
+            )
+            return
+        if released:
+            logger.info("🔌 Released Appium device session for %s", self.config.device_id)
+
+    async def _abort_in_flight_task(self) -> None:
+        """Cancel the executing handler and record the cancellation in the State Stream Broker."""
+        exec_task = self._inflight_exec_task
+        task_id = self._inflight_task_id
+        if exec_task is None or task_id is None:
+            return
+
+        logger.info("🛑 Aborting in-flight task %s", task_id)
+        exec_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await exec_task
+
+        # A handler that finished successfully in the window between its final broker write and
+        # the in-flight handle being cleared must keep its terminal status.
+        current = await self.broker.get_task(task_id)
+        if current is not None and current.status in _TERMINAL_TASK_STATUSES:
+            logger.info(
+                "ℹ️ Task %s already reached %s; leaving its status untouched.",
+                task_id,
+                current.status.value,
+            )
+            return
+
+        try:
+            await self.broker.append_log(task_id, SHUTDOWN_CANCEL_REASON)
+            await self.broker.update_task_status(
+                task_id,
+                status=TaskStatus.CANCELLED,
+                error_message=SHUTDOWN_CANCEL_REASON,
+            )
+        except Exception as e:
+            logger.error("Failed to mark task %s as cancelled during shutdown: %s", task_id, e)
+            return
+
+        logger.info("✅ Task %s marked CANCELLED (%s)", task_id, SHUTDOWN_CANCEL_REASON)
+
+    async def shutdown(self, signal_name: str = "SIGTERM") -> None:
+        """Handle a termination signal: stop polling, abort the in-flight task, release the device.
+
+        The acknowledgment is logged before any cleanup, so a supervisor has immediate proof the
+        signal was accepted. Cleanup itself is bounded only where it can be: the device session
+        release is capped by `DEVICE_RELEASE_TIMEOUT_SEC`. Aborting a handler that is executing a
+        *synchronous* Appium command cannot be bounded in-process — the command must return (and
+        the event loop resumes) before the abort proceeds, so such a worker can exceed the usual
+        exit bound by the duration of that one command. A supervisor should escalate rather than
+        wait indefinitely.
+        """
+        logger.info("🛑 %s (%s), initiating graceful shutdown...", SHUTDOWN_ACK_MARKER, signal_name)
+        if self._shutting_down:
+            logger.info(
+                "⏳ [Worker] Graceful shutdown already in progress; ignoring duplicate signal."
+            )
+            return
+        self._shutting_down = True
+
+        # Halt the polling loop and interrupt any pending poll sleep.
+        self._running = False
+        self._stop_event.set()
+
+        await self._abort_in_flight_task()
+        await self._release_device_session()
+
+        logger.info("👋 [Worker] Shutdown complete.")
 
     async def start(self, max_runs: int | None = None) -> None:
         """Start the worker execution polling loop."""
@@ -249,14 +394,15 @@ class AutomationWorker:
                     if max_runs is not None and runs >= max_runs:
                         break
                 else:
-                    await asyncio.sleep(self.config.poll_interval_sec)
+                    await self._sleep_or_stop(self.config.poll_interval_sec)
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error("Error in worker execution loop: %s", e)
-                await asyncio.sleep(self.config.poll_interval_sec)
+                await self._sleep_or_stop(self.config.poll_interval_sec)
         logger.info("🛑 Worker daemon loop stopped for %s", self.config.worker_id)
 
     def stop(self) -> None:
         """Signal the worker loop to stop."""
         self._running = False
+        self._stop_event.set()

@@ -80,6 +80,14 @@ _Avoid_: test job, mock task, fake run, 测试用例任务
 An automation task triggered intentionally by the user via the Task Management Dashboard or CLI for live job discovery or application workflows.
 _Avoid_: user test, real task, active test, 主动测试
 
+**Graceful Shutdown Protocol**:
+The POSIX signal contract by which the Automation Worker and the Web Dashboard runner stop cooperatively: acknowledge the termination signal in their own log stream, halt the polling loop, abort or release in-flight resources (State Stream Broker task cancellation, Virtual Device Session release, port release), then confirm completion — so supervisors and test fixtures never have to rely on arbitrary sleeps or force-kills.
+_Avoid_: hard stop, force quit, kill -9 policy
+
+**E2E Pre-Test Teardown Gate**:
+The session-scoped test fixture that, before any end-to-end test runs, stops residual Automation Worker and Web Dashboard instances located through the shared runtime directory and verifies their shutdown feedback, guaranteeing exclusive use of the Virtual Device Session and the dashboard port. Shared infrastructure (State Stream Broker, Appium, AVD) is deliberately out of its scope.
+_Avoid_: test cleanup hook, pre-test reset script, teardown helper
+
 **Job Record**:
 The persisted entity representing a job posting discovered from mobile search results or scraping workflows in the Boss app.
 _Avoid_: Scraped item, raw post, search card
