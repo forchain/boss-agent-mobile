@@ -178,27 +178,29 @@ communication_list:
     - "//*[@resource-id='com.hpbr.bosszhipin:id/tv_title' and contains(@text, '仅沟通')]"
     - "//*[@text='仅沟通']"
   message_card:
+    - "//*[@resource-id='com.hpbr.bosszhipin:id/recyclerView']/android.view.ViewGroup"
+    - "//*[@resource-id='com.hpbr.bosszhipin:id/recyclerView']/*"
     - "com.hpbr.bosszhipin:id/view_chat_item"
     - "//*[contains(@resource-id, 'chat_item') or contains(@resource-id, 'item_chat') or contains(@resource-id, 'msg_item') or contains(@resource-id, 'message_item')]"
+    - "//*[@resource-id='com.hpbr.bosszhipin:id/tv_msg']/.."
   sender_name:
     - "com.hpbr.bosszhipin:id/tv_name"
     - "//*[contains(@resource-id, 'tv_name') or contains(@resource-id, 'tv_nick') or contains(@resource-id, 'tv_employer')]"
   # The card's `[Company] | [Position]` descriptor (e.g. "传音控股 | 算法工程师"),
-  # which carries the employer without opening the chat (spec #205). No measured
-  # resource-id yet: when none of these match, the page object falls back to the
-  # first child node whose text carries the "|" separator.
+  # which carries the employer without opening the chat (spec #205).
   company_position:
+    - "com.hpbr.bosszhipin:id/tv_position"
     - "com.hpbr.bosszhipin:id/tv_company"
-    - "//*[contains(@resource-id, 'tv_company') or contains(@resource-id, 'company_name')]"
-    - "//*[contains(@resource-id, 'tv_job_name') or contains(@resource-id, 'tv_position')]"
+    - "//*[contains(@resource-id, 'tv_position') or contains(@resource-id, 'tv_company') or contains(@resource-id, 'company_name')]"
+    - "//*[contains(@resource-id, 'tv_job_name')]"
   # `tv_msg` carries the full last-message text directly on the list item, which
   # is what lets classification happen without opening every chat (spec #205).
   message_text:
     - "com.hpbr.bosszhipin:id/tv_msg"
     - "//*[contains(@resource-id, 'tv_msg') or contains(@resource-id, 'tv_last_msg')]"
   # Outbound Message Indicator: prefixed to cards whose last message is the
-  # candidate's own (`[送达]` / `[已读]`). Its mere presence means the thread is
-  # waiting on the recruiter, so those cards are bypassed without any LLM call.
+  # candidate's own (`[送达]` / `[已读]`) or an unsent draft (`[草稿]`). Its mere presence means
+  # the thread is waiting on the recruiter or is a draft, so those cards are bypassed without any LLM call.
   outbound_status:
     - "com.hpbr.bosszhipin:id/iv_msg_status"
     - "//*[@resource-id='com.hpbr.bosszhipin:id/iv_msg_status']"

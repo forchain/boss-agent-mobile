@@ -54,6 +54,18 @@ def test_outbound_status_locator_targets_the_badge(registry):
     assert any("iv_msg_status" in sel.value for sel in selectors)
 
 
+def test_message_card_locator_targets_recyclerview_items(registry):
+    selectors = registry.get_selectors("communication_list.message_card")
+    assert selectors
+    assert any("recyclerView" in sel.value for sel in selectors)
+
+
+def test_company_position_locator_targets_tv_position(registry):
+    selectors = registry.get_selectors("communication_list.company_position")
+    assert selectors
+    assert any("tv_position" in sel.value for sel in selectors)
+
+
 def test_disinterest_reason_locator_formats_the_standardized_reason(registry):
     selectors = registry.get_selectors(
         "chat.disinterest_reason_option", format_args={"reason": DISINTEREST_REASON}
@@ -136,9 +148,13 @@ def test_outbound_indicator_is_detected_from_the_badge_text():
     read = CommunicationCard(
         sender_name="陈格", message_text="收到，谢谢", outbound_status="[已读]"
     )
+    draft = CommunicationCard(
+        sender_name="宋女士", message_text="收到 谢谢", outbound_status="[草稿]"
+    )
 
     assert delivered.has_outbound_indicator is True
     assert read.has_outbound_indicator is True
+    assert draft.has_outbound_indicator is True
 
 
 def test_absent_badge_marks_the_card_as_inbound():
@@ -541,3 +557,20 @@ def test_open_message_without_element_is_a_noop():
 
 def test_parse_company_from_descriptor_is_exposed_for_the_blacklist_path():
     assert parse_company_from_descriptor("传音控股 | 算法工程师") == "传音控股"
+
+
+def test_find_message_cards_resolves_parent_container_on_fallback():
+    driver = MagicMock()
+    parent_card = MagicMock()
+    text_node = MagicMock()
+    text_node.find_element.return_value = parent_card
+
+    page = CommunicationListPage(driver)
+    page._find_elements_by_key = MagicMock(
+        side_effect=lambda key, **_: [] if key == "communication_list.message_card" else [text_node]
+    )
+
+    cards = page._find_message_cards()
+    assert cards == [parent_card]
+    text_node.find_element.assert_called_with(by="xpath", value="..")
+

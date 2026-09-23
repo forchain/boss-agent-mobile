@@ -300,9 +300,10 @@ class CheckChatHandler(BaseTaskHandler):
         sender = message.sender_name or "未知招聘者"
 
         if message.has_outbound_indicator:
+            desc = "存在未发送草稿" if "草稿" in message.outbound_status else "我发出后对方未回复"
             await broker.append_log(
                 task.id,
-                f"⏭️ [出站等待] '{sender}': 我发出后对方未回复"
+                f"⏭️ [出站等待·零Token] '{sender}': {desc}"
                 f"（{message.outbound_status}），跳过，零 Token 消耗",
             )
             return TriageOutcome(kind=TriageKind.SKIPPED)
@@ -323,7 +324,7 @@ class CheckChatHandler(BaseTaskHandler):
             note = f"（判定异常: {verdict.error}）" if verdict.error else ""
             await broker.append_log(
                 task.id,
-                f"⏭️ [正常消息] '{sender}': {preview} {note}— 保留，不处理",
+                f"⏭️ [正常消息·LLM判定] '{sender}': {preview} {note}— 保留，不处理",
             )
             return TriageOutcome(kind=TriageKind.PRESERVED)
 

@@ -180,8 +180,12 @@ def test_append_is_idempotent_and_appends_to_an_existing_block_list():
         assert data["company_blacklist"] == ["传音控股", "磐基技术"]
 
 
-def test_append_creates_the_config_with_a_full_policy_snapshot():
+def test_append_creates_the_config_with_a_full_policy_snapshot(monkeypatch):
     """A brand-new file must not become a policy that drops every other rule."""
+    monkeypatch.setattr(
+        "boss_agent.models.ScreeningPolicy.load_default",
+        classmethod(lambda cls, **kw: ScreeningPolicy()),
+    )
     with tempfile.TemporaryDirectory() as tmpdir:
         path = Path(tmpdir) / "screening.local.yaml"
 

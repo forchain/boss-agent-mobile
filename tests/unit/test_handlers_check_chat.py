@@ -332,6 +332,9 @@ async def test_outbound_cards_are_skipped_without_any_llm_call(broker, context, 
             card(
                 "收到，谢谢", sender="陈格", status="[已读]", descriptor="杭州脉享人力资源 | 算法"
             ),
+            card(
+                "收到 谢谢", sender="宋女士", status="[草稿]", descriptor="磐基技术 | 技术总监"
+            ),
         ]
     )
     classifier = FakeClassifier(default=True)
@@ -340,11 +343,11 @@ async def test_outbound_cards_are_skipped_without_any_llm_call(broker, context, 
     result, _ = await _run_async(broker, context, harness, handler)
 
     assert classifier.calls == []
-    assert result.output["skipped_outbound"] == 2
+    assert result.output["skipped_outbound"] == 3
     assert result.output["evaluated"] == 0
     assert result.output["rejections"] == 0
     assert result.output["blacklisted"] == 0
-    assert harness.events == ["scroll", "scroll"]
+    assert harness.events == ["scroll", "scroll", "scroll"]
 
 
 @pytest.mark.asyncio

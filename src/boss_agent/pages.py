@@ -69,10 +69,10 @@ def _normalize_card_descriptors(text: str) -> str:
 
 
 #: Badge texts the platform renders in `iv_msg_status` for a thread whose last
-#: message is the candidate's own (spec #205). Matched explicitly rather than
-#: keyed on the node's mere presence: a future badge with different wording would
-#: otherwise silently stop every rejection from being detected.
-OUTBOUND_STATUS_MARKERS: tuple[str, ...] = ("送达", "已读")
+#: message is the candidate's own or an unsent draft (spec #205). Matched explicitly
+#: rather than keyed on the node's mere presence: a future badge with different wording
+#: would otherwise silently stop every rejection from being detected.
+OUTBOUND_STATUS_MARKERS: tuple[str, ...] = ("送达", "已读", "草稿")
 
 
 def _log_selector_lookup(selector: UISelector, outcome: str, started_at: float) -> None:
@@ -1827,11 +1827,21 @@ class CommunicationListPage(BaseBossPage):
         self.gestures.random_sleep(*BACK_INTERVAL_SEC)
 
     def _find_message_cards(self) -> list[Any]:
-        """Locate communication rows, falling back to the message nodes themselves."""
+        """Locate communication rows, falling back to the message nodes' parents."""
         cards = self._find_elements_by_key("communication_list.message_card")
         if cards:
             return cards
-        return self._find_elements_by_key("communication_list.message_text")
+        text_nodes = self._find_elements_by_key("communication_list.message_text")
+        if not text_nodes:
+            return []
+        resolved: list[Any] = []
+        for node in text_nodes:
+            try:
+                parent = node.find_element(by="xpath", value="..")
+                resolved.append(parent if parent else node)
+            except Exception:
+                resolved.append(node)
+        return resolved
 
     def extract_visible_messages(self, max_items: int = 10) -> list[CommunicationCard]:
         """Extract every visible card's sender, outbound badge, descriptor and text."""
