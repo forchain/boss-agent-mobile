@@ -181,6 +181,8 @@ def test_provision_sqlite_database_migrates_existing_table(tmp_path: Path):
 
     assert "enable_search" in col_names
     assert "enable_filter" in col_names
+    assert "target_action" in col_names
+    assert "max_jobs" in col_names
 
 
 def test_provision_remote_pocketbase_mock():

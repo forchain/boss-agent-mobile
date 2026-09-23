@@ -109,6 +109,8 @@ describe('PocketBase Client Helpers', () => {
 			target_task_type: 'AUTO_APPLY',
 			is_enabled: false,
 			cron_expression: '0 9 * * *',
+			target_action: 'save_jd',
+			max_jobs: 30,
 			filter: {
 				education: '硕士',
 				salary: '30-50K',
@@ -121,16 +123,33 @@ describe('PocketBase Client Helpers', () => {
 
 		expect(created.id).toBe('test_ai_agent_strategy');
 		expect(created.name).toBe('AI Agent Strategy');
+		expect(created.target_action).toBe('save_jd');
+		expect(created.max_jobs).toBe(30);
 		expect(created.filter?.company_scales).toEqual(['100-499人', '500-999人']);
 		expect(created.filter?.industries).toEqual(['人工智能', '互联网']);
 
 		const updated = await updateSavedSearch('test_ai_agent_strategy', {
 			name: 'AI Agent Strategy Updated',
+			keyword: 'Agent Engineer',
+			target_action: 'auto_apply',
+			max_jobs: 50,
+			filter: {
+				education: '博士',
+				salary: '50K以上',
+				experience: '10年以上',
+				activity: '今日活跃',
+				company_scales: ['10000人以上'],
+				industries: ['人工智能']
+			},
 			is_enabled: true
 		});
 		expect(updated.name).toBe('AI Agent Strategy Updated');
+		expect(updated.keyword).toBe('Agent Engineer');
+		expect(updated.target_action).toBe('auto_apply');
+		expect(updated.max_jobs).toBe(50);
 		expect(updated.is_enabled).toBe(true);
-		expect(updated.filter?.education).toBe('硕士');
+		expect(updated.filter?.education).toBe('博士');
+		expect(updated.filter?.salary).toBe('50K以上');
 
 		await deleteSavedSearch('test_ai_agent_strategy');
 	});

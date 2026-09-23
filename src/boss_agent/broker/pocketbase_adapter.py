@@ -1847,6 +1847,8 @@ class PocketBaseTaskBroker(BaseTaskBroker):
             "is_enabled": saved_search.is_enabled,
             "last_run_at": saved_search.last_run_at,
             "target_task_type": saved_search.target_task_type,
+            "target_action": saved_search.target_action,
+            "max_jobs": saved_search.max_jobs,
         }
         try:
             existing = await self.get_saved_search(saved_search.id)
