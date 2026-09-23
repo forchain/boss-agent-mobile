@@ -104,9 +104,11 @@
 		max_commute_distance_km: 40
 	});
 
-	// Bound as text so an empty field can express "distance filtering disabled"
-	// (a number-bound input yields undefined for empty, losing that distinction).
-	let maxCommuteInput = $state('40');
+	// The ceiling starts as the config's text form, but a `type="number"` binding hands
+	// back a `number` on every keystroke and `null` when cleared, so the bound value
+	// admits all three and every read (display included) goes through
+	// `normalizeCommuteLimit` rather than string methods the number lacks.
+	let maxCommuteInput = $state<string | number | null>('40');
 
 	function readCommuteInput(): number | null {
 		return normalizeCommuteLimit(maxCommuteInput);
@@ -879,7 +881,9 @@
 						</span>
 					</div>
 					<span class="text-[11px] text-slate-500">
-						{isCommuteLimitDisabled(maxCommuteInput) ? '已停用距离过滤' : `${maxCommuteInput.trim()} 公里`}
+						{isCommuteLimitDisabled(maxCommuteInput)
+							? '已停用距离过滤'
+							: `${normalizeCommuteLimit(maxCommuteInput)} 公里`}
 					</span>
 				</div>
 				<p class="text-[11px] text-slate-400 leading-relaxed">

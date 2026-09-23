@@ -581,7 +581,7 @@ class ScrapeJobsHandler(BaseTaskHandler):
 
                         if not commute_pass:
                             commute_relaxed, commute_token = policy.evaluate_whitelist_relaxation(
-                                title=card.title or effective_title,
+                                title=effective_title,
                                 company_name=card.company_name,
                                 tags=card_tags,
                                 digest=digest_text,

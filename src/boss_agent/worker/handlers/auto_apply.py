@@ -275,7 +275,7 @@ class AutoApplyHandler(BaseTaskHandler):
         if probe_commute_distance:
             await broker.append_log(
                 task.id,
-                f"📍 [App端强制过滤] Active ceiling {policy.max_commute_distance_km}km; "
+                f"📍 [App端强制过滤] Active ceiling {policy.max_commute_distance_km:.1f}km; "
                 f"probing detail page bottom for the distance widget.",
             )
 

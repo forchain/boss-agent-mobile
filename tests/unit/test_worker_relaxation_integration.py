@@ -595,6 +595,55 @@ async def test_scrape_jobs_distant_job_rescued_by_whitelist_is_saved():
 
 
 @pytest.mark.asyncio
+async def test_scrape_jobs_distance_relaxation_judges_the_enriched_title():
+    """A token carried only by the detail-page title still grants relaxation.
+
+    Card titles arrive truncated ("技术专家" where the detail page says
+    "大模型技术专家"), so the detail-stage check must judge the same enriched title
+    it audits — otherwise a distant job is rejected on a title the user never saw.
+    """
+    broker = InMemoryTaskBroker()
+    context = WorkerContext(
+        config=WorkerConfig(worker_id="w-distance-scrape-enriched"), driver=_mock_driver()
+    )
+    handler = ScrapeJobsHandler()
+    card, _card_elem = _scrape_card(title="技术专家")
+
+    task = await broker.create_task(
+        task_type=TaskType.SCRAPE_JOBS,
+        payload={
+            "keyword": "大模型",
+            "max_jobs": 5,
+            "screening_policy": {"max_commute_distance_km": 40.0, "title_whitelist": ["大模型"]},
+        },
+    )
+
+    with (
+        patch("boss_agent.worker.handlers.scrape_jobs.StartupDialogPage") as startup_cls,
+        patch("boss_agent.worker.handlers.scrape_jobs.JobListPage") as list_cls,
+        patch("boss_agent.worker.handlers.scrape_jobs.SearchPage") as search_cls,
+        patch("boss_agent.worker.handlers.scrape_jobs.JobDetailPage") as detail_cls,
+    ):
+        startup_cls.return_value.is_dialog_present.return_value = False
+        list_cls.return_value.extract_visible_job_cards.return_value = [card]
+        search_cls.return_value.is_search_page.return_value = True
+        detail_cls.return_value.extract_job_posting.return_value = _commute_posting(
+            52.0, "距离家庭住址52千米", title="大模型技术专家"
+        )
+
+        result = await handler.handle(task, broker, context)
+
+    assert result.success is True
+    assert result.output["scraped_count"] == 1
+    assert result.output["skipped_count"] == 0
+
+    records = await broker.list_job_records()
+    rec = next(r for r in records if r.get("title") == "大模型技术专家")
+    assert rec["relaxed_by_whitelist"] is True
+    assert "白名单放宽" in (rec.get("screening_audit") or "")
+
+
+@pytest.mark.asyncio
 async def test_scrape_jobs_skips_distance_probe_when_filter_disabled():
     broker = InMemoryTaskBroker()
     context = WorkerContext(
