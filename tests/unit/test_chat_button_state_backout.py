@@ -121,7 +121,7 @@ async def test_scrape_records_platform_historical_contact_and_backs_out(broker):
         config=config,
         broker=broker,
         context=context,
-        handlers=[ScrapeJobsHandler()],
+        handlers=[ScrapeJobsHandler(llm_client=MagicMock())],
     )
 
     task = await broker.create_task(
@@ -130,10 +130,10 @@ async def test_scrape_records_platform_historical_contact_and_backs_out(broker):
     )
 
     with (
-        patch("boss_agent.worker.handlers.scrape_jobs.StartupDialogPage") as mock_startup_cls,
-        patch("boss_agent.worker.handlers.scrape_jobs.JobListPage") as mock_list_cls,
-        patch("boss_agent.worker.handlers.scrape_jobs.SearchPage") as mock_search_cls,
-        patch("boss_agent.worker.handlers.scrape_jobs.JobDetailPage") as mock_detail_cls,
+        patch("boss_agent.feed_pipeline.StartupDialogPage") as mock_startup_cls,
+        patch("boss_agent.feed_pipeline.JobListPage") as mock_list_cls,
+        patch("boss_agent.feed_pipeline.SearchPage") as mock_search_cls,
+        patch("boss_agent.feed_pipeline.JobDetailPage") as mock_detail_cls,
     ):
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_list = mock_list_cls.return_value
@@ -183,7 +183,7 @@ async def test_scrape_marks_expired_posting_as_ignored_and_backs_out(broker):
         config=config,
         broker=broker,
         context=context,
-        handlers=[ScrapeJobsHandler()],
+        handlers=[ScrapeJobsHandler(llm_client=MagicMock())],
     )
 
     task = await broker.create_task(
@@ -192,10 +192,10 @@ async def test_scrape_marks_expired_posting_as_ignored_and_backs_out(broker):
     )
 
     with (
-        patch("boss_agent.worker.handlers.scrape_jobs.StartupDialogPage") as mock_startup_cls,
-        patch("boss_agent.worker.handlers.scrape_jobs.JobListPage") as mock_list_cls,
-        patch("boss_agent.worker.handlers.scrape_jobs.SearchPage") as mock_search_cls,
-        patch("boss_agent.worker.handlers.scrape_jobs.JobDetailPage") as mock_detail_cls,
+        patch("boss_agent.feed_pipeline.StartupDialogPage") as mock_startup_cls,
+        patch("boss_agent.feed_pipeline.JobListPage") as mock_list_cls,
+        patch("boss_agent.feed_pipeline.SearchPage") as mock_search_cls,
+        patch("boss_agent.feed_pipeline.JobDetailPage") as mock_detail_cls,
     ):
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_list = mock_list_cls.return_value
@@ -263,10 +263,10 @@ async def test_auto_apply_aborts_without_llm_waste_on_communicated_job(broker):
     )
 
     with (
-        patch("boss_agent.worker.handlers.auto_apply.StartupDialogPage") as mock_startup_cls,
-        patch("boss_agent.worker.handlers.auto_apply.JobListPage"),
-        patch("boss_agent.worker.handlers.auto_apply.SearchPage"),
-        patch("boss_agent.worker.handlers.auto_apply.JobDetailPage") as mock_detail_cls,
+        patch("boss_agent.feed_pipeline.StartupDialogPage") as mock_startup_cls,
+        patch("boss_agent.feed_pipeline.JobListPage"),
+        patch("boss_agent.feed_pipeline.SearchPage"),
+        patch("boss_agent.feed_pipeline.JobDetailPage") as mock_detail_cls,
     ):
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_detail = mock_detail_cls.return_value

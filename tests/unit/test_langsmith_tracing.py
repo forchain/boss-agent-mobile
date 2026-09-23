@@ -13,14 +13,12 @@ import pytest
 from langsmith import traceable
 from langsmith.run_helpers import get_current_run_tree
 
-from boss_agent.graph import (
-    JDSemanticScreenerAgent,
-    run_job_application_graph,
-)
+from boss_agent.graph import run_job_application_graph
 from boss_agent.matching import JobMatchGreetingService
 from boss_agent.memory import ResumeMemoryManager
 from boss_agent.models import JobPosting, ScreeningPolicy
 from boss_agent.pages import JobCardBrief
+from boss_agent.screening import CandidateScreener
 from droid_agent_core.llm import LLMConfig, OpenAIChatClient, configure_langsmith
 
 
@@ -201,23 +199,27 @@ def test_langgraph_screening_traced_execution():
     assert result["status"] == "greeting_drafted"
 
 
-def test_jd_semantic_screener_agent_traceable():
-    """Verify JDSemanticScreenerAgent.evaluate runs with traceable decorator."""
-    agent = JDSemanticScreenerAgent()
-    mock_llm = MagicMock()
-    mock_llm.chat_completion_json.return_value = {"pass": False, "reason": "Explicit Java JD"}
-    agent.llm_client = mock_llm
+def test_jd_semantic_screen_runs_traceable_through_the_screener():
+    """Verify the JD semantic screen runs under its traceable decorator via the seam."""
+    screener = CandidateScreener(llm_client=MagicMock())
+    screener.llm_client.chat_completion_json.return_value = {
+        "pass": False,
+        "reason": "Explicit Java JD",
+    }
 
-    policy = ScreeningPolicy(jd_blacklist=["Java"])
-    passed, reason = agent.evaluate(
+    result = screener.evaluate_job(
+        card={
+            "title": "Backend Engineer",
+            "company_name": "Enterprise Corp",
+            "recruiter_name": "HR",
+        },
         jd_text="Requirements: 5 years of enterprise Java SpringBoot.",
-        card_title="Backend Engineer",
-        company_name="Enterprise Corp",
-        policy=policy,
+        policy=ScreeningPolicy(jd_blacklist=["Java"]),
+        draft_greeting=False,
     )
 
-    assert passed is False
-    assert "Java" in reason
+    assert result.passed is False
+    assert "Java" in result.reason
 
 
 def test_job_match_greeting_service_traceable():
