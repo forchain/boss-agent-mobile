@@ -8,7 +8,10 @@ Every scenario runs against a temporary repository root containing a copy of the
 or Automation Worker belonging to other worktrees.
 """
 
+import contextlib
+import os
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -68,18 +71,25 @@ while True:
 WORKER_READY_MARKER = "worker loop started"
 
 # Mirrors `uv run python3 scripts/worker.py`: the recorded PID is a launcher whose child is
-# the real Automation Worker process.
+# the real Automation Worker process. `uv run` defers SIGTERM for as long as that child is
+# alive and exits once it is gone, so a wedged worker keeps the launcher — and therefore the
+# gate's exit check — alive too.
 LAUNCHER_STUB = """
+import signal
 import subprocess
 import sys
 import time
 
 log_path, mode, child_pid_file, stub_source = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+
+# Installed before the child exists, so no signal can slip through unhandled.
+signal.signal(signal.SIGTERM, lambda *_: None)
+
 child = subprocess.Popen([sys.executable, "-c", stub_source, log_path, mode])
 with open(child_pid_file, "w", encoding="utf-8") as handle:
     handle.write(str(child.pid))
 
-while True:
+while child.poll() is None:
     time.sleep(0.05)
 """
 
@@ -203,6 +213,42 @@ def test_gate_stops_worker_spawned_through_a_launcher(runtime_root: Path, spawn)
     )
     assert ServiceTeardownGate.WORKER_SHUTDOWN_ACK in log_file.read_text(encoding="utf-8")
     assert any("worker" in line.lower() for line in report), report
+
+
+def test_gate_force_kills_worker_behind_launcher_that_ignores_sigterm(runtime_root: Path, spawn):
+    """Verify a wedged worker is force-killed through its launcher rather than orphaned by it."""
+    log_file = runtime_root / ".boss_agent" / "worker.log"
+    child_pid_file = runtime_root / ".boss_agent" / "worker_child.pid"
+    launcher = spawn(
+        [
+            sys.executable,
+            "-c",
+            LAUNCHER_STUB,
+            str(log_file),
+            "ignore",
+            str(child_pid_file),
+            SERVICE_STUB,
+        ],
+    )
+    (runtime_root / ".boss_agent" / "worker.pid").write_text(str(launcher.pid), encoding="utf-8")
+    wait_for_log(log_file, WORKER_READY_MARKER)
+    child_pid = int(child_pid_file.read_text(encoding="utf-8"))
+
+    try:
+        with pytest.raises(TeardownGateError) as excinfo:
+            _gate(runtime_root).enforce()
+
+        assert wait_until_dead(launcher), "launcher survived the gate"
+        assert wait_until_dead_pid(child_pid), (
+            "the SIGTERM-immune worker behind the launcher was orphaned instead of killed; "
+            "the device session would still be claimed"
+        )
+        assert "force-killed" in str(excinfo.value)
+    finally:
+        # A leaked SIGTERM-immune process would survive the gate and the whole test session.
+        if not wait_until_dead_pid(child_pid, timeout=0.5):
+            with contextlib.suppress(OSError):
+                os.kill(child_pid, signal.SIGKILL)
 
 
 def test_gate_stops_web_dashboard_and_frees_port(runtime_root: Path, spawn):

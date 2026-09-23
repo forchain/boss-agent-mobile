@@ -12,6 +12,7 @@ Shared infrastructure — PocketBase (State Stream Broker), Appium, and the Andr
 emulator — is deliberately out of scope and is never signalled.
 """
 
+import contextlib
 import os
 import shutil
 import signal
@@ -94,12 +95,22 @@ class ServiceTeardownGate:
             os.kill(pid, 0)
         except OSError:
             return False
-        state = subprocess.run(
-            ["ps", "-p", str(pid), "-o", "stat="],
+        ps = shutil.which("ps")
+        if ps is None:
+            # The process state cannot be read at all. `kill(pid, 0)` just confirmed the PID
+            # exists, and calling a live worker dead would skip its shutdown silently, so the
+            # benefit of the doubt goes to "alive".
+            return True
+        result = subprocess.run(
+            [ps, "-p", str(pid), "-o", "stat="],
             capture_output=True,
             text=True,
             check=False,
-        ).stdout.strip()
+        )
+        state = result.stdout.strip()
+        # A PID that was reaped between the two probes matches nothing and reports no state.
+        if result.returncode != 0 or not state:
+            return False
         return not state.startswith("Z")
 
     def _read_live_pid(self, pid_file: Path) -> int | None:
@@ -161,16 +172,29 @@ class ServiceTeardownGate:
 
     # ------------------------------------------------------------------- stop
 
-    def _signal_worker(self, pid: int) -> None:
-        """SIGTERM the recorded worker PID together with its children.
+    @staticmethod
+    def _signal_worker(pid: int, sig: signal.Signals) -> None:
+        """Deliver `sig` to the recorded worker PID together with its children.
 
         `run.sh` records the PID of its launcher (`uv run python3 scripts/worker.py`), whose
         child is the actual Automation Worker; signalling only the launcher can leave the real
         process — and therefore the device session — alive. Children are signalled first, since
-        they are re-parented as soon as the launcher dies.
+        they are re-parented to `init` as soon as the launcher dies and can no longer be found
+        by parent PID.
+
+        A process that exits between detection and delivery is not an error: the caller only
+        reports on processes it can still observe.
         """
-        subprocess.run(["pkill", "-P", str(pid)], capture_output=True, text=True, check=False)
-        os.kill(pid, signal.SIGTERM)
+        pkill = shutil.which("pkill")
+        if pkill is not None:
+            subprocess.run(
+                [pkill, f"-{sig.value}", "-P", str(pid)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        with contextlib.suppress(OSError):
+            os.kill(pid, sig)
 
     def _require_shutdown_feedback(
         self, log_file: Path, log_offset: int, ack: str, *, failure: str
@@ -186,10 +210,13 @@ class ServiceTeardownGate:
             return []
 
         log_offset = self._log_size(self.worker_log_file)
-        self._signal_worker(pid)
+        self._signal_worker(pid, signal.SIGTERM)
         exited_gracefully = self._wait_for_exit(pid, self.worker_stop_timeout_sec)
         if not exited_gracefully:
-            os.kill(pid, signal.SIGKILL)
+            # The launcher outlives a child that ignored SIGTERM, so the worker is still
+            # reachable by parent PID here. Force-killing the launcher alone would re-parent
+            # the worker to `init`, sparing it and leaving the device session claimed.
+            self._signal_worker(pid, signal.SIGKILL)
             self._wait_for_exit(pid, _FORCE_KILL_GRACE_SEC)
         self.worker_pid_file.unlink(missing_ok=True)
 

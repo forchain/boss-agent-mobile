@@ -34,9 +34,9 @@ async def run_services(
 ) -> None:
     """Supervise the worker loop and any auxiliary service loops until shutdown completes.
 
-    Resolves on SIGTERM/SIGINT. It also resolves when every supervised service loop has
-    finished on its own, so the daemon can never wait forever for a signal that is not
-    coming; the worker is still shut down through its normal protocol either way.
+    Resolves on SIGTERM/SIGINT. It also resolves as soon as any supervised service loop has
+    finished on its own, so the daemon can never wait forever for a signal that is not coming;
+    the worker is still shut down through its normal protocol either way.
     """
     loop = asyncio.get_running_loop()
     stop_signal: asyncio.Future[str] = loop.create_future()
@@ -65,13 +65,13 @@ async def run_services(
         async def await_signal() -> None:
             await stop_signal
 
-        # Resolve on whichever comes first: a termination signal, or every service loop ending.
+        # Resolve on whichever comes first: a termination signal, or a service loop ending.
         signal_task = asyncio.create_task(await_signal())
         await asyncio.wait([signal_task, *service_tasks], return_when=asyncio.FIRST_COMPLETED)
         if stop_signal.done():
             await worker.shutdown(stop_signal.result())
         else:
-            logger.warning("⚠️ All service loops exited on their own; shutting down.")
+            logger.warning("⚠️ A supervised service loop exited; shutting down.")
             await worker.shutdown("service exit")
         for task in [*service_tasks, signal_task]:
             task.cancel()
