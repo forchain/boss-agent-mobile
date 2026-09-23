@@ -1181,6 +1181,16 @@ class FilterDialogPage(BaseBossPage):
             return True
         return False
 
+    def clear_filters(self, timeout_sec: float = 10.0) -> bool:
+        """Open filter dialog, click reset button, and confirm to clear all filters."""
+        if not self.is_dialog_open():
+            opened = self.open_filter(timeout_sec=timeout_sec)
+            if not opened:
+                return False
+        self.reset_filter()
+        time.sleep(0.3)
+        return self.confirm_filter(timeout_sec=timeout_sec)
+
     def close_dialog(self) -> bool:
         """Close the filter dialog without applying changes."""
         elem = self.find_by_key("filter.close_btn", timeout_sec=2.0)
@@ -1190,14 +1200,18 @@ class FilterDialogPage(BaseBossPage):
         return False
 
     def apply_filters(self, config: FilterConfig | None, timeout_sec: float = 10.0) -> bool:
-        """Apply all specified filter dimensions in order."""
+        """Apply all specified filter dimensions in order, clearing previous conditions first."""
         if not config or not config.has_filters:
-            return False
+            return self.clear_filters(timeout_sec=timeout_sec)
 
         if not self.is_dialog_open():
             opened = self.open_filter(timeout_sec=timeout_sec)
             if not opened:
                 return False
+
+        # Always reset first to prevent previous search conditions from persisting
+        self.reset_filter()
+        time.sleep(0.3)
 
         def _is_effective(val: str | None) -> bool:
             return bool(val and val.strip() and val.strip() != "不限")
