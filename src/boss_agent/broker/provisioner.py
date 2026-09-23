@@ -428,6 +428,8 @@ def provision_sqlite_database(
                     enable_search BOOLEAN DEFAULT 1,
                     enable_filter BOOLEAN DEFAULT 1,
                     filter JSON,
+                    target_action TEXT DEFAULT 'save_jd',
+                    max_jobs INTEGER DEFAULT 30,
                     cron_expression TEXT,
                     is_enabled BOOLEAN DEFAULT 0,
                     last_run_at TEXT,
@@ -453,6 +455,8 @@ def provision_sqlite_database(
         migration_columns = [
             ("enable_search", "BOOLEAN DEFAULT 1"),
             ("enable_filter", "BOOLEAN DEFAULT 1"),
+            ("target_action", "TEXT DEFAULT 'save_jd'"),
+            ("max_jobs", "INTEGER DEFAULT 30"),
             ("cron_expression", "TEXT"),
             ("is_enabled", "BOOLEAN DEFAULT 0"),
             ("last_run_at", "TEXT"),
@@ -474,6 +478,8 @@ def provision_sqlite_database(
                 s_en_search = 1 if item_data.get("enable_search", True) else 0
                 s_en_filter = 1 if item_data.get("enable_filter", True) else 0
                 s_filter = item_data.get("filter", {})
+                s_action = item_data.get("target_action", "save_jd")
+                s_max = item_data.get("max_jobs", 30)
                 s_cron = item_data.get("cron_expression", "")
                 s_enabled = 1 if item_data.get("is_enabled", False) else 0
                 s_type = item_data.get("target_task_type", "AUTO_APPLY")
@@ -481,8 +487,8 @@ def provision_sqlite_database(
                     """
                     INSERT OR IGNORE INTO saved_searches (
                         id, name, description, keyword, enable_search, enable_filter,
-                        filter, cron_expression, is_enabled, target_task_type
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        filter, target_action, max_jobs, cron_expression, is_enabled, target_task_type
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         search_id,
@@ -492,6 +498,8 @@ def provision_sqlite_database(
                         s_en_search,
                         s_en_filter,
                         json.dumps(s_filter),
+                        s_action,
+                        s_max,
                         s_cron,
                         s_enabled,
                         s_type,
