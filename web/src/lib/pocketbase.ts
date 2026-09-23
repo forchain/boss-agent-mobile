@@ -836,6 +836,8 @@ export async function listSavedSearches(): Promise<SavedSearch[]> {
 				enable_search: r.enable_search !== false,
 				enable_filter: r.enable_filter !== false,
 				filter: r.filter || {},
+				target_action: r.target_action || (r.target_task_type === 'AUTO_APPLY' ? 'auto_apply' : 'save_jd'),
+				max_jobs: r.max_jobs ?? 30,
 				cron_expression: r.cron_expression || '',
 				is_enabled: !!r.is_enabled,
 				last_run_at: r.last_run_at,
@@ -846,7 +848,7 @@ export async function listSavedSearches(): Promise<SavedSearch[]> {
 			for (const s of list) {
 				localSavedSearchesMap[s.id] = s;
 			}
-			return Object.values(localSavedSearchesMap);
+			return list;
 		}
 	} catch (e) {
 		console.warn('PocketBase listSavedSearches failed, fallback to local cache:', e);
@@ -880,6 +882,8 @@ export async function getSavedSearch(id: string): Promise<SavedSearch | null> {
 				enable_search: r.enable_search !== false,
 				enable_filter: r.enable_filter !== false,
 				filter: r.filter || {},
+				target_action: r.target_action || (r.target_task_type === 'AUTO_APPLY' ? 'auto_apply' : 'save_jd'),
+				max_jobs: r.max_jobs ?? 30,
 				cron_expression: r.cron_expression || '',
 				is_enabled: !!r.is_enabled,
 				last_run_at: r.last_run_at,
@@ -910,13 +914,20 @@ export async function saveSavedSearch(search: Partial<SavedSearch> & { name: str
 					localSavedSearchesMap[data.search.id] = data.search;
 					return data.search;
 				}
+				throw new Error(data.message || 'Failed to save search');
+			} else {
+				const errData = await res.json().catch(() => ({}));
+				throw new Error(errData.message || `Server returned ${res.status}`);
 			}
-		} catch {
+		} catch (apiErr) {
+			console.warn('API saveSavedSearch failed, attempting direct pb fallback:', apiErr);
 			// Fallback to direct PocketBase call below
 		}
 	}
 
 	const searchId = search.id || generatePbId();
+	const targetAction = search.target_action || (search.target_task_type === 'AUTO_APPLY' ? 'auto_apply' : 'save_jd');
+	const maxJobs = search.max_jobs ?? 30;
 	const data = {
 		id: searchId,
 		name: search.name,
@@ -925,10 +936,12 @@ export async function saveSavedSearch(search: Partial<SavedSearch> & { name: str
 		enable_search: search.enable_search !== false,
 		enable_filter: search.enable_filter !== false,
 		filter: search.filter || {},
+		target_action: targetAction,
+		max_jobs: maxJobs,
 		cron_expression: search.cron_expression || '',
 		is_enabled: !!search.is_enabled,
 		last_run_at: search.last_run_at || null,
-		target_task_type: search.target_task_type || 'AUTO_APPLY'
+		target_task_type: search.target_task_type || (targetAction === 'auto_apply' ? 'AUTO_APPLY' : 'SCRAPE_JOBS')
 	};
 
 	try {
@@ -984,6 +997,7 @@ export async function createSavedSearch(search: Omit<SavedSearch, 'id' | 'create
 
 export async function updateSavedSearch(id: string, search: Partial<SavedSearch>): Promise<SavedSearch> {
 	const current = await getSavedSearch(id);
+	const targetAction = search.target_action ?? current?.target_action;
 	const merged: Partial<SavedSearch> & { name: string } = {
 		id,
 		name: search.name ?? current?.name ?? id,
@@ -992,10 +1006,12 @@ export async function updateSavedSearch(id: string, search: Partial<SavedSearch>
 		enable_search: search.enable_search ?? current?.enable_search ?? true,
 		enable_filter: search.enable_filter ?? current?.enable_filter ?? true,
 		filter: search.filter ?? current?.filter,
+		target_action: targetAction,
+		max_jobs: search.max_jobs ?? current?.max_jobs ?? 30,
 		cron_expression: search.cron_expression ?? current?.cron_expression,
 		is_enabled: search.is_enabled ?? current?.is_enabled,
 		last_run_at: search.last_run_at ?? current?.last_run_at,
-		target_task_type: search.target_task_type ?? current?.target_task_type
+		target_task_type: search.target_task_type ?? current?.target_task_type ?? (targetAction === 'auto_apply' ? 'AUTO_APPLY' : 'SCRAPE_JOBS')
 	};
 	return saveSavedSearch(merged);
 }
