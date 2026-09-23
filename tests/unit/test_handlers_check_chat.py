@@ -2,17 +2,19 @@
 tests.unit.test_handlers_check_chat
 ===================================
 Unit tests for CheckChatHandler: 仅沟通 list traversal, Outbound Message Indicator
-skipping, explicit rejection classification, company blacklist ingestion and the
-polite acknowledgment sequence (Issues #206-#208).
+skipping, explicit rejection classification, company blacklist ingestion, the
+polite acknowledgment sequence and the execution-time cursor that bounds paging
+(Issues #206-#208, #239).
 """
 
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
 
-from boss_agent.broker.models import TaskType
+from boss_agent.broker.models import TaskStatus, TaskType
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
 from boss_agent.models import ScreeningPolicy
 from boss_agent.pages import CommunicationCard
@@ -24,8 +26,14 @@ from boss_agent.rejection import (
 )
 from boss_agent.worker.config import WorkerConfig
 from boss_agent.worker.context import WorkerContext
+from boss_agent.worker.daemon import AutomationWorker
 from boss_agent.worker.handlers import check_chat as check_chat_module
 from boss_agent.worker.handlers.check_chat import CheckChatHandler
+
+#: The `stop_reason` AC-4 mandates, pinned as a literal rather than imported from the
+#: handler: the value is the contract the issue specifies, so a rename inside the
+#: handler must fail this suite rather than silently move the contract with it.
+REACHED_LAST_EXECUTION_TIME = "reached_last_execution_time"
 
 REJECTION_TEXT = "我们感谢您的投递，但您的专业技能与我们目前的职位需求并不完全吻合。"
 INVITATION_TEXT = "您好，方便约个时间聊聊吗？"
@@ -59,6 +67,7 @@ def card(
     sender: str = "招聘者",
     status: str = "",
     descriptor: str = "",
+    stamp: str = "",
 ) -> CommunicationCard:
     """Build one 仅沟通 card: an inbound rejection unless a badge says otherwise."""
     return CommunicationCard(
@@ -66,6 +75,7 @@ def card(
         message_text=text,
         outbound_status=status,
         company_position=descriptor,
+        card_time=stamp,
         row_text=f"{sender}\n{text}",
     )
 
@@ -638,6 +648,287 @@ async def test_scan_stops_when_the_platform_never_returns_to_the_list(broker, co
     # The invitation was never reached, because the scan stopped at the lost list.
     assert result.output["preserved"] == 0
     assert any("终止本次扫描" in log for log in task.logs)
+
+
+# ---------------------------------------------------------------------------
+# Slice #239: the execution cursor bounds paging, the first viewport never
+# ---------------------------------------------------------------------------
+
+#: A stamp no cursor a test can seed will ever be newer than.
+STALE_STAMP = "2020-01-01"
+
+#: The stamp the platform renders for a message that has just arrived.
+FRESH_STAMP = "刚刚"
+
+#: A stamp the parser cannot read: age unknown, so never a reason to stop.
+UNREADABLE_STAMP = "你已投递"
+
+
+async def _seed_prior_run(broker, *, dry_run: bool = False) -> datetime:
+    """Record one finished CHECK_CHAT run, as the worker daemon would on success."""
+    prior = await broker.create_task(task_type=TaskType.CHECK_CHAT, payload={"dry_run": dry_run})
+    await broker.claim_task(prior.id, worker_id="seed-worker")
+    finished = await broker.update_task_status(prior.id, status=TaskStatus.SUCCESS)
+    return finished.updated
+
+
+@pytest.mark.asyncio
+async def test_a_successful_run_supplies_the_next_run_cursor(broker, context, policy):
+    """AC: the previous run's completion time is what the next run measures against."""
+    cursor = await _seed_prior_run(broker)
+    harness = Harness([card(INVITATION_TEXT, sender="张先生", stamp=FRESH_STAMP)])
+    handler = make_handler(classifier=FakeClassifier(default=False), policy=policy)
+
+    result, task = await _run_async(broker, context, harness, handler)
+
+    assert result.output["last_execution_time"] == cursor.isoformat()
+    assert any("上次执行时间" in log for log in task.logs)
+
+
+@pytest.mark.asyncio
+async def test_the_first_viewport_is_scanned_in_full_despite_the_cursor(broker, context, policy):
+    """AC: page one is unconditional -- a fresh state can hide behind an old stamp."""
+    await _seed_prior_run(broker)
+    texts = ["我们感谢您的投递 #1", "我们感谢您的投递 #2", "我们感谢您的投递 #3"]
+    harness = Harness(
+        [card(t, sender=f"招聘者{i}", stamp=STALE_STAMP) for i, t in enumerate(texts)],
+        viewport_size=2,
+    )
+    classifier = FakeClassifier(default=False)
+    handler = make_handler(classifier=classifier, policy=policy)
+
+    result, _ = await _run_async(broker, context, harness, handler)
+
+    # Both cards of the opening viewport are judged even though both predate the cursor.
+    assert [call[1] for call in classifier.calls] == texts[:2]
+    assert result.output["scanned"] == 2
+    assert result.output["preserved"] == 2
+
+
+@pytest.mark.asyncio
+async def test_paging_stops_before_triaging_a_card_older_than_the_last_run(
+    broker, context, policy
+):
+    """AC: crossing the cursor ends the run, and says so in the log and the output."""
+    await _seed_prior_run(broker)
+    harness = Harness(
+        [
+            card(INVITATION_TEXT, sender="张先生", stamp=FRESH_STAMP),
+            card(REJECTION_TEXT, sender="严胜", stamp=STALE_STAMP, descriptor=DESCRIPTOR),
+            card("岗位已招满，感谢您的关注。", sender="宋女士", stamp=STALE_STAMP),
+        ],
+        viewport_size=1,
+    )
+    classifier = FakeClassifier(default=False)
+    handler = make_handler(classifier=classifier, policy=policy)
+
+    result, task = await _run_async(broker, context, harness, handler)
+
+    assert [call[1] for call in classifier.calls] == [INVITATION_TEXT]
+    assert result.output["scanned"] == 1
+    assert result.output["stop_reason"] == REACHED_LAST_EXECUTION_TIME
+    # The employer behind the older card was never judged, so nothing was blacklisted.
+    assert policy.company_blacklist == []
+    assert any("Time Truncation" in log for log in task.logs)
+    assert any(REACHED_LAST_EXECUTION_TIME in log for log in task.logs)
+
+
+@pytest.mark.asyncio
+async def test_the_opening_page_stays_exempt_after_an_acknowledgment_round_trip(
+    broker, context, policy
+):
+    """AC-3: judging a card on screen one must not end the opening page's exemption.
+
+    Acknowledging a rejection is the main path, and it round-trips through the chat and
+    back to the *same* screen, which the run then re-reads. Keying the exemption on the
+    loop's first pass rather than on having scrolled would put the cursor in force over
+    cards this run never scrolled past -- skipping exactly the edge of the window the
+    exemption exists to protect.
+    """
+    await _seed_prior_run(broker)
+    stale_texts = ["方便约个时间聊聊吗？", "方便发一下简历吗？"]
+    harness = Harness(
+        [
+            card(REJECTION_TEXT, sender="严胜", stamp=FRESH_STAMP, descriptor=DESCRIPTOR),
+            card(stale_texts[0], sender="张先生", stamp=STALE_STAMP),
+            card(stale_texts[1], sender="宋女士", stamp=STALE_STAMP),
+        ],
+        viewport_size=3,
+    )
+    classifier = FakeClassifier({REJECTION_TEXT: True})
+    handler = make_handler(classifier=classifier, policy=policy)
+
+    result, _ = await _run_async(broker, context, harness, handler)
+
+    assert [call[1] for call in classifier.calls] == [REJECTION_TEXT, *stale_texts]
+    assert result.output["scanned"] == 3
+    assert policy.company_blacklist == [COMPANY]
+    assert result.output["stop_reason"] == REACHED_LAST_EXECUTION_TIME
+
+
+@pytest.mark.asyncio
+async def test_the_boundary_viewport_still_judges_cards_that_are_not_certainly_older(
+    broker, context, policy
+):
+    """An unreadable stamp is unknown, not old: it is judged, not skipped."""
+    await _seed_prior_run(broker)
+    harness = Harness(
+        [
+            card(INVITATION_TEXT, sender="张先生", stamp=FRESH_STAMP),
+            card(REJECTION_TEXT, sender="严胜", stamp=STALE_STAMP),
+            card("方便发一下简历吗？", sender="宋女士", stamp=UNREADABLE_STAMP),
+        ],
+        viewport_size=2,
+    )
+    classifier = FakeClassifier(default=False)
+    handler = make_handler(classifier=classifier, policy=policy)
+
+    result, _ = await _run_async(broker, context, harness, handler)
+
+    assert "方便发一下简历吗？" in [call[1] for call in classifier.calls]
+    assert result.output["stop_reason"] == REACHED_LAST_EXECUTION_TIME
+
+
+@pytest.mark.asyncio
+async def test_an_unreadable_stamp_never_truncates_the_scan(broker, context, policy):
+    """Nothing the run can read as old means nothing to stop on: keep scanning."""
+    await _seed_prior_run(broker)
+    texts = ["方便聊聊吗？", "方便发简历吗？", "我们约个面试吧"]
+    harness = Harness(
+        [card(t, sender=f"招聘者{i}", stamp=UNREADABLE_STAMP) for i, t in enumerate(texts)],
+        viewport_size=2,
+    )
+    classifier = FakeClassifier(default=False)
+    handler = make_handler(classifier=classifier, policy=policy)
+
+    result, _ = await _run_async(broker, context, harness, handler)
+
+    assert [call[1] for call in classifier.calls] == texts
+    assert result.output["stop_reason"] == "empty_list"
+
+
+@pytest.mark.asyncio
+async def test_without_a_cursor_the_configured_scan_bounds_still_apply(broker, context, policy):
+    """AC: a first-ever run keeps the safe depth and card ceiling, not a time cut."""
+    texts = [f"我们感谢您的投递 #{i}" for i in range(5)]
+    harness = Harness(
+        [card(t, sender=f"招聘者{i}", stamp=STALE_STAMP) for i, t in enumerate(texts)],
+        viewport_size=2,
+    )
+    classifier = FakeClassifier(default=False)
+    handler = make_handler(classifier=classifier, policy=policy)
+
+    result, _ = await _run_async(broker, context, harness, handler, payload={"max_scan_depth": 2})
+
+    assert result.output["last_execution_time"] is None
+    assert result.output["evaluated"] == 2
+    assert result.output["stop_reason"] == "max_scan_depth"
+    assert len(classifier.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_dry_run_does_not_become_the_next_run_cursor(broker, context, policy):
+    """A dry run acts on nothing, so trusting it would turn its window into a blind spot."""
+    await _seed_prior_run(broker, dry_run=True)
+    texts = ["方便约个时间聊聊吗？", "我们感谢您的投递 #1", "我们感谢您的投递 #2"]
+    harness = Harness(
+        [
+            card(texts[0], sender="张先生", stamp=FRESH_STAMP),
+            card(texts[1], sender="严胜", stamp=STALE_STAMP),
+            card(texts[2], sender="宋女士", stamp=STALE_STAMP),
+        ],
+        viewport_size=1,
+    )
+    classifier = FakeClassifier(default=False)
+    handler = make_handler(classifier=classifier, policy=policy)
+
+    result, _ = await _run_async(broker, context, harness, handler)
+
+    assert result.output["last_execution_time"] is None
+    assert result.output["stop_reason"] != REACHED_LAST_EXECUTION_TIME
+    assert [call[1] for call in classifier.calls] == texts
+
+
+@pytest.mark.asyncio
+async def test_a_second_run_over_the_same_list_reuses_the_first_runs_cursor(broker, context, policy):
+    """#239 end to end, through the worker daemon: run one judges the window, run two
+    stops at run one's edge.
+
+    Both runs go through `AutomationWorker.run_once`, so the SUCCESS write the cursor is
+    derived from is the daemon's own rather than something a test performs on its behalf
+    -- that write is the whole basis for reading a completion back. Run two then reads
+    the opening page in full and stops, instead of walking the older pages again.
+    """
+    texts = [f"方便聊聊第 {i} 个岗位吗？" for i in range(6)]
+    harness = Harness(
+        [card(t, sender=f"招聘者{i}", stamp=STALE_STAMP) for i, t in enumerate(texts)],
+        viewport_size=2,
+    )
+    classifier = FakeClassifier(default=False)
+    worker = AutomationWorker(
+        config=context.config,
+        broker=broker,
+        context=context,
+        handlers=[make_handler(classifier=classifier, policy=policy)],
+    )
+
+    with (
+        patch.object(check_chat_module, "CommunicationListPage", return_value=harness),
+        patch.object(check_chat_module, "ChatPage", return_value=FakeChatPage(harness)),
+    ):
+        first = await broker.create_task(task_type=TaskType.CHECK_CHAT, payload={})
+        assert await worker.run_once() is True
+        calls_after_first = len(classifier.calls)
+        # A new dispatch lands at the top of the list; the double holds its scroll
+        # position, so the platform's reset is modelled here.
+        harness.window = 0
+        second = await broker.create_task(task_type=TaskType.CHECK_CHAT, payload={})
+        assert await worker.run_once() is True
+
+    finished_first = await broker.get_task(first.id)
+    finished_second = await broker.get_task(second.id)
+    assert finished_first is not None and finished_second is not None
+
+    # The daemon's SUCCESS write is what makes run one readable as a completion.
+    assert finished_first.status == TaskStatus.SUCCESS
+    assert finished_second.status == TaskStatus.SUCCESS
+
+    # Run one has no history to measure against, so it walks the whole list.
+    assert calls_after_first == len(texts)
+    assert any("Finished CHECK_CHAT: scanned 6 card(s)" in line for line in finished_first.logs)
+    assert any("stop_reason=empty_list" in line for line in finished_first.logs)
+
+    # Run two is told where run one finished, reads the opening page anyway, then stops.
+    assert any("上次执行时间" in line for line in finished_second.logs)
+    assert any("Time Truncation" in line for line in finished_second.logs)
+    assert any("Finished CHECK_CHAT: scanned 2 card(s)" in line for line in finished_second.logs)
+    assert len(classifier.calls) - calls_after_first == 2
+
+
+class _FastClockBroker(InMemoryTaskBroker):
+    """A broker whose newest completion was stamped by a server clock running ahead."""
+
+    async def list_recent_successful_completions(self, task_type, limit=10):
+        task = await self.create_task(task_type=TaskType.CHECK_CHAT)
+        return [task.model_copy(update={"updated": datetime.now(UTC) + timedelta(hours=2)})]
+
+
+@pytest.mark.asyncio
+async def test_a_cursor_from_the_future_is_refused_rather_than_truncating_everything(
+    context, policy
+):
+    """Stored stamps and card stamps come from different clocks; a skewed one must not bite."""
+    broker = _FastClockBroker()
+    harness = Harness(
+        [card(INVITATION_TEXT, sender="张先生", stamp=FRESH_STAMP)], viewport_size=1
+    )
+    handler = make_handler(classifier=FakeClassifier(default=False), policy=policy)
+
+    result, task = await _run_async(broker, context, harness, handler)
+
+    assert result.output["last_execution_time"] is None
+    assert result.output["stop_reason"] != REACHED_LAST_EXECUTION_TIME
+    assert any("时钟" in log or "未来" in log for log in task.logs)
 
 
 # ---------------------------------------------------------------------------

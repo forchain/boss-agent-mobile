@@ -5,6 +5,7 @@ Unit tests for State Stream Task Broker and PocketBase Schema Adapter (Issue #27
 """
 
 import asyncio
+from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
 import pytest
@@ -340,3 +341,151 @@ async def test_list_stale_running_tasks_handles_404_gracefully():
     broker = PocketBaseTaskBroker(session=mock_session)
     tasks = await broker.list_stale_running_tasks()
     assert tasks == []
+
+
+# ---------------------------------------------------------------------------
+# Execution cursor: the newest SUCCESS of a task type (issue #239)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_recent_successful_completions_is_empty_without_any_success():
+    """No successful run yet means no cursor, which is what triggers a full scan."""
+    broker = InMemoryTaskBroker()
+    await broker.create_task(task_type=TaskType.CHECK_CHAT)
+
+    assert await broker.list_recent_successful_completions(TaskType.CHECK_CHAT) == []
+
+
+@pytest.mark.asyncio
+async def test_recent_successful_completions_returns_the_newest_success_first():
+    broker = InMemoryTaskBroker()
+    older = await broker.create_task(task_type=TaskType.CHECK_CHAT)
+    newer = await broker.create_task(task_type=TaskType.CHECK_CHAT)
+    await broker.claim_task(older.id, worker_id="w1")
+    await broker.update_task_status(older.id, status=TaskStatus.SUCCESS)
+    await broker.claim_task(newer.id, worker_id="w1")
+    await broker.update_task_status(newer.id, status=TaskStatus.SUCCESS)
+
+    completed = await broker.list_recent_successful_completions(TaskType.CHECK_CHAT)
+
+    assert [t.id for t in completed] == [newer.id, older.id]
+
+
+@pytest.mark.asyncio
+async def test_recent_successful_completions_skips_runs_that_did_not_succeed():
+    """A failed or still-running run must never become the window a later run trusts."""
+    broker = InMemoryTaskBroker()
+    succeeded = await broker.create_task(task_type=TaskType.CHECK_CHAT)
+    failed = await broker.create_task(task_type=TaskType.CHECK_CHAT)
+    running = await broker.create_task(task_type=TaskType.CHECK_CHAT)
+    pending = await broker.create_task(task_type=TaskType.CHECK_CHAT)
+
+    await broker.claim_task(succeeded.id, worker_id="w1")
+    await broker.update_task_status(succeeded.id, status=TaskStatus.SUCCESS)
+    await broker.claim_task(failed.id, worker_id="w1")
+    await broker.update_task_status(failed.id, status=TaskStatus.FAILED, error_message="boom")
+    await broker.claim_task(running.id, worker_id="w1")
+
+    completed = await broker.list_recent_successful_completions(TaskType.CHECK_CHAT)
+
+    assert [t.id for t in completed] == [succeeded.id]
+    assert pending.id not in {t.id for t in completed}
+
+
+@pytest.mark.asyncio
+async def test_recent_successful_completions_is_scoped_to_one_task_type():
+    """CHECK_CHAT's cursor is not another workflow's completion time."""
+    broker = InMemoryTaskBroker()
+    chat = await broker.create_task(task_type=TaskType.CHECK_CHAT)
+    login = await broker.create_task(task_type=TaskType.CHECK_LOGIN)
+    await broker.claim_task(login.id, worker_id="w1")
+    await broker.update_task_status(login.id, status=TaskStatus.SUCCESS)
+    await broker.claim_task(chat.id, worker_id="w1")
+    await broker.update_task_status(chat.id, status=TaskStatus.SUCCESS)
+
+    completed = await broker.list_recent_successful_completions(TaskType.CHECK_CHAT)
+
+    assert [t.id for t in completed] == [chat.id]
+
+
+@pytest.mark.asyncio
+async def test_recent_successful_completions_honours_the_lookback_limit():
+    broker = InMemoryTaskBroker()
+    for _ in range(4):
+        task = await broker.create_task(task_type=TaskType.CHECK_CHAT)
+        await broker.claim_task(task.id, worker_id="w1")
+        await broker.update_task_status(task.id, status=TaskStatus.SUCCESS)
+
+    assert len(await broker.list_recent_successful_completions(TaskType.CHECK_CHAT)) == 4
+    assert len(await broker.list_recent_successful_completions(TaskType.CHECK_CHAT, limit=2)) == 2
+
+
+@pytest.mark.asyncio
+async def test_recent_successful_completions_exposes_the_payload_for_caller_filtering():
+    """The cursor excludes unactioned runs, and only the caller knows which those are."""
+    broker = InMemoryTaskBroker()
+    task = await broker.create_task(task_type=TaskType.CHECK_CHAT, payload={"dry_run": True})
+    await broker.claim_task(task.id, worker_id="w1")
+    await broker.update_task_status(task.id, status=TaskStatus.SUCCESS)
+
+    completed = await broker.list_recent_successful_completions(TaskType.CHECK_CHAT)
+
+    assert completed[0].payload == {"dry_run": True}
+
+
+@pytest.mark.asyncio
+async def test_pocketbase_recent_successful_completions_queries_successes_of_one_type():
+    mock_session = MagicMock()
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "items": [
+            {
+                "id": "rec-new",
+                "task_type": "CHECK_CHAT",
+                "status": "success",
+                "payload": {},
+                "logs": [],
+                "created": "2026-09-23T09:00:00Z",
+                "updated": "2026-09-23T10:00:00Z",
+            }
+        ]
+    }
+    mock_session.get.return_value = mock_resp
+
+    broker = PocketBaseTaskBroker(base_url="http://pb.test", session=mock_session)
+    completed = await broker.list_recent_successful_completions(TaskType.CHECK_CHAT, limit=5)
+
+    assert [t.id for t in completed] == ["rec-new"]
+    assert completed[0].updated == datetime(2026, 9, 23, 10, 0, tzinfo=UTC)
+
+    url = mock_session.get.call_args[0][0]
+    assert url.startswith("http://pb.test/api/collections/automation_tasks/records?")
+    assert "task_type='CHECK_CHAT'" in url
+    assert "status='success'" in url
+    assert "sort=-updated" in url
+    assert "perPage=5" in url
+
+
+@pytest.mark.asyncio
+async def test_pocketbase_recent_successful_completions_handles_404_gracefully():
+    """An unprovisioned collection means no cursor, which falls back to a full scan."""
+    mock_session = MagicMock()
+    mock_resp = MagicMock()
+    mock_resp.status_code = 404
+    mock_session.get.return_value = mock_resp
+
+    broker = PocketBaseTaskBroker(session=mock_session)
+    assert await broker.list_recent_successful_completions(TaskType.CHECK_CHAT) == []
+
+
+@pytest.mark.asyncio
+async def test_pocketbase_recent_successful_completions_handles_request_exception():
+    import requests
+
+    mock_session = MagicMock()
+    mock_session.get.side_effect = requests.exceptions.ConnectionError("Connection refused")
+
+    broker = PocketBaseTaskBroker(session=mock_session)
+    assert await broker.list_recent_successful_completions(TaskType.CHECK_CHAT) == []

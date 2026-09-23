@@ -22,6 +22,7 @@ from droid_agent_core.locators import (
     wait_until,
 )
 
+from .card_time import CardTimestamp, parse_card_timestamp
 from .models import (
     KNOWN_CITIES,
     RECRUITER_TITLE_KEYWORDS,
@@ -58,6 +59,9 @@ FULLWIDTH_CARD_DESCRIPTOR_SEPARATOR: str = "｜"
 
 #: Locator key of the on-screen back affordance tried before the hardware Back key.
 BACK_BUTTON_KEY: str = "communication_list.back_btn"
+
+#: XPath to a card's text nodes, the fallback for fields the platform leaves unlabelled.
+CARD_CHILD_TEXT_XPATH: str = ".//android.widget.TextView"
 
 #: Bounded recovery steps the 仅沟通 list navigation may spend unwinding the app.
 LIST_RECOVERY_MAX_STEPS: int = 6
@@ -244,6 +248,8 @@ class CommunicationCard:
     outbound_status: str = ""
     #: The card's `[Company] | [Position]` descriptor, e.g. "传音控股 | 算法工程师".
     company_position: str = ""
+    #: The card's rendered last-message stamp, e.g. "昨天 10:20" or "09-21".
+    card_time: str = ""
 
     def __post_init__(self) -> None:
         if not self.key:
@@ -270,6 +276,16 @@ class CommunicationCard:
     def company_name(self) -> str:
         """Employer parsed from the card descriptor, or "" when unavailable."""
         return parse_company_from_descriptor(self.company_position, self.sender_name)
+
+    @property
+    def card_stamp(self) -> CardTimestamp | None:
+        """The instant the card's stamp names, or None when it is unreadable.
+
+        ``None`` is deliberately not "very old": the two lead to opposite decisions.
+        An unreadable stamp makes the card's age unknown, so a run scans it; only a
+        stamp that is *certainly* older than the previous run may truncate a page.
+        """
+        return parse_card_timestamp(self.card_time)
 
 
 def parse_recruiter_info(raw_text: str) -> tuple[str, str, bool]:
@@ -1882,9 +1898,47 @@ class CommunicationListPage(BaseBossPage):
                         card, "communication_list.outbound_status"
                     ),
                     company_position=self._extract_company_position(card, sender, text),
+                    card_time=self._extract_card_stamp(card, sender, text),
                 )
             )
         return cards
+
+    def _extract_card_stamp(self, card: Any, sender: str, message_text: str) -> str:
+        """Read the last-message stamp off a card, falling back to a child-node scan.
+
+        Every candidate -- configured field and scanned child alike -- has to *parse*
+        as a card stamp before it is returned. That gate is the whole point: without
+        it a wrong resource-id, or a text node borrowed from the row, would hand the
+        caller a plausible-looking string, and the scan would truncate the page on a
+        stamp that was never a time. A card with no readable stamp simply reports
+        none, and the caller keeps scanning it.
+        """
+        configured = self._extract_card_field_text(card, "communication_list.card_time")
+        if parse_card_timestamp(configured) is not None:
+            return configured
+
+        excluded = {(sender or "").strip(), (message_text or "").strip()}
+        for candidate in self._scan_card_text_nodes(card):
+            if not candidate or candidate in excluded:
+                continue
+            if parse_card_timestamp(candidate) is not None:
+                return candidate
+        return ""
+
+    def _scan_card_text_nodes(self, card: Any) -> list[str]:
+        """The text of a card's child TextViews, in document order.
+
+        The fallback shared by the fields the platform leaves unlabelled: the
+        descriptor and the stamp are both rendered into text nodes with no resource-id
+        measured on hardware, so one node walk answers for either. A card whose layer
+        cannot be read at all yields nothing, which every caller reads as "this field
+        is not on the card" rather than as an error.
+        """
+        try:
+            children = card.find_elements(by="xpath", value=CARD_CHILD_TEXT_XPATH)
+        except Exception:
+            return []
+        return [(getattr(child, "text", "") or "").strip() for child in children]
 
     def _extract_company_position(self, card: Any, sender: str, message_text: str) -> str:
         """Read the `[Company] | [Position]` descriptor off a card.
@@ -1908,12 +1962,8 @@ class CommunicationListPage(BaseBossPage):
 
         message = _normalize_card_descriptors((message_text or "").strip())
         sender = (sender or "").strip()
-        try:
-            children = card.find_elements(by="xpath", value=".//android.widget.TextView")
-        except Exception:
-            return ""
-        for child in children:
-            candidate = _normalize_card_descriptors((getattr(child, "text", "") or "").strip())
+        for candidate in self._scan_card_text_nodes(card):
+            candidate = _normalize_card_descriptors(candidate)
             if not candidate or candidate == sender:
                 continue
             if message and (candidate in message or message in candidate):

@@ -8,11 +8,24 @@ conversation (Issues #205-#208).
 The list is scanned from the cards alone. Cards carrying the Outbound Message
 Indicator are bypassed without any LLM call, so a thread waiting on a recruiter
 reply costs nothing.
+
+Paging is bounded by *time*, not only by depth (#239). The list is ordered
+newest-first, so once a run has scrolled past the point where the previous run
+finished, everything below it has already been judged -- whether it was acted on
+or deliberately preserved. The previous run's completion time is therefore the
+natural stop line, and it is read back from the task history rather than stored
+separately, so it can never drift from the runs it describes (see
+`_resolve_scan_cursor`).
+
+The first viewport is deliberately exempt from that line. It is the only part of
+the list that can carry state the previous run never saw, and skipping it to save
+a handful of calls would trade tokens for missed rejections.
 """
 
 import logging
 from collections import Counter
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
@@ -51,6 +64,23 @@ PREVIEW_CHARS = 40
 #: Timeout budget for a single list/dialog interaction.
 PAGE_TIMEOUT_SEC = 5.0
 
+#: `stop_reason` recorded when paging reached cards older than the previous run.
+REACHED_LAST_EXECUTION_TIME = "reached_last_execution_time"
+
+#: Successful runs examined when resolving the execution cursor. A dry run succeeds
+#: without acting, so it must not advance the window a later real run trusts; the
+#: cursor is the newest success that actually acted. Past this many consecutive dry
+#: runs the cursor is simply unavailable and the run falls back to a full scan —
+#: the safe direction, since that costs tokens rather than messages.
+CURSOR_LOOKBACK_RUNS = 20
+
+#: How far the stored cursor may sit ahead of this device's clock before it is
+#: treated as unusable. Task records are stamped by PocketBase's clock and card
+#: stamps by the device's, and a cursor skewed into the future would place the stop
+#: line above every card on the list — ending paging before a single message was
+#: read. Refusing the cursor costs one full scan; trusting it costs the window.
+MAX_CURSOR_SKEW_SEC = 300.0
+
 
 class TriageKind(StrEnum):
     """What the handler did with one communication card."""
@@ -77,6 +107,18 @@ class TriageOutcome:
     #: Set when the platform never returned to the list; the scan must stop
     #: rather than read cards off an unknown screen.
     lost_list: bool = False
+
+
+@dataclass(frozen=True)
+class _PagingStop:
+    """The line this run stopped paging at, and the card that marked it.
+
+    Carried together so the truncation log can name both without re-narrowing a
+    cursor that is optional only where no boundary exists.
+    """
+
+    stop_line: datetime
+    card: CommunicationCard
 
 
 class CheckChatHandler(BaseTaskHandler):
@@ -139,6 +181,20 @@ class CheckChatHandler(BaseTaskHandler):
             f"reply='{reply_text}')",
         )
 
+        cursor = await self._resolve_scan_cursor(task, broker)
+        if cursor is None:
+            await broker.append_log(
+                task.id,
+                "🕒 [Time Cursor] 无上次执行时间可用，本次不做时间截断，"
+                f"回退到 max_scan_depth={max_scan_depth} 与 {MAX_INSPECTED_CARDS} 张卡片上限控制",
+            )
+        else:
+            await broker.append_log(
+                task.id,
+                f"🕒 [Time Cursor] 上次执行时间 {cursor.isoformat()}："
+                "首屏全量检测，翻页遇到更早的卡片即截断",
+            )
+
         startup_page = StartupDialogPage(driver)
         if startup_page.is_dialog_present():
             startup_page.dismiss_dialog()
@@ -168,6 +224,8 @@ class CheckChatHandler(BaseTaskHandler):
         visited_keys: set[str] = set()
         stalled_scrolls = 0
         stop_reason = "completed"
+        #: Set once the run has scrolled away from the opening page (see the stop line).
+        left_opening_page = False
 
         while True:
             cur_task = await broker.get_task(task.id)
@@ -181,8 +239,83 @@ class CheckChatHandler(BaseTaskHandler):
                 stop_reason = "empty_list"
                 break
 
-            pending = [m for m in visible if m.key not in visited_keys]
-            if not pending:
+            # The opening page is read unconditionally: it is where a state the previous
+            # run never saw can still be sitting, so a run must not skip a card merely
+            # because its stamp predates the cursor. The exemption is keyed on having
+            # *scrolled*, not on the first pass of this loop: acknowledging a card
+            # round-trips back to the same screen, and ending the exemption there would
+            # put the stop line in force over cards this run never scrolled past.
+            stop_line = cursor if left_opening_page else None
+
+            # The card this viewport had to stop at, if it had to stop at all.
+            boundary: _PagingStop | None = None
+            if stop_line is not None:
+                beyond = [m for m in visible if _predates_cursor(m, stop_line)]
+                if beyond:
+                    boundary = _PagingStop(stop_line=stop_line, card=beyond[0])
+                # Cards past the line are simply not re-judged; they were covered by
+                # the run the cursor names, or by one before it.
+                pending = [
+                    m
+                    for m in visible
+                    if m.key not in visited_keys and not _predates_cursor(m, stop_line)
+                ]
+            else:
+                pending = [m for m in visible if m.key not in visited_keys]
+
+            if pending:
+                stalled_scrolls = 0
+                navigated = False
+                lost_list = False
+                for message in pending:
+                    if evaluated >= max_scan_depth or scanned >= MAX_INSPECTED_CARDS:
+                        break
+                    visited_keys.add(message.key)
+                    scanned += 1
+                    outcome = await self._triage_message(
+                        task,
+                        broker,
+                        comm_list,
+                        chat_page,
+                        policy,
+                        message,
+                        dry_run=dry_run,
+                        reply_text=reply_text,
+                    )
+                    counters[outcome.kind] += 1
+                    if outcome.kind is not TriageKind.SKIPPED:
+                        evaluated += 1
+                        detected_rejections += int(outcome.is_rejection)
+                    if outcome.blacklisted and message.company_name:
+                        blacklisted.append(message.company_name)
+                    guardrail_blocked += int(outcome.guardrail_blocked)
+                    if outcome.navigated:
+                        # The platform shifted the remaining cards up: abandon this
+                        # viewport snapshot and re-read before continuing.
+                        navigated = True
+                        lost_list = outcome.lost_list
+                        break
+
+                if lost_list:
+                    # We are no longer looking at the list; reading cards here could
+                    # interact with an unrelated screen, so stop instead.
+                    stop_reason = "lost_list"
+                    break
+                if evaluated >= max_scan_depth:
+                    stop_reason = "max_scan_depth"
+                    break
+                if scanned >= MAX_INSPECTED_CARDS:
+                    stop_reason = "scan_ceiling"
+                    await broker.append_log(
+                        task.id,
+                        f"🛑 [Scan Ceiling] 单次扫描已达 {MAX_INSPECTED_CARDS} 张卡片上限，终止列表扫描",
+                    )
+                    break
+                if navigated:
+                    # Re-read before deciding anything about the stop line: the viewport
+                    # we would now judge `boundary` against is no longer this one.
+                    continue
+            elif boundary is None:
                 # Every visible card is already handled; there may be older ones above.
                 stalled_scrolls += 1
                 if stalled_scrolls > MAX_STALLED_SCROLLS:
@@ -195,58 +328,23 @@ class CheckChatHandler(BaseTaskHandler):
                 await broker.append_log(
                     task.id, "↕️ [Pagination] 当前可见消息均已处理，向上滑动加载更早的消息"
                 )
-                comm_list.scroll_list()
-                continue
+                # Falls through to the shared scroll below, so there is exactly one
+                # place that leaves the opening page behind.
 
-            stalled_scrolls = 0
-            navigated = False
-            lost_list = False
-            for message in pending:
-                if evaluated >= max_scan_depth or scanned >= MAX_INSPECTED_CARDS:
-                    break
-                visited_keys.add(message.key)
-                scanned += 1
-                outcome = await self._triage_message(
-                    task,
-                    broker,
-                    comm_list,
-                    chat_page,
-                    policy,
-                    message,
-                    dry_run=dry_run,
-                    reply_text=reply_text,
-                )
-                counters[outcome.kind] += 1
-                if outcome.kind is not TriageKind.SKIPPED:
-                    evaluated += 1
-                    detected_rejections += int(outcome.is_rejection)
-                if outcome.blacklisted and message.company_name:
-                    blacklisted.append(message.company_name)
-                guardrail_blocked += int(outcome.guardrail_blocked)
-                if outcome.navigated:
-                    # The platform shifted the remaining cards up: abandon this
-                    # viewport snapshot and re-read before continuing.
-                    navigated = True
-                    lost_list = outcome.lost_list
-                    break
-
-            if lost_list:
-                # We are no longer looking at the list; reading cards here could
-                # interact with an unrelated screen, so stop instead.
-                stop_reason = "lost_list"
-                break
-            if evaluated >= max_scan_depth:
-                stop_reason = "max_scan_depth"
-                break
-            if scanned >= MAX_INSPECTED_CARDS:
-                stop_reason = "scan_ceiling"
+            if boundary is not None:
+                stop_reason = REACHED_LAST_EXECUTION_TIME
                 await broker.append_log(
                     task.id,
-                    f"🛑 [Scan Ceiling] 单次扫描已达 {MAX_INSPECTED_CARDS} 张卡片上限，终止列表扫描",
+                    f"🛑 [Time Truncation] 卡片时间 '{boundary.card.card_time}' "
+                    f"（{boundary.card.sender_name or '未知招聘者'}）早于上次执行时间 "
+                    f"{boundary.stop_line.isoformat()}，列表其后均为更早的消息，终止翻页"
+                    f"（stop_reason={REACHED_LAST_EXECUTION_TIME}）",
                 )
                 break
-            if navigated:
-                continue
+
+            # Scrolling is the one thing that ends the opening page's exemption: the read
+            # that follows is a page the previous run's stop line may legitimately cut short.
+            left_opening_page = True
             comm_list.scroll_list()
 
         blacklist_note = f" [{', '.join(blacklisted)}]" if blacklisted else ""
@@ -269,6 +367,7 @@ class CheckChatHandler(BaseTaskHandler):
                 "dry_run": dry_run,
                 "reply_text": reply_text,
                 "max_scan_depth": max_scan_depth,
+                "last_execution_time": cursor.isoformat() if cursor else None,
                 "scanned": scanned,
                 "evaluated": evaluated,
                 "skipped_outbound": counters[TriageKind.SKIPPED],
@@ -283,6 +382,62 @@ class CheckChatHandler(BaseTaskHandler):
                 "visited_keys": sorted(visited_keys),
             },
         )
+
+    async def _resolve_scan_cursor(
+        self, task: AutomationTask, broker: BaseTaskBroker
+    ) -> datetime | None:
+        """Resolve the instant the previous *acting* CHECK_CHAT run finished.
+
+        The cursor is read back from the task history rather than kept in a store of
+        its own: a SUCCESS task record already *is* the durable record of a run's
+        completion time, so deriving from it cannot drift from the runs it describes
+        and needs no schema to provision.
+
+        Returns None whenever there is no history to trust -- the first ever run, an
+        unreachable broker, or a completion time this device's clock cannot be squared
+        with. Every one of those falls back to the depth and card bounds, which is the
+        behaviour that existed before the cursor.
+
+        Known and accepted limitation (ADR 0014): a run that ended short of its own stop
+        line -- by `max_scan_depth`, the card ceiling, a stalled feed or a lost list --
+        still reports success, so it becomes a cursor even though it never judged part of
+        its window, and no later run revisits that stretch. Closing it means recording the
+        coverage on the run's own task record, which the broker cannot write today.
+        """
+        try:
+            completions = await broker.list_recent_successful_completions(
+                TaskType.CHECK_CHAT, limit=CURSOR_LOOKBACK_RUNS
+            )
+        except Exception as exc:  # noqa: BLE001 - a missing cursor is never fatal
+            logger.warning("Could not read the CHECK_CHAT execution cursor: %s", exc)
+            return None
+
+        for completed in completions:
+            if (completed.payload or {}).get("dry_run"):
+                # A dry run acts on nothing. Letting it move the cursor would hand the
+                # next real run a window starting *after* the messages the dry run
+                # declined to touch, and no later run would ever revisit them.
+                continue
+
+            moment = completed.updated
+            if moment.tzinfo is None:
+                moment = moment.replace(tzinfo=UTC)
+            # Task records are stamped by PocketBase's clock and card stamps by this
+            # device's. A cursor from the future would put the stop line above every
+            # card on the list, ending paging before a single message was read, so a
+            # disagreement is reported and the run scans in full instead.
+            ahead_sec = (moment - datetime.now(UTC)).total_seconds()
+            if ahead_sec > MAX_CURSOR_SKEW_SEC:
+                await broker.append_log(
+                    task.id,
+                    f"⚠️ [Time Cursor] 上次执行时间 {moment.isoformat()} 比本机时钟快 "
+                    f"{ahead_sec / 60:.0f} 分钟，两处时钟不一致，"
+                    "本次拒绝该游标并按无历史回退到全量扫描",
+                )
+                return None
+
+            return moment
+        return None
 
     async def _triage_message(
         self,
@@ -487,6 +642,17 @@ def _preview(text: str) -> str:
     if len(flat) <= PREVIEW_CHARS:
         return flat
     return flat[:PREVIEW_CHARS] + "…"
+
+
+def _predates_cursor(message: CommunicationCard, cursor: datetime) -> bool:
+    """Whether a card is *provably* older than the previous run.
+
+    Only a stamp the run can actually read can prove that. A card whose stamp is
+    missing or unrecognised returns False and gets judged: re-reading one message
+    costs a few tokens, while dropping it costs the rejection it carried.
+    """
+    stamp = message.card_stamp
+    return stamp is not None and stamp.is_before(cursor)
 
 
 __all__ = ["CheckChatHandler", "TriageOutcome"]
