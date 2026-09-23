@@ -60,6 +60,18 @@ _Avoid_: In-process background task, Celery pool, worker thread
 The polymorphic workflow dispatch within the Automation Worker that executes concrete automation jobs (`CHECK_LOGIN`, `SCRAPE_JOBS`, `AUTO_APPLY`, `CHECK_CHAT`) without inter-process device contention.
 _Avoid_: Multi-worker router, sub-worker cluster
 
+**Task Provenance (`source`)**:
+The first-class lifecycle origin attribute on an `AutomationTask` (`manual`, `test`, `scheduler`) determining execution priority, dashboard visibility, and worker startup reclamation rules.
+_Avoid_: task kind, is_test flag, task origin tag
+
+**Automated Test Task (`source="test"`)**:
+An automation task instantiated by test suites (`pytest`, `vitest`) during verification. Excluded from live Automation Worker execution and automatically cancelled upon worker startup sweep to prevent mobile device contention.
+_Avoid_: test job, mock task, fake run, 测试用例任务
+
+**Manual Task (`source="manual"`)**:
+An automation task triggered intentionally by the user via the Task Management Dashboard or CLI for live job discovery or application workflows.
+_Avoid_: user test, real task, active test, 主动测试
+
 **Graceful Shutdown Protocol**:
 The POSIX signal contract by which the Automation Worker and the Web Dashboard runner stop cooperatively: acknowledge the termination signal in their own log stream, halt the polling loop, abort or release in-flight resources (State Stream Broker task cancellation, Virtual Device Session release, port release), then confirm completion — so supervisors and test fixtures never have to rely on arbitrary sleeps or force-kills.
 _Avoid_: hard stop, force quit, kill -9 policy
@@ -191,8 +203,28 @@ _Avoid_: blind tap, ocr clicker, hardcoded absolute coordinates
 
 
 **Job Lifecycle State**:
-The monotonic progression state of a Job Record tracking its data richness and application stage across mobile automation and backend manual actions (`ignored`, `jd_saved`, `matched`, `applied`; historical `digest_only` records map to `jd_saved`).
+The progression state of a Job Record tracking its data richness and application stage across mobile automation and backend manual actions (`ignored`, `jd_saved`, `matched`, `applied`; historical `digest_only` records map to `jd_saved`). The terminal `applied` state encompasses both Agent-Dispatched (`agent_auto_send`) greetings and Platform Historical Contacts (`platform_historical`); upon cool-down expiry or manual clearance, an `applied` record transitions back to `jd_saved` with its JD preserved for re-engagement.
 _Avoid_: job status flag, task progress, record phase
+
+**Communication Action Button (`btn_chat`)**:
+The primary call-to-action button widget (`com.hpbr.bosszhipin:id/btn_chat`) on the Job Detail Page reflecting platform engagement status ("立即沟通" / "聊一聊" for uncontacted jobs, "继续沟通" for previously contacted jobs, and "停止招聘" / "职位已关闭" for expired postings).
+_Avoid_: chat trigger, detail button, contact icon
+
+**Platform Historical Contact (`platform_historical`)**:
+A job posting previously engaged by the candidate on the platform prior to or outside agent execution, identified by "继续沟通" on the detail page, ingested directly into the database as `applied` without JD extraction or greeting dispatch to enable zero-overhead list-card skipping in subsequent scans.
+_Avoid_: manual chat, external application, old job
+
+**Enterprise-Level Direct-Hire Exclusion (直招同企避嫌 / 已沟通排重)**:
+The deduplication guardrail wherein active communication (`status == 'applied'`) with any direct-hire enterprise (`is_headhunter == False`, non-masked) automatically suppresses all other job postings from that same company during card preliminary screening. Headhunter channels (`is_headhunter == True`) and masked company names are strictly exempted.
+_Avoid_: company ban, company blacklist, total block
+
+**Re-application Cool-down Window (复投冷却时效)**:
+The configurable temporal threshold (`communication_cooldown_days`, default 30 days) after which previously communicated jobs and direct-hire enterprise exclusions expire, permitting re-evaluation and fresh application outreach without permanent suppression.
+_Avoid_: re-apply timer, retry delay, expire timeout
+
+**Communication State Clearance (沟通状态重置)**:
+The manual or automated state recovery action that transitions an `applied` job record back to `jd_saved` (clearing `applied_at`) and releases enterprise-level exclusion, allowing re-engagement without re-scraping the mobile JD.
+_Avoid_: unapply, job unblock, delete communication
 
 **Search Feed Boundary**:
 The explicit platform termination marker (`tv_tips` displaying "暂无符合职位，为你推荐") signalling the end of genuine search keyword results and preventing automation pagination into unrelated recommendation feeds.
@@ -207,5 +239,15 @@ The DEBUG-level `droid_agent_core.ui` log stream recording every concrete UI act
 _Avoid_: UI logging, debug prints, action trace
 
 **Daily Greeting Limit**:
-The system safety threshold restricting outbound mobile greeting volume per calendar day to protect user accounts from platform rate limits and anti-bot challenges, automatically degrading `auto_apply` to `save_jd` upon exhaustion.
+The system safety threshold restricting outbound mobile greeting volume per calendar day to protect user accounts from platform rate limits and anti-bot challenges, evaluated strictly against successful agent greeting dispatches (`applied_at >= today`), automatically degrading `auto_apply` to `save_jd` upon exhaustion.
 _Avoid_: daily quota, message cap, max chats
+
+**System Doctor (`doctor.sh`)**:
+The holistic health diagnostic and remediation CLI tool that inspects end-to-end operational readiness across PocketBase State Stream, SvelteKit Web Dashboard, Python Worker, Appium automation server, Android Virtual Device, and LLM configuration with actionable remediation steps.
+_Avoid_: sanity script, health checker, debug helper
+
+**Dedicated Runner Scripts (`emulator.sh`, `appium.sh`, `pocketbase.sh`, `web.sh`, `run.sh`)**:
+The first-class shell lifecycle scripts managing process states (start, stop, status, daemon mode) with persistent logging and auto-attach log streaming across all operational infrastructure tiers.
+_Avoid_: helper scripts, launcher utils, batch scripts
+
+

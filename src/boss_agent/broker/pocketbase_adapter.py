@@ -20,8 +20,11 @@ import requests
 
 from boss_agent.broker.models import AutomationTask, TaskStatus, TaskType
 from boss_agent.models import (
+    JobRecordStatus,
     SavedSearch,
     compute_job_fingerprint,
+    is_communication_expired,
+    is_direct_hire_company,
     is_invalid_company_name,
     sanitize_tags,
 )
@@ -33,6 +36,11 @@ INVALID_JOB_TITLES: frozenset[str] = frozenset(
     {"", "未注明职位", "未注明岗位", "未知职位", "未知岗位"}
 )
 INVALID_COMPANY_NAMES: frozenset[str] = frozenset({"", "未注明公司", "未知公司"})
+
+# Same trade-off as the web dashboard's MAX_PAGES walk: enough pages for any realistic
+# contact history, bounded so a runaway collection cannot stall the worker.
+APPLIED_POOL_PAGE_SIZE = 200
+APPLIED_POOL_MAX_PAGES = 25
 
 
 class BaseTaskBroker(ABC):
@@ -136,6 +144,24 @@ class BaseTaskBroker(ABC):
     @abstractmethod
     async def count_today_applied_jobs(self) -> int:
         """Count how many jobs have reached 'applied' status today in UTC."""
+        pass
+
+    @abstractmethod
+    async def get_applied_direct_companies(self, cooldown_days: int = 0) -> set[str]:
+        """Distinct direct-hire companies with active communication inside the cool-down window.
+
+        Headhunter channels and masked/confidential company names are never included, since
+        they do not represent a shared in-house HR candidate pool.
+        """
+        pass
+
+    @abstractmethod
+    async def clear_job_communication(self, record_id: str) -> dict[str, Any]:
+        """Transition a communicated job back to `jd_saved`, clearing its dispatch timestamp.
+
+        The extracted JD is preserved so the job can be re-evaluated and re-applied without
+        re-scraping the mobile detail page (cool-down expiry or manual clearance).
+        """
         pass
 
     @abstractmethod
@@ -396,6 +422,10 @@ class InMemoryTaskBroker(BaseTaskBroker):
                     rec["relaxed_by_whitelist"] = bool(record_data["relaxed_by_whitelist"])
                 if record_data.get("screening_audit"):
                     rec["screening_audit"] = record_data["screening_audit"]
+                if record_data.get("applied_at"):
+                    rec["applied_at"] = record_data["applied_at"]
+                if record_data.get("applied_source"):
+                    rec["applied_source"] = record_data["applied_source"]
                 rec["updated"] = now
                 return dict(rec)
 
@@ -422,6 +452,8 @@ class InMemoryTaskBroker(BaseTaskBroker):
                 "screened_reason": record_data.get("screened_reason", ""),
                 "relaxed_by_whitelist": bool(record_data.get("relaxed_by_whitelist", False)),
                 "screening_audit": record_data.get("screening_audit", ""),
+                "applied_at": record_data.get("applied_at"),
+                "applied_source": record_data.get("applied_source", ""),
                 "match_score": record_data.get("match_score"),
                 "jd_key_requirements": record_data.get("jd_key_requirements", []),
                 "greeting_message": record_data.get("greeting_message", ""),
@@ -444,17 +476,44 @@ class InMemoryTaskBroker(BaseTaskBroker):
             return None
 
     async def count_today_applied_jobs(self) -> int:
+        """Count greetings actually dispatched today (UTC), keyed strictly on `applied_at`.
+
+        Platform historical contacts imported as `applied` carry no `applied_at` and are
+        therefore excluded from the daily quota.
+        """
         today_prefix = datetime.now(UTC).strftime("%Y-%m-%d")
         async with self._lock:
             count = 0
             for rec in self._job_records.values():
-                if rec.get("status") == "applied":
-                    up = str(
-                        rec.get("updated") or rec.get("last_seen_at") or rec.get("created") or ""
-                    )
-                    if up.startswith(today_prefix):
-                        count += 1
+                applied_at = str(rec.get("applied_at") or "")
+                if applied_at.startswith(today_prefix):
+                    count += 1
             return count
+
+    async def get_applied_direct_companies(self, cooldown_days: int = 0) -> set[str]:
+        async with self._lock:
+            companies: set[str] = set()
+            for rec in self._job_records.values():
+                if rec.get("status") != "applied":
+                    continue
+                name = (rec.get("company_name") or "").strip()
+                if not is_direct_hire_company(name, rec.get("is_headhunter")):
+                    continue
+                if is_communication_expired(rec, cooldown_days):
+                    continue
+                companies.add(name)
+            return companies
+
+    async def clear_job_communication(self, record_id: str) -> dict[str, Any]:
+        async with self._lock:
+            rec = self._job_records.get(record_id)
+            if not rec:
+                raise KeyError(f"Job record {record_id} not found")
+            rec["status"] = JobRecordStatus.JD_SAVED.value
+            rec["applied_at"] = ""
+            rec["applied_source"] = ""
+            rec["updated"] = datetime.now(UTC).isoformat()
+            return dict(rec)
 
     async def get_job_record(self, record_id: str) -> dict[str, Any] | None:
         async with self._lock:
@@ -1293,7 +1352,7 @@ class PocketBaseTaskBroker(BaseTaskBroker):
         today_midnight = datetime.now(UTC).strftime("%Y-%m-%d 00:00:00.000Z")
         url = self._jobs_collection_url()
         params = {
-            "filter": f"status='applied' && updated>='{today_midnight}'",
+            "filter": f"applied_at>='{today_midnight}'",
             "perPage": "1",
         }
         loop = asyncio.get_running_loop()
@@ -1307,6 +1366,81 @@ class PocketBaseTaskBroker(BaseTaskBroker):
         except Exception as e:
             logger.warning("PocketBase count_today_applied_jobs failed: %s", e)
         return 0
+
+    async def get_applied_direct_companies(self, cooldown_days: int = 0) -> set[str]:
+        """Collect every direct-hire company with an unexpired communication.
+
+        The pool is walked page by page: a candidate with more than one page of lifetime
+        contacts would otherwise lose the older anchors and be re-contacted at a company
+        they have already approached.
+        """
+        url = self._jobs_collection_url()
+        loop = asyncio.get_running_loop()
+
+        items: list[dict[str, Any]] = []
+        try:
+            for page in range(1, APPLIED_POOL_MAX_PAGES + 1):
+                params = {
+                    "filter": "status='applied' && is_headhunter!=true",
+                    "page": str(page),
+                    "perPage": str(APPLIED_POOL_PAGE_SIZE),
+                    # is_headhunter has to be projected: the guard below reads it per record.
+                    "fields": "company_name,is_headhunter,applied_at,created",
+                }
+                resp = await loop.run_in_executor(
+                    None,
+                    lambda p=params: self.session.get(url, params=p, headers=self._headers()),
+                )
+                if resp.status_code != 200:
+                    logger.warning(
+                        "PocketBase get_applied_direct_companies stopped at page %d (%d)",
+                        page,
+                        resp.status_code,
+                    )
+                    break
+                batch = resp.json().get("items", [])
+                items.extend(batch)
+                if len(batch) < APPLIED_POOL_PAGE_SIZE:
+                    break
+        except Exception as e:
+            logger.warning("PocketBase get_applied_direct_companies failed: %s", e)
+            return set()
+
+        companies: set[str] = set()
+        for item in items:
+            name = (item.get("company_name") or "").strip()
+            if not is_direct_hire_company(name, item.get("is_headhunter")):
+                continue
+            if is_communication_expired(item, cooldown_days):
+                continue
+            companies.add(name)
+        return companies
+
+    async def clear_job_communication(self, record_id: str) -> dict[str, Any]:
+        url = f"{self._jobs_collection_url()}/{record_id}"
+        body = {
+            "status": JobRecordStatus.JD_SAVED.value,
+            # Empty string is PocketBase's canonical way to clear an optional date field.
+            "applied_at": "",
+            "applied_source": "",
+        }
+        loop = asyncio.get_running_loop()
+        try:
+            resp = await loop.run_in_executor(
+                None,
+                lambda: self.session.patch(url, json=body, headers=self._headers()),
+            )
+            if resp.status_code == 200:
+                return resp.json()
+            logger.error(
+                "Failed to release job communication %s in PocketBase (%d): %s",
+                record_id,
+                resp.status_code,
+                resp.text,
+            )
+        except Exception as e:
+            logger.warning("PocketBase clear_job_communication failed: %s", e)
+        return {}
 
     async def upsert_job_record(self, record_data: dict[str, Any]) -> dict[str, Any]:
         title = (record_data.get("title") or "").strip()
@@ -1467,6 +1601,10 @@ class PocketBaseTaskBroker(BaseTaskBroker):
                         )
                     if record_data.get("screening_audit"):
                         patch_body["screening_audit"] = record_data["screening_audit"]
+                    if record_data.get("applied_at"):
+                        patch_body["applied_at"] = record_data["applied_at"]
+                    if record_data.get("applied_source"):
+                        patch_body["applied_source"] = record_data["applied_source"]
 
                     patch_url = f"{url}/{rec_id}"
                     patch_resp = await loop.run_in_executor(
@@ -1523,6 +1661,8 @@ class PocketBaseTaskBroker(BaseTaskBroker):
             "screened_reason": record_data.get("screened_reason", ""),
             "relaxed_by_whitelist": bool(record_data.get("relaxed_by_whitelist", False)),
             "screening_audit": record_data.get("screening_audit", ""),
+            "applied_at": record_data.get("applied_at"),
+            "applied_source": record_data.get("applied_source", ""),
             "match_score": record_data.get("match_score"),
             "jd_key_requirements": record_data.get("jd_key_requirements", []),
             "greeting_message": record_data.get("greeting_message", ""),

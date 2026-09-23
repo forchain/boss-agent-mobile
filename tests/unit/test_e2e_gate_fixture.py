@@ -125,7 +125,7 @@ def test_gate_stops_residual_services_before_e2e_tests(e2e_project: Path, spawn)
     wait_for_port_bound(web_port)
     (e2e_project / ".boss_agent" / "web.pid").write_text(str(web.pid), encoding="utf-8")
 
-    result = _run_inner_pytest(e2e_project, _inner_env(WEB_PORT=web_port))
+    result = _run_inner_pytest(e2e_project, _inner_env(WEB_PORT=str(web_port)))
 
     assert result.returncode == 0, f"nested e2e run failed:\n{result.stdout}\n{result.stderr}"
     assert worker.poll() is not None, "residual Automation Worker survived the gate"

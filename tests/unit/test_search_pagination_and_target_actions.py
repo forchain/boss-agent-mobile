@@ -8,6 +8,7 @@ Unit tests for Spec #134, Tickets #135, #136, #137, #138:
 - Daily greeting safety limit & quota degradation
 """
 
+from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
 import pytest
@@ -159,11 +160,22 @@ async def test_broker_get_job_record_by_fingerprint_and_count_today():
     # Count today applied: initially 0
     assert await broker.count_today_applied_jobs() == 0
 
-    # Upgrade rec1 to applied
+    # Upgrading to `applied` without dispatching a message must not consume quota (Issue #199:
+    # historical imports and status edits must stay decoupled from the daily greeting limit).
     await broker.upsert_job_record(
         {
             "fingerprint": "fp_001",
             "status": "applied",
+        }
+    )
+    assert await broker.count_today_applied_jobs() == 0
+
+    # Only a real greeting dispatch stamps applied_at and consumes a slot
+    await broker.upsert_job_record(
+        {
+            "fingerprint": "fp_001",
+            "status": "applied",
+            "applied_at": datetime.now(UTC).isoformat(),
         }
     )
     assert await broker.count_today_applied_jobs() == 1
@@ -490,7 +502,8 @@ async def test_auto_apply_handler_quota_exhausted_degrades_to_matched():
     mock_driver = MagicMock()
     mock_driver.get_window_size.return_value = {"width": 1080, "height": 2400}
 
-    # Pre-populate broker with 20 applied jobs today
+    # Pre-populate broker with 20 greetings dispatched today (applied_at is what the quota counts)
+    today_iso = datetime.now(UTC).isoformat()
     for i in range(20):
         await broker.upsert_job_record(
             {
@@ -499,6 +512,7 @@ async def test_auto_apply_handler_quota_exhausted_degrades_to_matched():
                 "company_name": f"Company {i}",
                 "recruiter_name": f"Recruiter {i}",
                 "status": "applied",
+                "applied_at": today_iso,
             }
         )
 

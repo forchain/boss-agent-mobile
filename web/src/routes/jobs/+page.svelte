@@ -14,7 +14,9 @@
 		updateJobRecord,
 		deleteJobRecord,
 		getCandidateProfile,
-		createAutomationTask
+		createAutomationTask,
+		clearJobCommunication,
+		postCommunicationAction
 	} from '$lib/pocketbase';
 	import {
 		validateCanBlacklistCompany,
@@ -74,6 +76,11 @@
 	let blacklistNotice = $state('');
 	let isRestoring = $state(false);
 	let restoreNotice = $state('');
+
+	// Communication state clearance (Issue #203)
+	let isClearingCommunication = $state(false);
+	let isClearingCompany = $state(false);
+	let communicationNotice = $state('');
 
 	// Candidate profile & LLM settings
 	let profile = $state<CandidateProfile | null>(null);
@@ -575,6 +582,71 @@
 		}
 	}
 
+	async function handleClearCommunication() {
+		if (!selectedJob) return;
+		const targetId = selectedJob.id;
+		isClearingCommunication = true;
+		communicationNotice = '';
+		try {
+			const updated = await clearJobCommunication(targetId);
+			if (!updated) {
+				throw new Error('接口未返回更新后的记录');
+			}
+			jobs = jobs.map((j) =>
+				j.id === targetId
+					? {
+							...j,
+							status: 'jd_saved' as JobRecordStatus,
+							applied_at: null,
+							applied_source: ''
+						}
+					: j
+			);
+			communicationNotice = '✅ 已清除沟通状态，该职位回到待评估流（JD 保留）';
+			setTimeout(() => {
+				communicationNotice = '';
+			}, 5000);
+		} catch (e: any) {
+			communicationNotice = '❌ 清除沟通状态失败: ' + (e?.message || e);
+		} finally {
+			isClearingCommunication = false;
+		}
+	}
+
+	async function handleClearCompanyCommunication() {
+		if (!selectedJob) return;
+		const compName = (selectedJob.company_name || '').trim();
+		if (selectedJob.is_headhunter || isMaskedCompanyName(compName)) {
+			communicationNotice = 'ℹ️ 猎头代招与保密公司不参与同企避嫌，无需解除';
+			return;
+		}
+		if (
+			!confirm(
+				`确定解除直招企业「${compName}」的全部沟通避嫌吗？\n该公司所有已沟通岗位将回到待评估流（JD 保留），后续可重新投递。`
+			)
+		) {
+			return;
+		}
+
+		isClearingCompany = true;
+		communicationNotice = '';
+		try {
+			const data = await postCommunicationAction('clear_company', compName);
+			if (!data || !data.success) {
+				throw new Error(data?.error || '解除同企避嫌失败');
+			}
+			communicationNotice = `✅ ${data.notice || '已解除该企业全部避嫌记录'}`;
+			await loadJobs(currentPage);
+			setTimeout(() => {
+				communicationNotice = '';
+			}, 6000);
+		} catch (e: any) {
+			communicationNotice = '❌ ' + (e?.message || '解除同企避嫌失败');
+		} finally {
+			isClearingCompany = false;
+		}
+	}
+
 	async function handleBlacklistCompany() {
 		if (!selectedJob) return;
 		const compName = (selectedJob.company_name || '').trim();
@@ -635,8 +707,9 @@
 				candidate_profile: profile
 			});
 
-			await updateJobRecord(selectedJob.id, { status: 'applied' });
-			jobs = jobs.map((j) => (j.id === selectedJob.id ? { ...j, status: 'applied' } : j));
+			// Do NOT mark the record as applied here: the communication state (and its
+			// applied_at stamp) is written by the worker only once a greeting is actually
+			// dispatched. The realtime subscription above refreshes this card when that happens.
 			applyNotice = `🚀 投递任务已成功派发 (Task ID: ${task.id})，模拟器将自动执行沟通！`;
 			setTimeout(() => {
 				applyNotice = '';
@@ -1512,6 +1585,36 @@
 												{/if}
 											</button>
 										{:else}
+											{#if selectedJob.status === 'applied'}
+												<button
+													onclick={handleClearCommunication}
+													disabled={isClearingCommunication}
+													class="bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white font-bold px-4 py-2 rounded-xl text-xs shadow-lg shadow-amber-600/20 transition flex items-center space-x-1.5 disabled:opacity-50"
+													title="将该岗位从已沟通状态重置为待评估，保留已提取的 JD"
+												>
+													{#if isClearingCommunication}
+														<span class="animate-spin">🔄</span>
+														<span>清除中...</span>
+													{:else}
+														<span>🔄 清除沟通状态 (重置为待评估)</span>
+													{/if}
+												</button>
+												{#if !selectedJob.is_headhunter && !isMaskedCompanyName(selectedJob.company_name)}
+													<button
+														onclick={handleClearCompanyCommunication}
+														disabled={isClearingCompany}
+														class="bg-slate-800 hover:bg-slate-700 border border-amber-800/70 text-amber-300 hover:text-amber-100 px-3.5 py-2 rounded-xl text-xs transition flex items-center space-x-1.5 disabled:opacity-50"
+														title="解除该直招企业的同企避嫌，其全部已沟通岗位回到待评估流"
+													>
+														{#if isClearingCompany}
+															<span class="animate-spin">🌀</span>
+															<span>解除中...</span>
+														{:else}
+															<span>🏢 解除该公司全部避嫌</span>
+														{/if}
+													</button>
+												{/if}
+											{/if}
 											<button
 												onclick={handleDispatchApply}
 												disabled={isDispatchingApply}
@@ -1572,6 +1675,22 @@
 									</div>
 								{/if}
 							</div>
+						</div>
+					{/if}
+
+					<!-- Communication clearance feedback lives outside the evaluation branch: clearing a
+					     job flips it back to 待评估, which swaps the whole section above for the
+					     "开始 AI 匹配度评估" prompt. -->
+					{#if communicationNotice}
+						<div class="p-2.5 bg-slate-950/90 border {communicationNotice.startsWith('✅') ? 'border-emerald-800 text-emerald-300' : communicationNotice.startsWith('ℹ️') ? 'border-slate-700 text-slate-300' : 'border-rose-800 text-rose-300'} rounded-xl text-xs flex items-center justify-between">
+							<span>{communicationNotice}</span>
+							<button
+								onclick={() => (communicationNotice = '')}
+								class="text-slate-500 hover:text-slate-300 ml-2"
+								title="关闭提示"
+							>
+								✕
+							</button>
 						</div>
 					{/if}
 				</div>

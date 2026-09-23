@@ -137,6 +137,7 @@ def spawn() -> Iterator[Callable[..., subprocess.Popen]]:
                 stderr=stderr if stderr is not None else subprocess.DEVNULL,
                 env=env,
                 start_new_session=True,
+                text=True,
             )
         started.append(process)
         return process

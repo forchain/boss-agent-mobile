@@ -14,6 +14,7 @@ from droid_agent_core.gestures import (
     calculate_probe_coordinate,
 )
 from droid_agent_core.locators import (
+    By,
     LocatorRegistry,
     UISelector,
     get_global_locator_registry,
@@ -24,8 +25,10 @@ from .models import (
     KNOWN_CITIES,
     RECRUITER_TITLE_KEYWORDS,
     AuthStatus,
+    ChatButtonState,
     FilterConfig,
     JobPosting,
+    classify_chat_button,
     clean_job_title,
     compute_job_fingerprint,
     is_invalid_company_name,
@@ -1016,6 +1019,16 @@ class FilterDialogPage(BaseBossPage):
             return True
         return False
 
+    def clear_filters(self, timeout_sec: float = 10.0) -> bool:
+        """Open filter dialog, click reset button, and confirm to clear all filters."""
+        if not self.is_dialog_open():
+            opened = self.open_filter(timeout_sec=timeout_sec)
+            if not opened:
+                return False
+        self.reset_filter()
+        time.sleep(0.3)
+        return self.confirm_filter(timeout_sec=timeout_sec)
+
     def close_dialog(self) -> bool:
         """Close the filter dialog without applying changes."""
         elem = self.find_by_key("filter.close_btn", timeout_sec=2.0)
@@ -1025,14 +1038,18 @@ class FilterDialogPage(BaseBossPage):
         return False
 
     def apply_filters(self, config: FilterConfig | None, timeout_sec: float = 10.0) -> bool:
-        """Apply all specified filter dimensions in order."""
+        """Apply all specified filter dimensions in order, clearing previous conditions first."""
         if not config or not config.has_filters:
-            return False
+            return self.clear_filters(timeout_sec=timeout_sec)
 
         if not self.is_dialog_open():
             opened = self.open_filter(timeout_sec=timeout_sec)
             if not opened:
                 return False
+
+        # Always reset first to prevent previous search conditions from persisting
+        self.reset_filter()
+        time.sleep(0.3)
 
         def _is_effective(val: str | None) -> bool:
             return bool(val and val.strip() and val.strip() != "不限")
@@ -1478,6 +1495,32 @@ class JobDetailPage(BaseBossPage):
             salary_range=salary or "面议",
             job_description=desc or "无详细岗位描述",
         )
+
+    def get_chat_button_state(self, timeout_sec: float = 2.0) -> ChatButtonState:
+        """Read the engagement state of the detail page call-to-action button (`btn_chat`).
+
+        Returns UNKNOWN when the button is absent or its text is unrecognised, so callers keep
+        their normal extraction flow instead of skipping a possibly live posting.
+        """
+        elem = self.find_optional_element(
+            UISelector(By.ID, "com.hpbr.bosszhipin:id/btn_chat", description="btn_chat"),
+            timeout_sec=0.0,
+        ) or self.find_by_key("job_detail.chat_btn", timeout_sec=timeout_sec)
+        if not elem:
+            return ChatButtonState.UNKNOWN
+
+        text = getattr(elem, "text", "") or ""
+        enabled = True
+        try:
+            raw_enabled = elem.get_attribute("enabled")
+        except Exception:
+            raw_enabled = None
+        if isinstance(raw_enabled, str):
+            enabled = raw_enabled.strip().lower() not in ("false", "0")
+        elif raw_enabled is not None:
+            enabled = bool(raw_enabled)
+
+        return classify_chat_button(text, enabled=enabled)
 
     def open_chat(self, timeout_sec: float = 5.0) -> bool:
         """Click '立即沟通' / chat entry button to open chat dialog from job detail screen."""
