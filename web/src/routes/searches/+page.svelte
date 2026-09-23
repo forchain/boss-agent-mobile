@@ -158,7 +158,7 @@
 		isPocketBaseOnline = await checkPocketBaseHealth();
 		try {
 			const items = await listSavedSearches();
-			if (items && items.length > 0) {
+			if (items) {
 				searches = items;
 			}
 		} catch (err) {
@@ -242,10 +242,10 @@
 			cron_expression: '0 9 * * *',
 			is_enabled: false,
 			filter: {
-				education: '',
+				education: '不限',
 				salary: '',
-				experience: '',
-				activity: '',
+				experience: '不限',
+				activity: '不限',
 				company_scales: [],
 				industries: []
 			}
@@ -270,10 +270,10 @@
 			cron_expression: search.cron_expression || '',
 			is_enabled: !!search.is_enabled,
 			filter: {
-				education: search.filter?.education || '',
+				education: search.filter?.education || '不限',
 				salary: normalizeSalary(search.filter?.salary),
-				experience: search.filter?.experience || '',
-				activity: search.filter?.activity || '',
+				experience: search.filter?.experience || '不限',
+				activity: search.filter?.activity || '不限',
 				company_scales: [...(search.filter?.company_scales || [])],
 				industries: [...(search.filter?.industries || [])]
 			}
@@ -339,10 +339,10 @@
 				cron_expression: modalForm.cron_expression.trim(),
 				is_enabled: modalForm.is_enabled,
 				filter: {
-					education: modalForm.filter.education === '不限' ? undefined : modalForm.filter.education || undefined,
-					salary: modalForm.filter.salary === '不限' ? undefined : modalForm.filter.salary || undefined,
-					experience: modalForm.filter.experience === '不限' ? undefined : modalForm.filter.experience || undefined,
-					activity: modalForm.filter.activity === '不限' ? undefined : modalForm.filter.activity || undefined,
+					education: !modalForm.filter.education || modalForm.filter.education === '不限' ? undefined : modalForm.filter.education,
+					salary: !modalForm.filter.salary || modalForm.filter.salary === '不限' ? undefined : modalForm.filter.salary,
+					experience: !modalForm.filter.experience || modalForm.filter.experience === '不限' ? undefined : modalForm.filter.experience,
+					activity: !modalForm.filter.activity || modalForm.filter.activity === '不限' ? undefined : modalForm.filter.activity,
 					company_scales: modalForm.filter.company_scales,
 					industries: modalForm.filter.industries
 				}

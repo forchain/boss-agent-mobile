@@ -577,7 +577,9 @@ async def test_scrape_jobs_handler_aborts_when_search_fails(broker, mock_driver)
     finished_task = await broker.get_task(task.id)
     assert finished_task is not None
     assert finished_task.status == TaskStatus.FAILED
-    assert any("未能进入搜索页面或执行关键词搜索" in log and "Agent" in log for log in finished_task.logs)
+    assert any(
+        "未能进入搜索页面或执行关键词搜索" in log and "Agent" in log for log in finished_task.logs
+    )
     assert not any("Executed search for keyword 'Agent'" in log for log in finished_task.logs)
 
 
@@ -607,6 +609,116 @@ async def test_auto_apply_handler_aborts_when_search_fails(broker, mock_driver):
     finished_task = await broker.get_task(task.id)
     assert finished_task is not None
     assert finished_task.status == TaskStatus.FAILED
-    assert any("未能进入搜索页面或执行关键词搜索" in log and "Agent" in log for log in finished_task.logs)
+    assert any(
+        "未能进入搜索页面或执行关键词搜索" in log and "Agent" in log for log in finished_task.logs
+    )
     assert not any("Navigated to search results for 'Agent'" in log for log in finished_task.logs)
 
+
+@pytest.mark.asyncio
+async def test_scrape_jobs_handler_clears_filters_when_enable_filter_false(broker, mock_driver):
+    """Verify ScrapeJobsHandler actively clears filters when enable_filter is False."""
+    mock_title = MagicMock(text="AI 工程师")
+    mock_company = MagicMock(text="科技公司")
+    mock_salary = MagicMock(text="30-50K")
+    mock_desc = MagicMock(text="研发岗位")
+
+    def mock_find(by, value):
+        if "job_name" in value or "tv_job_name" in value:
+            return [mock_title]
+        if "company_name" in value or "tv_company_name" in value:
+            return [mock_company]
+        if "salary" in value or "tv_job_salary" in value:
+            return [mock_salary]
+        if "desc" in value or "tv_job_desc" in value:
+            return [mock_desc]
+        return [MagicMock()]
+
+    mock_driver.find_elements.side_effect = mock_find
+
+    config = WorkerConfig(worker_id="test-worker-clear-filter", poll_interval_sec=0.01)
+    context = WorkerContext(config=config, driver=mock_driver)
+
+    worker = AutomationWorker(
+        config=config,
+        broker=broker,
+        context=context,
+        handlers=[ScrapeJobsHandler(llm_client=MagicMock())],
+    )
+
+    task = await broker.create_task(
+        task_type=TaskType.SCRAPE_JOBS,
+        payload={
+            "keyword": "agent",
+            "enable_filter": False,
+            "max_jobs": 1,
+        },
+    )
+
+    with patch("boss_agent.feed_pipeline.FilterDialogPage") as mock_filter_cls:
+        mock_filter_inst = MagicMock()
+        mock_filter_cls.return_value = mock_filter_inst
+
+        executed = await worker.run_once()
+        assert executed is True
+
+        mock_filter_inst.clear_filters.assert_called_once()
+
+    finished_task = await broker.get_task(task.id)
+    assert finished_task is not None
+    assert finished_task.status == TaskStatus.SUCCESS
+    assert any("clearing" in log.lower() for log in finished_task.logs)
+
+
+@pytest.mark.asyncio
+async def test_auto_apply_handler_clears_filters_when_no_filter(broker, mock_driver):
+    """Verify AutoApplyHandler actively clears filters when no filter conditions are specified."""
+    mock_title = MagicMock(text="AI 架构师")
+    mock_company = MagicMock(text="科技公司")
+    mock_salary = MagicMock(text="30-50K")
+    mock_desc = MagicMock(text="研发岗位")
+
+    def mock_find(by, value):
+        if "job_name" in value or "tv_job_name" in value:
+            return [mock_title]
+        if "company_name" in value or "tv_company_name" in value:
+            return [mock_company]
+        if "salary" in value or "tv_job_salary" in value:
+            return [mock_salary]
+        if "desc" in value or "tv_job_desc" in value:
+            return [mock_desc]
+        return [MagicMock()]
+
+    mock_driver.find_elements.side_effect = mock_find
+
+    config = WorkerConfig(worker_id="test-worker-apply-clear-filter", poll_interval_sec=0.01)
+    context = WorkerContext(config=config, driver=mock_driver)
+
+    worker = AutomationWorker(
+        config=config,
+        broker=broker,
+        context=context,
+        handlers=[AutoApplyHandler(llm_client=MagicMock())],
+    )
+
+    task = await broker.create_task(
+        task_type=TaskType.AUTO_APPLY,
+        payload={
+            "keyword": "agent",
+            "enable_filter": True,
+            "filter": {},  # empty filter dict -> has_filters is False
+        },
+    )
+
+    with patch("boss_agent.feed_pipeline.FilterDialogPage") as mock_filter_cls:
+        mock_filter_inst = MagicMock()
+        mock_filter_cls.return_value = mock_filter_inst
+
+        executed = await worker.run_once()
+        assert executed is True
+
+        mock_filter_inst.clear_filters.assert_called_once()
+
+    finished_task = await broker.get_task(task.id)
+    assert finished_task is not None
+    assert any("clearing" in log.lower() for log in finished_task.logs)

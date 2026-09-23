@@ -366,15 +366,15 @@ class JobFeedPipeline:
         return False
 
     async def _apply_filters(self, config: FeedStreamConfig) -> None:
-        """Apply the pre-search industry and general filter dialogs, tolerating failures."""
-        filter_cfg = config.filter_config
-        if not config.enable_filter:
-            await self._log("enable_filter is False; skipped job filtering")
-            return
-        if filter_cfg is None:
-            return
+        """Apply the pre-search filter dialogs, clearing stale conditions when none apply.
 
-        if filter_cfg.has_industry_filters:
+        A previous run's conditions persist inside the app's filter dialog, so a run with
+        no general filters (or with filtering disabled) must actively clear them rather
+        than inherit somebody else's search.
+        """
+        filter_cfg = config.filter_config if config.enable_filter else None
+
+        if filter_cfg and filter_cfg.has_industry_filters:
             await self._log(f"Applying industry filter: {filter_cfg.industries}")
             try:
                 IndustryFilterDialogPage(self.driver).apply_industry_filters(
@@ -383,15 +383,24 @@ class JobFeedPipeline:
             except Exception as ex:
                 await self._log(f"Notice applying industry filter: {ex}")
 
-        if filter_cfg.has_filters:
+        filter_page = FilterDialogPage(self.driver)
+        if filter_cfg and filter_cfg.has_filters:
             await self._log(
                 f"Applying general filters: education={filter_cfg.education}, "
                 f"salary={filter_cfg.salary}, experience={filter_cfg.experience}"
             )
             try:
-                FilterDialogPage(self.driver).apply_filters(filter_cfg, timeout_sec=5.0)
+                filter_page.apply_filters(filter_cfg, timeout_sec=5.0)
             except Exception as ex:
-                await self._log(f"Notice applying general filter: {ex}")
+                await self._log(f"Notice applying general filters: {ex}")
+        else:
+            await self._log(
+                "No active general filters configured; actively clearing filter dialog conditions"
+            )
+            try:
+                filter_page.clear_filters(timeout_sec=5.0)
+            except Exception as ex:
+                await self._log(f"Notice clearing general filters: {ex}")
 
     async def _scan_feed(
         self,

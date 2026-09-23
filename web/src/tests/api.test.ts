@@ -4,7 +4,30 @@ import path from 'node:path';
 import { setupSettingsSandbox, type SettingsSandbox } from './settingsSandbox';
 import { POST as handleResumePost } from '../routes/api/candidate/resume/+server';
 import { POST as handleMatchPost } from '../routes/api/match/evaluate/+server';
-import { getCandidateProfile, saveCandidateProfile, createAutomationTask } from '../lib/pocketbase';
+import { getCandidateProfile, saveCandidateProfile, createAutomationTask, pb } from '../lib/pocketbase';
+
+// Issue #214: every automation task this suite persists is hard-deleted on teardown.
+// A leftover `pending` record is claimed by a live Automation Worker (poll interval
+// ~2s) and driven onto the phone, so test runs must never leave one behind.
+const createdTaskIds: string[] = [];
+
+function trackTask<T extends { id: string }>(task: T): T {
+	createdTaskIds.push(task.id);
+	return task;
+}
+
+afterAll(async () => {
+	for (const id of createdTaskIds) {
+		try {
+			await pb.collection('automation_tasks').delete(id);
+		} catch (err) {
+			// Offline runs never persisted the id; any other error means a pending
+			// record survived teardown and is still queued for the worker.
+			console.warn(`[api.test] failed to delete test task ${id}`, err);
+		}
+	}
+	createdTaskIds.length = 0;
+});
 
 describe('PocketBase Client Helpers', () => {
 	it('returns null when no candidate profile has been uploaded or saved', async () => {
@@ -34,10 +57,10 @@ describe('PocketBase Client Helpers', () => {
 	});
 
 	it('creates automation tasks in pending status', async () => {
-		const task = await createAutomationTask('AUTO_APPLY', {
+		const task = trackTask(await createAutomationTask('AUTO_APPLY', {
 			keyword: 'agent',
 			min_score: 80
-		});
+		}));
 		expect(task.id).toBeDefined();
 		expect(task.task_type).toBe('AUTO_APPLY');
 		expect(task.status).toBe('pending');
@@ -47,10 +70,10 @@ describe('PocketBase Client Helpers', () => {
 		const { listAutomationTasks, getAutomationTask, rerunTask } = await import('../lib/pocketbase');
 
 		// 1. Create a task
-		const original = await createAutomationTask('SCRAPE_JOBS', {
-			keyword: 'flutter',
+		const original = trackTask(await createAutomationTask('SCRAPE_JOBS', {
+			keyword: 'python',
 			min_score: 85
-		});
+		}));
 		expect(original.id).toBeDefined();
 
 		// 2. Query task list
@@ -62,14 +85,15 @@ describe('PocketBase Client Helpers', () => {
 		const fetched = await getAutomationTask(original.id);
 		expect(fetched).not.toBeNull();
 		expect(fetched?.task_type).toBe('SCRAPE_JOBS');
-		expect(fetched?.payload.keyword).toBe('flutter');
+		expect(fetched?.payload.keyword).toBe('python');
 
 		// 4. Re-run task
 		const rerun = await rerunTask(original.id);
 		expect(rerun).not.toBeNull();
+		if (rerun) trackTask(rerun);
 		expect(rerun?.id).not.toBe(original.id);
 		expect(rerun?.task_type).toBe('SCRAPE_JOBS');
-		expect(rerun?.payload.keyword).toBe('flutter');
+		expect(rerun?.payload.keyword).toBe('python');
 		expect(rerun?.status).toBe('pending');
 	});
 
@@ -109,6 +133,8 @@ describe('PocketBase Client Helpers', () => {
 			target_task_type: 'AUTO_APPLY',
 			is_enabled: false,
 			cron_expression: '0 9 * * *',
+			target_action: 'save_jd',
+			max_jobs: 30,
 			filter: {
 				education: '硕士',
 				salary: '30-50K',
@@ -121,16 +147,33 @@ describe('PocketBase Client Helpers', () => {
 
 		expect(created.id).toBe('test_ai_agent_strategy');
 		expect(created.name).toBe('AI Agent Strategy');
+		expect(created.target_action).toBe('save_jd');
+		expect(created.max_jobs).toBe(30);
 		expect(created.filter?.company_scales).toEqual(['100-499人', '500-999人']);
 		expect(created.filter?.industries).toEqual(['人工智能', '互联网']);
 
 		const updated = await updateSavedSearch('test_ai_agent_strategy', {
 			name: 'AI Agent Strategy Updated',
+			keyword: 'Agent Engineer',
+			target_action: 'auto_apply',
+			max_jobs: 50,
+			filter: {
+				education: '博士',
+				salary: '50K以上',
+				experience: '10年以上',
+				activity: '今日活跃',
+				company_scales: ['10000人以上'],
+				industries: ['人工智能']
+			},
 			is_enabled: true
 		});
 		expect(updated.name).toBe('AI Agent Strategy Updated');
+		expect(updated.keyword).toBe('Agent Engineer');
+		expect(updated.target_action).toBe('auto_apply');
+		expect(updated.max_jobs).toBe(50);
 		expect(updated.is_enabled).toBe(true);
-		expect(updated.filter?.education).toBe('硕士');
+		expect(updated.filter?.education).toBe('博士');
+		expect(updated.filter?.salary).toBe('50K以上');
 
 		await deleteSavedSearch('test_ai_agent_strategy');
 	});

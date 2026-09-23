@@ -20,6 +20,8 @@ export const load: PageServerLoad = async ({ parent, fetch }) => {
 					enable_search: r.enable_search !== false,
 					enable_filter: r.enable_filter !== false,
 					filter: r.filter || {},
+					target_action: r.target_action || (r.target_task_type === 'AUTO_APPLY' ? 'auto_apply' : 'save_jd'),
+					max_jobs: r.max_jobs ?? 30,
 					cron_expression: r.cron_expression || '',
 					is_enabled: !!r.is_enabled,
 					last_run_at: r.last_run_at,

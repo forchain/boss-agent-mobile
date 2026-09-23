@@ -511,7 +511,7 @@ async def test_scrape_jobs_cancelled_task_does_not_execute_fallback():
 
     task = await broker.create_task(
         task_type=TaskType.SCRAPE_JOBS,
-        payload={"keyword": "flutter", "enable_search": False, "max_jobs": 5},
+        payload={"keyword": "python", "enable_search": False, "max_jobs": 5},
     )
     # Cancel task before loop starts
     await broker.update_task_status(task.id, status=TaskStatus.CANCELLED)
@@ -549,7 +549,7 @@ async def test_scrape_jobs_fallback_ignores_unspecified_title():
 
     task = await broker.create_task(
         task_type=TaskType.SCRAPE_JOBS,
-        payload={"keyword": "flutter", "enable_search": False, "max_jobs": 5},
+        payload={"keyword": "python", "enable_search": False, "max_jobs": 5},
     )
 
     with (
@@ -585,7 +585,7 @@ async def test_scrape_jobs_detail_enrichment_does_not_overwrite_title_with_unspe
 
     task = await broker.create_task(
         task_type=TaskType.SCRAPE_JOBS,
-        payload={"keyword": "flutter", "enable_search": False, "max_jobs": 1},
+        payload={"keyword": "python", "enable_search": False, "max_jobs": 1},
     )
 
     card_elem = MagicMock()
