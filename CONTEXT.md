@@ -52,14 +52,6 @@ _Avoid_: API gateway, microservice gateway, proxy service
 The lightweight persistence and event mechanism utilizing PocketBase tables and Realtime SSE subscriptions for task queueing, optimistic lease locks, and live UI status updates.
 _Avoid_: Redis broker, RabbitMQ cluster, in-memory queue
 
-**Job Record Store (`JobRecordStore`)**:
-The dedicated repository seam managing Job Record persistence, canonical deduplication fingerprints, direct-hire enterprise exclusion pools, daily greeting quota counting, and re-application cool-down lifecycle calculations independently from task lease brokerage.
-_Avoid_: db helper, raw collection query, job cache
-
-**Mobile Job Feed Pipeline (`JobFeedPipeline`)**:
-The deep feed navigation and extraction engine encapsulating Two-Anchor Search Entry, bounded Back-only recovery, viewport card pagination, call-to-action button state checking, inline description hotspot expansion, and feed boundary termination without procedural handler micromanagement.
-_Avoid_: scroll helper, feed crawler, page looper
-
 **Automation Worker**:
 The dedicated out-of-process execution daemon bound 1:1 to a Virtual Device Session that claims pending tasks from the State Stream Broker, executes mobile UI automation workflows, and reports execution telemetry.
 _Avoid_: In-process background task, Celery pool, worker thread
@@ -144,10 +136,6 @@ _Avoid_: runtime config, app data folder, temporary settings
 The system-managed directory housing runtime database state (`pb_data`), caches, execution logs, and transient artifacts. Never used as a manual configuration store.
 _Avoid_: config store, settings dir, user preference folder
 
-
-**Candidate Screener (`CandidateScreener`)**:
-The unified deep module consolidating zero-token card preliminary keyword checks, App-Enforced Filters, Whitelist Relaxation, JD semantic blacklist evaluation, and living Greeting Prompt drafting behind a minimal two-method interface (`evaluate_card` and `evaluate_job`). Supersedes shallow pass-through graph wrappers.
-_Avoid_: filter runner, card checker, matcher script
 
 **Candidate Screener Graph (`JobApplicationState`)**:
 The stateful LangGraph orchestrator governing the complete multi-tier lifecycle from card-level keyword filtering, JD extraction, semantic screening, to targeted greeting generation.
