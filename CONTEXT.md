@@ -222,3 +222,12 @@ _Avoid_: UI logging, debug prints, action trace
 The system safety threshold restricting outbound mobile greeting volume per calendar day to protect user accounts from platform rate limits and anti-bot challenges, evaluated strictly against successful agent greeting dispatches (`applied_at >= today`), automatically degrading `auto_apply` to `save_jd` upon exhaustion.
 _Avoid_: daily quota, message cap, max chats
 
+**System Doctor (`doctor.sh`)**:
+The holistic health diagnostic and remediation CLI tool that inspects end-to-end operational readiness across PocketBase State Stream, SvelteKit Web Dashboard, Python Worker, Appium automation server, Android Virtual Device, and LLM configuration with actionable remediation steps.
+_Avoid_: sanity script, health checker, debug helper
+
+**Dedicated Runner Scripts (`emulator.sh`, `appium.sh`, `pocketbase.sh`, `web.sh`, `run.sh`)**:
+The first-class shell lifecycle scripts managing process states (start, stop, status, daemon mode) with persistent logging and auto-attach log streaming across all operational infrastructure tiers.
+_Avoid_: helper scripts, launcher utils, batch scripts
+
+

@@ -41,9 +41,18 @@ boss-agent-mobile/
 ├── CONTEXT.md                    # Canonical domain glossary (Zero implementation noise)
 ├── ACCEPTANCE.md                 # This executable acceptance baseline
 ├── docs/
-│   └── adr/                      # Architectural Decision Records (0001-0005)
+│   ├── adr/                      # Architectural Decision Records (0001-0012, README.md index)
+│   └── agents/                   # Agent operational guidelines & protocols
 ├── scripts/
-│   └── bootstrap.py              # Idempotent environment provisioner
+│   ├── bootstrap.py              # Idempotent environment provisioner
+│   └── run_live_test.py          # Live device smoke harness runner
+├── doctor.sh                     # System health diagnostics & remediation CLI
+├── emulator.sh (emu.sh)          # Dedicated AVD lifecycle manager
+├── appium.sh (app.sh)            # Dedicated Appium server runner
+├── pocketbase.sh (pb.sh)         # PocketBase State Stream Broker runner
+├── web.sh                        # SvelteKit Web Dashboard runner
+├── run.sh                        # Live test harness & worker CLI
+├── web/                          # Full-Stack SvelteKit Web Management Dashboard
 ├── src/
 │   ├── droid_agent_core/         # 100% Agnostic Android Automation Engine
 │   │   ├── driver/               # ADB & Appium session management
@@ -52,9 +61,12 @@ boss-agent-mobile/
 │   │   ├── interceptors/         # Global dialog/popup handlers
 │   │   └── llm/                  # Agnostic LLM reasoning contracts
 │   └── boss_agent/               # Boss 直聘 Application Domain Layer
+│       ├── broker/               # PocketBase persistence adapter & schema provisioner
+│       ├── worker/               # Dedicated out-of-process automation daemon & handlers
 │       ├── pages/                # Page Objects (JobListPage, JobDetailPage, etc.)
-│       ├── workflows/            # Smoke harness & session persistence
-│       └── models/               # Domain dataclasses (JobPosting, AuthStatus)
+│       ├── workflows/            # Fast entry search, smoke harness & session persistence
+│       ├── graph.py              # LangGraph multi-agent candidate screener workflow
+│       └── models.py             # Domain models (JobPosting, ScreeningPolicy, SavedSearch)
 └── tests/
     ├── unit/                     # Fast isolated mock/unit tests
     └── e2e/                      # Integration & smoke harness tests
