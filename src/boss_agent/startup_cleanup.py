@@ -98,15 +98,19 @@ class StartupCleanupGate:
             return None
         self._armed = True
 
-        async with self._arm_lock:
-            if await self._pending_cleanups():
-                logger.info("Startup 拒信清扫 already queued; not queueing a second one")
-                return None
-            task = await self.broker.create_task(
-                task_type=TaskType.CHECK_CHAT, payload=_startup_cleanup_payload()
-            )
+        try:
+            async with self._arm_lock:
+                if await self._pending_cleanups():
+                    logger.info("Startup 拒信清扫 already queued; not queueing a second one")
+                    return None
+                task = await self.broker.create_task(
+                    task_type=TaskType.CHECK_CHAT, payload=_startup_cleanup_payload()
+                )
 
-        return await self._settle_race(task)
+            return await self._settle_race(task)
+        except Exception as e:
+            logger.warning("Could not arm startup 拒信清扫 barrier: %s", e)
+            return None
 
     async def held_types(self) -> frozenset[TaskType]:
         """Every task type that must wait for the startup cleanup to settle.
@@ -114,7 +118,13 @@ class StartupCleanupGate:
         Resolved in one queue read so a claim pass over a long pending queue costs a
         single query rather than one per task.
         """
-        if not self.enabled or not await self._pending_cleanups():
+        if not self.enabled:
+            return frozenset()
+        try:
+            if not await self._pending_cleanups():
+                return frozenset()
+        except Exception as e:
+            logger.warning("Could not check pending cleanups for startup barrier: %s", e)
             return frozenset()
         return SEARCH_TASK_TYPES
 
