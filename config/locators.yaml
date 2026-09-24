@@ -207,29 +207,6 @@ communication_list:
   outbound_status:
     - "com.hpbr.bosszhipin:id/iv_msg_status"
     - "//*[@resource-id='com.hpbr.bosszhipin:id/iv_msg_status']"
-  # The last-message stamp the card renders ("14:30" / "昨天 10:20" / "09-21" /
-  # "2023-11-04"). It is what lets a later CHECK_CHAT run stop paging once it
-  # reaches cards older than its previous run (#239). Unmeasured on hardware, so a
-  # child-node scan backs these ids up; a value that does not parse as a stamp is
-  # discarded rather than used, because a mis-read stamp would truncate the scan.
-  #
-  # Cost: one lookup per card per viewport, alongside the four the row already spends
-  # (name, message, status, descriptor), and the child scan only runs when every id
-  # here misses. ADR 0011's short-list rule targets a probe repeated per recovery
-  # step; this one is paid once per card and buys the end of the scan, so the list
-  # stays as short as the measured ids allow and no shorter.
-  #
-  # Overlap: `tv_msg_time` also matches `message_text`'s `contains(@resource-id,
-  # 'tv_msg')` fallback, so on a build where the message node is not `tv_msg` that
-  # fallback could return the stamp. Reading a message is a plain text field with no
-  # parse gate to catch it, so the overlap is left as-is rather than filtered: a card
-  # skipped for a missing message node is invisible, where a wrong message at least
-  # reaches the classifier and its logs.
-  card_time:
-    - "com.hpbr.bosszhipin:id/tv_time"
-    - "com.hpbr.bosszhipin:id/tv_msg_time"
-    - "com.hpbr.bosszhipin:id/tv_date"
-    - "//*[contains(@resource-id, 'tv_time') or contains(@resource-id, 'tv_date')]"
   # On-screen back affordance, probed once per recovery step *before* the hardware
   # Back key (issue #228): a page back button always stays inside Boss, where a
   # hardware Back from a chat room or the message column can walk out to the
@@ -258,9 +235,10 @@ chat:
     - "//*[@resource-id='com.hpbr.bosszhipin:id/et_message']"
     - "//android.widget.EditText[@hint='介绍自己回复率更高哦~']"
     - "//android.widget.EditText[contains(@resource-id, 'scrollbar') or contains(@resource-id, 'chat') or contains(@resource-id, 'send') or contains(@resource-id, 'msg') or contains(@resource-id, 'editor')]"
+  # Single verified anchor for the paper-airplane send button inside ChatRoomActivity
+  # (ADR 0011: no bloated fallback cascade; exactly 1 verified XPath to prevent ~5s miss penalties).
   send_btn:
-    - "//*[@resource-id='com.hpbr.bosszhipin:id/btn_send']"
-    - "//*[@text='发送']"
+    - "//android.widget.LinearLayout[@resource-id='com.hpbr.bosszhipin:id/chat_functions']/android.widget.LinearLayout/android.widget.ImageView"
   back_btn:
     - "//*[@resource-id='com.hpbr.bosszhipin:id/iv_back']"
     - "//*[@content-desc='返回' or contains(@resource-id, 'iv_back') or contains(@resource-id, 'btn_back')]"

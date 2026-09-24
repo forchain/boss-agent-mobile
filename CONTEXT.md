@@ -257,13 +257,9 @@ _Avoid_: back-button scanning, navigation cascade, retry loop
 The startup rule that a service queues one marked `CHECK_CHAT` before anything else and holds every search task (`SCRAPE_JOBS` / `AUTO_APPLY`) until it reaches a terminal state, so employers that already rejected the candidate are in the company blacklist before the first search or greeting is dispatched. Derived from the pending queue rather than from process memory, so a cleanup queued by the Automation Scheduler binds the Automation Worker too, and any terminal outcome releases the barrier instead of deadlocking the pipeline (ADR 0013).
 _Avoid_: startup lock, init mutex, 启动检查
 
-**Card Stamp (`card_time` / `CardTimestamp`)**:
-The last-message time a 仅沟通 card renders next to its conversation (`14:30`, `昨天 10:20`, `09-21`, `2023-11-04`). Parsed together with the resolution it was rendered at, so a day-wide `09-21` is never mistaken for the instant `09-21T00:00` during a comparison; an unreadable stamp reads as unknown rather than as old (issue #239).
-_Avoid_: activity time, posted_at, timestamp
-
-**Execution Cursor (上次执行时间)**:
-The completion time of the previous `CHECK_CHAT` run that actually acted, read back from the State Stream Broker's SUCCESS task records and used as the stop line for paging: once the run has scrolled past it, every card below is older than the last run and was already judged. The opening page is exempt, because it is the only place a state the previous run never saw can be sitting. A Dry-Run run never supplies a cursor (issue #239).
-_Avoid_: last seen, watermark, checkpoint
+**First-Screen Scan (首屏扫描)**:
+The `CHECK_CHAT` traversal rule: a run reads the opening screen of the 仅沟通 list, re-reads it after every acknowledgment, and stops once nothing on it is new — it never scrolls. The list is newest-first and marking a conversation 不感兴趣 drops it from the list, so the top of the screen is both where new state arrives and where the list drains from. Coverage is therefore bounded by the screen: a card below the fold is reached only after the cards above it leave the list (issue #239, ADR 0015).
+_Avoid_: pagination, infinite scroll, full-list sweep
 
 **System Doctor (`doctor.sh`)**:
 The holistic health diagnostic and remediation CLI tool that inspects end-to-end operational readiness across PocketBase State Stream, SvelteKit Web Dashboard, Python Worker, Appium automation server, Android Virtual Device, and LLM configuration with actionable remediation steps.

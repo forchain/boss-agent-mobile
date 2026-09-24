@@ -103,23 +103,6 @@ class BaseTaskBroker(ABC):
         pass
 
     @abstractmethod
-    async def list_recent_successful_completions(
-        self, task_type: TaskType | str, limit: int = 10
-    ) -> list[AutomationTask]:
-        """The most recently finished SUCCESS runs of one task type, newest first.
-
-        A SUCCESS task record *is* the durable record of when a task type last ran,
-        so the newest one doubles as that type's execution cursor (#239). Reading it
-        from the task history rather than a separate store means the cursor can never
-        drift from the runs it describes, and it needs no schema of its own.
-
-        The payload is returned with each task because only the caller can say which
-        successful runs count: a CHECK_CHAT dry run succeeds without acting, so it
-        must not become the window a later real run trusts.
-        """
-        pass
-
-    @abstractmethod
     def subscribe_tasks(self, callback: Callable[[str, AutomationTask], Any]) -> None:
         """Register a callback for task lifecycle events (create, update)."""
         pass
@@ -722,21 +705,6 @@ class InMemoryTaskBroker(BaseTaskBroker):
         await self._notify_subscribers("update", requeued)
         return requeued
 
-    async def list_recent_successful_completions(
-        self, task_type: TaskType | str, limit: int = 10
-    ) -> list[AutomationTask]:
-        resolved_type = task_type if isinstance(task_type, TaskType) else TaskType(task_type)
-        async with self._lock:
-            completed = [
-                t.model_copy(deep=True)
-                for t in self._tasks.values()
-                if t.status == TaskStatus.SUCCESS and t.task_type == resolved_type
-            ]
-        # A SUCCESS task's `updated` is the moment the broker recorded the transition,
-        # which is the completion instant the cursor is read from.
-        completed.sort(key=lambda t: t.updated, reverse=True)
-        return completed[:limit]
-
     def subscribe_tasks(self, callback: Callable[[str, AutomationTask], Any]) -> None:
         self._subscribers.append(callback)
 
@@ -979,35 +947,6 @@ class PocketBaseTaskBroker(BaseTaskBroker):
         )
         resp.raise_for_status()
         return self._record_to_task(resp.json())
-
-    async def list_recent_successful_completions(
-        self, task_type: TaskType | str, limit: int = 10
-    ) -> list[AutomationTask]:
-        resolved_type = task_type if isinstance(task_type, TaskType) else TaskType(task_type)
-        url = (
-            f"{self._collection_url()}?filter=(task_type='{resolved_type.value}'"
-            f" && status='{TaskStatus.SUCCESS.value}')&sort=-updated&perPage={limit}"
-        )
-        loop = asyncio.get_running_loop()
-        try:
-            resp = await loop.run_in_executor(
-                None, lambda: self.session.get(url, headers=self._headers())
-            )
-            if resp.status_code == 404:
-                logger.warning(
-                    "PocketBase query for completed %s tasks returned 404: collection '%s' may not be provisioned or cached yet: %s",
-                    resolved_type.value,
-                    self.collection_name,
-                    url,
-                )
-                return []
-            resp.raise_for_status()
-            return [self._record_to_task(item) for item in resp.json().get("items", [])]
-        except requests.exceptions.RequestException as e:
-            logger.warning(
-                "Network or HTTP error fetching completed %s tasks: %s", resolved_type.value, e
-            )
-            return []
 
     def subscribe_tasks(self, callback: Callable[[str, AutomationTask], Any]) -> None:
         self._subscribers.append(callback)

@@ -1,5 +1,7 @@
 # 0014. 仅沟通 Paging Bounded by an Execution Cursor Read Back from Task Records
 
+> **SUPERSEDED by [ADR 0015](0015-opening-screen-only-check-chat-scan.md) (2026-09-23).** The scan still kept paging on a live device, so `CHECK_CHAT` no longer pages at all: it reads the opening screen and stops. The cursor, the card-stamp parser and `list_recent_successful_completions` were removed with it; this record is kept as the history of the approach and its accepted limitations. The implementation is in git history at `c490138`.
+
 We decided that the rejection cleanup (`CHECK_CHAT`) stops paging the 仅沟通 list once it reaches cards older than the previous run that actually acted, that the opening page is read in full regardless, that the cursor is derived from the broker's own SUCCESS task records rather than kept in a collection of its own, and that a card's age is compared at the resolution the platform rendered it at.
 
 ## Context

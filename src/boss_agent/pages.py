@@ -22,7 +22,6 @@ from droid_agent_core.locators import (
     wait_until,
 )
 
-from .card_time import CardTimestamp, parse_card_timestamp
 from .models import (
     KNOWN_CITIES,
     RECRUITER_TITLE_KEYWORDS,
@@ -248,8 +247,6 @@ class CommunicationCard:
     outbound_status: str = ""
     #: The card's `[Company] | [Position]` descriptor, e.g. "传音控股 | 算法工程师".
     company_position: str = ""
-    #: The card's rendered last-message stamp, e.g. "昨天 10:20" or "09-21".
-    card_time: str = ""
 
     def __post_init__(self) -> None:
         if not self.key:
@@ -276,16 +273,6 @@ class CommunicationCard:
     def company_name(self) -> str:
         """Employer parsed from the card descriptor, or "" when unavailable."""
         return parse_company_from_descriptor(self.company_position, self.sender_name)
-
-    @property
-    def card_stamp(self) -> CardTimestamp | None:
-        """The instant the card's stamp names, or None when it is unreadable.
-
-        ``None`` is deliberately not "very old": the two lead to opposite decisions.
-        An unreadable stamp makes the card's age unknown, so a run scans it; only a
-        stamp that is *certainly* older than the previous run may truncate a page.
-        """
-        return parse_card_timestamp(self.card_time)
 
 
 def parse_recruiter_info(raw_text: str) -> tuple[str, str, bool]:
@@ -1731,7 +1718,9 @@ class ChatPage(BaseBossPage):
             return True
         return False
 
-    def type_greeting_message(self, message: str, timeout_sec: float = 5.0) -> bool:
+    def type_greeting_message(
+        self, message: str, timeout_sec: float = 5.0, clear_first: bool = False
+    ) -> bool:
         """Type greeting message into the chat message input box.
 
         IMPORTANT SAFETY GUARANTEE: Does NOT click the send button.
@@ -1739,8 +1728,20 @@ class ChatPage(BaseBossPage):
         """
         elem = self.find_by_key("chat.message_input", timeout_sec=timeout_sec)
         if elem:
-            self.gestures.human_type(elem, message)
+            if clear_first:
+                self.gestures.human_type(elem, message, clear_first=True)
+            else:
+                self.gestures.human_type(elem, message)
             return True
+        return False
+
+    def clear_message_input(self, timeout_sec: float = 3.0) -> bool:
+        """Clear any text from the chat message input box to avoid leaving drafts."""
+        elem = self.find_by_key("chat.message_input", timeout_sec=timeout_sec)
+        if elem and hasattr(elem, "clear"):
+            with contextlib.suppress(Exception):
+                elem.clear()
+                return True
         return False
 
     def click_send(self, timeout_sec: float = 3.0) -> bool:
@@ -1760,7 +1761,7 @@ class ChatPage(BaseBossPage):
         """
         if not (message or "").strip():
             return False
-        if not self.type_greeting_message(message, timeout_sec=timeout_sec):
+        if not self.type_greeting_message(message, timeout_sec=timeout_sec, clear_first=True):
             return False
         return self.click_send(timeout_sec=timeout_sec)
 
@@ -1898,41 +1899,18 @@ class CommunicationListPage(BaseBossPage):
                         card, "communication_list.outbound_status"
                     ),
                     company_position=self._extract_company_position(card, sender, text),
-                    card_time=self._extract_card_stamp(card, sender, text),
                 )
             )
         return cards
 
-    def _extract_card_stamp(self, card: Any, sender: str, message_text: str) -> str:
-        """Read the last-message stamp off a card, falling back to a child-node scan.
-
-        Every candidate -- configured field and scanned child alike -- has to *parse*
-        as a card stamp before it is returned. That gate is the whole point: without
-        it a wrong resource-id, or a text node borrowed from the row, would hand the
-        caller a plausible-looking string, and the scan would truncate the page on a
-        stamp that was never a time. A card with no readable stamp simply reports
-        none, and the caller keeps scanning it.
-        """
-        configured = self._extract_card_field_text(card, "communication_list.card_time")
-        if parse_card_timestamp(configured) is not None:
-            return configured
-
-        excluded = {(sender or "").strip(), (message_text or "").strip()}
-        for candidate in self._scan_card_text_nodes(card):
-            if not candidate or candidate in excluded:
-                continue
-            if parse_card_timestamp(candidate) is not None:
-                return candidate
-        return ""
-
     def _scan_card_text_nodes(self, card: Any) -> list[str]:
         """The text of a card's child TextViews, in document order.
 
-        The fallback shared by the fields the platform leaves unlabelled: the
-        descriptor and the stamp are both rendered into text nodes with no resource-id
-        measured on hardware, so one node walk answers for either. A card whose layer
-        cannot be read at all yields nothing, which every caller reads as "this field
-        is not on the card" rather than as an error.
+        The fallback behind the fields the platform leaves unlabelled: the descriptor
+        is rendered into a text node with no resource-id measured on hardware, and a
+        node walk is what reads it. A card whose layer cannot be read at all yields
+        nothing, which the caller reads as "this field is not on the card" rather
+        than as an error.
         """
         try:
             children = card.find_elements(by="xpath", value=CARD_CHILD_TEXT_XPATH)
@@ -1971,18 +1949,6 @@ class CommunicationListPage(BaseBossPage):
             if CARD_DESCRIPTOR_SEPARATOR in candidate:
                 return candidate
         return ""
-
-    def scroll_list(self) -> None:
-        """Perform a humanized swipe up to reveal older communication cards."""
-        if not self.driver:
-            return
-        size = self._get_window_size()
-        w, h = size["width"], size["height"]
-
-        start = Point(w * 0.5, h * 0.75)
-        end = Point(w * 0.5, h * 0.25)
-        self.gestures.human_swipe(start, end, duration_ms=500)
-        self.gestures.random_sleep(0.3, 0.6)
 
     def open_message(self, message: CommunicationCard) -> bool:
         """Click a communication card to enter its chat dialog."""

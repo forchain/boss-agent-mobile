@@ -26,7 +26,6 @@ NEW_LOCATOR_KEYS = (
     "communication_list.company_position",
     "communication_list.message_text",
     "communication_list.outbound_status",
-    "communication_list.card_time",
     "chat.disinterest_btn",
     "chat.disinterest_reason_option",
 )
@@ -65,12 +64,6 @@ def test_company_position_locator_targets_tv_position(registry):
     selectors = registry.get_selectors("communication_list.company_position")
     assert selectors
     assert any("tv_position" in sel.value for sel in selectors)
-
-
-def test_card_time_locator_targets_the_stamp_node(registry):
-    selectors = registry.get_selectors("communication_list.card_time")
-    assert selectors
-    assert any("tv_time" in sel.value for sel in selectors)
 
 
 def test_disinterest_reason_locator_formats_the_standardized_reason(registry):
@@ -193,37 +186,6 @@ def test_card_without_a_descriptor_exposes_no_employer():
     card = CommunicationCard(sender_name="严胜", message_text="我们感谢您的投递")
 
     assert card.company_name == ""
-
-
-# ---------------------------------------------------------------------------
-# Last-message stamp (#239): the only signal that bounds a run's paging
-# ---------------------------------------------------------------------------
-
-
-def test_card_exposes_the_stamp_rendered_on_it():
-    card = CommunicationCard(
-        sender_name="严胜", message_text="我们感谢您的投递", card_time="昨天 10:20"
-    )
-
-    assert card.card_stamp is not None
-    assert card.card_stamp.at.hour == 10
-    assert card.card_stamp.at.minute == 20
-
-
-def test_card_without_a_stamp_exposes_no_timestamp():
-    card = CommunicationCard(sender_name="严胜", message_text="我们感谢您的投递")
-
-    assert card.card_time == ""
-    assert card.card_stamp is None
-
-
-def test_a_card_whose_stamp_is_unreadable_exposes_no_timestamp():
-    """Unreadable must stay distinguishable from 'older': one truncates, one does not."""
-    card = CommunicationCard(
-        sender_name="严胜", message_text="我们感谢您的投递", card_time="今天的心情不错"
-    )
-
-    assert card.card_stamp is None
 
 
 # ---------------------------------------------------------------------------
@@ -430,20 +392,14 @@ def test_back_button_locator_targets_the_boss_page_back_affordances(registry):
 # ---------------------------------------------------------------------------
 
 
-def _message_card(
-    sender: str, text: str, *, status: str = "", descriptor: str = "", stamp: str = ""
-) -> MagicMock:
+def _message_card(sender: str, text: str, *, status: str = "", descriptor: str = "") -> MagicMock:
     """Build a fake communication card whose sub-element lookups return real nodes."""
     sender_node = MagicMock(text=sender)
     text_node = MagicMock(text=text)
     status_node = MagicMock(text=status) if status else None
     descriptor_node = MagicMock(text=descriptor) if descriptor else None
-    stamp_node = MagicMock(text=stamp) if stamp else None
 
     def find_elements(by, value):
-        # Checked before `tv_msg`: the stamp ids all start with it.
-        if "tv_time" in value or "tv_date" in value:
-            return [stamp_node] if stamp_node else []
         if "iv_msg_status" in value:
             return [status_node] if status_node else []
         if "tv_msg" in value:
@@ -558,60 +514,6 @@ def test_child_descriptor_scan_never_returns_the_message_as_an_employer():
     assert messages[0].company_name == ""
 
 
-def test_extract_visible_messages_reads_the_card_stamp():
-    card = _message_card("严胜", "我们感谢您的投递", stamp="09-21")
-    page = _page_with_cards([card])
-
-    messages = page.extract_visible_messages()
-
-    assert messages[0].card_time == "09-21"
-    assert messages[0].card_stamp is not None
-
-
-def test_extract_visible_messages_falls_back_to_a_child_stamp_node():
-    """The stamp node has no measured resource-id on a live screen, so a scan backs it up."""
-    card = _message_card("严胜", "我们感谢您的投递")
-    stamp_node = MagicMock(text="昨天 10:20")
-    card.find_elements.side_effect = lambda by, value: (
-        [stamp_node] if "TextView" in value else []
-    )
-    page = _page_with_cards([card])
-
-    messages = page.extract_visible_messages()
-
-    assert messages[0].card_time == "昨天 10:20"
-
-
-def test_child_stamp_scan_never_returns_the_message_or_sender_as_a_stamp():
-    """A card carrying no stamp must read as unstamped, not as dated by its own text."""
-    card = _message_card("李女士", "抱歉，您的经历与岗位要求不太匹配")
-    card.find_elements.side_effect = lambda by, value: (
-        [MagicMock(text="李女士"), MagicMock(text="抱歉，您的经历与岗位要求不太匹配")]
-        if "TextView" in value
-        else []
-    )
-    page = _page_with_cards([card])
-
-    messages = page.extract_visible_messages()
-
-    assert messages[0].card_time == ""
-    assert messages[0].card_stamp is None
-
-
-def test_a_configured_stamp_field_that_does_not_parse_falls_back_to_the_scan():
-    """A wrong resource-id must not silence the stamp for the whole list."""
-    card = _message_card("严胜", "我们感谢您的投递", stamp="不是时间")
-    stamp_node = MagicMock(text="2023-11-04")
-    card.find_elements.side_effect = lambda by, value: (
-        [stamp_node] if "TextView" in value else ([MagicMock(text="不是时间")] if "tv_time" in value else [])
-    )
-    page = _page_with_cards([card])
-
-    messages = page.extract_visible_messages()
-
-    assert messages[0].card_time == "2023-11-04"
-
-
 def test_extract_visible_messages_skips_cards_without_text():
     empty_card = MagicMock(text="")
     empty_card.find_elements.return_value = []
@@ -621,18 +523,6 @@ def test_extract_visible_messages_skips_cards_without_text():
     messages = page.extract_visible_messages()
 
     assert [m.message_text for m in messages] == ["岗位已招满，感谢关注"]
-
-
-def test_scroll_list_swipes_upward():
-    page = _page_with_cards([])
-    page.gestures.human_swipe = MagicMock()  # type: ignore[method-assign]
-    page.gestures.random_sleep = MagicMock()  # type: ignore[method-assign]
-
-    page.scroll_list()
-
-    assert page.gestures.human_swipe.call_count == 1
-    start, end = page.gestures.human_swipe.call_args.args[:2]
-    assert start.y > end.y
 
 
 def test_open_message_uses_humanized_click():
@@ -671,4 +561,3 @@ def test_find_message_cards_resolves_parent_container_on_fallback():
     cards = page._find_message_cards()
     assert cards == [parent_card]
     text_node.find_element.assert_called_with(by="xpath", value="..")
-
