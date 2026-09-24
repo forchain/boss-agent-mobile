@@ -166,41 +166,24 @@ fi
 TARGET_AVD="${TARGET_AVD:-boss_avd_arm64}"
 
 check_dedicated_avd_ready() {
-    if ! command -v adb >/dev/null 2>&1; then
-        echo "❌ Error: 'adb' command not found in PATH." >&2
-        echo "💡 Install Android Platform Tools: brew install android-platform-tools" >&2
-        exit 1
+    # `emulator.sh status` is the single source of truth for "online and booted", and every
+    # adb query behind it is bounded (spec #241), so a device stuck `offline` can no longer
+    # freeze the worker pre-flight gate the way an inline adb query used to.
+    local STATUS_OUTPUT=""
+    if STATUS_OUTPUT="$(ANDROID_AVD="${TARGET_AVD}" ./emulator.sh status 2>&1)"; then
+        return 0
     fi
 
-    local RUNNING_AVD_SERIAL=""
-    local DEV_LIST
-    DEV_LIST="$(adb devices 2>/dev/null | grep -E "emulator-[0-9]+" | awk '{print $1}' || true)"
-    for dev in ${DEV_LIST}; do
-        local AVD_FOUND
-        AVD_FOUND="$(adb -s "${dev}" emu avd name 2>/dev/null | head -n 1 | tr -d '\r\n' || true)"
-        if [[ "${AVD_FOUND}" == "${TARGET_AVD}" ]]; then
-            RUNNING_AVD_SERIAL="${dev}"
-            break
-        fi
-    done
-
-    if [[ -z "${RUNNING_AVD_SERIAL}" ]]; then
-        echo "❌ Error: Dedicated Android AVD '${TARGET_AVD}' is not running." >&2
-        echo "" >&2
-        echo "💡 The automation worker requires the dedicated '${TARGET_AVD}' emulator:" >&2
-        echo "   - Start dedicated AVD: run './emulator.sh' or './run.sh emu'" >&2
-        echo "   - Check AVD list:      run './emulator.sh list'" >&2
-        echo "" >&2
-        exit 1
-    fi
-
-    local BOOT_STATUS
-    BOOT_STATUS="$(adb -s "${RUNNING_AVD_SERIAL}" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r\n' || true)"
-    if [[ "${BOOT_STATUS}" != "1" ]]; then
-        echo "❌ Error: Dedicated Android AVD '${TARGET_AVD}' (${RUNNING_AVD_SERIAL}) is still booting (sys.boot_completed='${BOOT_STATUS}')." >&2
-        echo "💡 Please wait a few seconds for the emulator to finish booting, then retry." >&2
-        exit 1
-    fi
+    echo "${STATUS_OUTPUT}" >&2
+    echo "" >&2
+    echo "❌ Error: Dedicated Android AVD '${TARGET_AVD}' is not ready for the Automation Worker." >&2
+    echo "" >&2
+    echo "💡 The automation worker requires the dedicated '${TARGET_AVD}' emulator:" >&2
+    echo "   - Start dedicated AVD: run './emulator.sh' or './run.sh emu'" >&2
+    echo "   - Check AVD list:      run './emulator.sh list'" >&2
+    echo "   - Stuck 'offline'?     restart it: './emulator.sh stop && ./emulator.sh'" >&2
+    echo "" >&2
+    exit 1
 }
 
 # 3. Resolve and check Appium server status

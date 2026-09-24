@@ -341,13 +341,14 @@ cmd_stop() {
     local SERIAL
     SERIAL="$(get_running_device_serial)"
 
-    if [[ -n "${SERIAL}" ]]; then
-        if adb_query -s "${SERIAL}" emu kill >/dev/null; then
-            echo "✅ Sent emu kill to ${SERIAL} (${TARGET_AVD})."
-        else
+    if [[ -n "${SERIAL}" ]] && adb_query -s "${SERIAL}" emu kill >/dev/null; then
+        echo "✅ Sent emu kill to ${SERIAL} (${TARGET_AVD})."
+    else
+        if [[ -n "${SERIAL}" ]]; then
+            # A kill the wedged device never acknowledged leaves the emulator running, so
+            # fall back to the same process cleanup the "no device found" path uses.
             echo "⚠️ ${SERIAL} did not acknowledge the kill within ${ADB_QUERY_TIMEOUT_SEC}s."
         fi
-    else
         pkill -f "emulator.*@${TARGET_AVD}" 2>/dev/null || true
         echo "ℹ️ Stopped emulator processes for ${TARGET_AVD}."
     fi
