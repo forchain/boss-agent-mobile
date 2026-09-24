@@ -187,18 +187,42 @@ def test_marker_only_invocation_reaches_the_e2e_tier(collection_probe: Path):
     )
 
 
-def test_filter_only_marker_expression_keeps_the_default_scope(collection_probe: Path):
-    """Verify `-m "not live"` filters the unit tier instead of widening into the E2E one.
+@pytest.mark.parametrize(
+    "expression",
+    ["not live", "not  live", "not\tlive", "not (live)", "not e2e"],
+    ids=["single-space", "double-space", "tab", "parenthesised", "other-tier"],
+)
+def test_filter_only_marker_expression_keeps_the_default_scope(
+    collection_probe: Path, expression: str
+):
+    """Verify a negated tier mention filters the unit tier instead of widening into E2E.
 
     A negated mention is a filter over whatever is in scope, not a request for another tier:
-    only `-m live` / `-m e2e` pull the wider collection root in.
+    only `-m live` / `-m e2e` pull the wider collection root in. How the negation is spelled
+    must not matter, because pytest's own tokenizer accepts each of these forms and any one
+    of them that widened instead would collect — and run — the real services in `tests/e2e`.
     """
-    result = _collect_only("-m", "not live", probe_dir=collection_probe)
+    result = _collect_only("-m", expression, probe_dir=collection_probe)
     report = _probe_report(result, collection_probe)
 
-    assert report["nodeids"], "`-m 'not live'` must still collect the unit suite"
+    assert report["nodeids"], f"`-m {expression!r}` must still collect the unit suite"
     strays = [nodeid for nodeid in report["nodeids"] if not nodeid.startswith("tests/unit/")]
-    assert not strays, f"a filter-only expression widened the run:\n{strays}"
+    assert not strays, f"the filter {expression!r} widened the run:\n{strays}"
+
+
+def test_marker_flag_inside_a_short_cluster_still_reaches_the_tier(collection_probe: Path):
+    """Verify `pytest -qm e2e` is read as the tier request pytest's own parser sees.
+
+    pytest accepts `-m` bundled into a short-flag cluster, so detection scans the whole short
+    token. Reading a bundled flag as absent would leave the expression nothing to select from
+    and exit 5 on a run the developer meant to widen.
+    """
+    result = _collect_only("-qm", "e2e", probe_dir=collection_probe)
+    report = _probe_report(result, collection_probe)
+
+    assert report["nodeids"], "`-qm e2e` collected nothing:\n" + _output(result)
+    strays = [nodeid for nodeid in report["nodeids"] if not nodeid.startswith("tests/e2e/")]
+    assert not strays, f"`-qm e2e` collected tests outside the E2E tier:\n{strays}"
 
 
 def test_broad_path_still_deselects_both_remote_tiers(collection_probe: Path):

@@ -45,7 +45,9 @@ def wait_for_port_bound(port: int, timeout: float = 10.0) -> None:
         if not is_port_free(port):
             return
         time.sleep(0.05)
-    raise AssertionError(f"stub server never bound port {port}")
+    # Neither tier is named: the unit suites wait on throwaway stubs, the E2E gate suites on
+    # the real Worker CLI, and a post-mortem should not be told which one it was looking at.
+    raise AssertionError(f"never bound port {port} within {timeout}s")
 
 
 def wait_for_log(log_file: Path, marker: str, timeout: float = 30.0) -> None:

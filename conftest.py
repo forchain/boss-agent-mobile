@@ -11,11 +11,11 @@ from that configuration alone:
 * **A path inside `tests/e2e`** — the default `not e2e` clause would deselect everything the
   developer just pointed at, so that clause is lifted. The `live` guard is never lifted
   (device tests always require `-m live`), and a `-m` the developer typed is never touched.
-* **A marker expression that names a tier** (`pytest -m live`, `pytest -m e2e`) — the default
-  `testpaths` leaves it nothing outside `tests/unit` to select from, so the whole `tests/`
-  tree becomes the collection root and the expression alone decides what runs. An expression
-  that merely filters (`pytest -m "not live"`) is not a tier request: it keeps the default
-  scope and filters within it.
+* **A marker expression that names a tier** (`pytest -m live`, `pytest -m e2e`, or the same
+  bundled as `pytest -qm e2e`) — the default `testpaths` leaves it nothing outside `tests/unit`
+  to select from, so the whole `tests/` tree becomes the collection root and the expression
+  alone decides what runs. An expression that merely filters (`pytest -m "not live"`) is not a
+  tier request: it keeps the default scope and filters within it.
 
 An explicit path always wins — nothing here widens a run the developer has already narrowed.
 Everything else keeps the default: an unadorned `pytest` runs the unit tier, and a broad
@@ -40,9 +40,15 @@ def _cli_path_arguments(config: Config) -> list[str]:
 
 
 def _cli_marker_expression(config: Config) -> bool:
-    """Whether the invocation itself passed `-m`; an `addopts` value never counts."""
+    """Whether the invocation itself passed `-m`; an `addopts` value never counts.
+
+    pytest's parser accepts `-m` bundled into a short-flag cluster (`-qm e2e`), so each short
+    token is scanned for it rather than only its leading characters. Erring towards `True` is
+    harmless: widening the collection root also requires the expression to name a tier, and
+    an `addopts` default (the only markexpr available when no `-m` was typed) never does.
+    """
     return any(
-        arg == "-m" or (arg.startswith("-m") and not arg.startswith("--"))
+        arg.startswith("-") and not arg.startswith("--") and "m" in arg[1:]
         for arg in config.invocation_params.args
     )
 
@@ -50,10 +56,23 @@ def _cli_marker_expression(config: Config) -> bool:
 def _names_a_tier_marker(expression: str) -> bool:
     """Whether `-m` *asks for* a tier that lives outside `tests/unit`.
 
-    `live` and `e2e` are requests; a negated mention (`not live`) is only a filter over
-    whatever is already in scope, and must not widen the collection root.
+    `live` and `e2e` are requests; a negated mention (`not live`, `not (live)`) is only a
+    filter over whatever is already in scope, and must not widen the collection root. The
+    expression is tokenized rather than pattern-matched so that spelling cannot change the
+    verdict: pytest's own tokenizer ignores extra whitespace and grouping parentheses around
+    `not`, and a spelling that slipped past this check would collect — and run — the E2E
+    services the tier split exists to keep out of reach.
     """
-    return any(re.search(rf"(?<!not )\b{marker}\b", expression) for marker in TIER_MARKERS)
+    tokens = re.findall(r"\w+|[()]", expression)
+    for index, token in enumerate(tokens):
+        if token not in TIER_MARKERS:
+            continue
+        preceding = index - 1
+        while preceding >= 0 and tokens[preceding] == "(":
+            preceding -= 1
+        if preceding < 0 or tokens[preceding] != "not":
+            return True
+    return False
 
 
 def _targets_e2e_dir(config: Config) -> bool:

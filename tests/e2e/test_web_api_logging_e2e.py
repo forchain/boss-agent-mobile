@@ -108,13 +108,19 @@ def _stop_dashboard(process: subprocess.Popen) -> None:
 
     Group-level, not process-level: `npm run dev` hands off to a vite child, which would
     survive a kill aimed at npm alone. That is why this does not use the harness `spawn`
-    fixture, which reaps exactly the one process it started.
+    fixture, which reaps exactly the one process it started — and why the escalation below
+    stays group-scoped too, so a vite child that ignores SIGTERM cannot be orphaned.
     """
     try:
-        os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+        group = os.getpgid(process.pid)
+    except ProcessLookupError:
+        return  # the group is already gone, so there is nothing left to signal
+    try:
+        os.killpg(group, signal.SIGTERM)
         process.wait(timeout=5)
     except Exception:
-        process.kill()
+        os.killpg(group, signal.SIGKILL)
+        process.wait(timeout=5)
 
 
 def test_web_api_logging_e2e(web_dashboard: Dashboard):
