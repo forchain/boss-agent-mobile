@@ -85,8 +85,20 @@ The POSIX signal contract by which the Automation Worker and the Web Dashboard r
 _Avoid_: hard stop, force quit, kill -9 policy
 
 **E2E Pre-Test Teardown Gate**:
-The session-scoped test fixture that, before any end-to-end test runs, stops residual Automation Worker and Web Dashboard instances located through the shared runtime directory and verifies their shutdown feedback, guaranteeing exclusive use of the Virtual Device Session and the dashboard port. Shared infrastructure (State Stream Broker, Appium, AVD) is deliberately out of its scope.
+The session-scoped, opt-in test fixture (`BOSS_AGENT_ENFORCE_TEARDOWN=1`) that stops residual Automation Worker and Web Dashboard instances located through the shared runtime directory and verifies their shutdown feedback, guaranteeing exclusive use of the Virtual Device Session and the dashboard port when a run genuinely needs it. Left unopted, E2E runs touch nothing outside their own temporary state. Shared infrastructure (State Stream Broker, Appium, AVD) is deliberately out of its scope either way.
 _Avoid_: test cleanup hook, pre-test reset script, teardown helper
+
+**Fast Unit Test**:
+The in-memory verification tier (`tests/unit/`) that exercises module interfaces against mocked collaborators — no Automation Worker, no Appium session, no bound host port, and no live LLM endpoint. It is the tier an unadorned `pytest` runs, and the one that must finish in tens of seconds with zero side effects on the machine.
+_Avoid_: quick check, small spec, unit suite
+
+**Service Integration Test (`@pytest.mark.e2e`)**:
+The end-to-end tier that drives real services — the Automation Worker CLI, the SvelteKit Web Dashboard, nested test sessions — against ephemeral ports and per-test temporary state directories, so a run neither collides with nor shuts down services belonging to other worktrees. Opted into explicitly, never part of the default run. Live Device Tests deliberately do not carry this marker, so marker selection can never reach the emulator.
+_Avoid_: integration spec, heavy test, slow suite
+
+**Live Device Test (`@pytest.mark.live`)**:
+The device tier that drives the shared Android Virtual Device through Appium, guarded by an explicit marker that no default, broad-path, or E2E-marker invocation can override — waking the emulator out from under another worktree is the failure this tier exists to prevent.
+_Avoid_: real test, device suite, emulator spec
 
 **Job Record**:
 The persisted entity representing a job posting discovered from mobile search results or scraping workflows in the Boss app.
