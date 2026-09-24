@@ -145,7 +145,11 @@ Each acceptance criterion is defined with Gherkin semantics and an exact verific
   4. The agent gracefully navigates back to the list.
 - **Verification Command**:
   ```bash
-  pytest tests/e2e/test_smoke_job_extraction.py
+  # Live device run — the Given above: boots the app and parses a real job detail
+  uv run python scripts/run_live_test.py
+
+  # Fast-tier contract check for the same parsing path (mocked driver, no device)
+  pytest tests/unit/test_smoke_harness_extraction.py
   ```
 
 ---
@@ -216,4 +220,4 @@ flowchart LR
 | **AC-1** | Idempotent Environment Provisioner | `VERIFIED` | Test Suite & CLI | `tests/unit/test_bootstrap_provisioner.py`, `scripts/bootstrap.py --check` |
 | **AC-2** | Framework Independence (`droid_agent_core`) | `VERIFIED` | Test Suite & AST | `tests/unit/test_framework_isolation.py`, `tests/unit/test_gestures_and_locators.py` |
 | **AC-3** | App Lifecycle & Safety Takeover | `VERIFIED` | Test Suite | `tests/unit/test_lifecycle_and_takeover.py` |
-| **AC-4** | End-to-End Job Detail Extraction Smoke Test | `VERIFIED` | E2E Harness | `tests/e2e/test_smoke_job_extraction.py` |
+| **AC-4** | End-to-End Job Detail Extraction Smoke Test | `VERIFIED` | Smoke Harness | `scripts/run_live_test.py` (device), `tests/unit/test_smoke_harness_extraction.py` (parsing contract) |
