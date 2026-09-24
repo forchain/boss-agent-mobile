@@ -14,6 +14,12 @@
 #   ./emulator.sh list                # List all installed local AVDs
 #   ./emulator.sh logs                # Attach to live log stream of running AVD
 #   ./emulator.sh stop                # Stop the running dedicated AVD
+#
+# Environment:
+#   ADB_QUERY_TIMEOUT_SEC      Wall-clock bound for a single adb query (default 2).
+#                              The knob only tightens it: clamped to 1-2 seconds, and
+#                              with the SIGKILL escalation a query never exceeds 2.5s,
+#                              so an offline or unresponsive device cannot stall the runner.
 # ==============================================================================
 
 set -euo pipefail
@@ -56,6 +62,102 @@ find_adb_binary() {
 
 EMULATOR_BIN="$(find_emulator_binary)"
 ADB_BIN="$(find_adb_binary)"
+
+# --- Bounded ADB inspection ---------------------------------------------------
+# A wedged adb server, a device stuck in `offline`, or an unresponsive adbd must never
+# freeze emulator.sh: every adb query below goes through `bounded_run` with a hard
+# wall-clock bound, so serial resolution, `status`, and `start` always return.
+
+# Echo an integer clamped into [MIN, MAX]; a non-numeric value falls back to DEFAULT.
+clamp_int() {
+    local VALUE="$1"
+    local DEFAULT="$2"
+    local MIN="$3"
+    local MAX="$4"
+    [[ "${VALUE}" =~ ^[0-9]+$ ]] || VALUE="${DEFAULT}"
+    if (( VALUE < MIN )); then
+        VALUE="${MIN}"
+    elif (( VALUE > MAX )); then
+        VALUE="${MAX}"
+    fi
+    echo "${VALUE}"
+}
+
+# Patience for a single adb query. The environment knob only ever tightens it: SIGTERM fires
+# here and the SIGKILL escalation follows 0.5s later, so one query can hold the script for
+# at most 2.5s - inside the agreed 3-second contract.
+ADB_QUERY_TIMEOUT_SEC="$(clamp_int "${ADB_QUERY_TIMEOUT_SEC:-2}" 2 1 2)"
+
+# Run one external command under a hard wall-clock limit, printing its stdout (empty when
+# the command had to be killed). macOS ships no coreutils `timeout`, so the bound is
+# enforced by a watchdog that SIGTERMs - then SIGKILLs - the child. Pass a simple external
+# command only: a pipeline would leave its earlier stages running past the bound.
+bounded_run() {
+    local TIMEOUT_SEC="$1"
+    shift
+    local OUT_FILE
+    OUT_FILE="$(mktemp "${TMPDIR:-/tmp}/boss_agent_bounded.XXXXXX")"
+
+    "$@" >"${OUT_FILE}" 2>/dev/null &
+    local CMD_PID=$!
+
+    # The watchdog must not inherit this process's stdout: when `bounded_run` is used in a
+    # command substitution, a surviving sleeper holding the pipe would keep the caller
+    # waiting until it wakes up.
+    (
+        sleep "${TIMEOUT_SEC}"
+        if kill -0 "${CMD_PID}" 2>/dev/null; then
+            kill -TERM "${CMD_PID}" 2>/dev/null || true
+            sleep 0.5
+            kill -KILL "${CMD_PID}" 2>/dev/null || true
+        fi
+    ) >/dev/null 2>&1 &
+    local WATCHDOG_PID=$!
+
+    local EXIT_CODE=0
+    wait "${CMD_PID}" 2>/dev/null || EXIT_CODE=$?
+    # Reap the watchdog before it can fire at a recycled PID.
+    kill -TERM "${WATCHDOG_PID}" 2>/dev/null || true
+    wait "${WATCHDOG_PID}" 2>/dev/null || true
+
+    # Report a killed query the way GNU `timeout` does, so a caller can tell "the bound was
+    # hit" (124) apart from "adb itself failed" (adb's own exit status).
+    if (( EXIT_CODE == 143 || EXIT_CODE == 137 )); then
+        EXIT_CODE=124
+    fi
+
+    cat "${OUT_FILE}" 2>/dev/null || true
+    rm -f "${OUT_FILE}"
+    return "${EXIT_CODE}"
+}
+
+# Bounded adb query: prints captured stdout and exits 0 when adb answered, 124 when the bound
+# was hit, or adb's own status when it failed. Callers that only want the answer append
+# `|| true` and read the empty output as "did not answer".
+adb_query() {
+    if [[ -z "${ADB_BIN}" ]]; then
+        return 0
+    fi
+    bounded_run "${ADB_QUERY_TIMEOUT_SEC}" "${ADB_BIN}" "$@"
+}
+
+# Bounded `adb shell getprop <key>`: empty when the device does not answer in time.
+adb_getprop() {
+    local SERIAL="$1"
+    local KEY="$2"
+    local RAW
+    RAW="$(adb_query -s "${SERIAL}" shell getprop "${KEY}" || true)"
+    printf '%s\n' "${RAW}" | tr -d '\r\n'
+}
+
+# Bounded `adb -s <serial> emu avd name`: the AVD name, or empty when the device does not
+# answer in time.
+adb_avd_name() {
+    local SERIAL="$1"
+    local RAW
+    RAW="$(adb_query -s "${SERIAL}" emu avd name || true)"
+    printf '%s\n' "${RAW}" | head -n 1 | tr -d '\r\n'
+}
 
 resolve_target_avd() {
     if [[ -n "${TARGET_AVD_OVERRIDE:-}" ]]; then
@@ -134,12 +236,19 @@ get_running_device_serial() {
         return 0
     fi
 
-    local DEV_LIST
-    DEV_LIST="$("${ADB_BIN}" devices 2>/dev/null | grep -E "emulator-[0-9]+" | awk '{print $1}' || true)"
+    local RAW_DEVICES DEV_LIST
+    RAW_DEVICES="$(adb_query devices || true)"
+    # Only devices in the `device` state are queried: an `offline` (or otherwise broken)
+    # transport cannot report its AVD name and blocks the adb client until it times out.
+    DEV_LIST="$(printf '%s\n' "${RAW_DEVICES}" \
+        | awk '$1 ~ /^emulator-[0-9]+$/ && $2 == "device" { print $1 }')"
 
+    # Every candidate is probed, however slow: giving up on the scan early could miss the
+    # dedicated AVD sitting behind unresponsive siblings. The per-query bound, not a global
+    # budget, is what keeps this responsive.
     for dev in ${DEV_LIST}; do
         local AVD_NAME_FOUND
-        AVD_NAME_FOUND="$("${ADB_BIN}" -s "${dev}" emu avd name 2>/dev/null | head -n 1 | tr -d '\r\n' || true)"
+        AVD_NAME_FOUND="$(adb_avd_name "${dev}")"
         if [[ "${AVD_NAME_FOUND}" == "${TARGET_AVD}" ]]; then
             echo "${dev}"
             return 0
@@ -215,7 +324,7 @@ cmd_status() {
     fi
 
     local BOOT_STATUS
-    BOOT_STATUS="$("${ADB_BIN}" -s "${SERIAL}" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r\n' || true)"
+    BOOT_STATUS="$(adb_getprop "${SERIAL}" sys.boot_completed)"
 
     if [[ "${BOOT_STATUS}" == "1" ]]; then
         echo "🟢 Dedicated AVD '${TARGET_AVD}' is ONLINE and READY (${SERIAL})."
@@ -232,9 +341,12 @@ cmd_stop() {
     local SERIAL
     SERIAL="$(get_running_device_serial)"
 
-    if [[ -n "${SERIAL}" && -n "${ADB_BIN}" ]]; then
-        "${ADB_BIN}" -s "${SERIAL}" emu kill 2>/dev/null || true
-        echo "✅ Sent emu kill to ${SERIAL} (${TARGET_AVD})."
+    if [[ -n "${SERIAL}" ]]; then
+        if adb_query -s "${SERIAL}" emu kill >/dev/null; then
+            echo "✅ Sent emu kill to ${SERIAL} (${TARGET_AVD})."
+        else
+            echo "⚠️ ${SERIAL} did not acknowledge the kill within ${ADB_QUERY_TIMEOUT_SEC}s."
+        fi
     else
         pkill -f "emulator.*@${TARGET_AVD}" 2>/dev/null || true
         echo "ℹ️ Stopped emulator processes for ${TARGET_AVD}."
@@ -270,9 +382,9 @@ cmd_start() {
     # Check if already booted and ready
     local SERIAL
     SERIAL="$(get_running_device_serial)"
-    if [[ -n "${SERIAL}" && -n "${ADB_BIN}" ]]; then
+    if [[ -n "${SERIAL}" ]]; then
         local BOOT_STATUS
-        BOOT_STATUS="$("${ADB_BIN}" -s "${SERIAL}" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r\n' || true)"
+        BOOT_STATUS="$(adb_getprop "${SERIAL}" sys.boot_completed)"
         if [[ "${BOOT_STATUS}" == "1" ]]; then
             if [[ ${DAEMON} -eq 1 ]]; then
                 echo "ℹ️ Dedicated AVD '${TARGET_AVD}' is already running in background (${SERIAL}, PID: $(cat "${PID_FILE}" 2>/dev/null || echo "active"))."
@@ -298,9 +410,9 @@ cmd_start() {
         local BOOTED=0
         for _ in {1..90}; do
             SERIAL="$(get_running_device_serial)"
-            if [[ -n "${SERIAL}" && -n "${ADB_BIN}" ]]; then
+            if [[ -n "${SERIAL}" ]]; then
                 local BOOT_STATUS
-                BOOT_STATUS="$("${ADB_BIN}" -s "${SERIAL}" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r\n' || true)"
+                BOOT_STATUS="$(adb_getprop "${SERIAL}" sys.boot_completed)"
                 if [[ "${BOOT_STATUS}" == "1" ]]; then
                     BOOTED=1
                     break
