@@ -1,19 +1,23 @@
 """
 src/boss_agent/services/remote_adb_bridge.py
 ============================================
-Remote ADB Bridge daemon with preemptive zombie session eviction (spec #241, ticket #243).
+Remote ADB Bridge daemon with concurrent multi-client sessions (spec #241, ticket #243,
+revised after the 2026-09-24 eviction-war incident).
 
 Binds to an external network interface (default 0.0.0.0:6555) and relays bidirectional
 ADB traffic to the local Virtual Device Session (default 127.0.0.1:5555).
 
 Key architectural guarantees:
-1. Single-active-session exclusivity & Preemptive Eviction:
-   ADB daemon over TCP cannot interleave framing bytes from multiple clients.
-   When a new client connects, any existing active session is immediately and cleanly
-   evicted (closed) to hand over the port without lockup.
+1. Concurrent independent sessions:
+   adbd accepts multiple simultaneous TCP clients (each becomes its own transport), so
+   every accepted client gets its own paired (client, target) relay. A new connection
+   NEVER disconnects a live session. (The original "Preemptive Session Eviction" design
+   livelocked whenever two or more auto-reconnecting adb servers were connected at once:
+   each evicted side reconnected within ~1s and evicted the holder, an endless war.)
 2. Aggressive TCP keepalive:
    Sockets are configured with SO_KEEPALIVE and platform-specific idle/probe parameters
-   to detect half-open sockets promptly.
+   to detect and reap half-open/zombie sessions promptly, so dead sockets never hold
+   resources that block other clients.
 3. Clean lifecycle management:
    Handles SIGTERM/SIGINT signals gracefully, reclaiming ports and cleaning up PID files.
 """
@@ -138,7 +142,7 @@ class ActiveSession:
 
 
 class RemoteAdbBridge:
-    """Standalone TCP bridge with preemptive single-client eviction."""
+    """Standalone TCP bridge with concurrent independent per-client sessions."""
 
     def __init__(
         self,
@@ -157,7 +161,7 @@ class RemoteAdbBridge:
         self.ready_file = ready_file
 
         self._server_sock: socket.socket | None = None
-        self._current_session: ActiveSession | None = None
+        self._sessions: set[ActiveSession] = set()
         self._session_lock = threading.Lock()
         self._stop_event = threading.Event()
         self._accept_thread: threading.Thread | None = None
@@ -170,12 +174,10 @@ class RemoteAdbBridge:
         return self.listen_port
 
     @property
-    def active_client_endpoint(self) -> tuple[str, int] | None:
-        """Active client address if currently connected."""
+    def active_client_endpoints(self) -> list[tuple[str, int]]:
+        """Addresses of all currently connected clients."""
         with self._session_lock:
-            if self._current_session and not self._current_session.closed.is_set():
-                return self._current_session.client_addr
-            return None
+            return [s.client_addr for s in self._sessions if not s.closed.is_set()]
 
     def start(self, block: bool = True) -> None:
         """Bind the listener and start accepting connections."""
@@ -219,16 +221,17 @@ class RemoteAdbBridge:
                 self.stop()
 
     def stop(self) -> None:
-        """Gracefully stop the bridge, evicting any active session and freeing the port."""
+        """Gracefully stop the bridge, closing all active sessions and freeing the port."""
         if self._stop_event.is_set():
             return
         self._stop_event.set()
 
-        # Evict active session
+        # Close all active sessions
         with self._session_lock:
-            if self._current_session:
-                self._current_session.close()
-                self._current_session = None
+            sessions = list(self._sessions)
+            self._sessions.clear()
+        for session in sessions:
+            session.close()
 
         # Close listener socket
         if self._server_sock:
@@ -281,18 +284,9 @@ class RemoteAdbBridge:
 
             session = ActiveSession(client_sock, target_sock, client_addr)
 
-            # Preemptive Eviction of prior session
+            # Register the session; concurrent live clients are fully independent.
             with self._session_lock:
-                if self._current_session and not self._current_session.closed.is_set():
-                    logger.warning(
-                        "Evicting stagnant session %s:%d for new client %s:%d",
-                        self._current_session.client_addr[0],
-                        self._current_session.client_addr[1],
-                        client_addr[0],
-                        client_addr[1],
-                    )
-                    self._current_session.close()
-                self._current_session = session
+                self._sessions.add(session)
 
             # Start bidirectional relay threads
             t1 = threading.Thread(
@@ -331,8 +325,7 @@ class RemoteAdbBridge:
         finally:
             session.close()
             with self._session_lock:
-                if self._current_session is session:
-                    self._current_session = None
+                self._sessions.discard(session)
 
 
 def main() -> None:

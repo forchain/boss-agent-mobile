@@ -119,8 +119,10 @@ def test_bridge_bidirectional_relay(target_server: MockTcpServer, tmp_path: Path
         assert not pid_file.exists()
 
 
-def test_preemptive_session_eviction(target_server: MockTcpServer, tmp_path: Path):
-    """When client 2 connects, client 1 must be evicted cleanly without deadlocking the port."""
+def test_concurrent_sessions_are_independent(target_server: MockTcpServer, tmp_path: Path):
+    """Multiple LIVE clients may hold sessions simultaneously (root cause of the
+    2026-09-24 eviction war): a new connection must never disconnect existing
+    live sessions. Dead/half-open sessions are reaped by TCP keepalive instead."""
     bridge = RemoteAdbBridge(
         listen_host="127.0.0.1",
         listen_port=0,
@@ -132,34 +134,34 @@ def test_preemptive_session_eviction(target_server: MockTcpServer, tmp_path: Pat
     time.sleep(0.1)
 
     try:
-        # Client 1 connects and sends data
+        # Client 1 connects and is fully functional
         c1 = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         c1.settimeout(3.0)
         c1.connect(("127.0.0.1", bridge.bound_port))
         c1.sendall(b"CLIENT_1")
         assert c1.recv(1024) == b"ECHO:CLIENT_1"
 
-        # Client 2 connects -> triggers eviction of Client 1
+        # Client 2 connects while Client 1 is still live
         c2 = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         c2.settimeout(3.0)
         c2.connect(("127.0.0.1", bridge.bound_port))
-
-        # Give bridge a moment to process eviction
-        time.sleep(0.2)
-
-        # Client 1 socket must be closed / return EOF
-        c1.settimeout(1.0)
-        try:
-            chunk = c1.recv(1024)
-            assert chunk == b"", "Client 1 should have received EOF after eviction"
-        except (TimeoutError, OSError):
-            pass
-
-        # Client 2 must be fully functional
         c2.sendall(b"CLIENT_2")
         assert c2.recv(1024) == b"ECHO:CLIENT_2"
 
+        # Client 1 must remain fully usable after Client 2's arrival (no eviction)
+        time.sleep(0.2)
+        c1.sendall(b"CLIENT_1_AGAIN")
+        assert c1.recv(1024) == b"ECHO:CLIENT_1_AGAIN"
+
+        # Each bridge session owns its own independent target connection
+        assert len(target_server.active_conns) == 2
+
+        # Client 1 disconnecting must not disturb Client 2
         c1.close()
+        time.sleep(0.3)
+        c2.sendall(b"CLIENT_2_AGAIN")
+        assert c2.recv(1024) == b"ECHO:CLIENT_2_AGAIN"
+
         c2.close()
     finally:
         bridge.stop()
