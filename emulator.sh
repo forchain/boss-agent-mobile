@@ -120,8 +120,10 @@ bounded_run() {
     kill -TERM "${WATCHDOG_PID}" 2>/dev/null || true
     wait "${WATCHDOG_PID}" 2>/dev/null || true
 
-    # Report a killed query the way GNU `timeout` does, so a caller can tell "the bound was
-    # hit" (124) apart from "adb itself failed" (adb's own exit status).
+    # Report a query we had to kill as 124, the `timeout(1)` convention for "timed out", so a
+    # caller can tell "the bound was hit" apart from "adb itself failed" (adb's own status).
+    # Both signals land here: `timeout` distinguishes TERM (124) from KILL (137), which is
+    # noise for a caller whose only question is whether adb answered.
     if (( EXIT_CODE == 143 || EXIT_CODE == 137 )); then
         EXIT_CODE=124
     fi
