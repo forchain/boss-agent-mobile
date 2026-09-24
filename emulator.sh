@@ -31,6 +31,11 @@ mkdir -p ".boss_agent"
 
 PID_FILE=".boss_agent/emulator.pid"
 LOG_FILE=".boss_agent/emulator.log"
+BRIDGE_PID_FILE=".boss_agent/remote_bridge.pid"
+BRIDGE_READY_FILE=".boss_agent/remote_bridge.ready"
+BRIDGE_LOG_FILE=".boss_agent/remote_bridge.log"
+REMOTE_ADB_PORT="${REMOTE_ADB_PORT:-6555}"
+TARGET_ADB_PORT="${TARGET_ADB_PORT:-5555}"
 
 find_emulator_binary() {
     if command -v emulator >/dev/null 2>&1; then
@@ -156,8 +161,12 @@ adb_getprop() {
 # answer in time.
 adb_avd_name() {
     local SERIAL="$1"
-    local RAW
-    RAW="$(adb_query -s "${SERIAL}" emu avd name || true)"
+    local RAW=""
+    if [[ "${SERIAL}" =~ ^emulator-[0-9]+$ ]]; then
+        RAW="$(adb_query -s "${SERIAL}" emu avd name || true)"
+    else
+        RAW="$(adb_query -s "${SERIAL}" shell getprop ro.boot.qemu.avd_name || true)"
+    fi
     printf '%s\n' "${RAW}" | head -n 1 | tr -d '\r\n'
 }
 
@@ -243,7 +252,7 @@ get_running_device_serial() {
     # Only devices in the `device` state are queried: an `offline` (or otherwise broken)
     # transport cannot report its AVD name and blocks the adb client until it times out.
     DEV_LIST="$(printf '%s\n' "${RAW_DEVICES}" \
-        | awk '$1 ~ /^emulator-[0-9]+$/ && $2 == "device" { print $1 }')"
+        | awk '($1 ~ /^emulator-[0-9]+$/ || $1 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:[0-9]+$/) && $2 == "device" { print $1 }')"
 
     # Every candidate is probed, however slow: giving up on the scan early could miss the
     # dedicated AVD sitting behind unresponsive siblings. The per-query bound, not a global
@@ -278,6 +287,134 @@ attach_logs() {
     fi
 
     exec tail -n 30 -f "${LOG_FILE}"
+}
+
+get_primary_lan_ip() {
+    local LAN_IP=""
+    if [[ -n "${HOST_LAN_IP:-}" ]]; then
+        echo "${HOST_LAN_IP}"
+        return 0
+    fi
+    if command -v python3 >/dev/null 2>&1; then
+        LAN_IP="$(PYTHONPATH=src python3 -m boss_agent.services.remote_adb_bridge --print-lan-ip 2>/dev/null || true)"
+    fi
+    if [[ -z "${LAN_IP}" || "${LAN_IP}" =~ ^127\. ]]; then
+        LAN_IP="$(ifconfig 2>/dev/null | grep -E 'inet[[:space:]]+(192\.168|10\.|172\.(1[6-9]|2[0-9]|3[01]))\.' | awk '{print $2}' | head -n 1 || true)"
+    fi
+    if [[ -z "${LAN_IP}" ]]; then
+        LAN_IP="127.0.0.1"
+    fi
+    echo "${LAN_IP}"
+}
+
+start_remote_bridge() {
+    local PORT="${REMOTE_ADB_PORT:-6555}"
+    local TARGET_PORT="${TARGET_ADB_PORT:-5555}"
+
+    if [[ -f "${BRIDGE_PID_FILE}" ]]; then
+        local PID
+        PID="$(cat "${BRIDGE_PID_FILE}" 2>/dev/null || true)"
+        if [[ -n "${PID}" ]] && kill -0 "${PID}" 2>/dev/null; then
+            return 0
+        fi
+        rm -f "${BRIDGE_PID_FILE}"
+    fi
+
+    # Reclaim port from old orphaned bridge or socat if present
+    if command -v lsof >/dev/null 2>&1; then
+        local CONFLICT_PID
+        CONFLICT_PID="$(lsof -nP -iTCP:"${PORT}" -sTCP:LISTEN -t 2>/dev/null | head -n 1 || true)"
+        if [[ -n "${CONFLICT_PID}" ]]; then
+            local CMD_NAME
+            CMD_NAME="$(ps -p "${CONFLICT_PID}" -o comm= 2>/dev/null || true)"
+            if [[ "${CMD_NAME}" == *"python"* || "${CMD_NAME}" == *"socat"* ]]; then
+                echo "⚠️ Port ${PORT} already bound by PID ${CONFLICT_PID} (${CMD_NAME}). Reclaiming..."
+                kill -TERM "${CONFLICT_PID}" 2>/dev/null || true
+                sleep 0.5
+                kill -KILL "${CONFLICT_PID}" 2>/dev/null || true
+            fi
+        fi
+    fi
+
+    rm -f "${BRIDGE_READY_FILE}"
+    echo "🌉 Starting Remote ADB Bridge daemon (0.0.0.0:${PORT} -> 127.0.0.1:${TARGET_PORT})..."
+    PYTHONPATH="${ROOT_DIR}/src:${PYTHONPATH:-}" nohup python3 -m boss_agent.services.remote_adb_bridge \
+        --host 0.0.0.0 \
+        --port "${PORT}" \
+        --target-host 127.0.0.1 \
+        --target-port "${TARGET_PORT}" \
+        --pid-file "${BRIDGE_PID_FILE}" \
+        --ready-file "${BRIDGE_READY_FILE}" >> "${BRIDGE_LOG_FILE}" 2>&1 &
+    local BRIDGE_PID=$!
+    disown "${BRIDGE_PID}" 2>/dev/null || true
+
+    local READY=0
+    for _ in {1..30}; do
+        if [[ -f "${BRIDGE_READY_FILE}" ]] && kill -0 "${BRIDGE_PID}" 2>/dev/null; then
+            READY=1
+            break
+        fi
+        sleep 0.1
+    done
+    if [[ ${READY} -eq 1 ]]; then
+        echo "✅ Remote ADB Bridge daemon is active (PID: ${BRIDGE_PID}, Port: ${PORT})."
+    else
+        echo "⚠️ Remote ADB Bridge daemon started (PID: ${BRIDGE_PID}). Check ${BRIDGE_LOG_FILE}."
+    fi
+}
+
+stop_remote_bridge() {
+    local PORT="${REMOTE_ADB_PORT:-6555}"
+    local LAN_IP
+    LAN_IP="$(get_primary_lan_ip)"
+
+    if [[ -n "${LAN_IP}" && "${LAN_IP}" != "127.0.0.1" ]]; then
+        adb_query disconnect "${LAN_IP}:${PORT}" >/dev/null 2>&1 || true
+    fi
+
+    if [[ -f "${BRIDGE_PID_FILE}" ]]; then
+        local PID
+        PID="$(cat "${BRIDGE_PID_FILE}" 2>/dev/null || true)"
+        if [[ -n "${PID}" ]]; then
+            kill -TERM "${PID}" 2>/dev/null || true
+            sleep 0.3
+            kill -KILL "${PID}" 2>/dev/null || true
+        fi
+        rm -f "${BRIDGE_PID_FILE}" "${BRIDGE_READY_FILE}"
+        echo "ℹ️ Stopped Remote ADB Bridge daemon."
+    fi
+}
+
+ensure_lan_adb_connected() {
+    start_remote_bridge
+    local PORT="${REMOTE_ADB_PORT:-6555}"
+    local LAN_IP
+    LAN_IP="$(get_primary_lan_ip)"
+    if [[ -z "${LAN_IP}" || "${LAN_IP}" == "127.0.0.1" ]]; then
+        echo "⚠️ No non-loopback LAN IP detected; skipping auto-connect over LAN."
+        return 0
+    fi
+
+    local LAN_SERIAL="${LAN_IP}:${PORT}"
+    echo "🔌 Auto-connecting ADB to dedicated AVD via LAN (${LAN_SERIAL})..."
+    adb_query connect "${LAN_SERIAL}" >/dev/null 2>&1 || true
+
+    local CONNECTED=0
+    for _ in {1..20}; do
+        local BOOT
+        BOOT="$(adb_getprop "${LAN_SERIAL}" sys.boot_completed)"
+        if [[ "${BOOT}" == "1" ]]; then
+            CONNECTED=1
+            break
+        fi
+        sleep 0.5
+    done
+
+    if [[ ${CONNECTED} -eq 1 ]]; then
+        echo "🟢 Dedicated AVD connected via LAN: ${LAN_SERIAL} (ONLINE and READY)!"
+    else
+        echo "⚠️ Unable to verify LAN connection to ${LAN_SERIAL}. Check ${BRIDGE_LOG_FILE}."
+    fi
 }
 
 cmd_logs() {
@@ -328,20 +465,48 @@ cmd_status() {
     local BOOT_STATUS
     BOOT_STATUS="$(adb_getprop "${SERIAL}" sys.boot_completed)"
 
-    if [[ "${BOOT_STATUS}" == "1" ]]; then
-        echo "🟢 Dedicated AVD '${TARGET_AVD}' is ONLINE and READY (${SERIAL})."
-        echo "   Log file : ${LOG_FILE}"
-        return 0
-    else
+    if [[ "${BOOT_STATUS}" != "1" ]]; then
         echo "🟡 Dedicated AVD '${TARGET_AVD}' is BOOTING (${SERIAL}, sys.boot_completed='${BOOT_STATUS}')."
         return 1
     fi
+
+    echo "🟢 Dedicated AVD '${TARGET_AVD}' is ONLINE and READY (${SERIAL})."
+    echo "   Log file : ${LOG_FILE}"
+
+    local PORT="${REMOTE_ADB_PORT:-6555}"
+    local LAN_IP
+    LAN_IP="$(get_primary_lan_ip)"
+    local BRIDGE_PID=""
+    if [[ -f "${BRIDGE_PID_FILE}" ]]; then
+        BRIDGE_PID="$(cat "${BRIDGE_PID_FILE}" 2>/dev/null || true)"
+    fi
+
+    if [[ -n "${BRIDGE_PID}" ]] && kill -0 "${BRIDGE_PID}" 2>/dev/null; then
+        echo "🟢 Remote ADB Bridge is LISTENING (PID: ${BRIDGE_PID}, Port: ${PORT}, LAN: ${LAN_IP}:${PORT})"
+    else
+        echo "⚪ Remote ADB Bridge is NOT RUNNING (Port: ${PORT})"
+    fi
+
+    if [[ -n "${LAN_IP}" && "${LAN_IP}" != "127.0.0.1" ]]; then
+        local LAN_SERIAL="${LAN_IP}:${PORT}"
+        local LAN_DEV_STATE
+        LAN_DEV_STATE="$(adb_query devices || true)"
+        if printf '%s\n' "${LAN_DEV_STATE}" | awk -v s="${LAN_SERIAL}" '$1 == s && $2 == "device" {found=1} END {exit !found}'; then
+            echo "🟢 LAN ADB Connection is CONNECTED and READY (${LAN_SERIAL})"
+        else
+            echo "⚪ LAN ADB Connection is DISCONNECTED (${LAN_SERIAL})"
+        fi
+    fi
+
+    return 0
 }
 
 cmd_stop() {
     echo "🛑 Stopping Dedicated AVD '${TARGET_AVD}'..."
     local SERIAL
     SERIAL="$(get_running_device_serial)"
+
+    stop_remote_bridge
 
     if [[ -n "${SERIAL}" ]] && adb_query -s "${SERIAL}" emu kill >/dev/null; then
         echo "✅ Sent emu kill to ${SERIAL} (${TARGET_AVD})."
@@ -389,6 +554,7 @@ cmd_start() {
         local BOOT_STATUS
         BOOT_STATUS="$(adb_getprop "${SERIAL}" sys.boot_completed)"
         if [[ "${BOOT_STATUS}" == "1" ]]; then
+            ensure_lan_adb_connected
             if [[ ${DAEMON} -eq 1 ]]; then
                 echo "ℹ️ Dedicated AVD '${TARGET_AVD}' is already running in background (${SERIAL}, PID: $(cat "${PID_FILE}" 2>/dev/null || echo "active"))."
                 exit 0
@@ -427,6 +593,7 @@ cmd_start() {
         if [[ ${BOOTED} -eq 1 ]]; then
             echo "✅ Dedicated AVD '${TARGET_AVD}' is fully booted and ready (${SERIAL}, PID: ${EMU_PID})!"
             echo "   Log File : ${LOG_FILE}"
+            ensure_lan_adb_connected
             if [[ ${DAEMON} -eq 1 ]]; then
                 exit 0
             fi

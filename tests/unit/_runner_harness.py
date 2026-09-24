@@ -67,6 +67,11 @@ if [[ "${1:-}" == "devices" ]]; then
     exit 0
 fi
 
+if [[ "${1:-}" == "connect" || "${1:-}" == "disconnect" ]]; then
+    log_call "$*"
+    exit 0
+fi
+
 if [[ "${1:-}" == "-s" ]]; then
     SERIAL="${2:-}"
     shift 2 || true
@@ -81,7 +86,7 @@ if [[ "${1:-}" == "-s" ]]; then
     [[ -f "${SCENARIO}/hang.${SERIAL}.${COMMAND}" ]] && hang_forever "${SERIAL}.${COMMAND}"
     [[ -f "${SCENARIO}/hang.${COMMAND}" ]] && hang_forever "${COMMAND}"
     # Three-part key: hang only one subcommand, e.g. `hang.emulator-5554.emu.kill`.
-    [[ -f "${SCENARIO}/hang.${SERIAL}.${COMMAND}.${1:-}" ]] \\
+    [[ -f "${SCENARIO}/hang.${SERIAL}.${COMMAND}.${1:-}" ]] \
         && hang_forever "${SERIAL}.${COMMAND}.${1:-}"
 
     case "${COMMAND} ${1:-}" in
