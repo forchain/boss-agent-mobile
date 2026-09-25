@@ -864,29 +864,34 @@ class ScreeningPolicy:
         Currently the recruitment channel preference (direct-hire vs headhunter) and
         the commute distance ceiling. Returns (passed: bool, violation: str);
         ``violation`` is an empty string when the card satisfies all App-Enforced
-        Filters, otherwise a human-readable description of the violated condition,
-        which the Whitelist Relaxation router may still exempt.
+        Filters, otherwise every violated condition joined by '；', which the
+        Whitelist Relaxation router may still exempt. Reporting each violated
+        dimension — rather than the first one checked — keeps this caller's audit
+        trail equivalent to SCRAPE_JOBS', which adjudicates the two dimensions at
+        different stages and can therefore record both.
         """
         if not self.enable_screening:
             return True, ""
 
-        passed, violation = self.evaluate_commute_distance(commute_distance_km)
+        violations: list[str] = []
+
+        passed, commute_violation = self.evaluate_commute_distance(commute_distance_km)
         if not passed:
-            return False, violation
+            violations.append(commute_violation)
 
         if self.channel_preference == ChannelPreference.DIRECT_ONLY and is_headhunter:
-            return (
-                False,
-                "【App端强制过滤】猎头代招岗位违反直聘渠道偏好 (channel_preference='direct_only')",
+            violations.append(
+                "【App端强制过滤】猎头代招岗位违反直聘渠道偏好 (channel_preference='direct_only')"
+            )
+        elif self.channel_preference == ChannelPreference.HEADHUNTER_ONLY and not is_headhunter:
+            violations.append(
+                "【App端强制过滤】直招岗位违反猎头渠道偏好 (channel_preference='headhunter_only')"
             )
 
-        if self.channel_preference == ChannelPreference.HEADHUNTER_ONLY and not is_headhunter:
-            return (
-                False,
-                "【App端强制过滤】直招岗位违反猎头渠道偏好 (channel_preference='headhunter_only')",
-            )
+        if not violations:
+            return True, ""
 
-        return True, ""
+        return False, "；".join(violations)
 
     def evaluate_whitelist_relaxation(
         self,

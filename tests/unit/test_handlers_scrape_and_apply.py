@@ -442,6 +442,16 @@ async def test_scrape_jobs_handler_eliminates_blacklisted_cards_and_persists_rea
     assert records[0].get("status") == "ignored"
     assert "黑名单外包科技" in records[0].get("screened_reason", "")
 
+    # The keyword-stage rejection shares the App-Enforced Filter record shape, so it
+    # must carry the same fields — including the commute columns that every job record
+    # is documented to persist, even though no detail page was ever opened.
+    assert records[0].get("relaxed_by_whitelist") is False
+    assert records[0].get("screening_audit") == ""
+    assert records[0].get("jd_key_requirements") == []
+    assert "commute_distance_km" in records[0]
+    assert records[0].get("commute_distance_km") is None
+    assert records[0].get("commute_distance_text") == ""
+
 
 @pytest.mark.asyncio
 async def test_auto_apply_handler_preflight_blocks_already_ignored_job(broker, mock_driver):

@@ -1,13 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import {
+	formatCommuteDistance,
 	formatCommuteLimitInput,
 	isCommuteLimitDisabled,
 	normalizeCommuteLimit
 } from '../lib/commute';
 
-// Spec #209 / Ticket #210: the settings panel edits the commute ceiling as free
-// text so that "empty" can mean "filtering disabled" — a number-bound input
-// reports an empty field as undefined, losing that distinction.
+// Spec #209 / Ticket #210: the settings panel's `type="number"` field binds to
+// `string | number | null` — Svelte reports a cleared field as null, never as an
+// empty string — so "empty" still means "filtering disabled" while "0" stays a
+// deliberately typed zero.
 //
 // One coercion serves the input field, the config-file read and the YAML write:
 // two copies with different strictness is how a saved "disabled" silently
@@ -61,6 +63,29 @@ describe('commute ceiling disabled state', () => {
 	it('reports a positive ceiling as active', () => {
 		for (const active of ['40', 40, 0.5, 25.5]) {
 			expect(isCommuteLimitDisabled(active)).toBe(false);
+		}
+	});
+});
+
+// The jobs dashboard badge. The verdict was already rendered by the filter, so this
+// is display only — and an unknown distance must render as nothing rather than as a
+// "0 m" reading the job never had.
+describe('commute distance badge', () => {
+	it('renders kilometre distances with one decimal', () => {
+		expect(formatCommuteDistance(19.5)).toBe('19.5 km');
+		expect(formatCommuteDistance(1)).toBe('1.0 km');
+		expect(formatCommuteDistance(40)).toBe('40.0 km');
+	});
+
+	it('renders sub-kilometre distances in metres', () => {
+		expect(formatCommuteDistance(0)).toBe('0 m');
+		expect(formatCommuteDistance(0.5)).toBe('500 m');
+		expect(formatCommuteDistance(0.999)).toBe('999 m');
+	});
+
+	it('renders an unknown distance as nothing', () => {
+		for (const unknown of [null, undefined, '', '   ', 'abc', NaN, Infinity, -1]) {
+			expect(formatCommuteDistance(unknown)).toBe('');
 		}
 	});
 });

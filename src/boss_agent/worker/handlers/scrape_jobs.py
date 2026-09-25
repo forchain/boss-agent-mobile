@@ -21,9 +21,9 @@ from boss_agent.models import (
     JobRecordStatus,
     ScreeningPolicy,
     TargetAction,
+    commute_columns,
     is_communication_expired,
     is_direct_hire_company,
-    commute_columns,
     is_invalid_company_name,
 )
 from boss_agent.pages import (
@@ -55,7 +55,11 @@ def _app_filter_rejection_record(
     posting: JobPosting | None = None,
     title: str | None = None,
 ) -> dict[str, Any]:
-    """Build the ``ignored`` job record for an App-Enforced Filter violation.
+    """Build the ``ignored`` job record for a card rejected before detail inspection.
+
+    Serves both the keyword-stage gatekeeper (``violation`` is its rejection reason,
+    ``audit`` empty) and the App-Enforced Filter rejections, so one shape covers every
+    pre-detail rejection.
 
     ``relaxed_by_whitelist`` is always False here: the field records whether the job
     was *admitted* by relaxation, and this record was rejected. Any relaxation granted
@@ -210,7 +214,7 @@ class ScrapeJobsHandler(BaseTaskHandler):
         if probe_commute_distance:
             await broker.append_log(
                 task.id,
-                f"📍 [App端强制过滤] Active ceiling {policy.max_commute_distance_km}km; "
+                f"📍 [App端强制过滤] Active ceiling {policy.max_commute_distance_km:.1f}km; "
                 f"probing detail page bottom for the distance widget.",
             )
 
@@ -379,28 +383,15 @@ class ScrapeJobsHandler(BaseTaskHandler):
                 )
                 if not passed:
                     skipped_count += 1
-                    ignored_record = {
-                        "fingerprint": card.fingerprint,
-                        "title": card.title,
-                        "company_name": card.company_name,
-                        "recruiter_name": card.recruiter_name,
-                        "recruiter_title": getattr(card, "recruiter_title", "") or "",
-                        "is_headhunter": getattr(card, "is_headhunter", False),
-                        "company_scale": getattr(card, "company_scale", "") or "",
-                        "industry": getattr(card, "industry", "") or "",
-                        "tags": card_tags,
-                        "salary_range": getattr(card, "salary_range", "") or "",
-                        "location": getattr(card, "location", "") or "",
-                        "digest": digest_text,
-                        "job_description": "",
-                        "jd_key_requirements": card_tags,
-                        "status": JobRecordStatus.IGNORED.value,
-                        "screened_reason": reason,
-                        "relaxed_by_whitelist": False,
-                        "screening_audit": "",
-                        "search_keywords": [keyword] if keyword else [],
-                        "source_task_id": task.id,
-                    }
+                    ignored_record = _app_filter_rejection_record(
+                        card,
+                        violation=reason,
+                        audit="",
+                        keyword=keyword,
+                        task_id=task.id,
+                        tags=card_tags,
+                        digest=digest_text,
+                    )
                     await broker.upsert_job_record(ignored_record)
                     await broker.append_log(
                         task.id,
@@ -590,7 +581,10 @@ class ScrapeJobsHandler(BaseTaskHandler):
                             screening_audit = "；".join(p for p in audit_parts if p)
 
                             if not commute_relaxed:
-                                if scraped_jobs:
+                                # Guarded like the chat-state rollback above: only drop the
+                                # optimistic record we appended for this card, so a shifted
+                                # append order cannot miscount an earlier job.
+                                if scraped_jobs and scraped_jobs[-1] is persisted:
                                     scraped_jobs.pop()
                                 skipped_count += 1
                                 await broker.upsert_job_record(

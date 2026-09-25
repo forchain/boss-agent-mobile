@@ -29,6 +29,25 @@ def test_commute_violation_flags_distance_beyond_ceiling():
     assert violation == "【App端强制过滤】距离家庭住址 52.0km 超过通勤上限 40.0km"
 
 
+def test_commute_and_channel_violations_are_both_reported():
+    """A job violating both App-Enforced Filters must record both in the audit.
+
+    SCRAPE_JOBS adjudicates the channel from the card and the distance from the
+    detail page bottom, so its audit trail can carry both. AUTO_APPLY renders
+    every dimension in a single call, where returning only the first violation
+    would truncate the trail to whichever dimension is checked first.
+    """
+    policy = ScreeningPolicy(channel_preference="direct_only", max_commute_distance_km=40.0)
+
+    passed, violation = policy.evaluate_app_enforced_filters(
+        is_headhunter=True, commute_distance_km=52.0
+    )
+
+    assert passed is False
+    assert "超过通勤上限 40.0km" in violation
+    assert "猎头" in violation
+
+
 def test_commute_distance_at_or_below_ceiling_passes():
     policy = ScreeningPolicy(max_commute_distance_km=40.0)
 

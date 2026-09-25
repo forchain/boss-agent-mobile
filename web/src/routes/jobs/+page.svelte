@@ -25,6 +25,7 @@
 		extractDigestFromJd,
 		extractTagsFromText
 	} from '$lib/screening';
+	import { formatCommuteDistance } from '$lib/commute';
 
 	// State
 	let jobs = $state<JobRecord[]>([]);
@@ -100,15 +101,6 @@
 
 	// Derived: Filtered jobs (jobs returned by the server are already filtered by status, channel, and search)
 	let filteredJobs = $derived(jobs);
-
-	// Commute distance badge (spec #209). Sub-kilometre distances read better in
-	// metres, but anything measured in km keeps one decimal for a stable column.
-	function formatCommuteDistance(job: JobRecord): string {
-		const km = Number(job.commute_distance_km);
-		if (job.commute_distance_km === null || job.commute_distance_km === undefined) return '';
-		if (!Number.isFinite(km) || km < 0) return '';
-		return km >= 1 ? `${km.toFixed(1)} km` : `${Math.round(km * 1000)} m`;
-	}
 
 	function getJobTags(job: JobRecord): string[] {
 		const recruiterName = (job.recruiter_name || '').trim();
@@ -1004,7 +996,7 @@
 											<span
 												class="shrink-0 px-1.5 py-0.5 rounded bg-slate-800/80 text-[10px] text-slate-300 border border-slate-700/60"
 												title={job.commute_distance_text || '距家庭住址'}
-											>📍 {formatCommuteDistance(job)}</span>
+											>📍 {formatCommuteDistance(job.commute_distance_km)}</span>
 										{/if}
 									</div>
 
@@ -1191,7 +1183,7 @@
 									<span
 										class="px-1.5 py-0.5 rounded bg-slate-800/80 text-slate-300 border border-slate-700/60"
 										title={selectedJob.commute_distance_text || '距家庭住址'}
-									>📍 {formatCommuteDistance(selectedJob)}</span>
+									>📍 {formatCommuteDistance(selectedJob.commute_distance_km)}</span>
 								{/if}
 							</div>
 

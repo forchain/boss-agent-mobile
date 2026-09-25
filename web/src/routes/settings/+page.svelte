@@ -896,7 +896,7 @@
 						id="max-commute-distance-input"
 						type="number"
 						min="0"
-						step="1"
+						step="any"
 						placeholder="40"
 						bind:value={maxCommuteInput}
 						class="w-32 bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs font-mono text-slate-200 focus:outline-none focus:border-cyan-500"
