@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
+from .broker.collection_schema import SAVED_SEARCH_MAX_JOBS
 from .broker.models import TaskType
 from .models import SavedSearch, TargetAction, TargetTaskType
 from .settings import resolve_chat_acknowledgment_settings
@@ -36,8 +37,10 @@ from .settings import resolve_chat_acknowledgment_settings
 #: of the same SavedSearch cannot disagree about which jobs qualify.
 MIN_SCORE = 70
 
-#: Baseline job ceiling for a search dispatch, matching the schema's declared default.
-DEFAULT_MAX_JOBS = 30
+#: Baseline job ceiling for a search dispatch. An alias, not a restatement: the
+#: Collection Schema declares the `saved_searches.max_jobs` default, and a second
+#: literal here is how 20-vs-30 drifted apart in the first place.
+DEFAULT_MAX_JOBS = SAVED_SEARCH_MAX_JOBS
 
 #: Seconds the worker previews a drafted greeting before moving on.
 DEFAULT_PREVIEW_TIMEOUT_SEC = 3.0

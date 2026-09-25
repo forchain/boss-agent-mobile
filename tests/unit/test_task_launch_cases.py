@@ -82,6 +82,28 @@ def test_the_declared_defaults_are_the_shared_ones() -> None:
     assert defaults["preview_timeout_sec"] == task_launch.DEFAULT_PREVIEW_TIMEOUT_SEC
 
 
+def test_the_job_ceiling_is_the_schemas_declared_default() -> None:
+    """The launcher aliases the schema's default instead of restating the number.
+
+    The fixture pins the launcher to itself; this pins it to the declaration, which is
+    what stops a second literal from drifting the way 20-vs-30 once did. Exercise the
+    fallback branch, where `DEFAULT_MAX_JOBS` is what actually reaches the payload.
+    """
+    from boss_agent.broker.collection_schema import SAVED_SEARCH_MAX_JOBS
+
+    assert task_launch.DEFAULT_MAX_JOBS == SAVED_SEARCH_MAX_JOBS
+
+    search = SavedSearch(
+        id="s",
+        name="策略",
+        search=SearchConfig(keyword="agent"),
+        filter=FilterConfig(),
+        max_jobs=0,  # no ceiling of its own, so the baseline applies
+    )
+    launch = task_launch.build_search_launch(search, source=task_launch.LaunchSource.MANUAL)
+    assert launch.payload["max_jobs"] == SAVED_SEARCH_MAX_JOBS
+
+
 def test_a_scheduled_and_a_manual_launch_of_one_search_are_the_same_task() -> None:
     """The core promise: "the same SavedSearch" has exactly one meaning.
 
