@@ -9,7 +9,8 @@ import sqlite3
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from boss_agent.broker.provisioner import JOB_RECORDS_FIELDS, provision_sqlite_database
+from boss_agent.broker.collection_schema import JOB_RECORDS, pocketbase_fields
+from boss_agent.broker.provisioner import provision_sqlite_database
 from boss_agent.models import JobPosting, JobRecord
 from boss_agent.pages import (
     JobCardBrief,
@@ -155,7 +156,7 @@ def test_models_support_card_facets_and_headhunter_flag():
 
 def test_provision_sqlite_database_adds_all_new_facet_columns(tmp_path: Path):
     """Ensure database provisioner adds all 5 new columns to existing job_records table."""
-    field_names = [f["name"] for f in JOB_RECORDS_FIELDS]
+    field_names = [f["name"] for f in pocketbase_fields(JOB_RECORDS)]
     for expected_field in ("company_scale", "industry", "tags", "recruiter_title", "is_headhunter"):
         assert expected_field in field_names
 

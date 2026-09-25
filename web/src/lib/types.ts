@@ -170,7 +170,8 @@ export interface AutomationTask {
 	payload: Record<string, any>;
 	logs: string[];
 	error_message?: string;
-	assigned_worker?: string;
+	/** The Automation Worker holding this task's lease — the column the worker writes. */
+	worker_id?: string | null;
 	created?: string;
 	updated?: string;
 }

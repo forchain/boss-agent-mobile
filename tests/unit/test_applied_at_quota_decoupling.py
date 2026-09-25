@@ -15,9 +15,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from boss_agent.broker.collection_schema import JOB_RECORDS, pocketbase_fields
 from boss_agent.broker.models import TaskStatus, TaskType
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
-from boss_agent.broker.provisioner import JOB_RECORDS_FIELDS, provision_sqlite_database
+from boss_agent.broker.provisioner import provision_sqlite_database
 from boss_agent.worker.config import WorkerConfig
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.daemon import AutomationWorker
@@ -27,10 +28,10 @@ from droid_agent_core.locators import get_global_locator_registry
 
 def test_job_records_schema_declares_applied_at():
     """The PocketBase job_records collection definition must declare the applied_at field."""
-    field_names = {f["name"] for f in JOB_RECORDS_FIELDS}
+    field_names = {f["name"] for f in pocketbase_fields(JOB_RECORDS)}
     assert "applied_at" in field_names, (
-        "JOB_RECORDS_FIELDS must declare 'applied_at' so remote PocketBase collections "
-        "accepts the quota-decoupled dispatch timestamp."
+        "The job_records schema must declare 'applied_at' so remote PocketBase "
+        "collections accept the quota-decoupled dispatch timestamp."
     )
 
 

@@ -340,7 +340,7 @@ export async function createAutomationTask(taskType: string, payload: Record<str
 			payload: record.payload,
 			logs: record.logs || [],
 			error_message: record.error_message,
-			assigned_worker: record.assigned_worker,
+			worker_id: record.worker_id,
 			created: record.created,
 			updated: record.updated
 		};
@@ -426,7 +426,7 @@ export async function listAutomationTasks(options?: {
 			payload: r.payload || {},
 			logs: r.logs || [],
 			error_message: r.error_message,
-			assigned_worker: r.assigned_worker,
+			worker_id: r.worker_id,
 			created: r.created,
 			updated: r.updated
 		}));
@@ -494,7 +494,7 @@ export async function getAutomationTask(taskId: string): Promise<AutomationTask 
 				payload: r.payload || {},
 				logs: r.logs || [],
 				error_message: r.error_message,
-				assigned_worker: r.assigned_worker,
+				worker_id: r.worker_id,
 				created: r.created,
 				updated: r.updated
 			};

@@ -23,6 +23,7 @@ from typing import Any
 
 import requests
 
+from boss_agent.broker.collection_schema import JOB_RECORDS, wire_payload
 from boss_agent.models import (
     JobRecordStatus,
     compute_job_fingerprint,
@@ -115,40 +116,29 @@ def _sticky_field_updates(existing: dict[str, Any], record_data: dict[str, Any])
 
 
 def _record_fields(record_data: dict[str, Any], fingerprint: str, now: str) -> dict[str, Any]:
-    """The canonical field set of a brand-new job record, shared by both adapters."""
-    status_val = record_data.get("status", JobRecordStatus.UNMATCHED)
+    """The canonical field set of a brand-new job record, shared by both adapters.
+
+    The field list is the Collection Schema's, so a column added to ``job_records``
+    is written by the store the moment it is declared, and a key the schema does not
+    know about is dropped rather than smuggled onto the wire.
+    """
+    fields = wire_payload(JOB_RECORDS, record_data)
+    fields["fingerprint"] = fingerprint
+
+    status_val = fields.get("status") or JobRecordStatus.UNMATCHED
     if hasattr(status_val, "value"):
         status_val = status_val.value
-    return {
-        "fingerprint": fingerprint,
-        "title": record_data.get("title", ""),
-        "company_name": record_data.get("company_name", ""),
-        "recruiter_name": record_data.get("recruiter_name", ""),
-        "recruiter_title": record_data.get("recruiter_title", ""),
-        "is_headhunter": record_data.get("is_headhunter", False),
-        "company_scale": record_data.get("company_scale", ""),
-        "industry": record_data.get("industry", ""),
-        "tags": record_data.get("tags", []),
-        "salary_range": record_data.get("salary_range", ""),
-        "location": record_data.get("location", ""),
-        "digest": record_data.get("digest", ""),
-        "job_description": record_data.get("job_description", ""),
-        "status": status_val or JobRecordStatus.UNMATCHED.value,
-        "screened_reason": record_data.get("screened_reason", ""),
-        "relaxed_by_whitelist": bool(record_data.get("relaxed_by_whitelist", False)),
-        "screening_audit": record_data.get("screening_audit", ""),
-        "applied_at": record_data.get("applied_at"),
-        "applied_source": record_data.get("applied_source", ""),
-        "match_score": record_data.get("match_score"),
-        "jd_key_requirements": record_data.get("jd_key_requirements", []),
-        "greeting_message": record_data.get("greeting_message", ""),
-        "search_keywords": record_data.get("search_keywords", []),
-        "source_task_id": record_data.get("source_task_id"),
-        "first_seen_at": now,
-        "last_seen_at": now,
-        "created": now,
-        "updated": now,
-    }
+    fields["status"] = status_val or JobRecordStatus.UNMATCHED.value
+
+    # Boolean and timestamp columns are coerced here because a caller may hand over a
+    # value that survived a JSON round-trip (``"false"``) or an ORM-ish truthy object.
+    fields["is_headhunter"] = bool(fields.get("is_headhunter", False))
+    fields["relaxed_by_whitelist"] = bool(fields.get("relaxed_by_whitelist", False))
+    fields["first_seen_at"] = now
+    fields["last_seen_at"] = now
+    fields["created"] = now
+    fields["updated"] = now
+    return fields
 
 
 class JobRecordStore(ABC):

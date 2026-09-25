@@ -9,22 +9,27 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from boss_agent.broker.models import (
-    POCKETBASE_AUTOMATION_TASKS_SCHEMA,
-    AutomationTask,
-    TaskStatus,
-    TaskType,
+from boss_agent.broker.collection_schema import (
+    AUTOMATION_TASKS,
+    pocketbase_collection_payload,
 )
+from boss_agent.broker.models import AutomationTask, TaskStatus, TaskType
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker, PocketBaseTaskBroker
 
 
 def test_pocketbase_schema_definition_validity():
-    """Verify automation_tasks collection schema conforms to PocketBase requirements."""
-    schema = POCKETBASE_AUTOMATION_TASKS_SCHEMA
-    assert schema["name"] == "automation_tasks"
-    assert schema["type"] == "base"
+    """Verify the shipped automation_tasks schema conforms to PocketBase requirements.
 
-    field_names = [f["name"] for f in schema["fields"]]
+    This used to pin ``POCKETBASE_AUTOMATION_TASKS_SCHEMA`` — a dict inside the broker
+    models that nothing in production imported, so the suite asserted against fiction
+    while the provisioner shipped something else. It now pins the schema the
+    provisioner actually renders.
+    """
+    payload = pocketbase_collection_payload(AUTOMATION_TASKS)
+    assert payload["name"] == "automation_tasks"
+    assert payload["type"] == "base"
+
+    field_names = [f["name"] for f in payload["fields"]]
     assert "task_type" in field_names
     assert "status" in field_names
     assert "payload" in field_names

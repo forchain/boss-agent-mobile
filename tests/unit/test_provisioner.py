@@ -305,10 +305,10 @@ def test_provision_sqlite_database_offline_structure(tmp_path: Path):
 
 def test_provision_sqlite_database_adds_digest_column_if_missing(tmp_path: Path):
     """If job_records table was created in an older version without 'digest', provisioner alters table."""
-    from boss_agent.broker.provisioner import JOB_RECORDS_FIELDS
+    from boss_agent.broker.collection_schema import JOB_RECORDS, pocketbase_fields
 
     # Verify field definition
-    field_names = [f["name"] for f in JOB_RECORDS_FIELDS]
+    field_names = [f["name"] for f in pocketbase_fields(JOB_RECORDS)]
     assert "digest" in field_names
 
     db_file = tmp_path / "data.db"

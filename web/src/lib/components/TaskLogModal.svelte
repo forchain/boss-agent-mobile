@@ -77,10 +77,10 @@
 					<span>创建时间: </span>
 					<span class="text-slate-200 font-mono">{task.created || '未知'}</span>
 				</div>
-				{#if task.assigned_worker}
+				{#if task.worker_id}
 					<div>
 						<span>执行 Worker: </span>
-						<span class="text-cyan-400 font-mono">{task.assigned_worker}</span>
+						<span class="text-cyan-400 font-mono">{task.worker_id}</span>
 					</div>
 				{/if}
 				{#if task.payload?.search_name || task.payload?.saved_search_name}

@@ -1409,6 +1409,19 @@ def _yaml_block_end(lines: list[str], key_index: int) -> int:
     return end
 
 
+def _saved_search_max_jobs_default() -> int:
+    """The declared ``saved_searches.max_jobs`` default, resolved lazily.
+
+    ``boss_agent.models`` is imported *by* the broker adapter, so importing the
+    Collection Schema at module scope here would close an import cycle. The default
+    itself lives in the schema module so the domain model, the provisioner and the
+    Web UI cannot drift apart the way 20-vs-30 once did.
+    """
+    from boss_agent.broker.collection_schema import SAVED_SEARCH_MAX_JOBS
+
+    return SAVED_SEARCH_MAX_JOBS
+
+
 @dataclass
 class SavedSearch:
     """Represents a named and persistent search & filter query configuration."""
@@ -1424,7 +1437,7 @@ class SavedSearch:
     last_run_at: str | None = None
     target_task_type: str = "AUTO_APPLY"
     target_action: str = ""
-    max_jobs: int = 20
+    max_jobs: int = field(default_factory=_saved_search_max_jobs_default)
     enable_search: bool = True
     enable_filter: bool = True
 
@@ -1590,6 +1603,11 @@ class SavedSearch:
                     else TargetAction.SAVE_JD
                 )
 
+        raw_max_jobs = data.get("max_jobs")
+        max_jobs = (
+            int(raw_max_jobs) if raw_max_jobs is not None else _saved_search_max_jobs_default()
+        )
+
         return cls(
             id=sid,
             name=data.get("name", sid),
@@ -1602,7 +1620,7 @@ class SavedSearch:
             last_run_at=data.get("last_run_at"),
             target_task_type=target_task_type,
             target_action=target_action,
-            max_jobs=int(data.get("max_jobs", 20)),
+            max_jobs=max_jobs,
             enable_search=enable_search,
             enable_filter=enable_filter,
         )

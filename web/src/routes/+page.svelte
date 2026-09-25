@@ -524,9 +524,9 @@
 						</span>
 					{/if}
 					<span>创建: {activeTask.created?.slice(11, 19) || '刚刚'}</span>
-					{#if activeTask.assigned_worker}
+					{#if activeTask.worker_id}
 						<span class="px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-slate-300">
-							Worker: {activeTask.assigned_worker}
+							Worker: {activeTask.worker_id}
 						</span>
 					{/if}
 				</div>

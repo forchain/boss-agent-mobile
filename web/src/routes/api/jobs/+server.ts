@@ -2,12 +2,7 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { getPocketBaseUrl } from '$lib/pocketbase';
 import { cleanJobTitle } from '$lib/screening';
-import crypto from 'crypto';
-
-function computeFingerprint(companyName: string, title: string, recruiterName: string): string {
-	const raw = `${(companyName || '').trim()}::${cleanJobTitle(title)}::${(recruiterName || '').trim()}`;
-	return crypto.createHash('sha256').update(raw).digest('hex');
-}
+import { computeFingerprint } from '$lib/server/jobFingerprint';
 
 import type { JobRecordsCounts } from '$lib/types';
 
