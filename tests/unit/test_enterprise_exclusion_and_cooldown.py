@@ -13,11 +13,11 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
+from _card_fixtures import located
 
 from boss_agent.broker.models import TaskType
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker, PocketBaseTaskBroker
-from boss_agent.models import ChatButtonState, is_communication_expired
-from boss_agent.pages import JobCardBrief
+from boss_agent.models import ChatButtonState, JobCardBrief, is_communication_expired
 from boss_agent.worker.config import WorkerConfig
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.daemon import AutomationWorker
@@ -215,7 +215,7 @@ async def test_scrape_skips_card_already_recorded_as_applied(broker, mock_driver
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_list = mock_list_cls.return_value
         mock_list.get_feed_bottom_boundary.return_value = None
-        mock_list.extract_visible_job_cards.return_value = [card]
+        mock_list.extract_visible_job_cards.return_value = [located(card)]
         mock_search_cls.return_value.is_search_page.return_value = True
 
         mock_detail = mock_detail_cls.return_value
@@ -265,7 +265,7 @@ async def test_scrape_skips_other_roles_from_communicated_direct_hire_company(br
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_list = mock_list_cls.return_value
         mock_list.get_feed_bottom_boundary.return_value = None
-        mock_list.extract_visible_job_cards.return_value = [other_role]
+        mock_list.extract_visible_job_cards.return_value = [located(other_role)]
         mock_search_cls.return_value.is_search_page.return_value = True
 
         mock_detail = mock_detail_cls.return_value
@@ -314,7 +314,7 @@ async def test_scrape_admits_headhunter_roles_from_same_company_name(broker, moc
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_list = mock_list_cls.return_value
         mock_list.get_feed_bottom_boundary.return_value = None
-        mock_list.extract_visible_job_cards.return_value = [headhunter_role]
+        mock_list.extract_visible_job_cards.return_value = [located(headhunter_role)]
         mock_search_cls.return_value.is_search_page.return_value = True
 
         mock_detail = mock_detail_cls.return_value
@@ -364,7 +364,7 @@ async def test_masked_company_names_never_join_the_exclusion_pool(broker, mock_d
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_list = mock_list_cls.return_value
         mock_list.get_feed_bottom_boundary.return_value = None
-        mock_list.extract_visible_job_cards.return_value = [other_role]
+        mock_list.extract_visible_job_cards.return_value = [located(other_role)]
         mock_search_cls.return_value.is_search_page.return_value = True
 
         mock_detail = mock_detail_cls.return_value
@@ -400,7 +400,7 @@ async def test_newly_communicated_company_is_cached_within_the_same_run(broker, 
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_list = mock_list_cls.return_value
         mock_list.get_feed_bottom_boundary.return_value = None
-        mock_list.extract_visible_job_cards.return_value = [first_role, second_role]
+        mock_list.extract_visible_job_cards.return_value = [located(first_role), located(second_role)]
         mock_search_cls.return_value.is_search_page.return_value = True
 
         mock_detail = mock_detail_cls.return_value
@@ -452,7 +452,7 @@ async def test_expired_communication_releases_card_for_reevaluation(broker, mock
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_list = mock_list_cls.return_value
         mock_list.get_feed_bottom_boundary.return_value = None
-        mock_list.extract_visible_job_cards.return_value = [card]
+        mock_list.extract_visible_job_cards.return_value = [located(card)]
         mock_search_cls.return_value.is_search_page.return_value = True
 
         mock_detail = mock_detail_cls.return_value
@@ -527,7 +527,7 @@ async def test_expired_communication_releases_record_back_to_candidate_pool(brok
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_list = mock_list_cls.return_value
         mock_list.get_feed_bottom_boundary.return_value = None
-        mock_list.extract_visible_job_cards.return_value = [card]
+        mock_list.extract_visible_job_cards.return_value = [located(card)]
         mock_search_cls.return_value.is_search_page.return_value = True
         mock_detail_cls.return_value.get_chat_button_state.return_value = ChatButtonState.UNKNOWN
 
@@ -709,7 +709,7 @@ async def test_permanent_cooldown_keeps_excluding_old_communications(broker, moc
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_list = mock_list_cls.return_value
         mock_list.get_feed_bottom_boundary.return_value = None
-        mock_list.extract_visible_job_cards.return_value = [card]
+        mock_list.extract_visible_job_cards.return_value = [located(card)]
         mock_search_cls.return_value.is_search_page.return_value = True
 
         mock_detail = mock_detail_cls.return_value

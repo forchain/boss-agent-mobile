@@ -1,8 +1,7 @@
 from unittest.mock import MagicMock
 
 from boss_agent.graph import run_job_application_graph
-from boss_agent.models import SavedSearch, ScreeningPolicy
-from boss_agent.pages import JobCardBrief
+from boss_agent.models import JobCardBrief, SavedSearch, ScreeningPolicy
 from boss_agent.screening import CandidateScreener, JobVerdictStage
 
 

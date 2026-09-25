@@ -11,14 +11,12 @@ from unittest.mock import MagicMock
 
 from boss_agent.broker.collection_schema import JOB_RECORDS, pocketbase_fields
 from boss_agent.broker.provisioner import provision_sqlite_database
-from boss_agent.models import JobPosting, JobRecord
-from boss_agent.pages import (
-    JobCardBrief,
-    JobListPage,
-    clean_job_title,
+from boss_agent.card_parser import (
     parse_company_scale_industry,
     parse_recruiter_info,
 )
+from boss_agent.models import JobCardBrief, JobPosting, JobRecord, clean_job_title
+from boss_agent.pages import JobListPage
 
 
 def test_parse_recruiter_info_headhunter_detection():
@@ -277,7 +275,7 @@ def test_job_list_page_extracts_rich_card_facets():
 
     cards = page.extract_visible_job_cards(max_cards=1)
     assert len(cards) == 1
-    card = cards[0]
+    card = cards[0].card
 
     assert card.title == "技术负责人-CTO级别 | pre-ipo 公司 | 医疗AI"
     assert card.company_name == "某中型人工智能公司"
@@ -349,7 +347,7 @@ def test_job_list_page_rejects_title_as_company_and_recovers_from_card_text():
 
     cards = page.extract_visible_job_cards(max_cards=1)
     assert len(cards) == 1
-    card = cards[0]
+    card = cards[0].card
 
     assert card.company_name == "塔塔"
     assert card.company_scale == "1000-999人"
@@ -428,7 +426,7 @@ def test_job_list_page_guards_against_recruiter_title_in_location():
 
     cards = page.extract_visible_job_cards(max_cards=1)
     assert len(cards) == 1
-    card = cards[0]
+    card = cards[0].card
     assert card.title == "资深架构师"
     assert card.recruiter_name == "林先生"
     assert card.recruiter_title == "猎头顾问"
@@ -494,8 +492,8 @@ def test_job_list_page_skips_cards_without_company_name_or_unknown_company():
 
     cards = page.extract_visible_job_cards(max_cards=10)
     assert len(cards) == 1
-    assert cards[0].title == "AI工程师"
-    assert cards[0].company_name == "字节跳动"
+    assert cards[0].card.title == "AI工程师"
+    assert cards[0].card.company_name == "字节跳动"
 
 
 def test_backfill_purges_unknown_company_records(tmp_path: Path):

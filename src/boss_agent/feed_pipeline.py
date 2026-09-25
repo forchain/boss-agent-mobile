@@ -37,6 +37,7 @@ from .models import (
     TARGET_ACTION_RANK,
     ChatButtonState,
     FilterConfig,
+    JobCardBrief,
     JobRecordStatus,
     ScreeningPolicy,
     TargetAction,
@@ -47,9 +48,9 @@ from .pages import (
     ChatPage,
     FilterDialogPage,
     IndustryFilterDialogPage,
-    JobCardBrief,
     JobDetailPage,
     JobListPage,
+    LocatedJobCard,
     SearchPage,
     StartupDialogPage,
 )
@@ -209,6 +210,9 @@ class _CardRun:
     result: FeedStreamResult
     on_job: Callable[[JobOutcome], Awaitable[None]] | None = None
     card: JobCardBrief | None = None
+    # The element the brief was read from. Only the boundary check and the detail tap
+    # touch it; every other stage works from `card`.
+    located: LocatedJobCard | None = None
     card_record: dict[str, Any] = field(default_factory=dict)
     verdict: CardScreeningVerdict | None = None
     # Position of this card's record in ``result.jobs``, replaced in place by the
@@ -435,10 +439,11 @@ class JobFeedPipeline:
                 break
 
             new_cards_in_view = 0
-            for card in visible_cards:
+            for located in visible_cards:
+                card = located.card
                 if len(scanned_fingerprints) >= config.max_jobs:
                     break
-                card_y = _element_y(card.element)
+                card_y = _element_y(located.element)
                 if boundary_y is not None and card_y is not None and card_y >= boundary_y:
                     # Below the boundary marker: a recommendation, not a search result.
                     continue
@@ -450,7 +455,13 @@ class JobFeedPipeline:
 
                 try:
                     await self._process_card(
-                        _CardRun(config=config, result=result, on_job=on_job, card=card)
+                        _CardRun(
+                            config=config,
+                            result=result,
+                            on_job=on_job,
+                            card=card,
+                            located=located,
+                        )
                     )
                 except Exception as e:
                     # One unrecoverable card must not abandon the rest of the batch:
@@ -656,7 +667,7 @@ class JobFeedPipeline:
             f"🔍 [Detail Inspection] Inspecting {tag} '{card.title}' @ '{card.company_name}'"
         )
 
-        if not await self._open_detail(card):
+        if not await self._open_detail(run.located):
             return
         try:
             if await self._back_out_if_contacted(run, card.fingerprint):
@@ -668,11 +679,16 @@ class JobFeedPipeline:
         finally:
             self.detail_page.navigate_back()
 
-    async def _open_detail(self, card: JobCardBrief) -> bool:
-        """Tap the card (or fall back to the first list item) to reach its detail page."""
-        if card.element is not None and hasattr(card.element, "click"):
+    async def _open_detail(self, located: LocatedJobCard | None) -> bool:
+        """Tap the card (or fall back to the first list item) to reach its detail page.
+
+        The one place besides the boundary check that needs the device handle rather
+        than the parsed brief.
+        """
+        element = located.element if located is not None else None
+        if element is not None and hasattr(element, "click"):
             try:
-                card.element.click()
+                element.click()
                 return True
             except Exception:
                 pass

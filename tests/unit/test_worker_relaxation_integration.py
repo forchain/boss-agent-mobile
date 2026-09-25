@@ -10,11 +10,11 @@ SCRAPE_JOBS handlers and persisted in job_records audit fields.
 from unittest.mock import MagicMock, patch
 
 import pytest
+from _card_fixtures import located
 
 from boss_agent.broker.models import TaskType
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
-from boss_agent.models import JobPosting
-from boss_agent.pages import JobCardBrief
+from boss_agent.models import JobCardBrief, JobPosting
 from boss_agent.worker.config import WorkerConfig
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.handlers.auto_apply import AutoApplyHandler
@@ -170,7 +170,6 @@ async def test_scrape_jobs_relaxed_headhunter_card_persists_audit_fields():
         recruiter_name="钟先生 · 猎头顾问",
         tags=["LLM"],
         digest="负责大模型应用平台与Agent工作流架构",
-        element=card_elem,
     )
 
     task = await broker.create_task(
@@ -192,7 +191,7 @@ async def test_scrape_jobs_relaxed_headhunter_card_persists_audit_fields():
         patch("boss_agent.feed_pipeline.JobDetailPage") as detail_cls,
     ):
         startup_cls.return_value.is_dialog_present.return_value = False
-        list_cls.return_value.extract_visible_job_cards.return_value = [card]
+        list_cls.return_value.extract_visible_job_cards.return_value = [located(card, card_elem)]
         search_cls.return_value.is_search_page.return_value = True
         detail_cls.return_value.extract_job_posting.return_value = JobPosting(
             title="大模型技术负责人",
@@ -233,7 +232,6 @@ async def test_scrape_jobs_app_rule_violation_without_rescue_is_ignored():
         recruiter_name="钟先生 · 猎头顾问",
         tags=["K8s"],
         digest="负责容器平台与云原生基础设施建设",
-        element=card_elem,
     )
 
     task = await broker.create_task(
@@ -255,7 +253,7 @@ async def test_scrape_jobs_app_rule_violation_without_rescue_is_ignored():
         patch("boss_agent.feed_pipeline.JobDetailPage") as detail_cls,
     ):
         startup_cls.return_value.is_dialog_present.return_value = False
-        list_cls.return_value.extract_visible_job_cards.return_value = [card]
+        list_cls.return_value.extract_visible_job_cards.return_value = [located(card, card_elem)]
         search_cls.return_value.is_search_page.return_value = True
         detail_cls.return_value.extract_job_posting.return_value = JobPosting(
             title="云原生平台工程师",

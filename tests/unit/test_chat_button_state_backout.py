@@ -13,11 +13,12 @@ The Boss 直聘 job detail page exposes its engagement state through the call-to
 from unittest.mock import MagicMock, patch
 
 import pytest
+from _card_fixtures import located
 
 from boss_agent.broker.models import TaskStatus, TaskType
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
-from boss_agent.models import ChatButtonState, classify_chat_button
-from boss_agent.pages import JobCardBrief, JobDetailPage
+from boss_agent.models import ChatButtonState, JobCardBrief, classify_chat_button
+from boss_agent.pages import JobDetailPage
 from boss_agent.worker.config import WorkerConfig
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.daemon import AutomationWorker
@@ -138,7 +139,7 @@ async def test_scrape_records_platform_historical_contact_and_backs_out(broker):
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_list = mock_list_cls.return_value
         mock_list.get_feed_bottom_boundary.return_value = None
-        mock_list.extract_visible_job_cards.return_value = [card]
+        mock_list.extract_visible_job_cards.return_value = [located(card)]
         mock_search_cls.return_value.is_search_page.return_value = True
 
         mock_detail = mock_detail_cls.return_value
@@ -200,7 +201,7 @@ async def test_scrape_marks_expired_posting_as_ignored_and_backs_out(broker):
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_list = mock_list_cls.return_value
         mock_list.get_feed_bottom_boundary.return_value = None
-        mock_list.extract_visible_job_cards.return_value = [card]
+        mock_list.extract_visible_job_cards.return_value = [located(card)]
         mock_search_cls.return_value.is_search_page.return_value = True
 
         mock_detail = mock_detail_cls.return_value

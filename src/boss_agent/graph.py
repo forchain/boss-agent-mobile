@@ -15,8 +15,7 @@ from typing import Any, TypedDict
 from langgraph.graph import END, START, StateGraph
 from langsmith import traceable
 
-from .models import ScreeningPolicy
-from .pages import JobCardBrief
+from .models import JobCardBrief, ScreeningPolicy
 from .screening import CARD_PASS_REASON, CandidateScreener, CardVerdictStage
 
 logger = logging.getLogger(__name__)

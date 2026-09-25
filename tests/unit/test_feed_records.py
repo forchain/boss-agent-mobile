@@ -15,8 +15,7 @@ from boss_agent.feed_records import (
     effective_title,
     enriched_record,
 )
-from boss_agent.models import JobPosting, JobRecordStatus
-from boss_agent.pages import JobCardBrief
+from boss_agent.models import JobCardBrief, JobPosting, JobRecordStatus
 
 JD = "岗位职责：主导企业级大模型应用与Agent工作流平台建设，负责推理链编排与落地。"
 

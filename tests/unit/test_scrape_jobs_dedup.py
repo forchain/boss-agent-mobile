@@ -7,11 +7,11 @@ Unit tests for card-level fingerprint extraction and deduplication skip in Scrap
 from unittest.mock import MagicMock, patch
 
 import pytest
+from _card_fixtures import located
 
 from boss_agent.broker.models import AutomationTask, TaskType
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
-from boss_agent.models import JobPosting, compute_job_fingerprint
-from boss_agent.pages import JobCardBrief
+from boss_agent.models import JobCardBrief, JobPosting, compute_job_fingerprint
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.handlers.scrape_jobs import ScrapeJobsHandler
 
@@ -53,7 +53,6 @@ async def test_scrape_jobs_handler_skips_existing_and_scrapes_new():
         title="已抓取的岗位",
         company_name="字节跳动",
         recruiter_name="张HR",
-        element=card1_elem,
         fingerprint=existing_fp,
     )
 
@@ -63,7 +62,6 @@ async def test_scrape_jobs_handler_skips_existing_and_scrapes_new():
         title="新AI岗位",
         company_name="新公司",
         recruiter_name="李总",
-        element=card2_elem,
     )
 
     from boss_agent.worker.config import WorkerConfig
@@ -86,7 +84,7 @@ async def test_scrape_jobs_handler_skips_existing_and_scrapes_new():
         mock_startup.is_dialog_present.return_value = False
 
         mock_list = mock_list_cls.return_value
-        mock_list.extract_visible_job_cards.return_value = [card1, card2]
+        mock_list.extract_visible_job_cards.return_value = [located(card1, card1_elem), located(card2, card2_elem)]
 
         mock_search = mock_search_cls.return_value
         mock_search.is_search_page.return_value = True
@@ -133,7 +131,6 @@ async def test_scrape_jobs_handler_direct_ingestion_even_when_detail_fails():
         location="上海",
         tags=["3-5年", "本科"],
         snippet="负责基于agent的devops体系的架构",
-        element=card_elem,
     )
 
     from boss_agent.worker.config import WorkerConfig
@@ -153,7 +150,7 @@ async def test_scrape_jobs_handler_direct_ingestion_even_when_detail_fails():
     ):
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_list = mock_list_cls.return_value
-        mock_list.extract_visible_job_cards.return_value = [card]
+        mock_list.extract_visible_job_cards.return_value = [located(card, card_elem)]
 
         mock_search = mock_search_cls.return_value
         mock_search.is_search_page.return_value = True
@@ -218,7 +215,10 @@ def test_extract_visible_job_cards_parser():
     briefs = page.extract_visible_job_cards(max_cards=5)
 
     assert len(briefs) == 1
-    b = briefs[0]
+    # The page object hands back located cards: the parsed brief plus the element it
+    # was read from. Everything but the boundary check and the detail tap reads `card`.
+    b = briefs[0].card
+    assert briefs[0].element is mock_card
     assert b.title == "Agent研发架构师"
     assert b.salary_range == "7-10万元·16薪"
     assert b.company_name == "某大型知名互联网公司"
@@ -249,7 +249,6 @@ async def test_scrape_jobs_handler_preliminary_card_screening_and_enrichment():
         recruiter_name="外包HR",
         tags=["Python"],
         digest="此岗位需长期在客户现场驻场办公开发",
-        element=card1_elem,
     )
 
     # Card 2: Passes preliminary screening
@@ -260,7 +259,6 @@ async def test_scrape_jobs_handler_preliminary_card_screening_and_enrichment():
         recruiter_name="技术总监",
         tags=["LLM", "Agent"],
         digest="负责核心智能体工作流平台搭建",
-        element=card2_elem,
     )
 
     from boss_agent.worker.config import WorkerConfig
@@ -289,7 +287,7 @@ async def test_scrape_jobs_handler_preliminary_card_screening_and_enrichment():
         mock_startup.is_dialog_present.return_value = False
 
         mock_list = mock_list_cls.return_value
-        mock_list.extract_visible_job_cards.return_value = [card1, card2]
+        mock_list.extract_visible_job_cards.return_value = [located(card1, card1_elem), located(card2, card2_elem)]
 
         mock_search = mock_search_cls.return_value
         mock_search.is_search_page.return_value = True
@@ -350,7 +348,6 @@ async def test_scrape_jobs_handler_facet_persistence_and_recruitment_type_teleme
         industry="人工智能",
         tags=["10年以上", "硕士", "容器技术"],
         digest="核心研发与平台建设领导团队研发医疗领域专用的大模型",
-        element=card_hh_elem,
     )
 
     card_dir_elem = MagicMock()
@@ -363,7 +360,6 @@ async def test_scrape_jobs_handler_facet_persistence_and_recruitment_type_teleme
         industry="人工智能",
         tags=["10年以上", "硕士", "互联网/AI"],
         digest="负责核心研发团队管理与前沿算法落地",
-        element=card_dir_elem,
     )
 
     handler = ScrapeJobsHandler(llm_client=MagicMock())
@@ -383,7 +379,7 @@ async def test_scrape_jobs_handler_facet_persistence_and_recruitment_type_teleme
         mock_startup.is_dialog_present.return_value = False
 
         mock_list = mock_list_cls.return_value
-        mock_list.extract_visible_job_cards.return_value = [card_hh, card_dir]
+        mock_list.extract_visible_job_cards.return_value = [located(card_hh, card_hh_elem), located(card_dir, card_dir_elem)]
 
         mock_search = mock_search_cls.return_value
         mock_search.is_search_page.return_value = True
@@ -459,7 +455,6 @@ async def test_scrape_jobs_handler_logs_error_when_jd_contains_view_more():
         title="Agent开发专家",
         company_name="某大厂",
         recruiter_name="张总监",
-        element=card_elem,
     )
 
     handler = ScrapeJobsHandler(llm_client=MagicMock())
@@ -476,7 +471,7 @@ async def test_scrape_jobs_handler_logs_error_when_jd_contains_view_more():
         patch("boss_agent.feed_pipeline.JobDetailPage") as mock_detail_cls,
     ):
         mock_startup_cls.return_value.is_dialog_present.return_value = False
-        mock_list_cls.return_value.extract_visible_job_cards.return_value = [card]
+        mock_list_cls.return_value.extract_visible_job_cards.return_value = [located(card, card_elem)]
         mock_search_cls.return_value.is_search_page.return_value = True
 
         mock_detail = mock_detail_cls.return_value
@@ -593,14 +588,13 @@ async def test_scrape_jobs_detail_enrichment_does_not_overwrite_title_with_unspe
         title="全栈技术负责人",
         company_name="传影旭禾",
         recruiter_name="招聘者",
-        element=card_elem,
     )
 
     with (
         patch("boss_agent.feed_pipeline.JobListPage") as mock_list_cls,
         patch("boss_agent.feed_pipeline.JobDetailPage") as mock_detail_cls,
     ):
-        mock_list_cls.return_value.extract_visible_job_cards.return_value = [card]
+        mock_list_cls.return_value.extract_visible_job_cards.return_value = [located(card, card_elem)]
         mock_list_cls.return_value.get_feed_bottom_boundary.return_value = None
         mock_detail = mock_detail_cls.return_value
         mock_detail.extract_job_posting.return_value = JobPosting(

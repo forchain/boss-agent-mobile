@@ -34,18 +34,46 @@ def clean_job_title(raw_title: str) -> str:
     return t
 
 
+#: Characters Boss uses between a recruiter's name and the title it appends.
+RECRUITER_SEPARATORS: tuple[str, ...] = ("·", "•", "・")
+_RECRUITER_SEPARATOR_RE = re.compile(r"[·•・]")
+
+#: Platform chrome that appears as its own text node or tag on a job card. Declared once
+#: so the card parser, the locator read and the tag sanitizer cannot disagree about
+#: which strings are badges rather than content.
+PLATFORM_BADGE_MARKERS: frozenset[str] = frozenset({"猎", "新", "急", "热", "置顶"})
+
+
+def split_recruiter_name(raw: str) -> tuple[str, str]:
+    """``(name, title)`` for a recruiter string, split on the first name/title separator.
+
+    Boss renders the recruiter as "钟先生 · 猎头顾问" on some card layouts and
+    "钟先生·猎头顾问" on others, and the name is always the part before the first
+    separator. This is the one place that rule is expressed: the Job Fingerprint, the
+    card brief, ``JobRecord``, ``JobPosting`` and the legacy-record backfill all
+    normalize through it, so they cannot disagree about who the recruiter was.
+    """
+    text = (raw or "").strip()
+    if not text:
+        return "", ""
+    parts = _RECRUITER_SEPARATOR_RE.split(text, maxsplit=1)
+    name = parts[0].rstrip("·•・").strip()
+    title = parts[1].strip() if len(parts) > 1 else ""
+    return name, title
+
+
+def normalize_recruiter_name(raw: str) -> str:
+    """The recruiter's name alone, with any title Boss appended after a separator removed."""
+    return split_recruiter_name(raw)[0]
+
+
 def compute_job_fingerprint(company_name: str, title: str, recruiter_name: str) -> str:
     """Compute normalized SHA-256 fingerprint for a job card using the canonical 3 fields."""
     import hashlib
 
     norm_comp = (company_name or "").strip()
     norm_title = clean_job_title(title)
-    norm_recruiter = (recruiter_name or "").strip()
-    if any(sep in norm_recruiter for sep in ("·", "•", "・")):
-        parts = [p.strip() for p in re.split(r"[·•・]", norm_recruiter, maxsplit=1)]
-        norm_recruiter = parts[0].rstrip("·•・").strip()
-    else:
-        norm_recruiter = norm_recruiter.rstrip("·•・").strip()
+    norm_recruiter = normalize_recruiter_name(recruiter_name)
     raw = f"{norm_comp}::{norm_title}::{norm_recruiter}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
@@ -240,10 +268,10 @@ def sanitize_tags(
         if not raw:
             continue
         t = str(raw).strip()
-        if not t or t in ("猎", "新", "急", "热", "置顶") or len(t) > 25:
+        if not t or t in PLATFORM_BADGE_MARKERS or len(t) > 25:
             continue
         # Recruiter filtering
-        if any(sep in t for sep in ("·", "•", "・")):
+        if any(sep in t for sep in RECRUITER_SEPARATORS):
             continue
         if any(kw in t for kw in ("猎头", "顾问", "HR", "人事", "招聘专员", "招聘者", "Recruiter")):
             continue
@@ -474,6 +502,67 @@ EXPIRED_POSTING_REASON = "岗位已失效/停止招聘"
 DEFAULT_COMMUNICATION_COOLDOWN_DAYS = 30
 
 
+# --------------------------------------------------------------------------- #
+# Job card observation
+# --------------------------------------------------------------------------- #
+#
+# Read off a search/list card before any detail page is opened. It is pure domain
+# data: it used to carry an opaque Appium element handle, which forced the Candidate
+# Screener and the feed-record builders to import the page-object module just to read
+# text. The handle now lives on `pages.LocatedJobCard`, which the feed pipeline alone
+# consumes for viewport geometry and the detail tap.
+
+
+@dataclass
+class JobCardBrief:
+    """Lightweight extraction from a job card in search/list view for deduplication."""
+
+    title: str
+    company_name: str
+    recruiter_name: str
+    fingerprint: str = ""
+    salary_range: str = ""
+    location: str = ""
+    tags: list[str] = field(default_factory=list)
+    digest: str = ""
+    snippet: str = ""
+    company_scale: str = ""
+    industry: str = ""
+    recruiter_title: str = ""
+    is_headhunter: bool = False
+
+    def __post_init__(self) -> None:
+        if self.title:
+            self.title = clean_job_title(self.title)
+        if self.recruiter_name:
+            self.recruiter_name, derived_recruiter_title = split_recruiter_name(self.recruiter_name)
+            if not self.recruiter_title and derived_recruiter_title:
+                self.recruiter_title = derived_recruiter_title
+
+        if not self.digest and self.snippet:
+            self.digest = self.snippet
+        elif self.digest and not self.snippet:
+            self.snippet = self.digest
+
+        self.is_headhunter = resolve_headhunter_channel(
+            self.is_headhunter, self.recruiter_name, self.recruiter_title
+        )
+        self.tags = sanitize_tags(
+            self.tags,
+            recruiter_name=self.recruiter_name,
+            recruiter_title=self.recruiter_title,
+            location=self.location,
+            company_name=self.company_name,
+            title=self.title,
+        )
+        if not self.fingerprint:
+            self.fingerprint = compute_job_fingerprint(
+                company_name=self.company_name,
+                title=self.title,
+                recruiter_name=self.recruiter_name,
+            )
+
+
 def resolve_headhunter_channel(
     is_headhunter: bool | None,
     recruiter_name: str | None = "",
@@ -596,13 +685,10 @@ class JobRecord:
     def __post_init__(self) -> None:
         if self.title:
             self.title = clean_job_title(self.title)
-        if self.recruiter_name and any(sep in self.recruiter_name for sep in ("·", "•", "・")):
-            parts = [p.strip() for p in re.split(r"[·•・]", self.recruiter_name, maxsplit=1)]
-            self.recruiter_name = parts[0].rstrip("·•・").strip()
-            if not self.recruiter_title and len(parts) > 1 and parts[1]:
-                self.recruiter_title = parts[1].strip()
-        elif self.recruiter_name:
-            self.recruiter_name = self.recruiter_name.rstrip("·•・").strip()
+        if self.recruiter_name:
+            self.recruiter_name, derived_recruiter_title = split_recruiter_name(self.recruiter_name)
+            if not self.recruiter_title and derived_recruiter_title:
+                self.recruiter_title = derived_recruiter_title
 
         if not self.is_headhunter and (
             "猎头" in (self.recruiter_title or "") or "猎头" in (self.recruiter_name or "")
@@ -655,13 +741,10 @@ class JobPosting:
     def __post_init__(self) -> None:
         if self.title:
             self.title = clean_job_title(self.title)
-        if self.recruiter_name and any(sep in self.recruiter_name for sep in ("·", "•", "・")):
-            parts = [p.strip() for p in re.split(r"[·•・]", self.recruiter_name, maxsplit=1)]
-            self.recruiter_name = parts[0].rstrip("·•・").strip()
-            if not self.recruiter_title and len(parts) > 1 and parts[1]:
-                self.recruiter_title = parts[1].strip()
-        elif self.recruiter_name:
-            self.recruiter_name = self.recruiter_name.rstrip("·•・").strip()
+        if self.recruiter_name:
+            self.recruiter_name, derived_recruiter_title = split_recruiter_name(self.recruiter_name)
+            if not self.recruiter_title and derived_recruiter_title:
+                self.recruiter_title = derived_recruiter_title
 
         self.is_headhunter = resolve_headhunter_channel(
             self.is_headhunter, self.recruiter_name, self.recruiter_title

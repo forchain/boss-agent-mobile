@@ -7,10 +7,11 @@ Unit tests for SCRAPE_JOBS and AUTO_APPLY polymorphic task handlers (Issue #30).
 from unittest.mock import MagicMock, patch
 
 import pytest
+from _card_fixtures import located
 
 from boss_agent.broker.models import TaskStatus, TaskType
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
-from boss_agent.pages import JobCardBrief
+from boss_agent.models import JobCardBrief
 from boss_agent.worker.config import WorkerConfig
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.daemon import AutomationWorker
@@ -127,7 +128,7 @@ async def test_scrape_enrichment_falls_back_to_jd_digest_when_card_has_no_snippe
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_list = mock_list_cls.return_value
         mock_list.get_feed_bottom_boundary.return_value = None
-        mock_list.extract_visible_job_cards.return_value = [card]
+        mock_list.extract_visible_job_cards.return_value = [located(card)]
         mock_search_cls.return_value.is_search_page.return_value = True
         mock_detail = mock_detail_cls.return_value
         mock_detail.get_chat_button_state.return_value = ChatButtonState.UNKNOWN
@@ -488,7 +489,7 @@ async def test_scrape_jobs_handler_eliminates_blacklisted_cards_and_persists_rea
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_list = mock_list_cls.return_value
         mock_list.get_feed_bottom_boundary.return_value = None
-        mock_list.extract_visible_job_cards.return_value = [card]
+        mock_list.extract_visible_job_cards.return_value = [located(card)]
         mock_search_cls.return_value.is_search_page.return_value = True
 
         executed = await worker.run_once()

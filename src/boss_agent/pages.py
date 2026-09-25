@@ -4,7 +4,7 @@ import logging
 import re
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from rich.console import Console
@@ -15,27 +15,21 @@ from droid_agent_core.gestures import (
     calculate_probe_coordinate,
 )
 from droid_agent_core.locators import (
-    By,
     LocatorRegistry,
     UISelector,
     get_global_locator_registry,
     wait_until,
 )
 
+from .card_parser import CardFacets, ParsedCard, needs_text_fallback, parse_card
 from .models import (
-    KNOWN_CITIES,
-    RECRUITER_TITLE_KEYWORDS,
+    PLATFORM_BADGE_MARKERS,
     AuthStatus,
     ChatButtonState,
     FilterConfig,
+    JobCardBrief,
     JobPosting,
     classify_chat_button,
-    clean_job_title,
-    compute_job_fingerprint,
-    is_invalid_company_name,
-    is_likely_location,
-    resolve_headhunter_channel,
-    sanitize_tags,
 )
 from .rejection import DISINTEREST_REASON
 
@@ -107,57 +101,17 @@ def _log_error(msg: str) -> None:
 
 
 @dataclass
-class JobCardBrief:
-    """Lightweight extraction from a job card in search/list view for deduplication."""
+class LocatedJobCard:
+    """A parsed card brief together with the element it was read from.
 
-    title: str
-    company_name: str
-    recruiter_name: str
+    The element is an opaque device handle; it crosses to the feed pipeline only for
+    viewport geometry and the detail-page tap. Everything else consumes the brief,
+    which is pure domain data — the same shape Chat Triage proved with
+    ``CommunicationCard``.
+    """
+
+    card: JobCardBrief
     element: Any = None
-    fingerprint: str = ""
-    salary_range: str = ""
-    location: str = ""
-    tags: list[str] = field(default_factory=list)
-    digest: str = ""
-    snippet: str = ""
-    company_scale: str = ""
-    industry: str = ""
-    recruiter_title: str = ""
-    is_headhunter: bool = False
-
-    def __post_init__(self) -> None:
-        if self.title:
-            self.title = clean_job_title(self.title)
-        if self.recruiter_name and any(sep in self.recruiter_name for sep in ("·", "•", "・")):
-            parts = [p.strip() for p in re.split(r"[·•・]", self.recruiter_name, maxsplit=1)]
-            self.recruiter_name = parts[0].rstrip("·•・").strip()
-            if not self.recruiter_title and len(parts) > 1 and parts[1]:
-                self.recruiter_title = parts[1].strip()
-        elif self.recruiter_name:
-            self.recruiter_name = self.recruiter_name.rstrip("·•・").strip()
-
-        if not self.digest and self.snippet:
-            self.digest = self.snippet
-        elif self.digest and not self.snippet:
-            self.snippet = self.digest
-
-        self.is_headhunter = resolve_headhunter_channel(
-            self.is_headhunter, self.recruiter_name, self.recruiter_title
-        )
-        self.tags = sanitize_tags(
-            self.tags,
-            recruiter_name=self.recruiter_name,
-            recruiter_title=self.recruiter_title,
-            location=self.location,
-            company_name=self.company_name,
-            title=self.title,
-        )
-        if not self.fingerprint:
-            self.fingerprint = compute_job_fingerprint(
-                company_name=self.company_name,
-                title=self.title,
-                recruiter_name=self.recruiter_name,
-            )
 
 
 def _whitespace_digest(text: str) -> str:
@@ -275,127 +229,6 @@ class CommunicationCard:
         return parse_company_from_descriptor(self.company_position, self.sender_name)
 
 
-def parse_recruiter_info(raw_text: str) -> tuple[str, str, bool]:
-    """Parse raw recruiter text into (name, title, is_headhunter).
-
-    Strictly determines is_headhunter based on whether '猎头' appears
-    in the recruiter's title or name.
-
-    Examples:
-        "钟先生 · 猎头顾问" -> ("钟先生", "猎头顾问", True)
-        "钟先生·猎头顾问"   -> ("钟先生", "猎头顾问", True)
-        "钟先生 ·"          -> ("钟先生", "", False)
-        "农女士 · 高级招聘专员" -> ("农女士", "高级招聘专员", False)
-        "冯女士 · 总经理助理 上海" -> ("冯女士", "总经理助理", False)
-        "张先生"             -> ("张先生", "", False)
-    """
-    raw = (raw_text or "").strip()
-    if not raw:
-        return "", "", False
-
-    # Strip trailing city if attached like "冯女士 · 总经理助理 上海"
-    trailing_city = False
-    parts_by_space = raw.split()
-    if len(parts_by_space) > 2:
-        last_tok = parts_by_space[-1]
-        if is_likely_location(last_tok):
-            raw = " ".join(parts_by_space[:-1]).strip()
-            trailing_city = True
-
-    name = raw
-    title = ""
-
-    if any(sep in raw for sep in ("·", "•", "・")):
-        tokens = [t.strip() for t in re.split(r"[·•・]", raw, maxsplit=1)]
-        name = tokens[0].strip().rstrip("·•・").strip()
-        title = tokens[1].strip() if len(tokens) > 1 else ""
-    elif " " in raw:
-        tokens = [t.strip() for t in raw.split(None, 1)]
-        name = tokens[0].strip().rstrip("·•・").strip()
-        title = tokens[1].strip() if len(tokens) > 1 else ""
-    else:
-        name = raw.rstrip("·•・").strip()
-
-    # Clean any trailing city from title if not already stripped
-    if not trailing_city and title and " " in title:
-        sub_toks = title.rsplit(" ", 1)
-        if is_likely_location(sub_toks[1]):
-            title = sub_toks[0].strip()
-
-    is_headhunter = "猎头" in title or "猎头" in name
-    return name, title, is_headhunter
-
-
-def parse_company_scale_industry(
-    company_text: str,
-    explicit_scale: str = "",
-    explicit_industry: str = "",
-) -> tuple[str, str, str]:
-    """Parse company name, company scale, and industry from raw text or explicit parameters.
-
-    Examples:
-        "某中型人工智能公司 100-499人 人工智能" -> ("某中型人工智能公司", "100-499人", "人工智能")
-        "深至科技 100-499人 人工智能" -> ("深至科技", "100-499人", "人工智能")
-        "深至科技", "100-499人", "人工智能" -> ("深至科技", "100-499人", "人工智能")
-    """
-    raw = (company_text or "").strip()
-    scale = (explicit_scale or "").strip()
-    industry = (explicit_industry or "").strip()
-
-    if not raw:
-        return "", scale, industry
-
-    comp_name = ""
-
-    # Pattern matching scale like "100-499人", "10000人以上", "少于50人", "20-99人"
-    scale_pattern = r"(\d+[-~至]\d+人|\d+人以上|少于\d+人|\d+人以下|\d+人)"
-    m = re.search(scale_pattern, raw)
-    if m:
-        matched_scale = m.group(1)
-        if not scale:
-            scale = matched_scale
-        # Split into before scale and after scale
-        parts = raw.split(matched_scale, 1)
-        comp_name = parts[0].strip()
-        rem = parts[1].strip() if len(parts) > 1 else ""
-        if rem and not industry:
-            industry = rem
-    elif scale and scale in raw:
-        # If scale was already provided explicitly and exists in raw company string
-        parts = raw.split(scale, 1)
-        comp_name = parts[0].strip()
-        rem = parts[1].strip() if len(parts) > 1 else ""
-        if rem and not industry:
-            industry = rem
-    elif industry and raw.endswith(industry) and len(raw) > len(industry) + 2:
-        # If industry was provided explicitly and exists at end of company string
-        comp_name = raw[: -len(industry)].strip()
-    else:
-        comp_name = raw
-
-    if comp_name and is_invalid_company_name(comp_name):
-        comp_name = ""
-
-    return comp_name, scale, industry
-
-
-def company_duplicates_card_title(company: str, title: str) -> bool:
-    """True when an extracted 'company' is the card's own job title instead of an employer.
-
-    Boss's recommendation popup cards reuse the position name in the company row, so a
-    locator can read the title text back as a company. Left alone, it poisons the
-    fingerprint (same job saved twice under different keys) and smuggles blacklisted
-    employers past company-name screening. A trailing badge-junk suffix (' &@') is
-    tolerated as the same mis-read, because a genuine employer does not begin with
-    its own posting's full title.
-    """
-    c = (company or "").strip()
-    t = (title or "").strip()
-    if not c or not t:
-        return False
-    return c == t or (c.startswith(t) and len(c) - len(t) <= 3)
-
-
 class BaseBossPage:
     """Base class for all Boss 直聘 Page Objects using key-based locator resolution."""
 
@@ -482,7 +315,7 @@ class BaseBossPage:
                         raw_t = getattr(el, "text", None)
                         if raw_t is not None:
                             txt = str(raw_t).strip()
-                            if txt and txt not in ("猎", "新", "急", "热", "置顶"):
+                            if txt and txt not in PLATFORM_BADGE_MARKERS:
                                 return txt
             except Exception:
                 continue
@@ -778,13 +611,89 @@ class JobListPage(BaseBossPage):
             return True
         return False
 
-    def extract_visible_job_cards(self, max_cards: int = 10) -> list[JobCardBrief]:
-        """Extract visible job card briefs (title, company, recruiter, salary, location, tags, snippet)."""
+    def _read_card_facets(self, card_elem: Any) -> CardFacets:
+        """Priority-1 reads: whatever the configured locators can address on this card.
+
+        A read is a device concern, so it stays here; interpreting what was read is
+        :mod:`boss_agent.card_parser`'s job.
+        """
+        return CardFacets(
+            title=self._extract_card_field_text(card_elem, "job_list.card_title"),
+            company=self._extract_card_field_text(card_elem, "job_list.card_company"),
+            scale=self._extract_card_field_text(card_elem, "job_list.card_scale"),
+            industry=self._extract_card_field_text(card_elem, "job_list.card_industry"),
+            salary=self._extract_card_field_text(card_elem, "job_list.card_salary"),
+            recruiter=self._extract_card_field_text(card_elem, "job_list.card_recruiter"),
+            location=self._extract_card_field_text(card_elem, "job_list.card_location"),
+            snippet=self._extract_card_field_text(card_elem, "job_list.card_snippet"),
+            tags=tuple(self._read_card_tags(card_elem)),
+        )
+
+    def _read_card_tags(self, card_elem: Any) -> list[str]:
+        """Tag texts from the card's tags container, or ``[]`` when there is none."""
+        tags: list[str] = []
+        with contextlib.suppress(Exception):
+            for t_sel in self.locators.get_selectors("job_list.card_tags_container"):
+                if t_sel.by.value == "id":
+                    tag_boxes = card_elem.find_elements(by="id", value=t_sel.value)
+                else:
+                    tag_boxes = card_elem.find_elements(by=t_sel.by.value, value=t_sel.value)
+                if tag_boxes:
+                    tags = [
+                        e.text.strip()
+                        for e in tag_boxes[0].find_elements(by="xpath", value=".//*[@text]")
+                        if getattr(e, "text", None) and e.text.strip()
+                    ]
+                    if tags:
+                        break
+        return tags
+
+    def _read_card_text_nodes(self, card_elem: Any) -> list[str]:
+        """The card's ordered text nodes, for the classifier's fallback pass."""
+        with contextlib.suppress(Exception):
+            nodes = [
+                e.text.strip()
+                for e in card_elem.find_elements(by="xpath", value=".//*[@text]")
+                if getattr(e, "text", None) and e.text.strip()
+            ]
+            if nodes:
+                return nodes
+        raw_text = getattr(card_elem, "text", "") or ""
+        return [line.strip() for line in raw_text.splitlines() if line.strip()]
+
+    def _is_bottom_cutoff(self, card_elem: Any, parsed: ParsedCard) -> bool:
+        """Whether a card lacking recruiter *and* city is merely cut off by the viewport.
+
+        Device geometry, so it stays here: when a card is cut off at the bottom of the
+        screen its lower sub-elements are not in the accessibility hierarchy yet, and
+        the next scroll will bring a complete one into view.
+        """
+        if parsed.recruiter_name or parsed.location:
+            return False
+        try:
+            elem_loc = getattr(card_elem, "location", None) or {}
+            elem_size = getattr(card_elem, "size", None) or {}
+            card_bottom = elem_loc.get("y", 0) + elem_size.get("height", 0)
+            win_height = self._get_window_size()["height"]
+            if card_bottom >= win_height * 0.85:
+                logger.info(
+                    "Skipping bottom-cutoff job card '%s - %s' (card_bottom=%d, win_h=%d) to wait for next scroll",
+                    parsed.company_name,
+                    parsed.title,
+                    card_bottom,
+                    win_height,
+                )
+                return True
+        except Exception:
+            pass
+        return False
+
+    def extract_visible_job_cards(self, max_cards: int = 10) -> list[LocatedJobCard]:
+        """Extract visible job cards as data plus the element each was read from."""
         if not self.driver:
             return []
-        card_selectors = self.locators.get_selectors("job_list.job_card")
         cards: list[Any] = []
-        for sel in card_selectors:
+        for sel in self.locators.get_selectors("job_list.job_card"):
             try:
                 elems = self.driver.find_elements(by=sel.by.value, value=sel.value)
                 if elems:
@@ -793,219 +702,37 @@ class JobListPage(BaseBossPage):
             except Exception:
                 continue
 
-        briefs: list[JobCardBrief] = []
+        located: list[LocatedJobCard] = []
         for card_elem in cards[:max_cards]:
-            # Priority 1: Direct sub-element extraction by configured locator keys
-            title = clean_job_title(self._extract_card_field_text(card_elem, "job_list.card_title"))
-            raw_company = self._extract_card_field_text(card_elem, "job_list.card_company")
-            raw_scale = self._extract_card_field_text(card_elem, "job_list.card_scale")
-            raw_industry = self._extract_card_field_text(card_elem, "job_list.card_industry")
-            salary = self._extract_card_field_text(card_elem, "job_list.card_salary")
-            raw_recruiter = self._extract_card_field_text(card_elem, "job_list.card_recruiter")
-            location = self._extract_card_field_text(card_elem, "job_list.card_location")
-            snippet = self._extract_card_field_text(card_elem, "job_list.card_snippet")
-
-            company, scale, industry = parse_company_scale_industry(
-                raw_company, explicit_scale=raw_scale, explicit_industry=raw_industry
+            facets = self._read_card_facets(card_elem)
+            # Only pay for the accessibility-tree walk when the locator reads were
+            # incomplete — the parser decides that, so the rule lives in one place.
+            text_nodes = self._read_card_text_nodes(card_elem) if needs_text_fallback(facets) else []
+            parsed = parse_card(facets, text_nodes)
+            if parsed is None:
+                continue
+            if self._is_bottom_cutoff(card_elem, parsed):
+                continue
+            located.append(
+                LocatedJobCard(
+                    card=JobCardBrief(
+                        title=parsed.title,
+                        company_name=parsed.company_name,
+                        recruiter_name=parsed.recruiter_name or "招聘者",
+                        salary_range=parsed.salary_range,
+                        location=parsed.location,
+                        tags=list(parsed.tags),
+                        digest=parsed.snippet,
+                        snippet=parsed.snippet,
+                        company_scale=parsed.company_scale,
+                        industry=parsed.industry,
+                        recruiter_title=parsed.recruiter_title,
+                        is_headhunter=parsed.is_headhunter,
+                    ),
+                    element=card_elem,
+                )
             )
-            if company and (
-                is_invalid_company_name(company) or company_duplicates_card_title(company, title)
-            ):
-                company = ""
-            recruiter_name, recruiter_title, is_headhunter = parse_recruiter_info(raw_recruiter)
-
-            # Safeguard: if location element was extracted but contains recruiter title words
-            if location and not is_likely_location(location):
-                if any(kw in location for kw in RECRUITER_TITLE_KEYWORDS):
-                    if not recruiter_title:
-                        recruiter_title = location
-                    if "猎头" in location:
-                        is_headhunter = True
-                location = ""
-
-            tags: list[str] = []
-            with contextlib.suppress(Exception):
-                tag_containers = self.locators.get_selectors("job_list.card_tags_container")
-                for t_sel in tag_containers:
-                    if t_sel.by.value == "id":
-                        tag_boxes = card_elem.find_elements(by="id", value=t_sel.value)
-                    else:
-                        tag_boxes = card_elem.find_elements(by=t_sel.by.value, value=t_sel.value)
-                    if tag_boxes:
-                        tags = [
-                            e.text.strip()
-                            for e in tag_boxes[0].find_elements(by="xpath", value=".//*[@text]")
-                            if getattr(e, "text", None) and e.text.strip()
-                        ]
-                        if tags:
-                            break
-
-            if tags:
-                tags = sanitize_tags(
-                    tags,
-                    recruiter_name=recruiter_name,
-                    recruiter_title=recruiter_title,
-                    location=location,
-                    company_name=company,
-                    title=title,
-                )
-
-            # Priority 2: Fallback to text heuristic parsing IF title or company is still missing
-            if not title or not company:
-                sub_texts: list[str] = []
-                with contextlib.suppress(Exception):
-                    sub_texts = [
-                        e.text.strip()
-                        for e in card_elem.find_elements(by="xpath", value=".//*[@text]")
-                        if getattr(e, "text", None) and e.text.strip()
-                    ]
-
-                if not sub_texts:
-                    raw_text = getattr(card_elem, "text", "") or ""
-                    sub_texts = [line.strip() for line in raw_text.splitlines() if line.strip()]
-
-                clean_texts = [t for t in sub_texts if t not in ("猎", "新", "急", "热", "置顶")]
-
-                for t in clean_texts:
-                    # 1. Salary detection
-                    if not salary and (
-                        re.search(r"\d+[-~至]\d+.*[万千Kk元薪]", t)
-                        or re.search(r"^\d+.*[万千Kk元薪]", t)
-                        or ("元" in t and any(c.isdigit() for c in t))
-                        or ("K" in t and any(c.isdigit() for c in t))
-                    ):
-                        salary = t
-                        continue
-
-                    # 2. Recruiter & attached location detection (e.g. "钟先生 · 猎头顾问" or "冯女士·总经理助理 上海")
-                    if not recruiter_name and (
-                        any(sep in t for sep in ("·", "•", "・"))
-                        or any(kw in t for kw in RECRUITER_TITLE_KEYWORDS)
-                    ):
-                        r_name, r_title, r_hh = parse_recruiter_info(t)
-                        recruiter_name = r_name
-                        if r_title:
-                            recruiter_title = r_title
-                        if r_hh:
-                            is_headhunter = True
-                        parts = t.rsplit(" ", 1)
-                        if not location and len(parts) == 2 and is_likely_location(parts[1]):
-                            location = parts[1].strip()
-                        continue
-
-                    # 3. Location detection if standalone
-                    if not location and (
-                        t in KNOWN_CITIES
-                        or t.endswith("市")
-                        or t.endswith("区")
-                        or t.endswith("县")
-                        or is_likely_location(t)
-                    ):
-                        location = t
-                        continue
-
-                    # 4. Requirement / education / experience tags
-                    if any(
-                        kw in t
-                        for kw in ("年", "应届", "经验", "本科", "大专", "硕士", "博士", "学历")
-                    ):
-                        tags.append(t)
-                        continue
-
-                    # 5. Title detection (first non-salary substantive text is always job title)
-                    if not title:
-                        title = clean_job_title(t)
-                        continue
-
-                    # 6. Company line detection (includes scale / industry heuristic)
-                    if not company:
-                        c_name, c_scale, c_ind = parse_company_scale_industry(t)
-                        if (
-                            c_name
-                            and not is_invalid_company_name(c_name)
-                            and not company_duplicates_card_title(c_name, title)
-                        ):
-                            company = c_name
-                            if c_scale and not scale:
-                                scale = c_scale
-                            if c_ind and not industry:
-                                industry = c_ind
-                            continue
-
-                    # 7. Standalone scale or industry detection
-                    if (
-                        re.search(r"(\d+[-~至]\d+人|\d+人以上|少于\d+人|\d+人以下|\d+人)", t)
-                        and not scale
-                    ):
-                        scale = t
-                        continue
-
-                    # 8. Tags vs Snippet
-                    if len(t) > 10 and not snippet:
-                        snippet = t
-                    elif (
-                        len(t) <= 12
-                        and not is_invalid_company_name(t)
-                        and not is_likely_location(t)
-                    ):
-                        tags.append(t)
-                    elif not snippet:
-                        snippet = t
-
-                tags = sanitize_tags(
-                    tags,
-                    recruiter_name=recruiter_name,
-                    recruiter_title=recruiter_title,
-                    location=location,
-                    company_name=company,
-                    title=title,
-                )
-
-            # Skip incomplete or partially visible cards without genuine company name
-            if title and company and not is_invalid_company_name(company):
-                # Safeguard against viewport cutoff:
-                # When a card is cut off at the bottom of the screen, the lower sub-elements
-                # (recruiter_name and location) are not loaded into the accessibility hierarchy yet.
-                # If neither recruiter nor location was extracted, check if the card is located
-                # near the bottom edge of the viewport. If so, skip it for now and let the next scroll
-                # bring it into full view to extract complete data.
-                if not recruiter_name and not location:
-                    try:
-                        elem_loc = getattr(card_elem, "location", None) or {}
-                        elem_size = getattr(card_elem, "size", None) or {}
-                        card_bottom = elem_loc.get("y", 0) + elem_size.get("height", 0)
-                        win_height = self._get_window_size()["height"]
-                        # If card's bottom touches or exceeds 85% of screen height, it's cut off by viewport
-                        if card_bottom >= win_height * 0.85:
-                            logger.info(
-                                "Skipping bottom-cutoff job card '%s - %s' (card_bottom=%d, win_h=%d) to wait for next scroll",
-                                company.strip(),
-                                title,
-                                card_bottom,
-                                win_height,
-                            )
-                            continue
-                    except Exception:
-                        pass
-
-                briefs.append(
-                    JobCardBrief(
-                        title=title,
-                        company_name=company.strip(),
-                        recruiter_name=recruiter_name or "招聘者",
-                        salary_range=salary,
-                        location=location,
-                        tags=tags,
-                        digest=snippet,
-                        snippet=snippet,
-                        company_scale=scale,
-                        industry=industry,
-                        recruiter_title=recruiter_title,
-                        is_headhunter=is_headhunter,
-                        element=card_elem,
-                    )
-                )
-        return briefs
+        return located
 
 
 class SearchPage(BaseBossPage):
@@ -1690,10 +1417,14 @@ class JobDetailPage(BaseBossPage):
         Returns UNKNOWN when the button is absent or its text is unrecognised, so callers keep
         their normal extraction flow instead of skipping a possibly live posting.
         """
-        elem = self.find_optional_element(
-            UISelector(By.ID, "com.hpbr.bosszhipin:id/btn_chat", description="btn_chat"),
-            timeout_sec=0.0,
-        ) or self.find_by_key("job_detail.chat_btn", timeout_sec=timeout_sec)
+        # Two-stage timing, one selector source. The registry's `job_detail.chat_btn`
+        # key already leads with the same resource id this used to hardcode, so the
+        # registry lookup stays the only path to a selector: a Boss UI change is
+        # absorbed by editing the locator config, not by hunting inline UISelectors.
+        # The zero-timeout first pass is what keeps this probe cheap on the happy path.
+        elem = self.find_by_key("job_detail.chat_btn", timeout_sec=0.0) or self.find_by_key(
+            "job_detail.chat_btn", timeout_sec=timeout_sec
+        )
         if not elem:
             return ChatButtonState.UNKNOWN
 
