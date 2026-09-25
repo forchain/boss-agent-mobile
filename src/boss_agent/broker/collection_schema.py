@@ -345,6 +345,12 @@ AUTOMATION_TASKS = Collection(
         Field("retry_count", NUMBER, default=0, sql_default="0"),
         Field("logs", JSON, default=[]),
         Field("error_message", TEXT),
+        # Task Provenance (CONTEXT.md): manual | test | scheduler. A real column rather
+        # than a payload marker, so startup reclamation can cancel test-sourced tasks
+        # without reading five different marker keys, and the dashboard can show the
+        # rest. Legacy rows default to manual — the sweep must not reclaim a task whose
+        # origin it cannot prove.
+        Field("source", TEXT, default="manual", sql_default="'manual'"),
         *_autodate(),
     ),
     indexes=(

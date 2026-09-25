@@ -3,6 +3,7 @@
 	import { resolveTargetAction, type AutomationTask, type SavedSearch, type TaskType, type TargetAction } from '$lib/types';
 	import { listSavedSearches, createAutomationTask, getCandidateProfile } from '$lib/pocketbase';
 	import { DEFAULT_CHAT_ACKNOWLEDGMENT, DEFAULT_LAUNCH_CHAT_DRY_RUN, normalizeChatAcknowledgment } from '$lib/chatAcknowledgment';
+	import { buildChatCleanupLaunch, buildLoginDiagnosticLaunch, buildSearchLaunch } from '$lib/taskLaunch';
 
 	let {
 		isOpen = false,
@@ -88,25 +89,20 @@
 		errorMessage = '';
 		try {
 			const profile = await getCandidateProfile();
-			const taskType = targetAction === 'auto_apply' ? 'AUTO_APPLY' : 'SCRAPE_JOBS';
-			const payload = {
-				search_id: target.id,
-				saved_search_id: target.id,
-				search_name: target.name,
-				keyword: target.keyword || '',
-				enable_search: target.enable_search !== false,
-				enable_filter: target.enable_filter !== false,
-				filter: target.filter || {},
-				target_action: targetAction,
-				max_jobs: Number(maxJobs) > 0 ? Number(maxJobs) : 30,
-				min_score: minScore,
-				preview_only: targetAction === 'auto_apply' ? taskMode === 'preview' : true,
-				auto_send: targetAction === 'auto_apply' ? taskMode === 'auto_send' : false,
-				preview_timeout_sec: 3.0,
-				candidate_profile: profile || {}
-			};
+			// One builder, not three inline payloads. `min_score` stays a UI *choice*
+			// passed through the builder rather than a competing default, and the preview
+			// flags are derived from the chosen mode instead of restated here.
+			const launch = buildSearchLaunch(
+				{ ...target, max_jobs: Number(maxJobs) > 0 ? Number(maxJobs) : target.max_jobs },
+				{
+					source: 'manual',
+					mode: taskMode === 'auto_send' ? 'live' : 'draft',
+					minScore,
+					candidateProfile: profile || {}
+				}
+			);
 
-			const task = await createAutomationTask(taskType, payload);
+			const task = await createAutomationTask(launch.task_type, launch.payload);
 			onTaskCreated(task);
 			onClose();
 		} catch (e: any) {
@@ -120,10 +116,10 @@
 		isSubmitting = true;
 		errorMessage = '';
 		try {
-			const task = await createAutomationTask(type, {
-				mode: 'diagnostic',
-				triggered_at: new Date().toISOString()
-			});
+			// No `mode`/`triggered_at` keys: the handler reads no payload, and provenance
+			// is what the diagnostic intent actually was.
+			const launch = buildLoginDiagnosticLaunch({ source: 'manual' });
+			const task = await createAutomationTask(type, launch.payload);
 			onTaskCreated(task);
 			onClose();
 		} catch (e: any) {
@@ -138,10 +134,12 @@
 		isSubmitting = true;
 		errorMessage = '';
 		try {
-			const task = await createAutomationTask('CHECK_CHAT', {
-				...normalizeChatAcknowledgment(chat),
-				dry_run: chatDryRun
+			const launch = buildChatCleanupLaunch({
+				source: 'manual',
+				chat: { ...normalizeChatAcknowledgment(chat), dry_run: chatDryRun },
+				mode: chatDryRun ? 'draft' : 'live'
 			});
+			const task = await createAutomationTask(launch.task_type, launch.payload);
 			onTaskCreated(task);
 			onClose();
 		} catch (e: any) {

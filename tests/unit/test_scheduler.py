@@ -149,7 +149,7 @@ async def test_scheduler_run_once():
     assert task.payload["saved_search_id"] == "search_active_1"
     assert task.payload["enable_search"] is True
     assert task.payload["enable_filter"] is True
-    assert task.payload["scheduled"] is True
+    assert task.payload["source"] == "scheduler"
     assert task.payload["filter"]["education"] == "硕士"
 
     # Verify search's last_run_at was updated
@@ -193,7 +193,7 @@ async def test_scheduler_dispatches_check_chat_task_for_inbox_cleanup_strategy()
     now = datetime(2026, 9, 7, 21, 0, 0, tzinfo=UTC)
 
     with patch(
-        "boss_agent.scheduler.resolve_chat_acknowledgment_settings",
+        "boss_agent.task_launch.resolve_chat_acknowledgment_settings",
         return_value=ChatAcknowledgmentSettings(
             rejection_reply_text="谢谢，祝招聘顺利", max_scan_depth=7
         ),
@@ -203,7 +203,7 @@ async def test_scheduler_dispatches_check_chat_task_for_inbox_cleanup_strategy()
     assert len(tasks) == 1
     task = tasks[0]
     assert task.task_type == TaskType.CHECK_CHAT
-    assert task.payload["scheduled"] is True
+    assert task.payload["source"] == "scheduler"
     assert task.payload["dry_run"] is False
     assert task.payload["rejection_reply_text"] == "谢谢，祝招聘顺利"
     assert task.payload["max_scan_depth"] == 7
@@ -241,7 +241,7 @@ async def test_scheduled_chat_cleanup_honours_the_configured_drill_mode():
     now = datetime(2026, 9, 7, 21, 0, 0, tzinfo=UTC)
 
     with patch(
-        "boss_agent.scheduler.resolve_chat_acknowledgment_settings",
+        "boss_agent.task_launch.resolve_chat_acknowledgment_settings",
         return_value=ChatAcknowledgmentSettings(dry_run=True),
     ):
         tasks = await scheduler.run_once(now=now)
