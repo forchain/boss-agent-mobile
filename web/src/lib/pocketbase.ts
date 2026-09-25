@@ -86,8 +86,6 @@ export function getPocketBaseUrl(): string {
 	return resolved.replace(/\/+$/, '');
 }
 
-export const PB_URL = getPocketBaseUrl();
-
 /**
  * Whether the broker is reachable, asked through the dashboard's own origin.
  *

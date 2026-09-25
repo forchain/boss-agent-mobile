@@ -15,7 +15,11 @@ import { getProjectRoot } from '../lib/server/pythonRunner';
 //   it('left the real settings file untouched', () => sandbox.assertRealConfigUntouched());
 //   afterAll(() => sandbox.cleanup());
 
-// Env vars that would let loadMergedSettings() bypass the sandbox file.
+// Env vars that would let loadMergedSettings() bypass the sandbox file. This mirrors
+// the env-override block in `lib/server/settings.ts` (the LLM/PB/Appium/AVD keys it
+// reads from `process.env`), which is a *different* set from the Python realm's
+// `config_realm.ENV_OVERRIDES` — that one also honours the PocketBase data/db path
+// keys. Keep this list in step with the TypeScript loader, not the Python one.
 const ENV_KEYS_TO_UNSET = [
 	'LLM_API_KEY',
 	'MINIMAX_API_KEY',
