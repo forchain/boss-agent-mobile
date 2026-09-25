@@ -55,6 +55,8 @@ def card_facets_record(
         "jd_key_requirements": list(getattr(card, "tags", None) or []),
         "search_keywords": [keyword] if keyword else [],
         "source_task_id": source_task_id,
+        "commute_distance_km": getattr(card, "commute_distance_km", None),
+        "commute_distance_text": getattr(card, "commute_distance_text", "") or "",
     }
 
 
@@ -114,4 +116,6 @@ def enriched_record(
         "screening_audit": verdict.screening_audit if verdict else "",
         "search_keywords": [keyword] if keyword else [],
         "source_task_id": source_task_id,
+        "commute_distance_km": getattr(posting, "commute_distance_km", None) or getattr(card, "commute_distance_km", None),
+        "commute_distance_text": (getattr(posting, "commute_distance_text", "") or getattr(card, "commute_distance_text", "") or ""),
     }

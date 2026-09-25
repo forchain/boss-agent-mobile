@@ -4,6 +4,8 @@ tests/unit/test_job_records.py
 Unit tests for JobRecord model, fingerprint computation, deduplication, and broker persistence.
 """
 
+from unittest.mock import MagicMock
+
 import pytest
 
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
@@ -507,3 +509,215 @@ async def test_broker_does_not_overwrite_title_with_unspecified_on_patch():
     assert patched["digest"] == "更新的职位摘要"
 
 
+#: PocketBase's rejection of an over-long text field, as returned for `job_description`
+#: on a collection that still carries the implicit 5000-character cap (Ticket #264).
+#: Verbatim body from a live PocketBase 0.39 server.
+_JD_TOO_LONG_RESPONSE = (
+    '{"data":{"job_description":{"code":"validation_max_text_constraint",'
+    '"message":"Must be no more than 5000 character(s).","params":{"max":5000}}},'
+    '"message":"Failed to create record.","status":400}'
+)
+
+
+def _long_expanded_jd() -> str:
+    """A full expanded bilingual JD, well past PocketBase's implicit 5000-char cap."""
+    return "岗位职责：负责大模型应用落地与多智能体协同。" * 300
+
+
+def _pb_broker():
+    from unittest.mock import MagicMock
+
+    from boss_agent.broker.pocketbase_adapter import PocketBaseTaskBroker
+
+    mock_session = MagicMock()
+    broker = PocketBaseTaskBroker(base_url="http://mock-pb:8090", session=mock_session)
+    return broker, mock_session
+
+
+@pytest.mark.asyncio
+async def test_pocketbase_upsert_truncates_jd_and_retries_when_server_rejects_length(caplog):
+    """A pre-existing PocketBase collection still enforces the implicit 5000-char text cap,
+    so an expanded JD is rejected with validation_max_text_constraint. The adapter must
+    truncate and re-send instead of dropping the whole enriched record."""
+    import logging
+
+    from boss_agent.broker.pocketbase_adapter import POCKETBASE_DEFAULT_TEXT_MAX_CHARS
+
+    broker, mock_session = _pb_broker()
+    check_resp = MagicMock(status_code=200, json=lambda: {"items": []})
+    rejected = MagicMock(status_code=400, text=_JD_TOO_LONG_RESPONSE)
+    accepted = MagicMock(status_code=201, json=lambda: {"id": "rec-long", "status": "jd_saved"})
+    mock_session.get.return_value = check_resp
+    mock_session.post.side_effect = [rejected, accepted]
+
+    long_jd = _long_expanded_jd()
+    assert len(long_jd) > POCKETBASE_DEFAULT_TEXT_MAX_CHARS
+
+    with caplog.at_level(logging.WARNING, logger="boss_agent.broker"):
+        rec = await broker.upsert_job_record(
+            {
+                "title": "数据科学家（外企医疗AI Agent）",
+                "company_name": "某外企医疗科技",
+                "recruiter_name": "李招聘",
+                "fingerprint": "fp_long_jd",
+                "status": "jd_saved",
+                "job_description": long_jd,
+            }
+        )
+
+    assert rec["id"] == "rec-long"
+    assert mock_session.post.call_count == 2
+    assert mock_session.post.call_args_list[0].kwargs["json"]["job_description"] == long_jd
+    retried_jd = mock_session.post.call_args_list[1].kwargs["json"]["job_description"]
+    assert retried_jd == long_jd[:POCKETBASE_DEFAULT_TEXT_MAX_CHARS]
+    assert "truncat" in caplog.text.lower()
+
+
+@pytest.mark.asyncio
+async def test_pocketbase_upsert_patch_truncates_jd_and_retries_on_length_rejection():
+    """The same recovery must cover the update path of an existing record."""
+    from boss_agent.broker.pocketbase_adapter import POCKETBASE_DEFAULT_TEXT_MAX_CHARS
+
+    broker, mock_session = _pb_broker()
+    check_resp = MagicMock(
+        status_code=200,
+        json=lambda: {"items": [{"id": "rec-9", "status": "digest_only", "search_keywords": []}]},
+    )
+    rejected = MagicMock(status_code=400, text=_JD_TOO_LONG_RESPONSE)
+    accepted = MagicMock(status_code=200, json=lambda: {"id": "rec-9", "status": "jd_saved"})
+    mock_session.get.return_value = check_resp
+    mock_session.patch.side_effect = [rejected, accepted]
+
+    long_jd = _long_expanded_jd()
+
+    rec = await broker.upsert_job_record(
+        {
+            "title": "数据科学家（外企医疗AI Agent）",
+            "company_name": "某外企医疗科技",
+            "recruiter_name": "李招聘",
+            "fingerprint": "fp_long_jd",
+            "status": "jd_saved",
+            "job_description": long_jd,
+        }
+    )
+
+    assert rec["id"] == "rec-9"
+    assert mock_session.patch.call_count == 2
+    assert mock_session.patch.call_args_list[0].kwargs["json"]["job_description"] == long_jd
+    retried_jd = mock_session.patch.call_args_list[1].kwargs["json"]["job_description"]
+    assert len(retried_jd) == POCKETBASE_DEFAULT_TEXT_MAX_CHARS
+    assert not mock_session.post.called
+
+
+@pytest.mark.asyncio
+async def test_pocketbase_upsert_honours_the_limit_reported_by_the_server():
+    """The reported boundary wins over the assumed default, so a deployment with a smaller
+    server-side cap is still recoverable."""
+    broker, mock_session = _pb_broker()
+    check_resp = MagicMock(status_code=200, json=lambda: {"items": []})
+    rejected = MagicMock(
+        status_code=400,
+        text='{"data":{"job_description":{"code":"validation_max_text_constraint",'
+        ' "message":"Must be no more than 4000 character(s).","params":{"max":4000}}}}',
+    )
+    accepted = MagicMock(status_code=201, json=lambda: {"id": "rec-small-cap"})
+    mock_session.get.return_value = check_resp
+    mock_session.post.side_effect = [rejected, accepted]
+
+    rec = await broker.upsert_job_record(
+        {
+            "title": "大模型算法工程师",
+            "company_name": "某科技公司",
+            "recruiter_name": "王招聘",
+            "fingerprint": "fp_small_cap",
+            "job_description": _long_expanded_jd(),
+        }
+    )
+
+    assert rec["id"] == "rec-small-cap"
+    assert len(mock_session.post.call_args_list[1].kwargs["json"]["job_description"]) == 4000
+
+
+@pytest.mark.asyncio
+async def test_pocketbase_upsert_sends_over_5000_char_jd_whole_when_the_schema_allows_it():
+    """On a collection provisioned with the wide cap, a >5000-character JD must be written
+    untruncated on the first attempt: screening reads the full description, and truncation
+    is a recovery for capped instances only (Ticket #264)."""
+    broker, mock_session = _pb_broker()
+    check_resp = MagicMock(status_code=200, json=lambda: {"items": []})
+    accepted = MagicMock(status_code=201, json=lambda: {"id": "rec-ok"})
+    mock_session.get.return_value = check_resp
+    mock_session.post.return_value = accepted
+
+    jd = _long_expanded_jd()
+    assert len(jd) > 5000
+
+    rec = await broker.upsert_job_record(
+        {
+            "title": "算法工程师",
+            "company_name": "某科技公司",
+            "recruiter_name": "王招聘",
+            "fingerprint": "fp_fits",
+            "job_description": jd,
+        }
+    )
+
+    assert rec["id"] == "rec-ok"
+    assert mock_session.post.call_count == 1
+    assert mock_session.post.call_args.kwargs["json"]["job_description"] == jd
+
+
+@pytest.mark.asyncio
+async def test_pocketbase_upsert_does_not_retry_or_truncate_unrelated_rejections():
+    """A rejection that is not about text length must still fail loudly and leave the
+    payload untouched — blind truncation would corrupt data to no purpose."""
+    broker, mock_session = _pb_broker()
+    check_resp = MagicMock(status_code=200, json=lambda: {"items": []})
+    rejected = MagicMock(status_code=400, text='{"message":"Fingerprint already exists."}')
+    mock_session.get.return_value = check_resp
+    mock_session.post.return_value = rejected
+
+    long_jd = _long_expanded_jd()
+
+    rec = await broker.upsert_job_record(
+        {
+            "title": "算法工程师",
+            "company_name": "某科技公司",
+            "recruiter_name": "王招聘",
+            "fingerprint": "fp_dup",
+            "job_description": long_jd,
+        }
+    )
+
+    assert rec == {}
+    assert mock_session.post.call_count == 1
+    assert mock_session.post.call_args.kwargs["json"]["job_description"] == long_jd
+
+
+@pytest.mark.asyncio
+async def test_pocketbase_upsert_does_not_truncate_when_another_field_is_rejected():
+    """A max-length rejection naming a different field is not ours to repair: truncating a
+    short job_description would only lose data without clearing the real violation."""
+    broker, mock_session = _pb_broker()
+    check_resp = MagicMock(status_code=200, json=lambda: {"items": []})
+    rejected = MagicMock(
+        status_code=400,
+        text='{"data":{"greeting_message":{"code":"validation_max_text_constraint",'
+        ' "message":"Must be shorter than 5000."}}}',
+    )
+    mock_session.get.return_value = check_resp
+    mock_session.post.return_value = rejected
+
+    jd = "岗位职责：负责模型训练与评测。"
+    rec = await broker.upsert_job_record(
+        {
+            "title": "算法工程师",
+            "company_name": "某科技公司",
+            "recruiter_name": "王招聘",
+            "fingerprint": "fp_other_field",
+            "job_description": jd,
+        }
+    )
+
+    assert rec == {}
+    assert mock_session.post.call_count == 1

@@ -8,6 +8,8 @@ import json
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 from boss_agent.broker.provisioner import provision_sqlite_database
 
 _COLLECTIONS_DDL = """
@@ -368,7 +370,10 @@ def test_provision_sqlite_database_adds_digest_column_if_missing(tmp_path: Path)
 
 def test_provision_sqlite_database_job_description_exceeds_default_text_max(tmp_path: Path):
     """PocketBase caps text fields at 5000 chars unless an explicit max is set; a full
-    expanded JD (e.g. a 9000-char bilingual posting) must be storable."""
+    expanded JD (e.g. a 9000-char bilingual posting) must be storable.
+
+    The flat ``max`` is asserted, not just the nested ``options``: current PocketBase reads
+    the schema this way round and ignores ``options`` entirely (Ticket #264)."""
     db_file = tmp_path / "data.db"
     conn = sqlite3.connect(str(db_file))
     cursor = conn.cursor()
@@ -380,6 +385,7 @@ def test_provision_sqlite_database_job_description_exceeds_default_text_max(tmp_
 
     fields = _read_collection_fields(db_file, "job_records")
     jd_field = next(f for f in fields if f["name"] == "job_description")
+    assert jd_field.get("max", 0) > 5000
     assert jd_field.get("options", {}).get("max", 0) > 5000
 
 
@@ -432,5 +438,195 @@ def test_provision_remote_pocketbase_job_description_exceeds_default_text_max():
     assert job_records_col is not None
 
     jd_field = next(f for f in job_records_col["fields"] if f["name"] == "job_description")
+    # Both shapes go out: current PocketBase honours only the flat keys, older releases the
+    # nested ones — a fresh remote collection must be created with a working wide cap.
+    assert jd_field.get("max", 0) > 5000
     assert jd_field.get("options", {}).get("max", 0) > 5000
 
+
+def _remote_provision_session(job_records_collection: dict | None, patch_ok: bool = True):
+    """A mocked PocketBase superuser session for remote provisioning.
+
+    ``job_records_collection`` is the collection as the server already stores it (None when
+    the collection does not exist yet), so a test can model a pre-existing instance whose
+    schema predates the widened text cap.
+    """
+    from unittest.mock import MagicMock
+
+    session = MagicMock()
+
+    auth_resp = MagicMock(ok=True)
+    auth_resp.json.return_value = {"token": "test_token"}
+
+    collection_names = ["users"]
+    if job_records_collection is not None:
+        collection_names.append("job_records")
+    list_col_resp = MagicMock(ok=True)
+    list_col_resp.json.return_value = {"items": [{"name": n} for n in collection_names]}
+
+    collection_resp = MagicMock(ok=True)
+    collection_resp.json.return_value = job_records_collection or {}
+
+    create_col_resp = MagicMock(ok=True)
+    patch_resp = MagicMock(ok=patch_ok)
+    patch_resp.text = "" if patch_ok else '{"message":"Failed to update collection."}'
+    records_resp = MagicMock(ok=True)
+    records_resp.json.return_value = {"totalItems": 1}
+    seed_resp = MagicMock(ok=True)
+
+    def mock_post(url, **kwargs):
+        if "auth-with-password" in url:
+            return auth_resp
+        if "collections/saved_searches/records" in url:
+            return seed_resp
+        return create_col_resp
+
+    def mock_get(url, **kwargs):
+        if url.endswith("/api/collections"):
+            return list_col_resp
+        if url.endswith("/api/collections/job_records"):
+            return collection_resp
+        return records_resp
+
+    session.post.side_effect = mock_post
+    session.get.side_effect = mock_get
+    session.patch.return_value = patch_resp
+    return session
+
+
+def _legacy_job_records_collection(max_chars: int | None = None, nested: bool = False) -> dict:
+    """The remote `job_records` collection as PocketBase stores it: field ids included.
+
+    ``nested`` models a pre-0.24 server, which nests the text bound under ``options``;
+    otherwise the bound sits directly on the field, as current PocketBase serializes it.
+    ``max_chars=None`` leaves the field unbounded (PocketBase's implicit 5000-char cap).
+    """
+    jd_field: dict = {"id": "fld_jd", "name": "job_description", "type": "text", "required": False}
+    bound = {"min": 0, "pattern": ""}
+    if max_chars is not None:
+        bound["max"] = max_chars
+    if nested:
+        jd_field["options"] = bound
+    else:
+        jd_field.update(bound)
+
+    return {
+        "id": "pbc_job_records",
+        "name": "job_records",
+        "type": "base",
+        "listRule": "",
+        "fields": [
+            {"id": "fld_id", "name": "id", "type": "text", "primaryKey": True},
+            {"id": "fld_fp", "name": "fingerprint", "type": "text", "required": True},
+            {"id": "fld_title", "name": "title", "type": "text", "required": True},
+            jd_field,
+        ],
+    }
+
+
+@pytest.mark.parametrize("nested_options", [False, True])
+@pytest.mark.parametrize("stored_max", [None, 5000])
+def test_provision_remote_pocketbase_widens_existing_job_description_cap(
+    stored_max: int | None, nested_options: bool
+):
+    """A remote instance provisioned before the wide cap existed keeps PocketBase's implicit
+    5000-character limit, which rejects every expanded JD (Ticket #264). Provisioning must
+    widen the field in place — and send the existing fields back with their ids, because
+    PocketBase drops any field omitted from the update payload.
+
+    The flat ``max`` is the key that actually governs on current PocketBase: a nested
+    ``options.max`` is silently ignored, as verified against a live 0.39 server."""
+    from unittest.mock import patch as mock_patch
+
+    from boss_agent.broker.provisioner import LONG_TEXT_FIELD_MAX_CHARS, provision_remote_pocketbase
+
+    collection = _legacy_job_records_collection(stored_max, nested=nested_options)
+    session = _remote_provision_session(collection)
+
+    with mock_patch("requests.Session", return_value=session):
+        assert (
+            provision_remote_pocketbase(
+                "http://127.0.0.1:8090", email="admin@example.com", password="password123"
+            )
+            is True
+        )
+
+    assert session.patch.call_count == 1
+    patch_url = session.patch.call_args.args[0]
+    assert patch_url.endswith("/api/collections/job_records")
+    sent_fields = session.patch.call_args.kwargs["json"]["fields"]
+
+    jd_field = next(f for f in sent_fields if f["name"] == "job_description")
+    assert jd_field["max"] == LONG_TEXT_FIELD_MAX_CHARS
+    assert jd_field["id"] == "fld_jd"
+    # A pre-0.24 schema keeps its nested shape, widened along with the flat keys.
+    if nested_options:
+        assert jd_field["options"]["max"] == LONG_TEXT_FIELD_MAX_CHARS
+    # Every other field travels back untouched, id included, or PocketBase deletes it.
+    assert [f["id"] for f in sent_fields] == [f["id"] for f in collection["fields"]]
+
+
+def test_provision_remote_pocketbase_leaves_wide_cap_alone():
+    """An already-upgraded instance must not be rewritten on every provisioning run."""
+    from unittest.mock import patch as mock_patch
+
+    from boss_agent.broker.provisioner import LONG_TEXT_FIELD_MAX_CHARS, provision_remote_pocketbase
+
+    session = _remote_provision_session(
+        _legacy_job_records_collection(max_chars=LONG_TEXT_FIELD_MAX_CHARS)
+    )
+
+    with mock_patch("requests.Session", return_value=session):
+        assert (
+            provision_remote_pocketbase(
+                "http://127.0.0.1:8090", email="admin@example.com", password="password123"
+            )
+            is True
+        )
+
+    assert not session.patch.called
+
+
+def test_provision_remote_pocketbase_upgrade_failure_does_not_abort_provisioning():
+    """A refused schema upgrade is worth a loud log, but it must not fail the whole run:
+    the remaining collections and seeds still have to be provisioned."""
+    from unittest.mock import patch as mock_patch
+
+    from boss_agent.broker.provisioner import provision_remote_pocketbase
+
+    session = _remote_provision_session(_legacy_job_records_collection(), patch_ok=False)
+
+    with mock_patch("requests.Session", return_value=session):
+        assert (
+            provision_remote_pocketbase(
+                "http://127.0.0.1:8090", email="admin@example.com", password="password123"
+            )
+            is True
+        )
+
+    assert session.patch.call_count == 1
+
+
+def test_provision_remote_pocketbase_skips_upgrade_when_collection_is_new():
+    """On a fresh database the collection is created with the wide cap already, so there is
+    nothing to migrate."""
+    from unittest.mock import patch as mock_patch
+
+    from boss_agent.broker.provisioner import provision_remote_pocketbase
+
+    session = _remote_provision_session(job_records_collection=None)
+
+    with mock_patch("requests.Session", return_value=session):
+        assert (
+            provision_remote_pocketbase(
+                "http://127.0.0.1:8090", email="admin@example.com", password="password123"
+            )
+            is True
+        )
+
+    assert not session.patch.called
+    assert any(
+        call.kwargs.get("json", {}).get("name") == "job_records"
+        for call in session.post.call_args_list
+        if "api/collections" in str(call.args)
+    )

@@ -71,6 +71,8 @@ export interface ScreeningPolicy {
 	jd_blacklist: string[];
 	enable_screening: boolean;
 	channel_preference?: 'all' | 'direct_only' | 'headhunter_only';
+	/** Commute ceiling in km; null, blank or <= 0 disables distance filtering. */
+	max_commute_distance_km?: number | null;
 }
 
 export interface LLMSettings {
@@ -117,6 +119,7 @@ export interface SystemSettings {
 	company_blacklist?: string[];
 	jd_blacklist?: string[];
 	channel_preference?: 'all' | 'direct_only' | 'headhunter_only';
+	max_commute_distance_km?: number | null;
 
 	// 仅沟通 rejection auto-acknowledgment (issue #208)
 	chat?: ChatAcknowledgmentConfig;
@@ -204,6 +207,10 @@ export interface JobRecord {
 	screening_audit?: string;
 	applied_at?: string | null;
 	applied_source?: 'agent_auto_send' | 'platform_historical' | '' | null;
+	/** App-probed commute distance in km (spec #209); null when unknown. */
+	commute_distance_km?: number | null;
+	/** Raw widget text, e.g. "距离家庭住址19.5千米". */
+	commute_distance_text?: string;
 	source_task_id?: string;
 	first_seen_at?: string;
 	last_seen_at?: string;

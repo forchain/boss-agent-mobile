@@ -88,6 +88,7 @@ class AutoApplyHandler(BaseTaskHandler):
         output = {
             "applied": result.applied,
             "status": result.outcome,
+            "reason": result.reason,
             "score": result.score,
             "jd_key_requirements": result.jd_key_requirements,
             "greeting_message": result.greeting_message,

@@ -9,6 +9,7 @@ import contextlib
 import json
 import logging
 import os
+import re
 import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Callable
@@ -35,7 +36,57 @@ __all__ = [
     "InMemoryTaskBroker",
     "PocketBaseBroker",
     "PocketBaseTaskBroker",
+    "POCKETBASE_DEFAULT_TEXT_MAX_CHARS",
+    "TEXT_MAX_CONSTRAINT_CODE",
+    "LENGTH_RECOVERY_FIELD",
+    "is_length_rejection_for_job_description",
+    "resolve_text_constraint_limit",
 ]
+
+#: PocketBase caps a text field at 5000 characters when it carries no explicit `max`
+#: (core/field_text.go). Provisioning raises that cap for `job_description`
+#: (provisioner.LONG_TEXT_FIELD_MAX_CHARS), but a collection predating the upgrade still
+#: rejects a fully expanded JD with `validation_max_text_constraint` — and because a
+#: rejected upsert returns empty, the worker used to drop the enriched record outright
+#: (log: `❌ [Enrich Error]`). Recovery truncates to the server's boundary instead.
+POCKETBASE_DEFAULT_TEXT_MAX_CHARS = 5000
+
+#: PocketBase error code for a text value longer than the field's configured `max`.
+TEXT_MAX_CONSTRAINT_CODE = "validation_max_text_constraint"
+
+#: The only field length recovery may rewrite. Another field hitting the constraint is not
+#: ours to repair: truncating `job_description` would lose data without clearing it.
+LENGTH_RECOVERY_FIELD = "job_description"
+
+#: The rejected bound as PocketBase reports it. v0.39 answers with
+#: ``{"message":"Must be no more than 5000 character(s).","params":{"max":5000}}`` — the
+#: structural `params.max` — while other releases only phrase it in prose ("Must be shorter
+#: than 5000."). Reading the number back means a deployment with a non-default cap is still
+#: recovered at the right boundary instead of at the assumed one.
+_SERVER_TEXT_LIMIT_PATTERNS = (
+    re.compile(r'"max"\s*:\s*(\d+)'),
+    re.compile(r"(?:no more than|shorter than)\s+(\d+)", re.IGNORECASE),
+)
+
+
+def is_length_rejection_for_job_description(response_text: Any) -> bool:
+    """Whether a PocketBase error is specifically about `job_description` being too long."""
+    text = response_text if isinstance(response_text, str) else ""
+    return TEXT_MAX_CONSTRAINT_CODE in text and LENGTH_RECOVERY_FIELD in text
+
+
+def resolve_text_constraint_limit(response_text: Any) -> int:
+    """Character boundary to truncate to, taken from the server's own message when present."""
+    text = response_text if isinstance(response_text, str) else ""
+    for pattern in _SERVER_TEXT_LIMIT_PATTERNS:
+        match = pattern.search(text)
+        if not match:
+            continue
+        limit = int(match.group(1))
+        if limit > 0:
+            return limit
+    return POCKETBASE_DEFAULT_TEXT_MAX_CHARS
+
 
 
 class BaseTaskBroker(ABC):
