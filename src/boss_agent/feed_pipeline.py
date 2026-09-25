@@ -20,13 +20,19 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
+from .feed_records import (
+    card_facets_record,
+    card_record,
+    effective_company,
+    effective_title,
+    enriched_record,
+)
 from .job_store import INVALID_JOB_TITLES, JobRecordStore
 from .memory import StructuredCandidateProfile
 from .models import (
     APPLIED_SOURCE_AGENT,
     APPLIED_SOURCE_PLATFORM_HISTORICAL,
     EXPIRED_POSTING_REASON,
-    INVALID_COMPANY_NAMES,
     STATE_RANK,
     TARGET_ACTION_RANK,
     ChatButtonState,
@@ -36,7 +42,6 @@ from .models import (
     TargetAction,
     is_communication_expired,
     is_direct_hire_company,
-    is_invalid_company_name,
 )
 from .pages import (
     ChatPage,
@@ -126,7 +131,7 @@ class FeedStreamConfig:
     keyword: str | None = None
     max_jobs: int = DEFAULT_MAX_JOBS
     enable_search: bool = True
-    enable_filter: bool = True
+    # Filtering is switched off on the filter config itself, which owns the flag.
     filter_config: FilterConfig | None = None
     screening_policy: ScreeningPolicy = field(default_factory=ScreeningPolicy)
     cooldown_days: int = 0
@@ -171,8 +176,7 @@ class FeedStreamConfig:
 
         raw_policy = data.get("screening_policy")
         daily_limit = int(
-            data.get("daily_greeting_limit")
-            or load_settings().get("daily_greeting_limit", 20)
+            data.get("daily_greeting_limit") or load_settings().get("daily_greeting_limit", 20)
         )
 
         return cls(
@@ -180,10 +184,11 @@ class FeedStreamConfig:
             keyword=data.get("keyword"),
             max_jobs=int(data.get("max_jobs", DEFAULT_MAX_JOBS)),
             enable_search=bool(data.get("enable_search", True)),
-            enable_filter=bool(data.get("enable_filter", True)),
             filter_config=filter_config,
             screening_policy=(
-                ScreeningPolicy.from_dict(raw_policy) if raw_policy else ScreeningPolicy.load_default()
+                ScreeningPolicy.from_dict(raw_policy)
+                if raw_policy
+                else ScreeningPolicy.load_default()
             ),
             cooldown_days=resolve_communication_cooldown_days(data),
             daily_greeting_limit=daily_limit,
@@ -209,6 +214,9 @@ class _CardRun:
     # Position of this card's record in ``result.jobs``, replaced in place by the
     # enriched record and dropped when the card turns out to be a skip.
     jobs_index: int | None = None
+    # Greetings already dispatched today, as read by this card's quota check. The read is
+    # reused by the log lines instead of paying a second round trip per card.
+    applied_today: int = 0
 
 
 def _element_y(elem: Any) -> float | None:
@@ -315,7 +323,9 @@ class JobFeedPipeline:
             self.startup_page.dismiss_dialog()
 
         if config.single_screen:
-            await self._evaluate_current_posting(_CardRun(config=config, result=result, on_job=on_job))
+            await self._evaluate_current_posting(
+                _CardRun(config=config, result=result, on_job=on_job)
+            )
             return result
 
         if config.enable_search and config.keyword:
@@ -372,7 +382,9 @@ class JobFeedPipeline:
         no general filters (or with filtering disabled) must actively clear them rather
         than inherit somebody else's search.
         """
-        filter_cfg = config.filter_config if config.enable_filter else None
+        # The filter config carries its own enable flag: a disabled run still clears the
+        # conditions a previous run left in the dialog.
+        filter_cfg = config.filter_config
 
         if filter_cfg and filter_cfg.has_industry_filters:
             await self._log(f"Applying industry filter: {filter_cfg.industries}")
@@ -521,9 +533,7 @@ class JobFeedPipeline:
             return
 
         existing_record = await self.store.get_job_record_by_fingerprint(card.fingerprint)
-        if existing_record and not await self._passes_state_machine(
-            run, existing_record, company
-        ):
+        if existing_record and not await self._passes_state_machine(run, existing_record, company):
             return
 
         run.verdict = self.screener.evaluate_card(card, config.screening_policy)
@@ -536,7 +546,13 @@ class JobFeedPipeline:
                 f"豁免渠道限制，继续采集"
             )
 
-        run.card_record = self._build_card_record(card, run, existing_record)
+        run.card_record = card_record(
+            card,
+            keyword=config.keyword,
+            source_task_id=config.source_task_id,
+            verdict=run.verdict,
+            existing_record=existing_record,
+        )
         persisted = await self.store.upsert_job_record(dict(run.card_record))
         # The card itself is already a result: a detail-page failure must not lose it.
         run.result.jobs.append(persisted)
@@ -590,10 +606,12 @@ class JobFeedPipeline:
         cur_rank = STATE_RANK.get(existing_status, 1)
         has_full_jd = bool((existing_record.get("job_description") or "").strip())
         is_already_progressed = cur_rank > TARGET_ACTION_RANK.get(TargetAction.SAVE_JD, 1)
-        if not is_released and cur_rank >= required_rank and (
-            is_already_progressed
-            or config.target_action != TargetAction.SAVE_JD
-            or has_full_jd
+        if (
+            not is_released
+            and cur_rank >= required_rank
+            and (
+                is_already_progressed or config.target_action != TargetAction.SAVE_JD or has_full_jd
+            )
         ):
             result.skipped += 1
             await self._log(
@@ -619,54 +637,17 @@ class JobFeedPipeline:
             )
         await self.store.upsert_job_record(
             {
-                **self._card_facets_record(card, run),
+                **card_facets_record(
+                    card,
+                    keyword=run.config.keyword,
+                    source_task_id=run.config.source_task_id,
+                ),
                 "status": JobRecordStatus.IGNORED.value,
                 "screened_reason": verdict.reason,
                 "relaxed_by_whitelist": False,
                 "screening_audit": verdict.screening_audit,
             }
         )
-
-    def _card_facets_record(self, card: JobCardBrief, run: _CardRun) -> dict[str, Any]:
-        """Card facets as a persistable record payload."""
-        config = run.config
-        digest = getattr(card, "digest", "") or getattr(card, "snippet", "") or ""
-        return {
-            "fingerprint": card.fingerprint,
-            "title": card.title,
-            "company_name": card.company_name,
-            "recruiter_name": card.recruiter_name,
-            "recruiter_title": getattr(card, "recruiter_title", "") or "",
-            "is_headhunter": getattr(card, "is_headhunter", False),
-            "company_scale": getattr(card, "company_scale", "") or "",
-            "industry": getattr(card, "industry", "") or "",
-            "tags": list(getattr(card, "tags", None) or []),
-            "salary_range": getattr(card, "salary_range", "") or "",
-            "location": getattr(card, "location", "") or "",
-            "digest": digest,
-            "job_description": "",
-            "jd_key_requirements": list(getattr(card, "tags", None) or []),
-            "search_keywords": [config.keyword] if config.keyword else [],
-            "source_task_id": config.source_task_id,
-        }
-
-    def _build_card_record(
-        self, card: JobCardBrief, run: _CardRun, existing_record: dict[str, Any] | None
-    ) -> dict[str, Any]:
-        """Optimistic record written before the detail page is even opened."""
-        verdict = run.verdict
-        preserved_jd = (existing_record or {}).get("job_description", "")
-        return {
-            **self._card_facets_record(card, run),
-            "job_description": preserved_jd,
-            "status": (
-                JobRecordStatus.JD_SAVED.value
-                if preserved_jd.strip()
-                else JobRecordStatus.UNMATCHED.value
-            ),
-            "relaxed_by_whitelist": bool(verdict and verdict.relaxed_by_whitelist),
-            "screening_audit": verdict.screening_audit if verdict else "",
-        }
 
     async def _inspect_detail(
         self,
@@ -722,7 +703,14 @@ class JobFeedPipeline:
             # Drop the optimistic card-level record: this card is a skip, not a scraped JD.
             run.result.jobs.pop(run.jobs_index)
             run.jobs_index = None
-        terminal = dict(run.card_record or self._card_facets_record(card, run))
+        terminal = dict(
+            run.card_record
+            or card_facets_record(
+                card,
+                keyword=run.config.keyword,
+                source_task_id=run.config.source_task_id,
+            )
+        )
         if chat_state == ChatButtonState.COMMUNICATED:
             terminal["status"] = JobRecordStatus.APPLIED.value
             terminal["applied_source"] = APPLIED_SOURCE_PLATFORM_HISTORICAL
@@ -769,7 +757,7 @@ class JobFeedPipeline:
             logger.error("Failed to extract detail for '%s': %s", card.title, e)
             return None
 
-        if self._effective_title(posting, card) in INVALID_JOB_TITLES:
+        if effective_title(posting, card) in INVALID_JOB_TITLES:
             logger.warning(
                 "Skipping job detail enrichment due to missing/invalid title: '%s' @ '%s'",
                 posting.title,
@@ -784,37 +772,18 @@ class JobFeedPipeline:
         assert card is not None
         config = run.config
 
-        effective_title = self._effective_title(posting, card)
-        effective_company = self._effective_company(posting, card)
+        posting_title = effective_title(posting, card)
+        posting_company = effective_company(posting, card)
         jd_text = posting.job_description or ""
-        is_headhunter = bool(
-            card.is_headhunter or getattr(posting, "is_headhunter", False)
+        enriched = enriched_record(
+            card,
+            posting,
+            keyword=config.keyword,
+            source_task_id=config.source_task_id,
+            card_record=run.card_record,
+            verdict=run.verdict,
         )
-        enriched = {
-            "fingerprint": card.fingerprint,
-            "title": effective_title,
-            "company_name": effective_company,
-            "recruiter_name": (
-                card.recruiter_name or posting.recruiter_name or "招聘者"
-            ),
-            "recruiter_title": (
-                card.recruiter_title or getattr(posting, "recruiter_title", "") or ""
-            ),
-            "is_headhunter": is_headhunter,
-            "company_scale": (
-                card.company_scale or getattr(posting, "company_scale", "") or ""
-            ),
-            "industry": card.industry or getattr(posting, "industry", "") or "",
-            "tags": list(card.tags) or list(getattr(posting, "tags", None) or []),
-            "salary_range": posting.salary_range or run.card_record.get("salary_range", ""),
-            "location": posting.location or run.card_record.get("location", ""),
-            "digest": run.card_record.get("digest", ""),
-            "job_description": jd_text or run.card_record.get("job_description", ""),
-            "relaxed_by_whitelist": bool(run.verdict and run.verdict.relaxed_by_whitelist),
-            "screening_audit": run.verdict.screening_audit if run.verdict else "",
-            "search_keywords": [config.keyword] if config.keyword else [],
-            "source_task_id": config.source_task_id,
-        }
+        is_headhunter = enriched["is_headhunter"]
 
         evaluation = self.screener.evaluate_job(
             card=card,
@@ -828,15 +797,15 @@ class JobFeedPipeline:
             logger.error(
                 "Incomplete JD: '查看更多' still present in extracted JD for %s '%s'",
                 "[猎头]" if is_headhunter else "[直招]",
-                effective_title,
+                posting_title,
             )
             await self._log(
                 f"❌ [Incomplete JD Error] '查看更多' was detected in extracted JD for "
-                f"{'[猎头]' if is_headhunter else '[直招]'} '{effective_title}'"
+                f"{'[猎头]' if is_headhunter else '[直招]'} '{posting_title}'"
             )
 
         if evaluation.stage is JobVerdictStage.FILTERED_BY_DEEP_SCREENER:
-            await self._log(f"⏭️ [精筛淘汰] '{effective_title}': {evaluation.reason}")
+            await self._log(f"⏭️ [精筛淘汰] '{posting_title}': {evaluation.reason}")
             await self._finalize_verdict(run, enriched, JobRecordStatus.IGNORED, evaluation)
             return
 
@@ -844,8 +813,7 @@ class JobFeedPipeline:
             # No evaluable JD means no verdict: keep the record retryable rather than
             # burying the posting, and never spend a greeting on it.
             await self._log(
-                f"⚠️ [JD Unavailable] '{effective_title}' @ '{effective_company}': "
-                f"{evaluation.reason}"
+                f"⚠️ [JD Unavailable] '{posting_title}' @ '{posting_company}': {evaluation.reason}"
             )
             await self._finalize_verdict(run, enriched, JobRecordStatus.JD_SAVED, evaluation)
             return
@@ -891,8 +859,7 @@ class JobFeedPipeline:
 
         if not (config.auto_send and not config.preview_only):
             await self._log(
-                f"💾 [OFFLINE DRAFT] Saved JD and drafted greeting for '{title}' "
-                f"(status: matched)."
+                f"💾 [OFFLINE DRAFT] Saved JD and drafted greeting for '{title}' (status: matched)."
             )
             await self._finalize_verdict(run, enriched, JobRecordStatus.MATCHED, evaluation)
             return
@@ -906,7 +873,7 @@ class JobFeedPipeline:
             return
 
         if await self._quota_exhausted(run):
-            applied_today = await self.store.count_today_applied_jobs()
+            applied_today = run.applied_today
             await self._log(
                 f"⚠️ [LIMIT REACHED] Daily greeting limit reached "
                 f"({applied_today}/{config.daily_greeting_limit}). Degrading to offline draft "
@@ -925,7 +892,8 @@ class JobFeedPipeline:
             self.chat_page.type_greeting_message(greeting, timeout_sec=5.0)
             dispatched = self.chat_page.click_send(timeout_sec=3.0)
             if dispatched:
-                applied_today = await self.store.count_today_applied_jobs()
+                # The count read at the quota gate, plus the greeting just sent.
+                applied_today = run.applied_today + 1
                 await self._log(
                     f"✅ [AUTO_SEND] Dispatched greeting message to {title} @ {company} "
                     f"({applied_today}/{config.daily_greeting_limit} today)"
@@ -950,9 +918,13 @@ class JobFeedPipeline:
                 self._excluded_companies.add(company_name)
 
     async def _quota_exhausted(self, run: _CardRun) -> bool:
-        """Whether the daily greeting quota leaves no room for another dispatch."""
-        applied_today = await self.store.count_today_applied_jobs()
-        if applied_today >= run.config.daily_greeting_limit:
+        """Whether the daily greeting quota leaves no room for another dispatch.
+
+        The count is read here once per card and kept on the run so the callers that only
+        need it for a log line reuse this read rather than issuing their own.
+        """
+        run.applied_today = await self.store.count_today_applied_jobs()
+        if run.applied_today >= run.config.daily_greeting_limit:
             run.result.quota_exhausted = True
             return True
         return False
@@ -987,9 +959,8 @@ class JobFeedPipeline:
             "status": status.value,
             "match_score": evaluation.match_score,
             "greeting_message": evaluation.greeting_message,
-            "jd_key_requirements": evaluation.jd_key_requirements or payload.get(
-                "jd_key_requirements", []
-            ),
+            "jd_key_requirements": evaluation.jd_key_requirements
+            or payload.get("jd_key_requirements", []),
         }
         saved = await self.store.upsert_job_record(dict(payload)) or {}
         run.result.processed += 1
@@ -1005,7 +976,9 @@ class JobFeedPipeline:
             run.result.score = evaluation.match_score
             run.result.greeting_message = evaluation.greeting_message
             run.result.jd_key_requirements = evaluation.jd_key_requirements
-        if status is JobRecordStatus.MATCHED and not run.result.applied:
+        # The action follows from the verdict alone: a matched record is a draft awaiting a
+        # manual send, whether or not this run already dispatched an earlier greeting.
+        if status is JobRecordStatus.MATCHED:
             await self._emit(
                 run,
                 JobOutcome(
@@ -1043,7 +1016,9 @@ class JobFeedPipeline:
                     title=payload.get("title", ""),
                     company_name=payload.get("company_name", ""),
                     status=status.value,
-                    action=JobAction.SAVED if status is JobRecordStatus.JD_SAVED else JobAction.SKIPPED,
+                    action=JobAction.SAVED
+                    if status is JobRecordStatus.JD_SAVED
+                    else JobAction.SKIPPED,
                     score=evaluation.match_score,
                     greeting_message=evaluation.greeting_message,
                     record=saved,
@@ -1118,7 +1093,11 @@ class JobFeedPipeline:
             tags=list(getattr(posting, "tags", None) or []),
         )
         run.card = card
-        run.card_record = self._card_facets_record(card, run)
+        run.card_record = card_facets_record(
+            card,
+            keyword=run.config.keyword,
+            source_task_id=run.config.source_task_id,
+        )
 
         run.verdict = self.screener.evaluate_card(card, run.config.screening_policy)
         if not run.verdict.passed:
@@ -1144,22 +1123,6 @@ class JobFeedPipeline:
             )
 
         await self._evaluate_and_act(run, posting)
-
-    @staticmethod
-    def _effective_title(posting: Any, card: JobCardBrief) -> str:
-        """Prefer the detail page's title, falling back to the card's."""
-        title = (posting.title or "").strip()
-        if title and title not in INVALID_JOB_TITLES:
-            return title
-        return (card.title or "").strip()
-
-    @staticmethod
-    def _effective_company(posting: Any, card: JobCardBrief) -> str:
-        """Prefer the detail page's company unless it is a placeholder."""
-        company = (posting.company_name or "").strip()
-        if company and company not in INVALID_COMPANY_NAMES and not is_invalid_company_name(company):
-            return company
-        return (card.company_name or "").strip()
 
     # ------------------------------------------------------------------
     # Plumbing

@@ -72,6 +72,17 @@ def _advanced_status(current: str | None, incoming: Any) -> str | None:
     return None
 
 
+def _quote_filter_value(value: Any) -> str:
+    """Render a scraped value as a quoted PocketBase filter literal.
+
+    Company names and titles reach the filter verbatim, so a raw quote is a syntax error
+    that makes the whole query fail — which silently turns a dedup lookup into a duplicate
+    insert. Escape the escape character first, then the quote.
+    """
+    escaped = str(value).replace("\\", "\\\\").replace("'", "\\'")
+    return f"'{escaped}'"
+
+
 def _placeholder_fill(existing: dict[str, Any], record_data: dict[str, Any]) -> dict[str, Any]:
     """Fields that fill a gap in the stored record but never overwrite what is known."""
     filled: dict[str, Any] = {}
@@ -81,9 +92,29 @@ def _placeholder_fill(existing: dict[str, Any], record_data: dict[str, Any]) -> 
     return filled
 
 
-def _record_fields(
-    record_data: dict[str, Any], fingerprint: str, now: str
-) -> dict[str, Any]:
+def _sticky_field_updates(existing: dict[str, Any], record_data: dict[str, Any]) -> dict[str, Any]:
+    """Merge rules for the fields an observation may enrich but never erase.
+
+    One authority for both adapters, so a re-scrape cannot blank what the record already
+    holds. The two list fields differ on purpose: ``tags`` are card facets, so the first
+    non-empty read wins and a later empty one is ignored, while ``jd_key_requirements`` is
+    re-extracted from the JD text and may be refined by a later non-empty read.
+    ``is_headhunter`` may be discovered by a later observation but never downgraded — a
+    headhunter channel recorded as direct-hire would wrongly join the same-company pool.
+    """
+    updates: dict[str, Any] = {}
+    if record_data.get("tags") and not existing.get("tags"):
+        updates["tags"] = record_data["tags"]
+    if record_data.get("jd_key_requirements"):
+        updates["jd_key_requirements"] = record_data["jd_key_requirements"]
+    if "is_headhunter" in record_data and (
+        record_data["is_headhunter"] or existing.get("is_headhunter") is None
+    ):
+        updates["is_headhunter"] = record_data["is_headhunter"]
+    return updates
+
+
+def _record_fields(record_data: dict[str, Any], fingerprint: str, now: str) -> dict[str, Any]:
     """The canonical field set of a brand-new job record, shared by both adapters."""
     status_val = record_data.get("status", JobRecordStatus.UNMATCHED)
     if hasattr(status_val, "value"):
@@ -152,7 +183,11 @@ class JobRecordStore(ABC):
         status: str,
         match_data: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Update the status and optional match results of a job record."""
+        """Update the status and optional match results of a job record.
+
+        Raises KeyError when the record does not exist and RuntimeError when the write
+        could not be performed, so a caller can never mistake a failed write for a saved one.
+        """
 
     @abstractmethod
     async def delete_job_record(self, record_id: str) -> bool:
@@ -257,16 +292,11 @@ class InMemoryJobRecordStore(JobRecordStore):
         if advanced:
             rec["status"] = advanced
         rec.update(_placeholder_fill(rec, record_data))
-        if record_data.get("tags") and not rec.get("tags"):
-            rec["tags"] = record_data["tags"]
-        if "is_headhunter" in record_data and rec.get("is_headhunter") is None:
-            rec["is_headhunter"] = record_data["is_headhunter"]
+        rec.update(_sticky_field_updates(rec, record_data))
         if record_data.get("greeting_message"):
             rec["greeting_message"] = record_data["greeting_message"]
         if record_data.get("match_score") is not None:
             rec["match_score"] = record_data["match_score"]
-        if record_data.get("jd_key_requirements"):
-            rec["jd_key_requirements"] = record_data["jd_key_requirements"]
         if "screened_reason" in record_data:
             rec["screened_reason"] = record_data["screened_reason"]
         if "relaxed_by_whitelist" in record_data:
@@ -492,7 +522,9 @@ class PocketBaseJobRecordStore(JobRecordStore):
         new_kw = record_data.get("search_keywords", [])
         body: dict[str, Any] = {
             "last_seen_at": now,
-            "search_keywords": list(dict.fromkeys((existing.get("search_keywords") or []) + new_kw)),
+            "search_keywords": list(
+                dict.fromkeys((existing.get("search_keywords") or []) + new_kw)
+            ),
         }
         if title and title not in INVALID_JOB_TITLES and title != existing.get("title"):
             body["title"] = title
@@ -511,21 +543,11 @@ class PocketBaseJobRecordStore(JobRecordStore):
         if advanced:
             body["status"] = advanced
         body.update(_placeholder_fill(existing, record_data))
-        if "tags" in record_data and record_data["tags"] is not None:
-            body["tags"] = record_data["tags"]
-        if "is_headhunter" in record_data and (
-            record_data["is_headhunter"] or existing.get("is_headhunter") is None
-        ):
-            body["is_headhunter"] = record_data["is_headhunter"]
+        body.update(_sticky_field_updates(existing, record_data))
         if record_data.get("greeting_message"):
             body["greeting_message"] = record_data["greeting_message"]
         if record_data.get("match_score") is not None:
             body["match_score"] = record_data["match_score"]
-        if (
-            "jd_key_requirements" in record_data
-            and record_data["jd_key_requirements"] is not None
-        ):
-            body["jd_key_requirements"] = record_data["jd_key_requirements"]
         if "screened_reason" in record_data:
             body["screened_reason"] = record_data["screened_reason"]
         if "relaxed_by_whitelist" in record_data:
@@ -538,7 +560,9 @@ class PocketBaseJobRecordStore(JobRecordStore):
             body["applied_source"] = record_data["applied_source"]
         return body
 
-    async def _get_existing(self, fingerprint: str, record_data: dict[str, Any]) -> dict[str, Any] | None:
+    async def _get_existing(
+        self, fingerprint: str, record_data: dict[str, Any]
+    ) -> dict[str, Any] | None:
         """Look the record up by fingerprint, then by company + title for generic recruiters."""
         import asyncio
 
@@ -548,7 +572,10 @@ class PocketBaseJobRecordStore(JobRecordStore):
             None,
             lambda: self.session.get(
                 url,
-                params={"filter": f"fingerprint='{fingerprint}'", "perPage": "1"},
+                params={
+                    "filter": f"fingerprint={_quote_filter_value(fingerprint)}",
+                    "perPage": "1",
+                },
                 headers=self._headers(),
             ),
         )
@@ -568,7 +595,10 @@ class PocketBaseJobRecordStore(JobRecordStore):
                 lambda: self.session.get(
                     url,
                     params={
-                        "filter": f'company_name="{comp_name}" && title="{title}"',
+                        "filter": (
+                            f"company_name={_quote_filter_value(comp_name)}"
+                            f" && title={_quote_filter_value(title)}"
+                        ),
                         "perPage": "1",
                     },
                     headers=self._headers(),
@@ -662,14 +692,14 @@ class PocketBaseJobRecordStore(JobRecordStore):
         import asyncio
 
         url = self._jobs_collection_url()
-        safe_fp = fingerprint.replace("'", "\\'")
+        filter_expr = f"fingerprint={_quote_filter_value(fingerprint)}"
         loop = asyncio.get_running_loop()
         try:
             resp = await loop.run_in_executor(
                 None,
                 lambda: self.session.get(
                     url,
-                    params={"filter": f"fingerprint='{safe_fp}'", "perPage": "1"},
+                    params={"filter": filter_expr, "perPage": "1"},
                     headers=self._headers(),
                 ),
             )
@@ -749,11 +779,18 @@ class PocketBaseJobRecordStore(JobRecordStore):
                     headers=self._headers(),
                 ),
             )
-            if resp.status_code == 200:
-                return resp.json()
         except Exception as e:
-            logger.warning("PocketBase update_job_record_status failed: %s", e)
-        return {"id": record_id, **body}
+            raise RuntimeError(f"Failed to update job record {record_id}: {e}") from e
+        if resp.status_code == 200:
+            return resp.json()
+        if resp.status_code == 404:
+            raise KeyError(f"Job record {record_id} not found")
+        # Never hand back a plausible-looking record for a write that did not land: the
+        # caller cannot tell the difference, and the next quota or cool-down read cannot either.
+        raise RuntimeError(
+            f"Failed to update job record {record_id} in PocketBase "
+            f"({resp.status_code}): {resp.text}"
+        )
 
     async def delete_job_record(self, record_id: str) -> bool:
         import asyncio

@@ -24,18 +24,17 @@ from langsmith import traceable
 
 from .matching import JobMatchGreetingService
 from .memory import StructuredCandidateProfile
-from .models import JobPosting, ScreeningPolicy, resolve_headhunter_channel
+from .models import (
+    JobPosting,
+    ScreeningPolicy,
+    is_substantive_jd,
+    resolve_headhunter_channel,
+)
 from .pages import JobCardBrief
 
 logger = logging.getLogger(__name__)
 
 CARD_PASS_REASON = "通过卡片初筛"
-
-# A JD shorter than this carries no evaluable signal: matching on it would produce a
-# fabricated greeting and a meaningless score. Kept identical to the precondition in
-# ``JobMatchGreetingService`` so both stages agree on what "a usable JD" means.
-MIN_JD_CHARS = 30
-UNUSABLE_JD_MARKERS = ("无详细岗位描述", "暂无详细描述", "未注明职位")
 
 UNUSABLE_JD_REASON = (
     "Job description is missing or too short ({length} chars). "
@@ -449,7 +448,7 @@ class CandidateScreener:
 
 def _jd_is_substantive(jd: str) -> bool:
     """Whether an extracted JD carries enough signal to greet from."""
-    return len(jd) >= MIN_JD_CHARS and jd not in UNUSABLE_JD_MARKERS
+    return is_substantive_jd(jd)
 
 
 def _resolve_policy(policy: ScreeningPolicy | dict[str, Any] | None) -> ScreeningPolicy:

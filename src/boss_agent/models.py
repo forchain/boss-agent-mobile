@@ -718,6 +718,19 @@ class FilterConfig:
         return bool(self.industries)
 
 
+# A JD shorter than this carries no evaluable signal: screening or greeting from it would
+# produce a meaningless score and a fabricated greeting. The card screener and the greeting
+# service gate on the same precondition, so it is stated once here.
+MIN_JD_CHARS = 30
+UNUSABLE_JD_MARKERS = ("无详细岗位描述", "暂无详细描述", "未注明职位")
+
+
+def is_substantive_jd(jd: str | None) -> bool:
+    """Whether an extracted JD carries enough signal to screen or greet from."""
+    text = jd or ""
+    return len(text) >= MIN_JD_CHARS and text not in UNUSABLE_JD_MARKERS
+
+
 def is_masked_company_name(name: str | None) -> bool:
     """Check whether a company name is an anonymous, confidential, or masked placeholder.
 

@@ -145,7 +145,9 @@ def _pipeline(
     return pipeline
 
 
-def _detail_page(state: ChatButtonState = ChatButtonState.UNCONTACTED, posting: JobPosting | None = None):
+def _detail_page(
+    state: ChatButtonState = ChatButtonState.UNCONTACTED, posting: JobPosting | None = None
+):
     detail = MagicMock()
     detail.get_chat_button_state.return_value = state
     detail.extract_job_posting.return_value = posting or _posting()
@@ -208,7 +210,9 @@ async def test_boundary_marker_terminates_pagination():
 async def test_cards_below_the_boundary_marker_are_recommendations():
     """A card positioned below the boundary banner is not a search result."""
     store = InMemoryJobRecordStore()
-    feed = ScriptedFeed([[_card("真实搜索结果", "甲公司", y=600), _card("推荐干扰项", "乙公司", y=1400)]])
+    feed = ScriptedFeed(
+        [[_card("真实搜索结果", "甲公司", y=600), _card("推荐干扰项", "乙公司", y=1400)]]
+    )
     feed._boundary_after = 0
     detail = _detail_page(posting=_posting("真实搜索结果", "甲公司"))
     pipeline = _pipeline(store, feed=feed, detail=detail)
@@ -238,7 +242,9 @@ async def test_cancellation_stops_the_run_without_touching_the_feed():
     """A cancelled task must not fall back to evaluating whatever is on screen."""
     store = InMemoryJobRecordStore()
     detail = _detail_page()
-    pipeline = _pipeline(store, feed=ScriptedFeed([]), detail=detail, is_cancelled=AsyncMock(return_value=True))
+    pipeline = _pipeline(
+        store, feed=ScriptedFeed([]), detail=detail, is_cancelled=AsyncMock(return_value=True)
+    )
 
     result = await pipeline.stream_jobs(FeedStreamConfig(keyword="Agent", max_jobs=5))
 
@@ -358,7 +364,9 @@ async def test_evaluate_card_runs_before_detail_and_evaluate_job_after():
     verdict = MagicMock(passed=True, relaxed_by_whitelist=False, screening_audit="")
     screener.evaluate_card.return_value = verdict
     screener.evaluate_job.return_value = MagicMock(
-        stage=__import__("boss_agent.screening", fromlist=["JobVerdictStage"]).JobVerdictStage.PASSED,
+        stage=__import__(
+            "boss_agent.screening", fromlist=["JobVerdictStage"]
+        ).JobVerdictStage.PASSED,
         passed=True,
         reason="精筛完成",
         match_score=88,
@@ -366,7 +374,12 @@ async def test_evaluate_card_runs_before_detail_and_evaluate_job_after():
         jd_key_requirements=["LangGraph"],
         greeting_message="您好",
     )
-    pipeline = _pipeline(store, feed=ScriptedFeed([[_card("AI Agent 工程师", "智元创新")]]), detail=_detail_page(), screener=screener)
+    pipeline = _pipeline(
+        store,
+        feed=ScriptedFeed([[_card("AI Agent 工程师", "智元创新")]]),
+        detail=_detail_page(),
+        screener=screener,
+    )
 
     await pipeline.stream_jobs(FeedStreamConfig(keyword="Agent", max_jobs=1))
 
@@ -375,6 +388,42 @@ async def test_evaluate_card_runs_before_detail_and_evaluate_job_after():
     assert screener.evaluate_job.call_args.kwargs["jd_text"] == GOOD_JD
     # save_jd runs never burn greeting tokens.
     assert screener.evaluate_job.call_args.kwargs["draft_greeting"] is False
+
+
+# ---------------------------------------------------------------------------
+# Pre-search filters
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_filtering_disabled_clears_conditions_instead_of_applying_them():
+    """enable_filter=False clears the dialog even when conditions are configured.
+
+    The flag has one owner — the filter config — so a run with conditions in the payload
+    still clears the previous run's conditions rather than applying its own.
+    """
+    store = InMemoryJobRecordStore()
+    pipeline = _pipeline(store, feed=ScriptedFeed([[_card("AI Agent 一号", "甲公司")]]))
+    config = FeedStreamConfig.from_payload(
+        {
+            "keyword": "Agent",
+            "max_jobs": 1,
+            "enable_filter": False,
+            "filter": {"education": "硕士", "salary": "20-30K", "industries": ["人工智能"]},
+        }
+    )
+    assert config.filter_config is not None
+    assert config.filter_config.enable_filter is False
+
+    with (
+        patch("boss_agent.feed_pipeline.FilterDialogPage") as filter_cls,
+        patch("boss_agent.feed_pipeline.IndustryFilterDialogPage") as industry_cls,
+    ):
+        await pipeline.stream_jobs(config)
+
+    filter_cls.return_value.clear_filters.assert_called_once()
+    filter_cls.return_value.apply_filters.assert_not_called()
+    industry_cls.return_value.apply_industry_filters.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -433,7 +482,9 @@ async def test_batch_outreach_dispatches_greetings_across_the_feed():
         chat=chat,
     )
 
-    result = await pipeline.stream_jobs(_apply_config(screening_policy=ScreeningPolicy(jd_blacklist=["Java"])), on_job)
+    result = await pipeline.stream_jobs(
+        _apply_config(screening_policy=ScreeningPolicy(jd_blacklist=["Java"])), on_job
+    )
 
     assert result.applied_count == 2
     assert result.applied is True
@@ -443,6 +494,59 @@ async def test_batch_outreach_dispatches_greetings_across_the_feed():
     assert len(applied) == 2
     assert all(r["applied_source"] == "agent_auto_send" for r in applied)
     assert await store.count_today_applied_jobs() == 2
+
+
+@pytest.mark.asyncio
+async def test_quota_is_read_once_per_card_and_the_log_reuses_that_read():
+    """One daily-count round trip per card: the gate's read also feeds both log lines."""
+    store = InMemoryJobRecordStore()
+    reads = 0
+    counted = store.count_today_applied_jobs
+
+    async def counting():
+        nonlocal reads
+        reads += 1
+        return await counted()
+
+    store.count_today_applied_jobs = counting  # type: ignore[method-assign]
+
+    feed = ScriptedFeed([[_card("AI Agent 一号", "甲公司"), _card("AI Agent 二号", "乙公司")]])
+    detail = _detail_page()
+    detail.extract_job_posting.side_effect = [
+        _posting("AI Agent 一号", "甲公司"),
+        _posting("AI Agent 二号", "乙公司"),
+    ]
+    llm = MagicMock()
+    llm.chat_completion_json.side_effect = [
+        {"pass": True, "reason": "契合"},
+        {"match_score": 90, "match_reasons": ["契合"], "greeting_message": "您好甲"},
+        {"pass": True, "reason": "契合"},
+        {"match_score": 91, "match_reasons": ["契合"], "greeting_message": "您好乙"},
+    ]
+    chat = MagicMock()
+    chat.click_send.return_value = True
+    logs: list[str] = []
+
+    async def log(line: str) -> None:
+        logs.append(line)
+
+    pipeline = _pipeline(
+        store,
+        feed=feed,
+        detail=detail,
+        screener=CandidateScreener(llm_client=llm),
+        log=log,
+        chat=chat,
+    )
+
+    result = await pipeline.stream_jobs(
+        _apply_config(max_jobs=2, screening_policy=ScreeningPolicy(jd_blacklist=["Java"]))
+    )
+
+    assert result.applied_count == 2
+    assert reads == 2, f"expected one quota read per card, saw {reads}"
+    assert any("(1/20 today)" in line for line in logs), logs
+    assert any("(2/20 today)" in line for line in logs), logs
 
 
 @pytest.mark.asyncio
@@ -481,7 +585,12 @@ async def test_quota_exhaustion_degrades_to_offline_draft_and_keeps_discovering(
         logs.append(line)
 
     pipeline = _pipeline(
-        store, feed=feed, detail=detail, screener=CandidateScreener(llm_client=llm), log=log, chat=chat
+        store,
+        feed=feed,
+        detail=detail,
+        screener=CandidateScreener(llm_client=llm),
+        log=log,
+        chat=chat,
     )
 
     result = await pipeline.stream_jobs(_apply_config(max_jobs=2))
@@ -495,6 +604,62 @@ async def test_quota_exhaustion_degrades_to_offline_draft_and_keeps_discovering(
     matched = await store.list_job_records(status="matched")
     assert {r["title"] for r in matched} == {"AI Agent 一号", "AI Agent 二号"}
     assert result.outcome == JobRecordStatus.MATCHED.value
+
+
+@pytest.mark.asyncio
+async def test_draft_after_a_dispatch_is_still_reported_as_offline_draft():
+    """Story 12: a quota-degraded card is a draft even once an earlier greeting went out.
+
+    The degraded card must not be reported as skipped just because the same run had
+    already dispatched a greeting to a different job.
+    """
+    store = InMemoryJobRecordStore()
+    feed = ScriptedFeed([[_card("AI Agent 一号", "甲公司"), _card("AI Agent 二号", "乙公司")]])
+    detail = _detail_page()
+    detail.extract_job_posting.side_effect = [
+        _posting("AI Agent 一号", "甲公司"),
+        _posting("AI Agent 二号", "乙公司"),
+    ]
+    llm = MagicMock()
+    llm.chat_completion_json.side_effect = [
+        {"pass": True, "reason": "契合"},
+        {"match_score": 90, "match_reasons": ["契合"], "greeting_message": "您好甲"},
+        {"pass": True, "reason": "契合"},
+        {"match_score": 91, "match_reasons": ["契合"], "greeting_message": "您好乙"},
+    ]
+    chat = MagicMock()
+    chat.click_send.return_value = True
+    outcomes: list[Any] = []
+
+    async def on_job(outcome):
+        outcomes.append(outcome)
+
+    pipeline = _pipeline(
+        store,
+        feed=feed,
+        detail=detail,
+        screener=CandidateScreener(llm_client=llm),
+        chat=chat,
+    )
+
+    result = await pipeline.stream_jobs(
+        _apply_config(
+            max_jobs=2,
+            daily_greeting_limit=1,
+            screening_policy=ScreeningPolicy(jd_blacklist=["Java"]),
+        ),
+        on_job,
+    )
+
+    assert result.applied_count == 1
+    assert result.quota_exhausted is True
+    assert [o.status for o in outcomes] == ["applied", "matched"]
+    assert [o.action for o in outcomes] == [
+        JobAction.APPLIED,
+        JobAction.OFFLINE_DRAFT,
+    ], "the quota-degraded card is a draft, not a skip"
+    matched = await store.list_job_records(status="matched")
+    assert {r["title"] for r in matched} == {"AI Agent 二号"}
 
 
 @pytest.mark.asyncio
@@ -632,7 +797,10 @@ async def test_incomplete_jd_is_flagged_and_kept_for_retry():
         recruiter_name="王女士",
     )
     pipeline = _pipeline(
-        store, feed=ScriptedFeed([[_card("AI Agent 一号", "甲公司")]]), detail=_detail_page(posting=truncated), log=log
+        store,
+        feed=ScriptedFeed([[_card("AI Agent 一号", "甲公司")]]),
+        detail=_detail_page(posting=truncated),
+        log=log,
     )
 
     await pipeline.stream_jobs(FeedStreamConfig(keyword="Agent", max_jobs=1))

@@ -72,6 +72,32 @@ def _split_top(expr: str, operator: str) -> list[str]:
     return [p.strip() for p in parts]
 
 
+def _decode_literal(raw: str) -> str | None:
+    """Decode a PocketBase filter literal, or None when its quoting is malformed.
+
+    PocketBase requires a quote inside a quoted value to be backslash-escaped; a raw
+    quote is a syntax error that makes the whole query fail. Emulating that here is what
+    lets a test prove that an unescaped company name silently breaks the dedup lookup.
+    """
+    if raw[:1] not in ("'", '"'):
+        return raw
+    quote = raw[0]
+    if raw[-1:] != quote:
+        return None
+    decoded, i = "", 1
+    while i < len(raw) - 1:
+        char = raw[i]
+        if char == "\\" and i + 1 < len(raw) - 1:
+            decoded += raw[i + 1]
+            i += 2
+            continue
+        if char == quote:
+            return None
+        decoded += char
+        i += 1
+    return decoded
+
+
 def _matches(expr: str, item: dict[str, Any]) -> bool:
     expr = expr.strip()
     while expr.startswith("(") and expr.endswith(")") and _split_top(expr[1:-1], "&&"):
@@ -86,7 +112,10 @@ def _matches(expr: str, item: dict[str, Any]) -> bool:
     match = re.match(r"^(\w+)\s*(>=|<=|!=|=|<|>)\s*(.+)$", expr)
     assert match, f"unsupported filter expression: {expr!r}"
     field, op, raw = match.group(1), match.group(2), match.group(3).strip()
-    expected = raw.strip("'\"")
+    expected = _decode_literal(raw)
+    if expected is None:
+        # A malformed literal is a syntax error server-side: the query returns nothing.
+        return False
     actual = str(item.get(field) or "")
     if op == "=":
         return actual == expected
@@ -107,6 +136,9 @@ class FakePocketBaseSession:
     def __init__(self) -> None:
         self.records: dict[str, dict[str, Any]] = {}
         self._counter = 0
+        # When set, the next patch returns this response instead, so failure paths can be
+        # exercised without pretending a write succeeded.
+        self.patch_failure: MagicMock | None = None
 
     def seed(self, items: list[dict[str, Any]]) -> None:
         for item in items:
@@ -146,6 +178,11 @@ class FakePocketBaseSession:
 
     def patch(self, url: str, json: dict[str, Any], headers=None):
         record_id = url.rsplit("/", 1)[-1]
+        if self.patch_failure is not None:
+            failure, self.patch_failure = self.patch_failure, None
+            return failure
+        if record_id not in self.records:
+            return MagicMock(status_code=404, text="Not found")
         self.records[record_id].update(json)
         return MagicMock(status_code=200, json=MagicMock(return_value=self.records[record_id]))
 
@@ -297,6 +334,105 @@ async def test_both_adapters_deduplicate_on_the_canonical_fingerprint(pb_session
 
 
 @pytest.mark.asyncio
+async def test_pocketbase_dedupes_when_a_scraped_name_contains_a_quote(pb_session):
+    """A quote in a scraped company name must not defeat the company+title dedup lookup.
+
+    Generic '招聘者' cards dedupe on company + title rather than fingerprint, so those two
+    scraped strings are interpolated into a PocketBase filter; an unescaped quote there is
+    a syntax error that makes the lookup miss and files the job twice.
+    """
+    seeded = {
+        "fingerprint": "fp-quote-1",
+        "company_name": '杭州"云智"科技有限公司',
+        "title": "大模型算法工程师",
+        "recruiter_name": "招聘者",
+        "status": "jd_saved",
+    }
+    pb_session.seed([seeded])
+    store = _pocketbase_store(pb_session)
+
+    merged = await store.upsert_job_record(
+        {
+            **seeded,
+            "fingerprint": "fp-quote-2",
+            "job_description": "岗位职责：负责大模型算法研发与落地。" * 3,
+        }
+    )
+
+    assert len(pb_session.records) == 1, "the quote broke the lookup and duplicated the job"
+    assert merged["id"] == "rec1"
+
+
+@pytest.mark.asyncio
+async def test_both_adapters_agree_on_the_sticky_field_merge(pb_session):
+    """Re-scraping a known job lands the same record in both adapters.
+
+    tags / is_headhunter / jd_key_requirements are merged by shared rules, so an empty
+    observation cannot blank what the record already holds and a headhunter channel is
+    never silently demoted into the direct-hire exclusion pool.
+    """
+    first = {
+        "fingerprint": "fp-merge",
+        "company_name": "深至科技",
+        "title": "大模型算法工程师",
+        "recruiter_name": "王女士",
+        "status": "jd_saved",
+        "tags": ["硕士", "5-10年"],
+        "is_headhunter": False,
+        "jd_key_requirements": ["LangGraph", "Multi-Agent"],
+    }
+    memory_store = InMemoryJobRecordStore()
+    pb_store = _pocketbase_store(pb_session)
+
+    async def scrape(payload: dict[str, Any]) -> None:
+        for store in (memory_store, pb_store):
+            await store.upsert_job_record(dict(payload))
+
+    # A later pass that saw nothing for these fields must not erase them.
+    await scrape(first)
+    await scrape(
+        {
+            **first,
+            "tags": [],
+            "jd_key_requirements": [],
+            "is_headhunter": True,
+            "job_description": "岗位职责：主导大模型算法研发与落地。" * 5,
+        }
+    )
+
+    for name, store in (("memory", memory_store), ("pocketbase", pb_store)):
+        found = await store.get_job_record_by_fingerprint("fp-merge")
+        assert found is not None, name
+        assert found["tags"] == ["硕士", "5-10年"], f"{name} let an empty read erase tags"
+        assert found["jd_key_requirements"] == ["LangGraph", "Multi-Agent"], name
+        assert found["is_headhunter"] is True, f"{name} missed a discovered headhunter channel"
+        assert found["job_description"].startswith("岗位职责")
+
+    # A later non-empty read refines the JD requirements but never re-tags the card facets,
+    # and never downgrades the headhunter flag.
+    await scrape(
+        {
+            **first,
+            "tags": ["本科"],
+            "jd_key_requirements": ["RAG"],
+            "is_headhunter": False,
+        }
+    )
+
+    merged: dict[str, dict[str, Any]] = {}
+    for name, store in (("memory", memory_store), ("pocketbase", pb_store)):
+        found = await store.get_job_record_by_fingerprint("fp-merge")
+        assert found is not None, name
+        merged[name] = found
+        assert found["tags"] == ["硕士", "5-10年"], name
+        assert found["jd_key_requirements"] == ["RAG"], name
+        assert found["is_headhunter"] is True, name
+
+    for key in ("tags", "is_headhunter", "jd_key_requirements"):
+        assert merged["memory"][key] == merged["pocketbase"][key], f"adapters disagree on {key}"
+
+
+@pytest.mark.asyncio
 async def test_both_adapters_release_a_communication_while_keeping_the_jd(pb_session):
     fixtures = [
         {
@@ -325,6 +461,35 @@ async def test_both_adapters_release_a_communication_while_keeping_the_jd(pb_ses
         assert not released["applied_source"]
         assert released["job_description"]
         assert await store.count_today_applied_jobs() == 0
+
+
+# ---------------------------------------------------------------------------
+# Failure reporting
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_both_adapters_report_a_missing_record_on_status_update(pb_session):
+    """Updating the status of an unknown record fails loudly in both adapters."""
+    with pytest.raises(KeyError):
+        await InMemoryJobRecordStore().update_job_record_status("missing", "applied")
+
+    store = _pocketbase_store(pb_session)
+    with pytest.raises(KeyError):
+        await store.update_job_record_status("missing", "applied")
+
+
+@pytest.mark.asyncio
+async def test_pocketbase_status_update_does_not_fake_success(pb_session):
+    """A server failure must surface as an error, not as a plausible-looking record."""
+    pb_session.seed([_record("fp-status-fail", "深至科技", status="jd_saved", applied_at=None)])
+    store = _pocketbase_store(pb_session)
+    pb_session.patch_failure = MagicMock(status_code=500, text="boom")
+
+    with pytest.raises(RuntimeError, match="500"):
+        await store.update_job_record_status("rec1", "applied")
+
+    assert pb_session.records["rec1"]["status"] == "jd_saved", "the write did not land"
 
 
 # ---------------------------------------------------------------------------
