@@ -289,6 +289,72 @@ def test_job_list_page_extracts_rich_card_facets():
     assert card.digest.startswith("核心研发与平台建设")
 
 
+def test_job_list_page_rejects_title_as_company_and_recovers_from_card_text():
+    """A recommendation-popup card rendering the job title inside tv_company_name must not
+    poison company_name; the text-node fallback must recover the real employer."""
+    mock_driver = MagicMock()
+    page = JobListPage(mock_driver)
+
+    title_text = "Senior AI Agent Engineer（英语口语）"
+
+    mock_card = MagicMock()
+    mock_title = MagicMock()
+    mock_title.text = title_text
+    mock_bad_company = MagicMock()
+    mock_bad_company.text = title_text
+    mock_salary = MagicMock()
+    mock_salary.text = "3-4.5万元·13月"
+    mock_recruiter = MagicMock()
+    mock_recruiter.text = "陈女士·招聘"
+    mock_employer_line = MagicMock()
+    mock_employer_line.text = "塔塔 1000-999人 计算机软件"
+    mock_tag_a = MagicMock()
+    mock_tag_a.text = "5-10年"
+    mock_tag_b = MagicMock()
+    mock_tag_b.text = "本科"
+    mock_snippet = MagicMock()
+    mock_snippet.text = "on coding agents in your daily workflow and deeply"
+
+    all_texts = [
+        mock_title,
+        mock_bad_company,
+        mock_salary,
+        mock_employer_line,
+        mock_tag_a,
+        mock_tag_b,
+        mock_snippet,
+    ]
+
+    def mock_find_elements(by, value):
+        val_str = str(value)
+        if "view_job_card" in val_str or "cl_card_container" in val_str or "item_job" in val_str:
+            return [mock_card]
+        if "tv_position_name" in val_str:
+            return [mock_title]
+        if "tv_company_name" in val_str:
+            return [mock_bad_company]
+        if "salary" in val_str:
+            return [mock_salary]
+        if "tv_employer" in val_str:
+            return [mock_recruiter]
+        if "tv_digest" in val_str or "fl_require_info" in val_str:
+            return []
+        if "@text" in val_str:
+            return all_texts
+        return []
+
+    mock_driver.find_elements.side_effect = mock_find_elements
+    mock_card.find_elements.side_effect = mock_find_elements
+
+    cards = page.extract_visible_job_cards(max_cards=1)
+    assert len(cards) == 1
+    card = cards[0]
+
+    assert card.company_name == "塔塔"
+    assert card.company_scale == "1000-999人"
+    assert card.industry == "计算机软件"
+
+
 def test_clean_job_title_removes_placeholders_and_badges():
     """clean_job_title must remove trailing '&@', '&@ &@', whitespace and tags."""
     assert clean_job_title("技术负责人-CTO级别｜pre-ipo公司｜医疗AI &@") == "技术负责人-CTO级别｜pre-ipo公司｜医疗AI"

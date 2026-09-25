@@ -4,10 +4,39 @@ tests/unit/test_provisioner.py
 Unit tests for PocketBase SQLite database provisioner and schema setup.
 """
 
+import json
 import sqlite3
 from pathlib import Path
 
 from boss_agent.broker.provisioner import provision_sqlite_database
+
+_COLLECTIONS_DDL = """
+    CREATE TABLE _collections (
+        id TEXT PRIMARY KEY,
+        system BOOLEAN DEFAULT FALSE,
+        type TEXT DEFAULT "base",
+        name TEXT UNIQUE NOT NULL,
+        fields JSON DEFAULT "[]" NOT NULL,
+        indexes JSON DEFAULT "[]" NOT NULL,
+        listRule TEXT DEFAULT NULL,
+        viewRule TEXT DEFAULT NULL,
+        createRule TEXT DEFAULT NULL,
+        updateRule TEXT DEFAULT NULL,
+        deleteRule TEXT DEFAULT NULL,
+        options JSON DEFAULT "{}" NOT NULL,
+        created TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%fZ')),
+        updated TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%fZ'))
+    )
+"""
+
+
+def _read_collection_fields(db_file: Path, collection: str) -> list[dict]:
+    conn = sqlite3.connect(str(db_file))
+    cursor = conn.cursor()
+    cursor.execute("SELECT fields FROM _collections WHERE name = ?", (collection,))
+    fields = json.loads(cursor.fetchone()[0])
+    conn.close()
+    return fields
 
 
 def test_provision_sqlite_database(tmp_path: Path):
@@ -335,4 +364,73 @@ def test_provision_sqlite_database_adds_digest_column_if_missing(tmp_path: Path)
     conn.close()
 
     assert "digest" in columns
+
+
+def test_provision_sqlite_database_job_description_exceeds_default_text_max(tmp_path: Path):
+    """PocketBase caps text fields at 5000 chars unless an explicit max is set; a full
+    expanded JD (e.g. a 9000-char bilingual posting) must be storable."""
+    db_file = tmp_path / "data.db"
+    conn = sqlite3.connect(str(db_file))
+    cursor = conn.cursor()
+    cursor.execute(_COLLECTIONS_DDL)
+    conn.commit()
+    conn.close()
+
+    assert provision_sqlite_database(db_file) is True
+
+    fields = _read_collection_fields(db_file, "job_records")
+    jd_field = next(f for f in fields if f["name"] == "job_description")
+    assert jd_field.get("options", {}).get("max", 0) > 5000
+
+
+def test_provision_remote_pocketbase_job_description_exceeds_default_text_max():
+    from unittest.mock import MagicMock, patch
+
+    from boss_agent.broker.provisioner import provision_remote_pocketbase
+
+    mock_session = MagicMock()
+    auth_resp = MagicMock(ok=True)
+    auth_resp.json.return_value = {"token": "test_token"}
+    list_col_resp = MagicMock(ok=True)
+    list_col_resp.json.return_value = {"items": [{"name": "users"}]}
+    create_col_resp = MagicMock(ok=True)
+    records_resp = MagicMock(ok=True)
+    records_resp.json.return_value = {"totalItems": 0}
+    seed_resp = MagicMock(ok=True)
+
+    def mock_post(url, **kwargs):
+        if "auth-with-password" in url:
+            return auth_resp
+        if "collections/saved_searches/records" in url:
+            return seed_resp
+        return create_col_resp
+
+    def mock_get(url, **kwargs):
+        if url.endswith("/api/collections"):
+            return list_col_resp
+        return records_resp
+
+    mock_session.post.side_effect = mock_post
+    mock_session.get.side_effect = mock_get
+
+    with patch("requests.Session", return_value=mock_session):
+        assert (
+            provision_remote_pocketbase(
+                "http://127.0.0.1:8090",
+                email="admin@example.com",
+                password="password123",
+            )
+            is True
+        )
+
+    job_records_col = None
+    for call in mock_session.post.call_args_list:
+        payload = call.kwargs.get("json") or {}
+        if "api/collections" in str(call.args) and payload.get("name") == "job_records":
+            job_records_col = payload
+            break
+    assert job_records_col is not None
+
+    jd_field = next(f for f in job_records_col["fields"] if f["name"] == "job_description")
+    assert jd_field.get("options", {}).get("max", 0) > 5000
 
