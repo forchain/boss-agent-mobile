@@ -86,14 +86,25 @@ export async function getRecord<T = any>(collection: string, id: string): Promis
 	return resp.json();
 }
 
+/** Generate a PocketBase-compatible 15-char record ID ([a-z0-9]{15}). */
+export function generateRecordId(): string {
+	const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+	let id = '';
+	for (let i = 0; i < 15; i++) {
+		id += chars.charAt(Math.floor(Math.random() * chars.length));
+	}
+	return id;
+}
+
 export async function createRecord<T = any>(
 	collection: string,
 	body: Record<string, unknown>
 ): Promise<T> {
+	const id = typeof body.id === 'string' && body.id ? body.id : generateRecordId();
 	const resp = await brokerRequest(collectionUrl(collection), {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(body)
+		body: JSON.stringify({ ...body, id })
 	});
 	if (!resp.ok) throw new BrokerError(await brokerMessage(resp), resp.status);
 	return resp.json();
@@ -132,6 +143,15 @@ export const COLLECTIONS = {
 /** A broker error's own message when it sends one, without leaking a stack. */
 export async function brokerMessage(resp: Response): Promise<string> {
 	const body = await resp.json().catch(() => null);
-	const message = body && typeof body.message === 'string' ? body.message : null;
-	return message || `Broker returned ${resp.status}`;
+	if (body && typeof body === 'object') {
+		const baseMessage = typeof body.message === 'string' ? body.message : `Broker returned ${resp.status}`;
+		if (body.data && typeof body.data === 'object' && Object.keys(body.data).length > 0) {
+			const details = Object.entries(body.data)
+				.map(([field, err]: [string, any]) => `${field}: ${err?.message || JSON.stringify(err)}`)
+				.join(', ');
+			return `${baseMessage} (${details})`;
+		}
+		return baseMessage;
+	}
+	return `Broker returned ${resp.status}`;
 }

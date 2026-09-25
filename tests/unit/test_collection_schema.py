@@ -223,6 +223,8 @@ def test_local_metadata_declares_the_primary_key(tmp_path: Path, collection) -> 
     metadata = sqlite_metadata_fields(collection)
     id_field = next(f for f in metadata if f["name"] == "id")
     assert id_field.get("primaryKey") is True
+    assert id_field.get("autogeneratePattern") == "[a-z0-9]{15}"
+    assert id_field.get("pattern") == "^[a-z0-9]+$"
     # It is the *local* dialect that needs it; the REST API rejects a declared id.
     assert "id" not in {f["name"] for f in pocketbase_fields(collection)}
 

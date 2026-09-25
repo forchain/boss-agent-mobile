@@ -134,6 +134,8 @@ class Field:
         pb: dict[str, Any] = {"name": self.name, "type": self.kind, "required": self.required}
         if self.primary_key:
             pb["primaryKey"] = True
+            pb["autogeneratePattern"] = "[a-z0-9]{15}"
+            pb["pattern"] = "^[a-z0-9]+$"
         if self.max_chars is not None:
             pb["min"] = 0
             pb["max"] = self.max_chars
