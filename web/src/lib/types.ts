@@ -117,6 +117,25 @@ export interface SystemSettings {
 	company_blacklist?: string[];
 	jd_blacklist?: string[];
 	channel_preference?: 'all' | 'direct_only' | 'headhunter_only';
+
+	// 仅沟通 rejection auto-acknowledgment (issue #208)
+	chat?: ChatAcknowledgmentConfig;
+
+	// Startup 拒信清扫 barrier: queue a CHECK_CHAT before the first search of a
+	// service startup and hold search tasks until it settles (issue #230).
+	run_cleanup_on_startup?: boolean;
+}
+
+export interface ChatAcknowledgmentConfig {
+	/** Polite closing message sent to a recruiter who explicitly rejected the candidate. */
+	rejection_reply_text: string;
+	/**
+	 * Maximum number of messages one CHECK_CHAT run may hand to the LLM. Cards
+	 * carrying the outbound status badge are skipped for free and do not count.
+	 */
+	max_scan_depth: number;
+	/** Drill mode: log proposed blacklist additions without writing any config. */
+	dry_run: boolean;
 }
 
 export interface MatchEvaluateRequest {
@@ -235,6 +254,17 @@ export interface SavedSearch {
 	target_task_type?: 'AUTO_APPLY' | 'SCRAPE_JOBS' | string;
 	created?: string;
 	updated?: string;
+}
+
+/**
+ * True for strategies that run 仅沟通 rejection cleanup (issue #208)
+ * instead of a keyword search. Such strategies carry no keyword or filter payload.
+ */
+export function isChatCleanupStrategy(search: {
+	target_action?: string;
+	target_task_type?: string;
+}): boolean {
+	return search.target_action === 'check_chat' || search.target_task_type === 'CHECK_CHAT';
 }
 
 export function resolveTargetAction(search: { target_action?: TargetAction | string; target_task_type?: string }): TargetAction {

@@ -80,6 +80,26 @@ _Avoid_: test job, mock task, fake run, 测试用例任务
 An automation task triggered intentionally by the user via the Task Management Dashboard or CLI for live job discovery or application workflows.
 _Avoid_: user test, real task, active test, 主动测试
 
+**Graceful Shutdown Protocol**:
+The POSIX signal contract by which the Automation Worker and the Web Dashboard runner stop cooperatively: acknowledge the termination signal in their own log stream, halt the polling loop, abort or release in-flight resources (State Stream Broker task cancellation, Virtual Device Session release, port release), then confirm completion — so supervisors and test fixtures never have to rely on arbitrary sleeps or force-kills.
+_Avoid_: hard stop, force quit, kill -9 policy
+
+**E2E Pre-Test Teardown Gate**:
+The session-scoped, opt-in test fixture (`BOSS_AGENT_ENFORCE_TEARDOWN=1`) that stops residual Automation Worker and Web Dashboard instances located through the shared runtime directory and verifies their shutdown feedback, guaranteeing exclusive use of the Virtual Device Session and the dashboard port when a run genuinely needs it. Left unopted, E2E runs touch nothing outside their own temporary state. Shared infrastructure (State Stream Broker, Appium, AVD) is deliberately out of its scope either way.
+_Avoid_: test cleanup hook, pre-test reset script, teardown helper
+
+**Fast Unit Test**:
+The in-memory verification tier (`tests/unit/`) that exercises module interfaces against mocked collaborators — no Automation Worker, no Appium session, no bound host port, and no live LLM endpoint. It is the tier an unadorned `pytest` runs, and the one that must finish in tens of seconds with zero side effects on the machine.
+_Avoid_: quick check, small spec, unit suite
+
+**Service Integration Test (`@pytest.mark.e2e`)**:
+The end-to-end tier that drives real services — the Automation Worker CLI, the SvelteKit Web Dashboard, nested test sessions — against ephemeral ports and per-test temporary state directories, so a run neither collides with nor shuts down services belonging to other worktrees. Opted into explicitly, never part of the default run. Live Device Tests deliberately do not carry this marker, so marker selection can never reach the emulator.
+_Avoid_: integration spec, heavy test, slow suite
+
+**Live Device Test (`@pytest.mark.live`)**:
+The device tier that drives the shared Android Virtual Device through Appium, guarded by an explicit marker that no default, broad-path, or E2E-marker invocation can override — waking the emulator out from under another worktree is the failure this tier exists to prevent.
+_Avoid_: real test, device suite, emulator spec
+
 **Job Record**:
 The persisted entity representing a job posting discovered from mobile search results or scraping workflows in the Boss app.
 _Avoid_: Scraped item, raw post, search card
@@ -245,6 +265,33 @@ _Avoid_: UI logging, debug prints, action trace
 **Daily Greeting Limit**:
 The system safety threshold restricting outbound mobile greeting volume per calendar day to protect user accounts from platform rate limits and anti-bot challenges, evaluated strictly against successful agent greeting dispatches (`applied_at` within today), automatically degrading `auto_apply` to an offline draft (`status: matched`) upon exhaustion while job discovery continues uninterrupted.
 _Avoid_: daily quota, message cap, max chats
+**Outbound Message Indicator**:
+The deterministic status badge (`iv_msg_status` displaying `[送达]` or `[已读]`) prefixed to a conversation card in the communication list, signalling that the candidate sent the last message and allowing automation to instantly bypass threads awaiting recruiter reply.
+_Avoid_: message badge, read tag, delivery marker
+
+**Communication-Only Filter ("仅沟通")**:
+The dedicated sub-tab/filter within the message screen (`tv_tab_3` -> `tv_title` matching "仅沟通") that isolates active reciprocal conversations, cleanly separating candidate-sent waiting items from unhandled incoming recruiter responses.
+_Avoid_: 新招呼, 全部消息, 互动标签
+
+**Rejection Blacklist Ingestion**:
+The automated triage workflow that detects explicit recruiter rejections in the communication list, extracts the employer, and commits it into the active `ScreeningPolicy` company blacklist under existing guardrails to prevent future wasted daily applications.
+_Avoid_: auto-block, recruiter kicker, 拒信拉黑脚本
+
+**Headhunter Agency Guardrail**:
+The company-name-derived protection that keeps staffing and recruitment agencies (人力资源, 劳务派遣, 人才服务, 猎头, 企业管理咨询 …) out of the company blacklist. A rejection card carries no recruiter title, so the 猎头 signal that card-level screening uses is unavailable and the agency must be recognised from its own registered name instead. Deliberately narrow: industry words real employers also carry (咨询, 科技) never trigger it, because the guardrail exists to protect the many employers an agency represents, and a false positive can never be undone by the rejected conversation.
+_Avoid_: agency filter, blacklist whitelist, 猎头豁免
+
+**仅沟通 List Recovery (仅沟通自愈导航)**:
+The bounded multi-tier navigation that lands a dispatched `CHECK_CHAT` on the 仅沟通 list from whatever screen the app happens to be on. Each step prefers an on-screen back affordance (`iv_back` / `iv_back_ai`) over the hardware Back key, clicks `消息` → `仅沟通` the moment the column is reachable, re-activates Boss if a Back press escaped it, and pauses between actions; exhausting the step budget is the only way the task reports an unreachable list (ADR 0016).
+_Avoid_: back-button scanning, navigation cascade, retry loop
+
+**Startup Rejection Cleanup Barrier (开服清扫闸门)**:
+The startup rule that a service queues one marked `CHECK_CHAT` before anything else and holds every search task (`SCRAPE_JOBS` / `AUTO_APPLY`) until it reaches a terminal state, so employers that already rejected the candidate are in the company blacklist before the first search or greeting is dispatched. Derived from the pending queue rather than from process memory, so a cleanup queued by the Automation Scheduler binds the Automation Worker too, and any terminal outcome releases the barrier instead of deadlocking the pipeline (ADR 0016).
+_Avoid_: startup lock, init mutex, 启动检查
+
+**First-Screen Scan (首屏扫描)**:
+The `CHECK_CHAT` traversal rule: a run reads the opening screen of the 仅沟通 list, re-reads it after every acknowledgment, and stops once nothing on it is new — it never scrolls. The list is newest-first and marking a conversation 不感兴趣 drops it from the list, so the top of the screen is both where new state arrives and where the list drains from. Coverage is therefore bounded by the screen: a card below the fold is reached only after the cards above it leave the list (issue #239, ADR 0015).
+_Avoid_: pagination, infinite scroll, full-list sweep
 
 **System Doctor (`doctor.sh`)**:
 The holistic health diagnostic and remediation CLI tool that inspects end-to-end operational readiness across PocketBase State Stream, SvelteKit Web Dashboard, Python Worker, Appium automation server, Android Virtual Device, and LLM configuration with actionable remediation steps.

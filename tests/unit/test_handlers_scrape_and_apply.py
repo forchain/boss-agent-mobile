@@ -78,6 +78,70 @@ async def test_scrape_jobs_handler_extracts_and_persists_jobs(broker, mock_drive
 
 
 @pytest.mark.asyncio
+async def test_scrape_enrichment_falls_back_to_jd_digest_when_card_has_no_snippet(broker, mock_driver):
+    """A popup card without a snippet must not persist an empty digest; the enrichment
+    should fall back to the digest derived from the full job description."""
+    from boss_agent.models import ChatButtonState, JobPosting
+
+    card = JobCardBrief(
+        title="Senior AI Agent Engineer（英语口语）",
+        company_name="塔塔",
+        recruiter_name="陈女士",
+        salary_range="3-4.5万元·13月",
+    )
+
+    posting = JobPosting(
+        title="Senior AI Agent Engineer（英语口语）",
+        company_name="塔塔",
+        salary_range="3-4.5万元",
+        job_description=(
+            "【 Role Summary 】；\n"
+            "We are seeking a passionate and experienced Senior Engineer to join our team "
+            "to build the architecture of our shared coding agent platform across the organization."
+        ),
+    )
+
+    config = WorkerConfig(worker_id="test-worker-digest-fallback", poll_interval_sec=0.01)
+    context = WorkerContext(config=config, driver=mock_driver)
+    worker = AutomationWorker(
+        config=config,
+        broker=broker,
+        context=context,
+        handlers=[ScrapeJobsHandler()],
+    )
+    await broker.create_task(
+        task_type=TaskType.SCRAPE_JOBS,
+        payload={
+            "keyword": "agent",
+            "max_jobs": 1,
+            "screening_policy": {"enable_screening": False},
+        },
+    )
+
+    with (
+        patch("boss_agent.feed_pipeline.StartupDialogPage") as mock_startup_cls,
+        patch("boss_agent.feed_pipeline.JobListPage") as mock_list_cls,
+        patch("boss_agent.feed_pipeline.SearchPage") as mock_search_cls,
+        patch("boss_agent.feed_pipeline.JobDetailPage") as mock_detail_cls,
+    ):
+        mock_startup_cls.return_value.is_dialog_present.return_value = False
+        mock_list = mock_list_cls.return_value
+        mock_list.get_feed_bottom_boundary.return_value = None
+        mock_list.extract_visible_job_cards.return_value = [card]
+        mock_search_cls.return_value.is_search_page.return_value = True
+        mock_detail = mock_detail_cls.return_value
+        mock_detail.get_chat_button_state.return_value = ChatButtonState.UNKNOWN
+        mock_detail.extract_job_posting.return_value = posting
+
+        assert await worker.run_once() is True
+
+    records = await broker.list_job_records(status="jd_saved")
+    assert len(records) == 1
+    assert records[0]["digest"].startswith("We are seeking")
+    assert "Role Summary" not in records[0]["digest"]
+
+
+@pytest.mark.asyncio
 async def test_auto_apply_handler_preview_mode_drafts_greeting(broker, mock_driver):
     """Verify AutoApplyHandler in preview_only mode types greeting draft and pauses without sending."""
     mock_title = MagicMock(text="Senior Python Agent Engineer")

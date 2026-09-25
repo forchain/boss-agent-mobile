@@ -108,7 +108,7 @@ def enriched_record(
         "tags": list(card.tags) or list(getattr(posting, "tags", None) or []),
         "salary_range": posting.salary_range or card_record.get("salary_range", ""),
         "location": posting.location or card_record.get("location", ""),
-        "digest": card_record.get("digest", ""),
+        "digest": card_record.get("digest", "") or getattr(posting, "digest", "") or "",
         "job_description": jd_text or card_record.get("job_description", ""),
         "relaxed_by_whitelist": bool(verdict and verdict.relaxed_by_whitelist),
         "screening_audit": verdict.screening_audit if verdict else "",

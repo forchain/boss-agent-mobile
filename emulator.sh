@@ -14,6 +14,12 @@
 #   ./emulator.sh list                # List all installed local AVDs
 #   ./emulator.sh logs                # Attach to live log stream of running AVD
 #   ./emulator.sh stop                # Stop the running dedicated AVD
+#
+# Environment:
+#   ADB_QUERY_TIMEOUT_SEC      Wall-clock bound for a single adb query (default 2).
+#                              The knob only tightens it: clamped to 1-2 seconds, and
+#                              with the SIGKILL escalation a query never exceeds 2.5s,
+#                              so an offline or unresponsive device cannot stall the runner.
 # ==============================================================================
 
 set -euo pipefail
@@ -25,6 +31,11 @@ mkdir -p ".boss_agent"
 
 PID_FILE=".boss_agent/emulator.pid"
 LOG_FILE=".boss_agent/emulator.log"
+BRIDGE_PID_FILE=".boss_agent/remote_bridge.pid"
+BRIDGE_READY_FILE=".boss_agent/remote_bridge.ready"
+BRIDGE_LOG_FILE=".boss_agent/remote_bridge.log"
+REMOTE_ADB_PORT="${REMOTE_ADB_PORT:-6555}"
+TARGET_ADB_PORT="${TARGET_ADB_PORT:-5555}"
 
 find_emulator_binary() {
     if command -v emulator >/dev/null 2>&1; then
@@ -56,6 +67,108 @@ find_adb_binary() {
 
 EMULATOR_BIN="$(find_emulator_binary)"
 ADB_BIN="$(find_adb_binary)"
+
+# --- Bounded ADB inspection ---------------------------------------------------
+# A wedged adb server, a device stuck in `offline`, or an unresponsive adbd must never
+# freeze emulator.sh: every adb query below goes through `bounded_run` with a hard
+# wall-clock bound, so serial resolution, `status`, and `start` always return.
+
+# Echo an integer clamped into [MIN, MAX]; a non-numeric value falls back to DEFAULT.
+clamp_int() {
+    local VALUE="$1"
+    local DEFAULT="$2"
+    local MIN="$3"
+    local MAX="$4"
+    [[ "${VALUE}" =~ ^[0-9]+$ ]] || VALUE="${DEFAULT}"
+    if (( VALUE < MIN )); then
+        VALUE="${MIN}"
+    elif (( VALUE > MAX )); then
+        VALUE="${MAX}"
+    fi
+    echo "${VALUE}"
+}
+
+# Patience for a single adb query. The environment knob only ever tightens it: SIGTERM fires
+# here and the SIGKILL escalation follows 0.5s later, so one query can hold the script for
+# at most 2.5s - inside the agreed 3-second contract.
+ADB_QUERY_TIMEOUT_SEC="$(clamp_int "${ADB_QUERY_TIMEOUT_SEC:-2}" 2 1 2)"
+
+# Run one external command under a hard wall-clock limit, printing its stdout (empty when
+# the command had to be killed). macOS ships no coreutils `timeout`, so the bound is
+# enforced by a watchdog that SIGTERMs - then SIGKILLs - the child. Pass a simple external
+# command only: a pipeline would leave its earlier stages running past the bound.
+bounded_run() {
+    local TIMEOUT_SEC="$1"
+    shift
+    local OUT_FILE
+    OUT_FILE="$(mktemp "${TMPDIR:-/tmp}/boss_agent_bounded.XXXXXX")"
+
+    "$@" >"${OUT_FILE}" 2>/dev/null &
+    local CMD_PID=$!
+
+    # The watchdog must not inherit this process's stdout: when `bounded_run` is used in a
+    # command substitution, a surviving sleeper holding the pipe would keep the caller
+    # waiting until it wakes up.
+    (
+        sleep "${TIMEOUT_SEC}"
+        if kill -0 "${CMD_PID}" 2>/dev/null; then
+            kill -TERM "${CMD_PID}" 2>/dev/null || true
+            sleep 0.5
+            kill -KILL "${CMD_PID}" 2>/dev/null || true
+        fi
+    ) >/dev/null 2>&1 &
+    local WATCHDOG_PID=$!
+
+    local EXIT_CODE=0
+    wait "${CMD_PID}" 2>/dev/null || EXIT_CODE=$?
+    # Reap the watchdog before it can fire at a recycled PID.
+    kill -TERM "${WATCHDOG_PID}" 2>/dev/null || true
+    wait "${WATCHDOG_PID}" 2>/dev/null || true
+
+    # Report a query we had to kill as 124, the `timeout(1)` convention for "timed out", so a
+    # caller can tell "the bound was hit" apart from "adb itself failed" (adb's own status).
+    # Both signals land here: `timeout` distinguishes TERM (124) from KILL (137), which is
+    # noise for a caller whose only question is whether adb answered.
+    if (( EXIT_CODE == 143 || EXIT_CODE == 137 )); then
+        EXIT_CODE=124
+    fi
+
+    cat "${OUT_FILE}" 2>/dev/null || true
+    rm -f "${OUT_FILE}"
+    return "${EXIT_CODE}"
+}
+
+# Bounded adb query: prints captured stdout and exits 0 when adb answered, 124 when the bound
+# was hit, or adb's own status when it failed. Callers that only want the answer append
+# `|| true` and read the empty output as "did not answer".
+adb_query() {
+    if [[ -z "${ADB_BIN}" ]]; then
+        return 0
+    fi
+    bounded_run "${ADB_QUERY_TIMEOUT_SEC}" "${ADB_BIN}" "$@"
+}
+
+# Bounded `adb shell getprop <key>`: empty when the device does not answer in time.
+adb_getprop() {
+    local SERIAL="$1"
+    local KEY="$2"
+    local RAW
+    RAW="$(adb_query -s "${SERIAL}" shell getprop "${KEY}" || true)"
+    printf '%s\n' "${RAW}" | tr -d '\r\n'
+}
+
+# Bounded `adb -s <serial> emu avd name`: the AVD name, or empty when the device does not
+# answer in time.
+adb_avd_name() {
+    local SERIAL="$1"
+    local RAW=""
+    if [[ "${SERIAL}" =~ ^emulator-[0-9]+$ ]]; then
+        RAW="$(adb_query -s "${SERIAL}" emu avd name || true)"
+    else
+        RAW="$(adb_query -s "${SERIAL}" shell getprop ro.boot.qemu.avd_name || true)"
+    fi
+    printf '%s\n' "${RAW}" | head -n 1 | tr -d '\r\n'
+}
 
 resolve_target_avd() {
     if [[ -n "${TARGET_AVD_OVERRIDE:-}" ]]; then
@@ -134,12 +247,19 @@ get_running_device_serial() {
         return 0
     fi
 
-    local DEV_LIST
-    DEV_LIST="$("${ADB_BIN}" devices 2>/dev/null | grep -E "emulator-[0-9]+" | awk '{print $1}' || true)"
+    local RAW_DEVICES DEV_LIST
+    RAW_DEVICES="$(adb_query devices || true)"
+    # Only devices in the `device` state are queried: an `offline` (or otherwise broken)
+    # transport cannot report its AVD name and blocks the adb client until it times out.
+    DEV_LIST="$(printf '%s\n' "${RAW_DEVICES}" \
+        | awk '($1 ~ /^emulator-[0-9]+$/ || $1 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:[0-9]+$/) && $2 == "device" { print $1 }')"
 
+    # Every candidate is probed, however slow: giving up on the scan early could miss the
+    # dedicated AVD sitting behind unresponsive siblings. The per-query bound, not a global
+    # budget, is what keeps this responsive.
     for dev in ${DEV_LIST}; do
         local AVD_NAME_FOUND
-        AVD_NAME_FOUND="$("${ADB_BIN}" -s "${dev}" emu avd name 2>/dev/null | head -n 1 | tr -d '\r\n' || true)"
+        AVD_NAME_FOUND="$(adb_avd_name "${dev}")"
         if [[ "${AVD_NAME_FOUND}" == "${TARGET_AVD}" ]]; then
             echo "${dev}"
             return 0
@@ -167,6 +287,134 @@ attach_logs() {
     fi
 
     exec tail -n 30 -f "${LOG_FILE}"
+}
+
+get_primary_lan_ip() {
+    local LAN_IP=""
+    if [[ -n "${HOST_LAN_IP:-}" ]]; then
+        echo "${HOST_LAN_IP}"
+        return 0
+    fi
+    if command -v python3 >/dev/null 2>&1; then
+        LAN_IP="$(PYTHONPATH=src python3 -m boss_agent.services.remote_adb_bridge --print-lan-ip 2>/dev/null || true)"
+    fi
+    if [[ -z "${LAN_IP}" || "${LAN_IP}" =~ ^127\. ]]; then
+        LAN_IP="$(ifconfig 2>/dev/null | grep -E 'inet[[:space:]]+(192\.168|10\.|172\.(1[6-9]|2[0-9]|3[01]))\.' | awk '{print $2}' | head -n 1 || true)"
+    fi
+    if [[ -z "${LAN_IP}" ]]; then
+        LAN_IP="127.0.0.1"
+    fi
+    echo "${LAN_IP}"
+}
+
+start_remote_bridge() {
+    local PORT="${REMOTE_ADB_PORT:-6555}"
+    local TARGET_PORT="${TARGET_ADB_PORT:-5555}"
+
+    if [[ -f "${BRIDGE_PID_FILE}" ]]; then
+        local PID
+        PID="$(cat "${BRIDGE_PID_FILE}" 2>/dev/null || true)"
+        if [[ -n "${PID}" ]] && kill -0 "${PID}" 2>/dev/null; then
+            return 0
+        fi
+        rm -f "${BRIDGE_PID_FILE}"
+    fi
+
+    # Reclaim port from old orphaned bridge or socat if present
+    if command -v lsof >/dev/null 2>&1; then
+        local CONFLICT_PID
+        CONFLICT_PID="$(lsof -nP -iTCP:"${PORT}" -sTCP:LISTEN -t 2>/dev/null | head -n 1 || true)"
+        if [[ -n "${CONFLICT_PID}" ]]; then
+            local CMD_NAME
+            CMD_NAME="$(ps -p "${CONFLICT_PID}" -o comm= 2>/dev/null || true)"
+            if [[ "${CMD_NAME}" == *"python"* || "${CMD_NAME}" == *"socat"* ]]; then
+                echo "⚠️ Port ${PORT} already bound by PID ${CONFLICT_PID} (${CMD_NAME}). Reclaiming..."
+                kill -TERM "${CONFLICT_PID}" 2>/dev/null || true
+                sleep 0.5
+                kill -KILL "${CONFLICT_PID}" 2>/dev/null || true
+            fi
+        fi
+    fi
+
+    rm -f "${BRIDGE_READY_FILE}"
+    echo "🌉 Starting Remote ADB Bridge daemon (0.0.0.0:${PORT} -> 127.0.0.1:${TARGET_PORT})..."
+    PYTHONPATH="${ROOT_DIR}/src:${PYTHONPATH:-}" nohup python3 -m boss_agent.services.remote_adb_bridge \
+        --host 0.0.0.0 \
+        --port "${PORT}" \
+        --target-host 127.0.0.1 \
+        --target-port "${TARGET_PORT}" \
+        --pid-file "${BRIDGE_PID_FILE}" \
+        --ready-file "${BRIDGE_READY_FILE}" >> "${BRIDGE_LOG_FILE}" 2>&1 &
+    local BRIDGE_PID=$!
+    disown "${BRIDGE_PID}" 2>/dev/null || true
+
+    local READY=0
+    for _ in {1..30}; do
+        if [[ -f "${BRIDGE_READY_FILE}" ]] && kill -0 "${BRIDGE_PID}" 2>/dev/null; then
+            READY=1
+            break
+        fi
+        sleep 0.1
+    done
+    if [[ ${READY} -eq 1 ]]; then
+        echo "✅ Remote ADB Bridge daemon is active (PID: ${BRIDGE_PID}, Port: ${PORT})."
+    else
+        echo "⚠️ Remote ADB Bridge daemon started (PID: ${BRIDGE_PID}). Check ${BRIDGE_LOG_FILE}."
+    fi
+}
+
+stop_remote_bridge() {
+    local PORT="${REMOTE_ADB_PORT:-6555}"
+    local LAN_IP
+    LAN_IP="$(get_primary_lan_ip)"
+
+    if [[ -n "${LAN_IP}" && "${LAN_IP}" != "127.0.0.1" ]]; then
+        adb_query disconnect "${LAN_IP}:${PORT}" >/dev/null 2>&1 || true
+    fi
+
+    if [[ -f "${BRIDGE_PID_FILE}" ]]; then
+        local PID
+        PID="$(cat "${BRIDGE_PID_FILE}" 2>/dev/null || true)"
+        if [[ -n "${PID}" ]]; then
+            kill -TERM "${PID}" 2>/dev/null || true
+            sleep 0.3
+            kill -KILL "${PID}" 2>/dev/null || true
+        fi
+        rm -f "${BRIDGE_PID_FILE}" "${BRIDGE_READY_FILE}"
+        echo "ℹ️ Stopped Remote ADB Bridge daemon."
+    fi
+}
+
+ensure_lan_adb_connected() {
+    start_remote_bridge
+    local PORT="${REMOTE_ADB_PORT:-6555}"
+    local LAN_IP
+    LAN_IP="$(get_primary_lan_ip)"
+    if [[ -z "${LAN_IP}" || "${LAN_IP}" == "127.0.0.1" ]]; then
+        echo "⚠️ No non-loopback LAN IP detected; skipping auto-connect over LAN."
+        return 0
+    fi
+
+    local LAN_SERIAL="${LAN_IP}:${PORT}"
+    echo "🔌 Auto-connecting ADB to dedicated AVD via LAN (${LAN_SERIAL})..."
+    adb_query connect "${LAN_SERIAL}" >/dev/null 2>&1 || true
+
+    local CONNECTED=0
+    for _ in {1..20}; do
+        local BOOT
+        BOOT="$(adb_getprop "${LAN_SERIAL}" sys.boot_completed)"
+        if [[ "${BOOT}" == "1" ]]; then
+            CONNECTED=1
+            break
+        fi
+        sleep 0.5
+    done
+
+    if [[ ${CONNECTED} -eq 1 ]]; then
+        echo "🟢 Dedicated AVD connected via LAN: ${LAN_SERIAL} (ONLINE and READY)!"
+    else
+        echo "⚠️ Unable to verify LAN connection to ${LAN_SERIAL}. Check ${BRIDGE_LOG_FILE}."
+    fi
 }
 
 cmd_logs() {
@@ -215,16 +463,42 @@ cmd_status() {
     fi
 
     local BOOT_STATUS
-    BOOT_STATUS="$("${ADB_BIN}" -s "${SERIAL}" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r\n' || true)"
+    BOOT_STATUS="$(adb_getprop "${SERIAL}" sys.boot_completed)"
 
-    if [[ "${BOOT_STATUS}" == "1" ]]; then
-        echo "🟢 Dedicated AVD '${TARGET_AVD}' is ONLINE and READY (${SERIAL})."
-        echo "   Log file : ${LOG_FILE}"
-        return 0
-    else
+    if [[ "${BOOT_STATUS}" != "1" ]]; then
         echo "🟡 Dedicated AVD '${TARGET_AVD}' is BOOTING (${SERIAL}, sys.boot_completed='${BOOT_STATUS}')."
         return 1
     fi
+
+    echo "🟢 Dedicated AVD '${TARGET_AVD}' is ONLINE and READY (${SERIAL})."
+    echo "   Log file : ${LOG_FILE}"
+
+    local PORT="${REMOTE_ADB_PORT:-6555}"
+    local LAN_IP
+    LAN_IP="$(get_primary_lan_ip)"
+    local BRIDGE_PID=""
+    if [[ -f "${BRIDGE_PID_FILE}" ]]; then
+        BRIDGE_PID="$(cat "${BRIDGE_PID_FILE}" 2>/dev/null || true)"
+    fi
+
+    if [[ -n "${BRIDGE_PID}" ]] && kill -0 "${BRIDGE_PID}" 2>/dev/null; then
+        echo "🟢 Remote ADB Bridge is LISTENING (PID: ${BRIDGE_PID}, Port: ${PORT}, LAN: ${LAN_IP}:${PORT})"
+    else
+        echo "⚪ Remote ADB Bridge is NOT RUNNING (Port: ${PORT})"
+    fi
+
+    if [[ -n "${LAN_IP}" && "${LAN_IP}" != "127.0.0.1" ]]; then
+        local LAN_SERIAL="${LAN_IP}:${PORT}"
+        local LAN_DEV_STATE
+        LAN_DEV_STATE="$(adb_query devices || true)"
+        if printf '%s\n' "${LAN_DEV_STATE}" | awk -v s="${LAN_SERIAL}" '$1 == s && $2 == "device" {found=1} END {exit !found}'; then
+            echo "🟢 LAN ADB Connection is CONNECTED and READY (${LAN_SERIAL})"
+        else
+            echo "⚪ LAN ADB Connection is DISCONNECTED (${LAN_SERIAL})"
+        fi
+    fi
+
+    return 0
 }
 
 cmd_stop() {
@@ -232,10 +506,16 @@ cmd_stop() {
     local SERIAL
     SERIAL="$(get_running_device_serial)"
 
-    if [[ -n "${SERIAL}" && -n "${ADB_BIN}" ]]; then
-        "${ADB_BIN}" -s "${SERIAL}" emu kill 2>/dev/null || true
+    stop_remote_bridge
+
+    if [[ -n "${SERIAL}" ]] && adb_query -s "${SERIAL}" emu kill >/dev/null; then
         echo "✅ Sent emu kill to ${SERIAL} (${TARGET_AVD})."
     else
+        if [[ -n "${SERIAL}" ]]; then
+            # A kill the wedged device never acknowledged leaves the emulator running, so
+            # fall back to the same process cleanup the "no device found" path uses.
+            echo "⚠️ ${SERIAL} did not acknowledge the kill within ${ADB_QUERY_TIMEOUT_SEC}s."
+        fi
         pkill -f "emulator.*@${TARGET_AVD}" 2>/dev/null || true
         echo "ℹ️ Stopped emulator processes for ${TARGET_AVD}."
     fi
@@ -270,10 +550,11 @@ cmd_start() {
     # Check if already booted and ready
     local SERIAL
     SERIAL="$(get_running_device_serial)"
-    if [[ -n "${SERIAL}" && -n "${ADB_BIN}" ]]; then
+    if [[ -n "${SERIAL}" ]]; then
         local BOOT_STATUS
-        BOOT_STATUS="$("${ADB_BIN}" -s "${SERIAL}" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r\n' || true)"
+        BOOT_STATUS="$(adb_getprop "${SERIAL}" sys.boot_completed)"
         if [[ "${BOOT_STATUS}" == "1" ]]; then
+            ensure_lan_adb_connected
             if [[ ${DAEMON} -eq 1 ]]; then
                 echo "ℹ️ Dedicated AVD '${TARGET_AVD}' is already running in background (${SERIAL}, PID: $(cat "${PID_FILE}" 2>/dev/null || echo "active"))."
                 exit 0
@@ -298,9 +579,9 @@ cmd_start() {
         local BOOTED=0
         for _ in {1..90}; do
             SERIAL="$(get_running_device_serial)"
-            if [[ -n "${SERIAL}" && -n "${ADB_BIN}" ]]; then
+            if [[ -n "${SERIAL}" ]]; then
                 local BOOT_STATUS
-                BOOT_STATUS="$("${ADB_BIN}" -s "${SERIAL}" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r\n' || true)"
+                BOOT_STATUS="$(adb_getprop "${SERIAL}" sys.boot_completed)"
                 if [[ "${BOOT_STATUS}" == "1" ]]; then
                     BOOTED=1
                     break
@@ -312,6 +593,7 @@ cmd_start() {
         if [[ ${BOOTED} -eq 1 ]]; then
             echo "✅ Dedicated AVD '${TARGET_AVD}' is fully booted and ready (${SERIAL}, PID: ${EMU_PID})!"
             echo "   Log File : ${LOG_FILE}"
+            ensure_lan_adb_connected
             if [[ ${DAEMON} -eq 1 ]]; then
                 exit 0
             fi

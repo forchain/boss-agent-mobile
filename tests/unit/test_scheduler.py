@@ -13,6 +13,7 @@ from boss_agent.scheduler import (
     is_cron_match,
     parse_cron_field,
 )
+from boss_agent.startup_cleanup import STARTUP_CLEANUP_MARKER, StartupCleanupGate
 
 
 def test_parse_cron_field():
@@ -64,6 +65,37 @@ def test_get_next_cron_run():
     base_dt = datetime(2026, 9, 7, 9, 5, 0, tzinfo=UTC)
     next_run = get_next_cron_run("0 10 * * *", after=base_dt)
     assert next_run == datetime(2026, 9, 7, 10, 0, 0, tzinfo=UTC)
+
+
+# ---------------------------------------------------------------------------
+# Startup 拒信清扫 gating (issue #230)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_scheduler_queues_the_startup_cleanup_once():
+    """#230: a starting scheduler queues one CHECK_CHAT, never one per poll."""
+    broker = InMemoryTaskBroker()
+    scheduler = AutomationScheduler(broker=broker, startup_gate=StartupCleanupGate(broker))
+
+    await scheduler.run_once(now=datetime(2026, 9, 7, 9, 0, tzinfo=UTC))
+    await scheduler.run_once(now=datetime(2026, 9, 7, 9, 1, tzinfo=UTC))
+
+    pending = await broker.list_pending_tasks()
+    assert [task.task_type for task in pending] == [TaskType.CHECK_CHAT]
+    assert pending[0].payload[STARTUP_CLEANUP_MARKER] is True
+
+
+@pytest.mark.asyncio
+async def test_scheduler_queues_nothing_when_the_startup_cleanup_is_disabled():
+    broker = InMemoryTaskBroker()
+    scheduler = AutomationScheduler(
+        broker=broker, startup_gate=StartupCleanupGate(broker, enabled=False)
+    )
+
+    await scheduler.run_once(now=datetime(2026, 9, 7, 9, 0, tzinfo=UTC))
+
+    assert await broker.list_pending_tasks() == []
 
 
 @pytest.mark.asyncio
@@ -136,3 +168,111 @@ async def test_scheduler_run_once():
     assert len(afternoon_tasks) == 1
     assert afternoon_tasks[0].task_type == TaskType.SCRAPE_JOBS
     assert afternoon_tasks[0].payload["saved_search_id"] == "search_other_3"
+
+
+@pytest.mark.asyncio
+async def test_scheduler_dispatches_check_chat_task_for_inbox_cleanup_strategy():
+    """#208: a CHECK_CHAT SavedSearch dispatches a rejection-acknowledgment task."""
+    from unittest.mock import patch
+
+    from boss_agent.rejection import ChatAcknowledgmentSettings
+
+    broker = InMemoryTaskBroker()
+    await broker.save_saved_search(
+        SavedSearch(
+            id="inbox_cleanup",
+            name="收件箱拒信清扫",
+            cron_expression="0 21 * * *",
+            is_enabled=True,
+            target_task_type="CHECK_CHAT",
+            target_action="check_chat",
+        )
+    )
+
+    scheduler = AutomationScheduler(broker=broker)
+    now = datetime(2026, 9, 7, 21, 0, 0, tzinfo=UTC)
+
+    with patch(
+        "boss_agent.scheduler.resolve_chat_acknowledgment_settings",
+        return_value=ChatAcknowledgmentSettings(
+            rejection_reply_text="谢谢，祝招聘顺利", max_scan_depth=7
+        ),
+    ):
+        tasks = await scheduler.run_once(now=now)
+
+    assert len(tasks) == 1
+    task = tasks[0]
+    assert task.task_type == TaskType.CHECK_CHAT
+    assert task.payload["scheduled"] is True
+    assert task.payload["dry_run"] is False
+    assert task.payload["rejection_reply_text"] == "谢谢，祝招聘顺利"
+    assert task.payload["max_scan_depth"] == 7
+    assert task.payload["saved_search_id"] == "inbox_cleanup"
+
+    # A CHECK_CHAT strategy carries no search keyword or filter payload.
+    assert "keyword" not in task.payload
+    assert "filter" not in task.payload
+
+    # The same-minute guard applies to inbox cleanup too.
+    duplicate = await scheduler.run_once(now=datetime(2026, 9, 7, 21, 0, 30, tzinfo=UTC))
+    assert duplicate == []
+
+
+@pytest.mark.asyncio
+async def test_scheduled_chat_cleanup_honours_the_configured_drill_mode():
+    """A drill configured in settings must not be overridden into a live run."""
+    from unittest.mock import patch
+
+    from boss_agent.rejection import ChatAcknowledgmentSettings
+
+    broker = InMemoryTaskBroker()
+    await broker.save_saved_search(
+        SavedSearch(
+            id="inbox_cleanup",
+            name="仅沟通拒信清扫",
+            cron_expression="0 21 * * *",
+            is_enabled=True,
+            target_task_type="CHECK_CHAT",
+            target_action="check_chat",
+        )
+    )
+
+    scheduler = AutomationScheduler(broker=broker)
+    now = datetime(2026, 9, 7, 21, 0, 0, tzinfo=UTC)
+
+    with patch(
+        "boss_agent.scheduler.resolve_chat_acknowledgment_settings",
+        return_value=ChatAcknowledgmentSettings(dry_run=True),
+    ):
+        tasks = await scheduler.run_once(now=now)
+
+    assert len(tasks) == 1
+    assert tasks[0].payload["dry_run"] is True
+
+
+def test_saved_search_check_chat_target_round_trips():
+    search = SavedSearch(id="inbox_cleanup", target_task_type="CHECK_CHAT")
+
+    assert search.target_task_type == "CHECK_CHAT"
+    assert search.target_action == "check_chat"
+    assert search.is_chat_cleanup is True
+    assert search.to_dict()["target_task_type"] == "CHECK_CHAT"
+    assert search.to_dict()["target_action"] == "check_chat"
+
+    restored = SavedSearch.from_dict("inbox_cleanup", {"target_task_type": "CHECK_CHAT"})
+    assert restored.target_task_type == "CHECK_CHAT"
+    assert restored.target_action == "check_chat"
+
+
+def test_saved_search_search_targets_are_unchanged_by_chat_support():
+    """Adding CHECK_CHAT must not disturb the existing two target derivations."""
+    auto = SavedSearch(id="a", target_task_type="AUTO_APPLY")
+    scrape = SavedSearch(id="s", target_task_type="SCRAPE_JOBS")
+    explicit = SavedSearch(id="e", target_action="save_jd")
+
+    assert (auto.target_action, auto.target_task_type) == ("auto_apply", "AUTO_APPLY")
+    assert (scrape.target_action, scrape.target_task_type) == ("save_jd", "SCRAPE_JOBS")
+    assert (explicit.target_action, explicit.target_task_type) == ("save_jd", "SCRAPE_JOBS")
+    assert not auto.is_chat_cleanup
+    assert not scrape.is_chat_cleanup
+    assert not explicit.is_chat_cleanup

@@ -25,25 +25,46 @@ WEB_HOST="${WEB_HOST:-0.0.0.0}"
 WEB_PORT="${WEB_PORT:-5173}"
 WEB_URL="http://${WEB_HOST}:${WEB_PORT}"
 
+# Seconds to wait for a graceful exit before escalating to SIGKILL, and again for the
+# listening socket to be handed back to the OS.
+WEB_STOP_TIMEOUT_SEC="${WEB_STOP_TIMEOUT_SEC:-10}"
+
+process_alive() {
+    local PID="$1"
+    ps -p "${PID}" >/dev/null 2>&1 || return 1
+    # A defunct (zombie) process has already terminated and only awaits reaping: it is
+    # neither a running dashboard nor a reason to burn the shutdown timeout.
+    local STATE
+    STATE="$(ps -p "${PID}" -o stat= 2>/dev/null | tr -d '[:space:]' || true)"
+    [[ "${STATE}" == Z* ]] && return 1
+    return 0
+}
+
 get_running_web_pid() {
     if [[ -f "${PID_FILE}" ]]; then
         local PID
         PID="$(cat "${PID_FILE}" 2>/dev/null || true)"
-        if [[ -n "${PID}" ]] && ps -p "${PID}" >/dev/null 2>&1; then
+        if [[ -n "${PID}" ]] && process_alive "${PID}"; then
             echo "${PID}"
             return 0
         fi
     fi
 
-    # Fallback to lsof on port
+    # Fallback to the process listening on the port
     local PORT_PID
-    PORT_PID="$(lsof -ti ":${WEB_PORT}" 2>/dev/null | head -n 1 || true)"
+    PORT_PID="$(listening_pid)"
     if [[ -n "${PORT_PID}" ]]; then
         echo "${PORT_PID}" > "${PID_FILE}"
         echo "${PORT_PID}"
         return 0
     fi
     echo ""
+}
+
+listening_pid() {
+    # LISTEN-only: a browser, curl, or a test client merely *connected* to the port must
+    # never be mistaken for the dashboard and must never be signalled.
+    lsof -ti "tcp:${WEB_PORT}" -sTCP:LISTEN 2>/dev/null | head -n 1 || true
 }
 
 attach_logs() {
@@ -82,6 +103,41 @@ cmd_status() {
     fi
 }
 
+log_web_event() {
+    printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" >> "${LOG_FILE}"
+}
+
+port_in_use() {
+    [[ -n "$(listening_pid)" ]]
+}
+
+# Wait until the given predicate (a command receiving `PREDICATE_ARGS`) reports success,
+# re-checking once at the deadline so a state change during the final interval still counts.
+wait_until() {
+    local TIMEOUT_SEC="$1"
+    shift
+    local attempts=$((TIMEOUT_SEC * 10))
+    local i
+    for ((i = 0; i < attempts; i++)); do
+        if "$@"; then
+            return 0
+        fi
+        sleep 0.1
+    done
+    if "$@"; then
+        return 0
+    fi
+    return 1
+}
+
+process_gone() {
+    ! process_alive "$1"
+}
+
+port_released() {
+    ! port_in_use
+}
+
 cmd_stop() {
     echo "🛑 Stopping SvelteKit Web Dashboard..."
     local STOPPED=0
@@ -89,18 +145,46 @@ cmd_stop() {
     PID="$(get_running_web_pid)"
 
     if [[ -n "${PID}" ]]; then
+        log_web_event "🛑 [Web] Received stop command, shutting down Web Dashboard... (PID: ${PID}, port: ${WEB_PORT})"
+        echo "   Shutdown feedback appended to ${LOG_FILE}"
         kill "${PID}" 2>/dev/null || true
-        sleep 0.5
-        kill -9 "${PID}" 2>/dev/null || true
+        pkill -P "${PID}" 2>/dev/null || true
+
+        if ! wait_until "${WEB_STOP_TIMEOUT_SEC}" process_gone "${PID}"; then
+            echo "⚠️ Graceful shutdown timed out after ${WEB_STOP_TIMEOUT_SEC}s; forcing termination."
+            log_web_event "⚠️ [Web] Graceful shutdown timed out after ${WEB_STOP_TIMEOUT_SEC}s; sending SIGKILL to PID ${PID}."
+            kill -9 "${PID}" 2>/dev/null || true
+            wait_until 2 process_gone "${PID}" || true
+        fi
         STOPPED=1
     fi
+
+    # Reclaim the port from any process that outlived its parent (e.g. a detached vite dev server)
+    pkill -f "vite dev.*${WEB_PORT}" 2>/dev/null || true
+    if port_in_use; then
+        local PORT_PID
+        PORT_PID="$(listening_pid)"
+        if [[ -n "${PORT_PID}" ]]; then
+            echo "⚠️ Port ${WEB_PORT} still held by PID ${PORT_PID}; reclaiming."
+            kill "${PORT_PID}" 2>/dev/null || true
+            if ! wait_until "${WEB_STOP_TIMEOUT_SEC}" process_gone "${PORT_PID}"; then
+                kill -9 "${PORT_PID}" 2>/dev/null || true
+                wait_until 2 process_gone "${PORT_PID}" || true
+            fi
+        fi
+    fi
+
     rm -f "${PID_FILE}"
 
-    # Cleanup vite process
-    pkill -f "vite dev.*${WEB_PORT}" 2>/dev/null || true
+    if ! wait_until "${WEB_STOP_TIMEOUT_SEC}" port_released; then
+        echo "❌ Error: port ${WEB_PORT} is still occupied after shutdown." >&2
+        log_web_event "❌ [Web] Port ${WEB_PORT} is still occupied after shutdown."
+        return 1
+    fi
 
     if [[ ${STOPPED} -eq 1 ]]; then
-        echo "✅ SvelteKit Web Dashboard stopped."
+        log_web_event "✅ [Web] Web Dashboard stopped; port ${WEB_PORT} released."
+        echo "✅ SvelteKit Web Dashboard stopped (port ${WEB_PORT} released)."
     else
         echo "ℹ️ No running Web Dashboard process found."
     fi

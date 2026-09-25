@@ -35,6 +35,25 @@ from boss_agent.worker.handlers.scrape_jobs import ScrapeJobsHandler
 # ---------------------------------------------------------------------------
 
 
+def _stub_llm_client() -> MagicMock:
+    """A deterministic stand-in for the LLM client, covering both screening and drafting.
+
+    Handlers given no client build a real one for the JD semantic screener and the greeting
+    drafter, so this test would otherwise depend on a live endpoint's latency *and* on what
+    that model happens to answer.
+    """
+    llm = MagicMock()
+    llm.chat_completion_json.return_value = {
+        "pass": True,
+        "reason": "JD 未触犯黑名单",
+        "match_score": 90,
+        "jd_key_requirements": ["精通 Python", "具备多智能体工程化落地经验"],
+        "match_reasons": ["JD 与候选人核心栈一致"],
+        "greeting_message": "看到贵司在招 AI 方向岗位，我在多智能体与移动端自动化落地方面有完整实战经验，方便沟通一下吗？",
+    }
+    return llm
+
+
 def test_job_list_page_is_feed_bottom_reached():
     """Verify is_feed_bottom_reached and get_feed_bottom_boundary recognize all divider text patterns."""
     driver = MagicMock()

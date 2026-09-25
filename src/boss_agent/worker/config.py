@@ -8,7 +8,11 @@ import uuid
 
 from pydantic import BaseModel, Field
 
-from boss_agent.settings import resolve_pocketbase_url, resolve_server_url
+from boss_agent.settings import (
+    resolve_pocketbase_url,
+    resolve_run_cleanup_on_startup,
+    resolve_server_url,
+)
 
 
 class WorkerConfig(BaseModel):
@@ -22,3 +26,5 @@ class WorkerConfig(BaseModel):
     poll_interval_sec: float = 2.0
     heartbeat_interval_sec: float = 15.0
     lease_timeout_sec: float = 60.0
+    #: Run the 拒信清扫 before the first search of a fresh service startup (#230).
+    run_cleanup_on_startup: bool = Field(default_factory=resolve_run_cleanup_on_startup)

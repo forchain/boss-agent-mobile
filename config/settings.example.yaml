@@ -92,3 +92,24 @@ company_blacklist: []
 # 岗位卡片摘要黑名单（一票否决，仅匹配卡片摘要或标签，避免误伤整个 JD 详情）
 jd_blacklist: ["驻场", "外包", "电销", "无底薪", "纯提成"]
 
+# ------------------------------------------------------------------------------
+# 7. 「仅沟通」列表 · 拒信清扫与公司拉黑（Rejection Triage & Company Blacklisting）
+# ------------------------------------------------------------------------------
+# 开服清扫闸门：服务启动时先下发一次拒信清扫，并在其完成前挂起搜索类任务
+# （SCRAPE_JOBS / AUTO_APPLY），确保此前拒绝过候选人的企业已写入公司黑名单，
+# 不再被重复投递。清扫失败或被取消时闸门自动放行，不会永久阻塞搜索调度。
+# （env: RUN_CLEANUP_ON_STARTUP）
+run_cleanup_on_startup: true
+
+chat:
+  # 识别到招聘者明确拒信后发送的礼貌收尾文案（env: CHAT_REJECTION_REPLY_TEXT）
+  rejection_reply_text: "收到 谢谢"
+
+  # 单次 CHECK_CHAT 任务最多交给大模型判定的消息条数，防止在消息堆积时无限扫描。
+  # 带「送达/已读」状态标签的出站等待消息不消耗该额度（env: CHAT_MAX_SCAN_DEPTH）
+  max_scan_depth: 30
+
+  # 演练模式：只识别拒信并记录拟拉黑的企业，不改写筛选配置、不发送任何消息
+  # （env: CHAT_DRY_RUN）
+  dry_run: false
+
