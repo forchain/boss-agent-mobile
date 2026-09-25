@@ -29,14 +29,17 @@ from .models import (
     SavedSearch,
     ScreeningPolicy,
     SearchConfig,
-    append_company_blacklist_entry,
     is_headhunter_agency_name,
     is_masked_company_name,
-    resolve_writable_screening_config_path,
 )
 
 with contextlib.suppress(ImportError):
-    from .screening import (
+    from .screening_config import (
+    append_company_blacklist_entry,
+    is_writable_screening_path,
+    resolve_writable_screening_config_path,
+)
+from .screening import (
         CandidateScreener,
         CardScreeningVerdict,
         CardVerdictStage,
@@ -137,6 +140,7 @@ __all__ = [
     "StructuredCandidateProfile",
     "TakeoverHandler",
     "append_company_blacklist_entry",
+    "is_writable_screening_path",
     "build_job_application_graph",
     "build_resume_lifecycle_graph",
     "get_global_search_registry",

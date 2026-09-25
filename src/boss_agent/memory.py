@@ -9,7 +9,6 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-import yaml
 from langsmith import traceable
 from rich.console import Console
 
@@ -453,34 +452,28 @@ class ResumeMemoryManager:
         self.memory_path = Path(configured_memory)
         self.configured_resume_path = self.candidate_config.get("resume_path")
 
-    @staticmethod
-    def _load_candidate_config(config_path: str | Path | None = None) -> dict[str, Any]:
-        search_paths: list[Path] = []
-        if config_path:
-            search_paths.append(Path(config_path))
-        else:
-            search_paths.extend(
-                [
-                    Path("config/candidate.local.yaml"),
-                    Path("config/candidate.local.json"),
-                    Path("config/candidate.yaml"),
-                    Path("config/candidate.json"),
-                ]
-            )
+    #: This realm's chain, highest precedence first. `candidate.json`/`candidate.yaml`
+    #: are pre-realm spellings kept at the floor so an existing deployment keeps working.
+    CANDIDATE_CHAIN: tuple[Path, ...] = (
+        Path("config/candidate.local.yaml"),
+        Path("config/candidate.local.json"),
+        Path("config/candidate.yaml"),
+        Path("config/candidate.json"),
+    )
 
-        for p in search_paths:
-            if p.is_file():
-                try:
-                    content = p.read_text(encoding="utf-8")
-                    if p.suffix in [".yaml", ".yml"]:
-                        loaded = yaml.safe_load(content) or {}
-                    else:
-                        loaded = json.loads(content) or {}
-                    if isinstance(loaded, dict):
-                        return loaded
-                except Exception:
-                    pass
-        return {}
+    @classmethod
+    def _load_candidate_config(cls, config_path: str | Path | None = None) -> dict[str, Any]:
+        """The candidate section, through the Configuration Realm's one merge engine.
+
+        This used to be its own loader with first-file-wins semantics and no defaults or
+        environment layer — a fourth precedence order for one realm. The realm merges,
+        so a local file that sets one key no longer hides the rest of the file beneath it.
+        """
+        from . import config_realm
+
+        if config_path:
+            return config_realm.load_chain([Path(config_path)], config_path=config_path)
+        return config_realm.load_chain(list(cls.CANDIDATE_CHAIN))
 
     def has_memory_file(self) -> bool:
         """Return True if candidate memory profile file exists and is non-empty."""

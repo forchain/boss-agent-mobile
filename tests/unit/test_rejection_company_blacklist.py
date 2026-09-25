@@ -12,14 +12,13 @@ from pathlib import Path
 
 import yaml
 
-from boss_agent.models import (
-    ScreeningPolicy,
+from boss_agent.models import ScreeningPolicy, is_headhunter_agency_name
+from boss_agent.pages import parse_company_from_descriptor
+from boss_agent.screening_config import (
     append_company_blacklist_entry,
-    is_headhunter_agency_name,
     is_writable_screening_path,
     resolve_writable_screening_config_path,
 )
-from boss_agent.pages import parse_company_from_descriptor
 
 # ---------------------------------------------------------------------------
 # `[Company] | [Position]` card descriptor
@@ -278,7 +277,7 @@ def test_persist_never_writes_the_checked_in_example_config(tmp_path, monkeypatc
     original = example.read_text(encoding="utf-8")
     fallback = config_dir / "screening.local.yaml"
     monkeypatch.setattr(
-        "boss_agent.models.resolve_writable_screening_config_path", lambda *_: fallback
+        "boss_agent.screening_config.resolve_writable_screening_config_path", lambda *_: fallback
     )
 
     policy = ScreeningPolicy.load_default(config_path=example)
@@ -312,7 +311,7 @@ def test_persist_reports_nothing_written_when_the_store_is_not_writable(tmp_path
     store.write_text('{"company_blacklist": ["a"]}', encoding="utf-8")
     # Pinned so a failing guard cannot escape into the shared checkout's config.
     monkeypatch.setattr(
-        "boss_agent.models.resolve_writable_screening_config_path",
+        "boss_agent.screening_config.resolve_writable_screening_config_path",
         lambda *_: tmp_path / "fallback.local.yaml",
     )
     policy = ScreeningPolicy(company_blacklist=["a", "传音控股"], source_path=str(store))
@@ -331,14 +330,31 @@ def test_the_suite_never_resolves_a_write_target_inside_the_checkout():
 
     Asserted through the module rather than the name imported at the top of this
     file: the appenders look the function up as a module global at call time, so
-    `boss_agent.models` is the attribute the sandbox patches and the one a write
-    actually goes through.
+    `boss_agent.screening_config` is the attribute the sandbox patches and the one a
+    write actually goes through.
     """
-    from boss_agent import models
+    from boss_agent import screening_config
     from boss_agent.settings import resolve_git_common_root
 
-    resolved = models.resolve_writable_screening_config_path()
+    resolved = screening_config.resolve_writable_screening_config_path()
 
     assert not str(resolved).startswith(str(resolve_git_common_root())), (
         f"Screening config writes resolve to {resolved}, inside the checkout."
+    )
+
+
+def test_the_suite_guard_redirects_the_default_write_target():
+    """`tests/conftest.py`'s sandbox must follow the implementation module.
+
+    This is the one guard whose silent failure is dangerous: if it patches a name the
+    writer no longer reads, every test that forgets to pass a path starts editing the
+    developer's real ``config/settings.local.yaml`` — and nothing goes red.
+    """
+    from boss_agent import screening_config
+
+    resolved = screening_config.resolve_writable_screening_config_path()
+
+    assert "screening-config" in str(resolved), (
+        f"the default write target resolved to {resolved}, which is not the sandbox — "
+        "conftest's guard is pointed at the wrong module"
     )
