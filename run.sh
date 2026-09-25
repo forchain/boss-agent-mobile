@@ -52,11 +52,12 @@ Usage:
   ./run.sh [command] [action] [options]
 
 Default Actions (operates on Application services: worker + web):
-  ./run.sh                            Start application services
-  ./run.sh start                      Start application services
+  ./run.sh                            Start application services & auto-attach to worker logs
+  ./run.sh start                      Start application services in background
   ./run.sh stop                       Stop application services
   ./run.sh restart                    Restart application services
   ./run.sh status                     Show overall system status dashboard
+  ./run.sh attach                     Attach to live Automation Worker logs
 
 Service Group Orchestration:
   ./run.sh app [action]               Manage application services (worker, web)
@@ -227,6 +228,10 @@ case "${SUBCOMMAND}" in
         shift
         exec ./doctor.sh "$@"
         ;;
+    attach|logs)
+        shift
+        exec ./worker.sh attach "$@"
+        ;;
     live)
         shift
         exec "${RUNNER[@]}" scripts/run_live_test.py "$@"
@@ -247,7 +252,11 @@ case "${SUBCOMMAND}" in
         ;;
 
     # Top-Level Lifecycle Defaults (operates on app)
-    start|"")
+    "")
+        cmd_app start
+        exec ./worker.sh attach
+        ;;
+    start)
         shift || true
         cmd_app start "$@"
         ;;
