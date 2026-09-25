@@ -36,9 +36,31 @@ from .models import (
 )
 
 with contextlib.suppress(ImportError):
+    from .screening import (
+        CandidateScreener,
+        CardScreeningVerdict,
+        CardVerdictStage,
+        JobEvaluationResult,
+        JobVerdictStage,
+    )
+
+with contextlib.suppress(ImportError):
+    from .job_store import (
+        InMemoryJobRecordStore,
+        JobRecordStore,
+        PocketBaseJobRecordStore,
+    )
+
+with contextlib.suppress(ImportError):
+    from .feed_pipeline import (
+        FeedStreamConfig,
+        FeedStreamResult,
+        JobFeedPipeline,
+        JobOutcome,
+    )
+
+with contextlib.suppress(ImportError):
     from .graph import (
-        GreetingDrafterAgent,
-        JDSemanticScreenerAgent,
         JobApplicationState,
         ResumeLifecycleState,
         build_job_application_graph,
@@ -77,20 +99,30 @@ __all__ = [
     "AuthStatus",
     "BaseBossPage",
     "CandidateProfile",
+    "CandidateScreener",
+    "CardScreeningVerdict",
+    "CardVerdictStage",
     "ChannelPreference",
     "ChatPage",
+    "FeedStreamConfig",
+    "FeedStreamResult",
     "FilterConfig",
     "FilterDialogPage",
-    "GreetingDrafterAgent",
     "IndustryFilterDialogPage",
-    "JDSemanticScreenerAgent",
+    "InMemoryJobRecordStore",
     "JobApplicationState",
     "JobDetailPage",
+    "JobEvaluationResult",
+    "JobFeedPipeline",
+    "JobOutcome",
+    "JobRecordStore",
+    "JobVerdictStage",
     "JobListPage",
     "JobMatchGreetingService",
     "JobPosting",
     "LoginPage",
     "MatchGreetingResult",
+    "PocketBaseJobRecordStore",
     "ProfileNormalizer",
     "ResumeLifecycleState",
     "ResumeMemoryManager",

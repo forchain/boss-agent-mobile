@@ -15,7 +15,7 @@ from droid_agent_core.llm import LLMDecisionClient, OpenAIChatClient
 
 from .greeting_prompt import load_greeting_prompt
 from .memory import StructuredCandidateProfile
-from .models import JobPosting, ScreeningPolicy
+from .models import JobPosting, ScreeningPolicy, is_substantive_jd
 
 console = Console(stderr=True)
 
@@ -127,7 +127,7 @@ class JobMatchGreetingService:
 
         # Strict precondition: job_description must be substantive (> 30 non-whitespace characters)
         jd = (job.job_description or "").strip()
-        if len(jd) < 30 or jd in ("无详细岗位描述", "暂无详细描述", "未注明职位"):
+        if not is_substantive_jd(jd):
             raise ValueError(
                 f"Job description is missing or too short ({len(jd)} chars). "
                 "Full JD (tv_description) from detail page is strictly required for greeting generation."

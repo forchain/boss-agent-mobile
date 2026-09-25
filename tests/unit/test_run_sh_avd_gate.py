@@ -20,6 +20,7 @@ from pathlib import Path
 
 import pytest
 from _runner_harness import STATUS_BUDGET_SEC, TARGET_AVD, RunnerScriptHarness
+
 from _service_harness import REPO_ROOT, free_port
 
 RUN_SH = REPO_ROOT / "run.sh"

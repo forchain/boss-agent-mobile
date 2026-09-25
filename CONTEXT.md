@@ -170,19 +170,19 @@ The unified deep module consolidating zero-token card preliminary keyword checks
 _Avoid_: filter runner, card checker, matcher script
 
 **Candidate Screener Graph (`JobApplicationState`)**:
-The stateful LangGraph orchestrator governing the complete multi-tier lifecycle from card-level keyword filtering, JD extraction, semantic screening, to targeted greeting generation.
+The LangGraph workflow that runs card screening and JD evaluation as two traced stages. It is a thin adapter over the Candidate Screener (ADR 0013): the graph contributes run configuration, tags and the serialized state contract, while every screening rule lives in the screener module.
 _Avoid_: Screening pipeline, match chain, agent workflow
 
 **Keyword Screener**:
-The zero-token deterministic gatekeeper node evaluating visible job card metadata (title, tags, company, digest) against the active Screening Policy before triggering expensive mobile navigation. Confined to the compact card facets by design, where collateral over-rejection is tolerated because the short text mirrors the role's core; it never operates on the full Job Description.
+The zero-token deterministic gatekeeper stage of `CandidateScreener.evaluate_card`, evaluating visible job card metadata (title, tags, company, digest) against the active Screening Policy before triggering expensive mobile navigation. Confined to the compact card facets by design, where collateral over-rejection is tolerated because the short text mirrors the role's core; it never operates on the full Job Description.
 _Avoid_: Title filter, card checker, fast screener
 
 **JD Semantic Screener Agent**:
-The token-optimized LLM agent evaluating extracted job descriptions against negative constraints and blacklist criteria without candidate resume overhead. It is the sole blacklists authority at JD stage: deterministic keyword matching is forbidden over the full description, and rejection happens only when a blacklisted subject matter semantically constitutes the role's core requirement, not a passing mention.
+The token-optimized LLM stage of `CandidateScreener.evaluate_job`, evaluating extracted job descriptions against negative constraints and blacklist criteria without candidate resume overhead. It is the sole blacklists authority at JD stage: deterministic keyword matching is forbidden over the full description, and rejection happens only when a blacklisted subject matter semantically constitutes the role's core requirement, not a passing mention.
 _Avoid_: Deep filter, JD checker, prompt screener
 
 **Greeting Drafter Agent**:
-The high-context LLM agent generating anti-template, tailored ice-breaking messages combining full candidate profile highlights with extracted JD pain points. The active Screening Policy's blacklists are dynamically injected into its matching judgement, so a job that fits the resume on paper but centers on a blacklisted subject matter (e.g. a Java role when Java is blacklisted) is disqualified at draft time even when neither the resume nor card text reveals the conflict.
+The high-context LLM stage of `CandidateScreener.evaluate_job`, generating anti-template, tailored ice-breaking messages combining full candidate profile highlights with extracted JD pain points. The active Screening Policy's blacklists are dynamically injected into its matching judgement, so a job that fits the resume on paper but centers on a blacklisted subject matter (e.g. a Java role when Java is blacklisted) is disqualified at draft time even when neither the resume nor card text reveals the conflict. It only runs when a JD carries enough substance to greet from; a thin JD yields no greeting rather than a fabricated one.
 _Avoid_: Greeting generator, ice breaker, message writer
 
 **Greeting Prompt (`greeting_prompt.local.md`)**:
@@ -263,7 +263,7 @@ The DEBUG-level `droid_agent_core.ui` log stream recording every concrete UI act
 _Avoid_: UI logging, debug prints, action trace
 
 **Daily Greeting Limit**:
-The system safety threshold restricting outbound mobile greeting volume per calendar day to protect user accounts from platform rate limits and anti-bot challenges, evaluated strictly against successful agent greeting dispatches (`applied_at >= today`), automatically degrading `auto_apply` to `save_jd` upon exhaustion.
+The system safety threshold restricting outbound mobile greeting volume per calendar day to protect user accounts from platform rate limits and anti-bot challenges, evaluated strictly against successful agent greeting dispatches (`applied_at` within today), automatically degrading `auto_apply` to an offline draft (`status: matched`) upon exhaustion while job discovery continues uninterrupted.
 _Avoid_: daily quota, message cap, max chats
 **Outbound Message Indicator**:
 The deterministic status badge (`iv_msg_status` displaying `[送达]` or `[已读]`) prefixed to a conversation card in the communication list, signalling that the candidate sent the last message and allowing automation to instantly bypass threads awaiting recruiter reply.

@@ -244,8 +244,8 @@ def test_greeting_drafter_in_graph_catches_precondition_failure():
     state = run_job_application_graph(card=card, policy=policy, jd_text="", llm_client=mock_llm)
 
     assert state["keyword_pass"] is True
-    assert state["deep_screen_pass"] is True
-    assert state["status"] == "greeting_draft_failed"
+    assert state["deep_screen_pass"] is False
+    assert state["status"] == "jd_unavailable"
     assert state["greeting_message"] == ""
     assert "Job description is missing or too short" in state["error_message"]
     # LLM should not have been called for greeting

@@ -60,7 +60,7 @@ async def test_scrape_jobs_handler_extracts_and_persists_jobs(broker, mock_drive
         config=config,
         broker=broker,
         context=context,
-        handlers=[ScrapeJobsHandler()],
+        handlers=[ScrapeJobsHandler(llm_client=MagicMock())],
     )
 
     task = await broker.create_task(
@@ -119,10 +119,10 @@ async def test_scrape_enrichment_falls_back_to_jd_digest_when_card_has_no_snippe
     )
 
     with (
-        patch("boss_agent.worker.handlers.scrape_jobs.StartupDialogPage") as mock_startup_cls,
-        patch("boss_agent.worker.handlers.scrape_jobs.JobListPage") as mock_list_cls,
-        patch("boss_agent.worker.handlers.scrape_jobs.SearchPage") as mock_search_cls,
-        patch("boss_agent.worker.handlers.scrape_jobs.JobDetailPage") as mock_detail_cls,
+        patch("boss_agent.feed_pipeline.StartupDialogPage") as mock_startup_cls,
+        patch("boss_agent.feed_pipeline.JobListPage") as mock_list_cls,
+        patch("boss_agent.feed_pipeline.SearchPage") as mock_search_cls,
+        patch("boss_agent.feed_pipeline.JobDetailPage") as mock_detail_cls,
     ):
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_list = mock_list_cls.return_value
@@ -305,7 +305,7 @@ async def test_scrape_jobs_handler_applies_filters(broker, mock_driver):
         config=config,
         broker=broker,
         context=context,
-        handlers=[ScrapeJobsHandler()],
+        handlers=[ScrapeJobsHandler(llm_client=MagicMock())],
     )
 
     task = await broker.create_task(
@@ -390,7 +390,9 @@ async def test_auto_apply_handler_filtered_by_deep_screener(broker, mock_driver)
     mock_title = MagicMock(text="AI Agent 开发者")
     mock_company = MagicMock(text="某大型外包")
     mock_salary = MagicMock(text="35-50K")
-    mock_desc = MagicMock(text="负责全栈应用开发，要求精通Java微服务及JVM底层。")
+    mock_desc = MagicMock(
+        text="负责全栈应用开发与中台微服务建设，要求精通Java、Spring Cloud与JVM底层调优。"
+    )
     mock_elem = MagicMock()
 
     def mock_find(by, value):
@@ -463,7 +465,7 @@ async def test_scrape_jobs_handler_eliminates_blacklisted_cards_and_persists_rea
         config=config,
         broker=broker,
         context=context,
-        handlers=[ScrapeJobsHandler()],
+        handlers=[ScrapeJobsHandler(llm_client=MagicMock())],
     )
 
     task = await broker.create_task(
@@ -478,10 +480,10 @@ async def test_scrape_jobs_handler_eliminates_blacklisted_cards_and_persists_rea
     )
 
     with (
-        patch("boss_agent.worker.handlers.scrape_jobs.StartupDialogPage") as mock_startup_cls,
-        patch("boss_agent.worker.handlers.scrape_jobs.JobListPage") as mock_list_cls,
-        patch("boss_agent.worker.handlers.scrape_jobs.SearchPage") as mock_search_cls,
-        patch("boss_agent.worker.handlers.scrape_jobs.JobDetailPage") as mock_detail_cls,
+        patch("boss_agent.feed_pipeline.StartupDialogPage") as mock_startup_cls,
+        patch("boss_agent.feed_pipeline.JobListPage") as mock_list_cls,
+        patch("boss_agent.feed_pipeline.SearchPage") as mock_search_cls,
+        patch("boss_agent.feed_pipeline.JobDetailPage") as mock_detail_cls,
     ):
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_list = mock_list_cls.return_value
@@ -625,7 +627,7 @@ async def test_scrape_jobs_handler_aborts_when_search_fails(broker, mock_driver)
         config=config,
         broker=broker,
         context=context,
-        handlers=[ScrapeJobsHandler()],
+        handlers=[ScrapeJobsHandler(llm_client=MagicMock())],
     )
 
     task = await broker.create_task(
@@ -657,7 +659,7 @@ async def test_auto_apply_handler_aborts_when_search_fails(broker, mock_driver):
         config=config,
         broker=broker,
         context=context,
-        handlers=[AutoApplyHandler()],
+        handlers=[AutoApplyHandler(llm_client=MagicMock())],
     )
 
     task = await broker.create_task(
@@ -705,7 +707,7 @@ async def test_scrape_jobs_handler_clears_filters_when_enable_filter_false(broke
         config=config,
         broker=broker,
         context=context,
-        handlers=[ScrapeJobsHandler()],
+        handlers=[ScrapeJobsHandler(llm_client=MagicMock())],
     )
 
     task = await broker.create_task(
@@ -717,7 +719,7 @@ async def test_scrape_jobs_handler_clears_filters_when_enable_filter_false(broke
         },
     )
 
-    with patch("boss_agent.worker.handlers.scrape_jobs.FilterDialogPage") as mock_filter_cls:
+    with patch("boss_agent.feed_pipeline.FilterDialogPage") as mock_filter_cls:
         mock_filter_inst = MagicMock()
         mock_filter_cls.return_value = mock_filter_inst
 
@@ -760,7 +762,7 @@ async def test_auto_apply_handler_clears_filters_when_no_filter(broker, mock_dri
         config=config,
         broker=broker,
         context=context,
-        handlers=[AutoApplyHandler()],
+        handlers=[AutoApplyHandler(llm_client=MagicMock())],
     )
 
     task = await broker.create_task(
@@ -772,18 +774,9 @@ async def test_auto_apply_handler_clears_filters_when_no_filter(broker, mock_dri
         },
     )
 
-    with (
-        patch("boss_agent.worker.handlers.auto_apply.FilterDialogPage") as mock_filter_cls,
-        patch("boss_agent.worker.handlers.auto_apply.run_job_application_graph") as mock_graph,
-    ):
+    with patch("boss_agent.feed_pipeline.FilterDialogPage") as mock_filter_cls:
         mock_filter_inst = MagicMock()
         mock_filter_cls.return_value = mock_filter_inst
-        mock_graph.return_value = MagicMock(
-            app_rule_pass=False,
-            app_rule_violation="skip",
-            relaxed_by_whitelist=False,
-            relaxation_reason="",
-        )
 
         executed = await worker.run_once()
         assert executed is True

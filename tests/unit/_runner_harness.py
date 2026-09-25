@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 import pytest
+
 from _service_harness import REPO_ROOT
 
 # Acceptance criteria: `status` completes within 5s even with an offline device present,
