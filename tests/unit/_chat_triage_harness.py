@@ -8,8 +8,8 @@ for the chat page object: both are what the production adapters wrap, so a test
 drives a run through the same seam production uses and asserts on outcomes — which
 companies were blacklisted, which cards were touched — never on internal calls.
 
-The fixtures at the bottom are imported by the suites that need them, so a scripted
-run never reads or writes the repo's own configuration.
+Shared by ``test_chat_triage.py``, ``test_check_chat_telemetry.py`` and
+``test_handlers_check_chat.py``; each suite pins its own settings and policy on top.
 """
 
 from pathlib import Path
@@ -20,6 +20,7 @@ from boss_agent.chat_triage import (
     ChatActorAdapter,
     ChatTriage,
     CommunicationListAdapter,
+    TriagePages,
 )
 from boss_agent.models import ScreeningPolicy
 from boss_agent.pages import CommunicationCard
@@ -28,7 +29,6 @@ from boss_agent.rejection import (
     ChatAcknowledgmentSettings,
     RejectionVerdict,
 )
-from boss_agent.worker.handlers.check_chat import CheckChatPages
 
 REJECTION_TEXT = "我们感谢您的投递，但您的专业技能与我们目前的职位需求并不完全吻合。"
 INVITATION_TEXT = "您好，方便约个时间聊聊吗？"
@@ -200,7 +200,7 @@ def triage_run(
 def scripted_pages(harness: Harness, chat_page: Any | None = None) -> Any:
     """The device world a CHECK_CHAT dispatch drives: the harness for both pages."""
     chat = chat_page if chat_page is not None else FakeChatPage(harness)
-    return lambda driver: CheckChatPages(list_page=harness, chat_page=chat)
+    return lambda driver: TriagePages(list_page=harness, chat_page=chat)
 
 
 def recording_log() -> tuple[list[str], Any]:

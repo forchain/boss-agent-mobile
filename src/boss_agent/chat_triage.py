@@ -44,6 +44,7 @@ from .pages import (
     ChatPage,
     CommunicationCard,
     CommunicationListPage,
+    StartupDialogPage,
 )
 from .rejection import ChatAcknowledgmentSettings
 
@@ -125,15 +126,13 @@ class TriageReport:
     acknowledged: int = 0
     preserved: int = 0
     failed: int = 0
-    #: Cards judged as rejections while dry-running: logged, never acted on.
-    rehearsed: int = 0
     rejections: int = 0
     guardrail_blocked: int = 0
     blacklisted_companies: tuple[str, ...] = ()
     visited_keys: frozenset[str] = frozenset()
 
     @property
-    def blacklisted(self) -> int:
+    def blacklisted_count(self) -> int:
         """How many companies this run newly added to the blacklist."""
         return len(self.blacklisted_companies)
 
@@ -145,7 +144,7 @@ class TriageReport:
             f"evaluated {self.evaluated} message(s), "
             f"{self.skipped_outbound} skipped as outbound, "
             f"{self.rejections} rejection(s) detected, "
-            f"{self.blacklisted} company(ies) blacklisted{note}, "
+            f"{self.blacklisted_count} company(ies) blacklisted{note}, "
             f"{self.guardrail_blocked} blocked by guardrails, "
             f"{self.acknowledged} acknowledged, "
             f"{self.preserved} preserved, "
@@ -191,6 +190,31 @@ class ChatActor(Protocol):
 
     def back_to_list(self) -> bool:
         """Leave the conversation without sending anything."""
+
+
+@dataclass(frozen=True)
+class TriagePages:
+    """The device collaborators one triage run drives, composed from its driver.
+
+    Composed rather than reached for, so a caller — or a test — can hand a run a
+    scripted screen and chat without patching module globals.
+    """
+
+    list_page: Any
+    chat_page: Any
+
+    @classmethod
+    def for_driver(cls, driver: Any) -> "TriagePages":
+        """Compose the production device world for ``driver``.
+
+        The startup dialog is dismissed here, before any page object is handed to a
+        run: a dispatch can land on it, and a dialog left up would swallow the clicks
+        the run is about to make.
+        """
+        startup_page = StartupDialogPage(driver)
+        if startup_page.is_dialog_present():
+            startup_page.dismiss_dialog()
+        return cls(list_page=CommunicationListPage(driver), chat_page=ChatPage(driver))
 
 
 class CommunicationListAdapter:
@@ -271,22 +295,24 @@ class ChatTriage:
         cls,
         broker: Any,
         task_id: str,
+        driver: Any,
         *,
-        list_reader: ChatListReader,
-        chat_actor: ChatActor,
         classifier: Any,
         policy: ScreeningPolicy,
         settings: ChatAcknowledgmentSettings,
+        pages: Any = None,
     ) -> "ChatTriage":
-        """Wire a triage run to a worker task: its log sink and cancellation probe.
+        """Compose a run for a worker task: its device world, log sink and cancel probe.
 
-        The device world arrives already adapted, so task plumbing lives here and
-        the module stays free of broker knowledge — the same shape the Mobile Job
-        Feed Pipeline composes its runs with.
+        Task plumbing lives here, so the module stays free of broker knowledge, and so
+        does the composition of the device world — the same shape the Mobile Job Feed
+        Pipeline composes its runs with. ``pages`` overrides how the driver becomes the
+        two page objects, which is how a test scripts the screen.
         """
+        device = (pages or TriagePages.for_driver)(driver)
         return cls(
-            list_reader=list_reader,
-            chat_actor=chat_actor,
+            list_reader=CommunicationListAdapter(device.list_page),
+            chat_actor=ChatActorAdapter(device.chat_page),
             classifier=classifier,
             policy=policy,
             settings=settings,
@@ -386,7 +412,6 @@ class ChatTriage:
             acknowledged=counters[TriageKind.ACKNOWLEDGED],
             preserved=counters[TriageKind.PRESERVED],
             failed=counters[TriageKind.FAILED],
-            rehearsed=counters[TriageKind.DRY_RUN],
             rejections=rejections,
             guardrail_blocked=guardrail_blocked,
             blacklisted_companies=tuple(blacklisted),
@@ -414,7 +439,7 @@ class ChatTriage:
     # ------------------------------------------------------------------
     async def _triage_card(self, card: CommunicationCard) -> TriageOutcome:
         """Classify one card and act on it when it is an explicit rejection."""
-        sender = card.sender_name or "未知招聘者"
+        sender = _sender(card)
 
         if card.has_outbound_indicator:
             desc = "存在未发送草稿" if "草稿" in card.outbound_status else "我发出后对方未回复"
@@ -449,7 +474,7 @@ class ChatTriage:
             f"依据: {verdict.rationale or '未说明'})"
         )
 
-        blacklisted, guardrail_blocked = await self._ingest_blacklist(card, sender)
+        blacklisted, guardrail_blocked = await self._ingest_blacklist(card)
 
         if self.settings.dry_run:
             await self._log(
@@ -463,7 +488,7 @@ class ChatTriage:
                 guardrail_blocked=guardrail_blocked,
             )
 
-        outcome = await self._acknowledge(card, sender)
+        outcome = await self._acknowledge(card)
         return replace(
             outcome,
             is_rejection=True,
@@ -471,13 +496,14 @@ class ChatTriage:
             guardrail_blocked=guardrail_blocked,
         )
 
-    async def _ingest_blacklist(self, card: CommunicationCard, sender: str) -> tuple[bool, bool]:
+    async def _ingest_blacklist(self, card: CommunicationCard) -> tuple[bool, bool]:
         """Add the card's employer to the company blacklist and persist it.
 
         Returns (newly_blacklisted, guardrail_blocked). Never let a missing employer
         or a guardrail refusal abort the acknowledgment: the rejection is still worth
         closing politely.
         """
+        sender = _sender(card)
         company = card.company_name
         if not company:
             await self._log(
@@ -528,8 +554,9 @@ class ChatTriage:
         )
         return True, False
 
-    async def _acknowledge(self, card: CommunicationCard, sender: str) -> TriageOutcome:
+    async def _acknowledge(self, card: CommunicationCard) -> TriageOutcome:
         """Open the chat, send the polite reply, and submit disinterest feedback."""
+        sender = _sender(card)
         if not self.list_reader.open_card(card):
             await self._log(f"❌ [Chat Open Error] 无法打开与 '{sender}' 的会话，已跳过")
             return TriageOutcome(kind=TriageKind.FAILED)
@@ -579,6 +606,11 @@ class ChatTriage:
         return await self._cancel_probe()
 
 
+def _sender(card: CommunicationCard) -> str:
+    """The name a card's recruiter is narrated by, when the card carries one."""
+    return card.sender_name or "未知招聘者"
+
+
 def _preview(text: str) -> str:
     flat = " ".join((text or "").split())
     if len(flat) <= PREVIEW_CHARS:
@@ -594,6 +626,7 @@ __all__ = [
     "CommunicationListAdapter",
     "StopReason",
     "TriageKind",
+    "TriagePages",
     "TriageOutcome",
     "TriageReport",
 ]

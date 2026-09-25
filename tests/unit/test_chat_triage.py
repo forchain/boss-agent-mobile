@@ -91,7 +91,7 @@ async def test_confirmed_rejection_blacklists_company_then_acknowledges(policy, 
     ).scan()
 
     assert report.rejections == 1
-    assert report.blacklisted == 1
+    assert report.blacklisted_count == 1
     assert report.blacklisted_companies == (COMPANY,)
     assert policy.company_blacklist == [COMPANY]
     assert yaml.safe_load(config_path.read_text(encoding="utf-8"))["company_blacklist"] == [COMPANY]
@@ -110,7 +110,7 @@ async def test_blacklist_is_written_before_the_chat_is_opened(policy, config_pat
         harness, classifier=FakeClassifier({REJECTION_TEXT: True}), policy=policy
     ).scan()
 
-    assert report.blacklisted == 1
+    assert report.blacklisted_count == 1
     assert report.failed == 1
     assert yaml.safe_load(config_path.read_text(encoding="utf-8"))["company_blacklist"] == [COMPANY]
 
@@ -137,7 +137,7 @@ async def test_no_rewrite_when_the_company_is_already_blacklisted(config_path, p
         harness, classifier=FakeClassifier({REJECTION_TEXT: True}), policy=policy
     ).scan()
 
-    assert report.blacklisted == 0
+    assert report.blacklisted_count == 0
     assert config_path.read_text(encoding="utf-8") == before
 
 
@@ -149,7 +149,7 @@ async def test_masked_company_is_refused_by_the_guardrail(policy, config_path):
         harness, classifier=FakeClassifier({REJECTION_TEXT: True}), policy=policy
     ).scan()
 
-    assert report.blacklisted == 0
+    assert report.blacklisted_count == 0
     assert report.guardrail_blocked == 1
     assert policy.company_blacklist == []
     # The rejection is still closed politely.
@@ -166,7 +166,7 @@ async def test_headhunter_agency_is_refused_by_the_guardrail(policy):
         harness, classifier=FakeClassifier({REJECTION_TEXT: True}), policy=policy
     ).scan()
 
-    assert report.blacklisted == 0
+    assert report.blacklisted_count == 0
     assert report.guardrail_blocked == 1
     assert policy.company_blacklist == []
 
@@ -179,7 +179,7 @@ async def test_unparseable_descriptor_skips_blacklisting_but_still_acknowledges(
         harness, classifier=FakeClassifier({REJECTION_TEXT: True}), policy=policy
     ).scan()
 
-    assert report.blacklisted == 0
+    assert report.blacklisted_count == 0
     assert report.acknowledged == 1
 
 
@@ -211,7 +211,7 @@ async def test_outbound_cards_are_skipped_without_any_llm_call(policy):
     assert report.skipped_outbound == 3
     assert report.evaluated == 0
     assert report.rejections == 0
-    assert report.blacklisted == 0
+    assert report.blacklisted_count == 0
     assert harness.events == []
 
 
@@ -224,7 +224,7 @@ async def test_an_unrecognised_badge_is_evaluated_rather_than_skipped(policy):
     report = await triage_run(harness, classifier=classifier, policy=policy).scan()
 
     assert report.skipped_outbound == 0
-    assert report.blacklisted == 1
+    assert report.blacklisted_count == 1
     assert len(classifier.calls) == 1
 
 
@@ -250,12 +250,12 @@ async def test_outbound_cards_do_not_consume_the_scan_budget(policy):
 
     assert report.skipped_outbound == 2
     assert report.evaluated == 1
-    assert report.blacklisted == 1
+    assert report.blacklisted_count == 1
     assert len(classifier.calls) == 1
 
 
 @pytest.mark.asyncio
-async def test_a_screen_that_never_runs_out_terminates_at_the_scan_ceiling(policy):
+async def test_a_long_first_screen_terminates_at_the_scan_ceiling(policy):
     """Skipping is free, so the LLM budget alone cannot bound a wide screen."""
     harness = EndlessOutboundHarness()
     classifier = FakeClassifier(default=True)
@@ -298,7 +298,7 @@ async def test_mixed_list_evaluates_only_the_untagged_cards(policy):
     assert report.skipped_outbound == 1
     assert report.evaluated == 3
     assert report.preserved == 1
-    assert report.blacklisted == 2
+    assert report.blacklisted_count == 2
     assert policy.company_blacklist == [COMPANY, "磐基技术"]
 
 
@@ -320,7 +320,7 @@ async def test_positive_invitation_is_preserved_untouched(policy):
     assert not [e for e in harness.events if e.startswith("send:")]
     assert not [e for e in harness.events if e.startswith("disinterest:")]
     assert report.preserved == 1
-    assert report.blacklisted == 0
+    assert report.blacklisted_count == 0
     assert policy.company_blacklist == []
 
 
@@ -337,7 +337,7 @@ async def test_llm_failure_preserves_message_conservatively(policy):
 
     assert report.preserved == 1
     assert report.rejections == 0
-    assert report.blacklisted == 0
+    assert report.blacklisted_count == 0
     assert policy.company_blacklist == []
     assert not [e for e in harness.events if e.startswith(("open:", "send:", "disinterest:"))]
 
@@ -367,9 +367,9 @@ async def test_dry_run_classifies_without_any_write_action(policy, config_path):
     assert policy.company_blacklist == []
     assert report.dry_run is True
     assert report.rejections == 1
-    assert report.blacklisted == 0
+    assert report.blacklisted_count == 0
+    # The rejection was judged and narrated, but nothing was acknowledged on the device.
     assert report.acknowledged == 0
-    assert report.rehearsed == 1
 
 
 @pytest.mark.asyncio
@@ -459,7 +459,7 @@ async def test_failed_disinterest_is_reported_and_recovers_to_list(policy, confi
     assert report.failed == 1
     assert report.acknowledged == 0
     # The employer stays blacklisted even though the chat sequence failed.
-    assert report.blacklisted == 1
+    assert report.blacklisted_count == 1
     assert "chat_back" in harness.events
 
 
@@ -602,6 +602,37 @@ async def test_recovers_into_the_list_from_an_arbitrary_screen(policy):
 
     assert report.rejections == 1
     assert any("自愈导航" in line for line in lines)
+
+
+@pytest.mark.asyncio
+async def test_a_run_stops_within_one_card_when_the_task_is_cancelled(policy):
+    """Cancellation is observed at the same point as ever: the top of a screen read."""
+    reads = 0
+
+    async def cancelled() -> bool:
+        nonlocal reads
+        reads += 1
+        return reads > 1
+
+    harness = Harness(
+        [
+            card(REJECTION_TEXT, sender="严胜", descriptor=DESCRIPTOR),
+            card(INVITATION_TEXT, sender="张先生", descriptor="深至科技 | 后端"),
+        ],
+        viewport_size=1,
+    )
+
+    report = await triage_run(
+        harness,
+        classifier=FakeClassifier({REJECTION_TEXT: True}),
+        policy=policy,
+        is_cancelled=cancelled,
+    ).scan()
+
+    assert report.stop_reason is StopReason.CANCELLED
+    assert report.scanned == 1
+    # The card behind the cancelled one was never read, let alone judged.
+    assert report.preserved == 0
 
 
 @pytest.mark.asyncio

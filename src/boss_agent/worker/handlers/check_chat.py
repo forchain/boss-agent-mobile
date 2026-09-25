@@ -6,60 +6,28 @@ Handler for CHECK_CHAT: dispatches one 仅沟通 rejection-triage run and report
 The scan, the stop-reason taxonomy, the Outbound Message Indicator bypass, the
 classify → guardrail → blacklist-ingest → acknowledge ordering and the per-run
 tallies all live in the deep ``ChatTriage`` module (spec #267); this handler only
-resolves a run's settings and screening policy from the task payload, composes the
-run over the injected device world, and maps the Triage Report into the task
-telemetry the Task Management Dashboard renders.
+resolves a run's settings and screening policy from the task payload, dispatches the
+run, and maps the Triage Report into the task telemetry the Task Management
+Dashboard renders. It touches no page object, no card and no device.
 
-The device world arrives through the injectable ``pages`` seam rather than being
-constructed inline, so a test scripts the screen and the chat instead of patching
-this module's globals (ticket #268).
+The device world a run drives is composed by the Chat Triage module from the
+driver, through the ``pages`` factory this handler hands in — overridable, so a test
+scripts the screen and the chat instead of patching this module's globals (#268).
 """
 
 import logging
-from dataclasses import dataclass
 from typing import Any
 
 from boss_agent.broker.models import AutomationTask, TaskType
 from boss_agent.broker.pocketbase_adapter import BaseTaskBroker
-from boss_agent.chat_triage import (
-    ChatActorAdapter,
-    ChatTriage,
-    CommunicationListAdapter,
-    StopReason,
-)
+from boss_agent.chat_triage import ChatTriage, StopReason, TriagePages
 from boss_agent.models import ScreeningPolicy
-from boss_agent.pages import ChatPage, CommunicationListPage, StartupDialogPage
 from boss_agent.rejection import ChatAcknowledgmentSettings, RejectionClassifier
 from boss_agent.settings import resolve_chat_acknowledgment_settings
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.handlers.base import BaseTaskHandler, HandlerResult
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class CheckChatPages:
-    """The device collaborators one CHECK_CHAT run drives.
-
-    A run's device world is composed from its driver and handed in, so a test can
-    script the 仅沟通 screen and the chat without reaching into this module.
-    """
-
-    list_page: Any
-    chat_page: Any
-
-    @classmethod
-    def for_driver(cls, driver: Any) -> "CheckChatPages":
-        """Compose the production device world for ``driver``.
-
-        The startup dialog is dismissed here, before any page object is handed to a
-        run: a dispatch can land on it, and a dialog left up would swallow the
-        clicks the run is about to make.
-        """
-        startup_page = StartupDialogPage(driver)
-        if startup_page.is_dialog_present():
-            startup_page.dismiss_dialog()
-        return cls(list_page=CommunicationListPage(driver), chat_page=ChatPage(driver))
 
 
 class CheckChatHandler(BaseTaskHandler):
@@ -79,7 +47,7 @@ class CheckChatHandler(BaseTaskHandler):
         self._settings = settings
         self._policy = policy
         # A factory over the driver, because the driver only exists at dispatch time.
-        self._pages = pages or CheckChatPages.for_driver
+        self._pages = pages or TriagePages.for_driver
 
     @property
     def task_type(self) -> TaskType:
@@ -116,18 +84,17 @@ class CheckChatHandler(BaseTaskHandler):
         await broker.append_log(
             task.id,
             f"Starting CHECK_CHAT (dry_run={settings.dry_run}, "
-            f"max_scan_depth={settings.max_scan_depth}, reply_text='{settings.rejection_reply_text}')",
+            f"max_scan_depth={settings.max_scan_depth}, reply='{settings.rejection_reply_text}')",
         )
 
-        pages = self._pages(driver)
         report = await ChatTriage.for_task(
             broker,
             task.id,
-            list_reader=CommunicationListAdapter(pages.list_page),
-            chat_actor=ChatActorAdapter(pages.chat_page),
+            driver,
             classifier=self.classifier,
             policy=self._resolve_policy(),
             settings=settings,
+            pages=self._pages,
         ).scan()
 
         if report.stop_reason is StopReason.LIST_UNREACHABLE:
@@ -144,7 +111,7 @@ class CheckChatHandler(BaseTaskHandler):
                 "evaluated": report.evaluated,
                 "skipped_outbound": report.skipped_outbound,
                 "rejections": report.rejections,
-                "blacklisted": report.blacklisted,
+                "blacklisted": report.blacklisted_count,
                 "blacklisted_companies": list(report.blacklisted_companies),
                 "guardrail_blocked": report.guardrail_blocked,
                 "acknowledged": report.acknowledged,
@@ -156,4 +123,4 @@ class CheckChatHandler(BaseTaskHandler):
         )
 
 
-__all__ = ["CheckChatHandler", "CheckChatPages"]
+__all__ = ["CheckChatHandler"]
