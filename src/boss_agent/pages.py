@@ -54,6 +54,18 @@ COMMUTE_DISTANCE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+#: Swipes the commute probe may spend before failing open (spec #209, ticket #263). An
+#: expanded JD is often 3,000-6,000+ characters and pushes `home_tip_vf` several screens
+#: below the fold, so the original three-swipe budget ran out on exactly the
+#: comprehensive postings the distance ceiling exists to screen.
+COMMUTE_PROBE_MAX_SCROLLS = 6
+
+#: Fraction of the viewport covered per probe swipe. 55% covers noticeably more ground per
+#: gesture than the original 40% while staying within safe bounds: ``_scroll_page_up``
+#: clamps the gesture to end no higher than 15% of the screen height, so this stride still
+#: trails off well below the status bar and the detail page's own header.
+COMMUTE_PROBE_SCROLL_STRIDE_RATIO = 0.55
+
 #: Separator in a communication card's `[Company] | [Position]` descriptor.
 CARD_DESCRIPTOR_SEPARATOR: str = "|"
 
@@ -1420,7 +1432,9 @@ class JobDetailPage(BaseBossPage):
         super().__init__(driver, locator_registry)
         self._current_description: str = ""
 
-    def extract_commute_distance(self, max_scrolls: int = 3) -> tuple[float | None, str]:
+    def extract_commute_distance(
+        self, max_scrolls: int = COMMUTE_PROBE_MAX_SCROLLS
+    ) -> tuple[float | None, str]:
         """Probe toward the bottom of the detail page for the commute distance widget.
 
         The Boss platform offers no native distance filter, but the detail page bottom
@@ -1428,6 +1442,10 @@ class JobDetailPage(BaseBossPage):
         ``(distance_km, raw_text)``; ``(None, "")`` when the widget is absent within the
         scroll budget (no home address configured, remote job, or timeout) so callers
         fail open instead of rejecting an unknown distance.
+
+        The budget defaults to :data:`COMMUTE_PROBE_MAX_SCROLLS` because an expanded JD
+        pushes the widget far below the fold; callers may override it. Probing ends as soon
+        as the widget appears or the scroll container refuses to move any further.
         """
         elem = self.find_by_key("job_detail.distance_tip", timeout_sec=1.0)
 
@@ -1435,12 +1453,21 @@ class JobDetailPage(BaseBossPage):
         while elem is None and scrolls < max_scrolls:
             scrolls += 1
             win_size = self._get_window_size()
+            offset_before = self._detail_scroll_offset()
             _log_info(
                 f"📜 [Commute Probe {scrolls}/{max_scrolls}] Distance widget not in viewport; "
                 f"scrolling toward page bottom to reveal 'home_tip_vf'..."
             )
-            self._scroll_page_up(int(win_size.get("height", 2400) * 0.4))
+            self._scroll_page_up(
+                int(win_size.get("height", 2400) * COMMUTE_PROBE_SCROLL_STRIDE_RATIO)
+            )
             elem = self.find_by_key("job_detail.distance_tip", timeout_sec=1.0)
+            if elem is None and self._scroll_ended_at_bottom(offset_before):
+                _log_info(
+                    f"⏹️ [Commute Probe] Detail page is already scrolled to its bottom "
+                    f"after {scrolls} scroll(s); 'home_tip_vf' cannot appear below it."
+                )
+                break
 
         if elem is None:
             _log_info(
@@ -1469,6 +1496,27 @@ class JobDetailPage(BaseBossPage):
         else:
             _log_info(f"📍 [Commute Probe] Parsed commute distance: {distance_km} km ('{raw_text}')")
         return distance_km, raw_text
+
+    def _detail_scroll_offset(self) -> float | None:
+        """Screen-space top of a stable detail-page anchor, or None when unreadable.
+
+        Comparing the anchor before and after a swipe is how the commute probe tells that
+        the scroll container has bottomed out. Unreadable bounds return None, which
+        disables the check entirely: an unreadable page must spend its full scroll budget
+        rather than end the search on a guess.
+        """
+        for key in ("job_detail.desc", "job_detail.title"):
+            rect = getattr(self.find_now(key), "rect", None)
+            if isinstance(rect, dict) and isinstance(rect.get("y"), int | float):
+                return float(rect["y"])
+        return None
+
+    def _scroll_ended_at_bottom(self, offset_before: float | None) -> bool:
+        """Whether a full swipe left the page exactly where it was (container at its end)."""
+        if offset_before is None:
+            return False
+        offset_after = self._detail_scroll_offset()
+        return offset_after is not None and abs(offset_after - offset_before) < 1.0
 
     @staticmethod
     def _parse_commute_distance(raw_text: str) -> float | None:
@@ -1675,6 +1723,7 @@ class JobDetailPage(BaseBossPage):
         fallback_title: str = "",
         probe_commute_distance: bool = False,
         is_headhunter: bool | None = None,
+        commute_max_scrolls: int = COMMUTE_PROBE_MAX_SCROLLS,
     ) -> JobPosting:
         """Extract structured JobPosting from current job detail screen.
 
@@ -1687,6 +1736,9 @@ class JobDetailPage(BaseBossPage):
         never rendered and the scroll could only burn gesture budget and
         element-discovery timeouts. An unknown channel (``None``) still probes, so an
         unrecognised direct hire is never silently spared distance screening.
+
+        ``commute_max_scrolls`` is the probe's swipe budget, relaxed by default for the
+        long expanded JDs that push the widget several screens below the fold.
 
         Raises RuntimeError if job details are not found on the screen.
         """
@@ -1768,7 +1820,9 @@ class JobDetailPage(BaseBossPage):
         commute_distance_km: float | None = None
         commute_distance_text = ""
         if probe_commute_distance and is_headhunter is not True:
-            commute_distance_km, commute_distance_text = self.extract_commute_distance()
+            commute_distance_km, commute_distance_text = self.extract_commute_distance(
+                max_scrolls=commute_max_scrolls
+            )
 
         return JobPosting(
             title=eff_title,

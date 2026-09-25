@@ -104,6 +104,84 @@ def test_extract_commute_distance_stops_at_scroll_budget():
     assert page._scroll_page_up.call_count == 3
 
 
+def test_extract_commute_distance_default_budget_reaches_widget_beyond_three_scrolls():
+    """An expanded multi-thousand-character JD pushes the widget further down than the
+    original 3-swipe budget could cover (Ticket #263)."""
+    page = _page(_distance_element("距离家庭住址19.5千米"), scroll_hits=5)
+
+    distance_km, text = page.extract_commute_distance()
+
+    assert distance_km == pytest.approx(19.5)
+    assert text == "距离家庭住址19.5千米"
+    assert page._scroll_page_up.call_count == 5
+
+
+def test_extract_commute_distance_default_budget_is_relaxed_to_at_least_six_scrolls():
+    """Absent widget: fail open only after spending the relaxed default budget."""
+    page = _page(None)
+
+    assert page.extract_commute_distance() == (None, "")
+    assert page._scroll_page_up.call_count >= 6
+
+
+def test_extract_commute_distance_honours_explicit_budget_override():
+    """Callers can raise or lower the budget; the default is not hard-wired."""
+    page = _page(None)
+
+    assert page.extract_commute_distance(max_scrolls=9) == (None, "")
+    assert page._scroll_page_up.call_count == 9
+
+
+def test_extract_commute_distance_stride_covers_most_of_the_viewport():
+    """Each downward swipe must cover 50-55% of the viewport height: more ground per
+    gesture than the original 40%, while staying clear of the top/bottom chrome."""
+    page = _page(None)
+
+    page.extract_commute_distance(max_scrolls=1)
+
+    stride_px = page._scroll_page_up.call_args.args[0]
+    assert 0.50 * 2400 <= stride_px <= 0.55 * 2400
+
+
+def _bottom_limited_page(bottom_after_swipes: int) -> JobDetailPage:
+    """A page whose scroll container cannot move past ``bottom_after_swipes`` swipes.
+
+    Mirrors a device at the end of a long expanded JD: the description anchor keeps
+    reporting the same screen position once the container is fully scrolled.
+    """
+    page = JobDetailPage(driver=MagicMock())
+    page._get_window_size = MagicMock(return_value={"width": 1080, "height": 2400})
+    page.gestures.human_swipe = MagicMock()
+
+    desc = MagicMock()
+    desc.text = "负责大模型应用与Agent工作流平台建设。" * 400
+    state = {"swipes": 0}
+
+    def _scroll(*_args, **_kwargs):
+        state["swipes"] += 1
+
+    page._scroll_page_up = MagicMock(side_effect=_scroll)
+
+    def custom_find(key, **kwargs):
+        if key == "job_detail.desc":
+            frozen = max(-20.0, -10.0 * min(state["swipes"], bottom_after_swipes))
+            desc.rect = {"x": 0, "y": frozen, "width": 1080, "height": 4000}
+            return desc
+        return None
+
+    page.find_by_key = MagicMock(side_effect=custom_find)
+    return page
+
+
+def test_extract_commute_distance_stops_early_when_container_reaches_bottom():
+    """A container that can no longer move must end the probe before the budget, instead
+    of burning the remaining swipes on a widget that cannot come into view."""
+    page = _bottom_limited_page(bottom_after_swipes=2)
+
+    assert page.extract_commute_distance() == (None, "")
+    assert page._scroll_page_up.call_count == 3
+
+
 def test_extract_commute_distance_fails_open_when_widget_absent():
     """No home address / remote job / timeout: never guess, never reject."""
     page = _page(None)
@@ -234,6 +312,42 @@ def _probing_detail_page(distance_text: str | None = None) -> tuple[JobDetailPag
 
     page.find_by_key = MagicMock(side_effect=custom_find)
     return page, probed_keys
+
+
+def test_extract_job_posting_honours_relaxed_probe_budget(monkeypatch):
+    """The detail-extraction flow must inherit the relaxed budget: a widget that only
+    appears after four swipes is unreachable under the old 3-swipe default (Ticket #263)."""
+    import time
+
+    monkeypatch.setattr(time, "sleep", lambda s: None)
+
+    page = JobDetailPage(driver=MagicMock())
+    page.wait_for_key = MagicMock(return_value=True)
+    page._get_window_size = MagicMock(return_value={"width": 1080, "height": 2400})
+
+    state = {"swipes": 0}
+    page._scroll_page_up = MagicMock(
+        side_effect=lambda *a, **kw: state.__setitem__("swipes", state["swipes"] + 1)
+    )
+
+    title = MagicMock()
+    title.text = "大模型 Agent 平台架构师"
+    desc = MagicMock()
+    desc.text = "负责大模型应用与Agent工作流平台建设，覆盖推理链编排与多智能体协同。"
+    distance = _distance_element("距离家庭住址19.5千米")
+
+    def custom_find(key, **kwargs):
+        if key == "job_detail.distance_tip":
+            return distance if state["swipes"] >= 4 else None
+        return {"job_detail.title": title, "job_detail.desc": desc}.get(key)
+
+    page.find_by_key = MagicMock(side_effect=custom_find)
+
+    posting = page.extract_job_posting(timeout_sec=2.0, probe_commute_distance=True)
+
+    assert posting.commute_distance_km == pytest.approx(19.5)
+    assert posting.commute_distance_text == "距离家庭住址19.5千米"
+    assert state["swipes"] == 4
 
 
 def test_extract_job_posting_skips_probing_for_headhunter_posting(monkeypatch):
