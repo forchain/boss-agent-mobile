@@ -9,6 +9,7 @@ import contextlib
 import json
 import logging
 import os
+import re
 import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Callable
@@ -41,6 +42,47 @@ INVALID_COMPANY_NAMES: frozenset[str] = frozenset({"", "未注明公司", "未�
 # contact history, bounded so a runaway collection cannot stall the worker.
 APPLIED_POOL_PAGE_SIZE = 200
 APPLIED_POOL_MAX_PAGES = 25
+
+#: PocketBase caps a text field at 5000 characters when it carries no explicit `max`
+#: (core/field_text.go). Provisioning raises that cap for `job_description`
+#: (provisioner.LONG_TEXT_FIELD_MAX_CHARS), but a collection predating the upgrade still
+#: rejects a fully expanded JD with `validation_max_text_constraint` — and because a
+#: rejected upsert returns empty, the worker used to drop the enriched record outright
+#: (log: `❌ [Enrich Error]`). Recovery truncates to the server's boundary instead.
+POCKETBASE_DEFAULT_TEXT_MAX_CHARS = 5000
+
+#: PocketBase error code for a text value longer than the field's configured `max`.
+TEXT_MAX_CONSTRAINT_CODE = "validation_max_text_constraint"
+
+#: The only field length recovery may rewrite. Another field hitting the constraint is not
+#: ours to repair: truncating `job_description` would lose data without clearing it.
+LENGTH_RECOVERY_FIELD = "job_description"
+
+#: The rejected bound as PocketBase reports it. v0.39 answers with
+#: ``{"message":"Must be no more than 5000 character(s).","params":{"max":5000}}``, older
+#: releases phrase it "Must be shorter than 5000."; reading the number back means a
+#: deployment with a non-default cap is still recovered at the right boundary.
+_SERVER_TEXT_LIMIT_PATTERNS = (
+    re.compile(r'"max"\s*:\s*(\d+)'),
+    re.compile(r"no more than\s+(\d+)", re.IGNORECASE),
+    re.compile(r"shorter than\s+(\d+)", re.IGNORECASE),
+)
+
+
+def is_length_rejection_for_job_description(response_text: Any) -> bool:
+    """Whether a PocketBase error is specifically about `job_description` being too long."""
+    text = response_text if isinstance(response_text, str) else ""
+    return TEXT_MAX_CONSTRAINT_CODE in text and LENGTH_RECOVERY_FIELD in text
+
+
+def resolve_text_constraint_limit(response_text: Any) -> int:
+    """Character boundary to truncate to, taken from the server's own message when present."""
+    text = response_text if isinstance(response_text, str) else ""
+    for pattern in _SERVER_TEXT_LIMIT_PATTERNS:
+        match = pattern.search(text)
+        if match and int(match.group(1)) > 0:
+            return int(match.group(1))
+    return POCKETBASE_DEFAULT_TEXT_MAX_CHARS
 
 
 class BaseTaskBroker(ABC):
@@ -1450,6 +1492,43 @@ class PocketBaseTaskBroker(BaseTaskBroker):
             logger.warning("PocketBase clear_job_communication failed: %s", e)
         return {}
 
+    async def _write_job_record(self, verb: str, url: str, body: dict[str, Any]) -> Any:
+        """Write a job record, truncating an over-long ``job_description`` and retrying once.
+
+        A collection still carrying PocketBase's implicit text cap rejects the whole write
+        for a full expanded JD, and the caller then reports an empty upsert — the enriched
+        record is lost for exactly the comprehensive postings the JD matters most for. One
+        retry at the server's own reported boundary keeps the record; the truncation is
+        logged as a warning because the tail is genuinely lost.
+        """
+        loop = asyncio.get_running_loop()
+        send = self.session.patch if verb == "patch" else self.session.post
+        response = await loop.run_in_executor(
+            None, lambda: send(url, json=body, headers=self._headers())
+        )
+
+        rejection_text = getattr(response, "text", None)
+        if not is_length_rejection_for_job_description(rejection_text):
+            return response
+
+        description = body.get(LENGTH_RECOVERY_FIELD)
+        limit = resolve_text_constraint_limit(rejection_text)
+        if not isinstance(description, str) or len(description) <= limit:
+            # The rejected field is not the one we can shrink: report the original failure.
+            return response
+
+        logger.warning(
+            "PocketBase rejected %s: job_description is %d chars, over the server's %d-char "
+            "text cap. Retrying with a truncated description; the tail is dropped.",
+            url,
+            len(description),
+            limit,
+        )
+        retry_body = {**body, LENGTH_RECOVERY_FIELD: description[:limit]}
+        return await loop.run_in_executor(
+            None, lambda: send(url, json=retry_body, headers=self._headers())
+        )
+
     async def upsert_job_record(self, record_data: dict[str, Any]) -> dict[str, Any]:
         title = (record_data.get("title") or "").strip()
         comp_name = (record_data.get("company_name") or "").strip()
@@ -1621,14 +1700,7 @@ class PocketBaseTaskBroker(BaseTaskBroker):
                         patch_body["commute_distance_text"] = record_data["commute_distance_text"]
 
                     patch_url = f"{url}/{rec_id}"
-                    patch_resp = await loop.run_in_executor(
-                        None,
-                        lambda: self.session.patch(
-                            patch_url,
-                            json=patch_body,
-                            headers=self._headers(),
-                        ),
-                    )
+                    patch_resp = await self._write_job_record("patch", patch_url, patch_body)
                     if patch_resp.status_code == 200:
                         return patch_resp.json()
                     logger.error(
@@ -1695,14 +1767,7 @@ class PocketBaseTaskBroker(BaseTaskBroker):
             body["id"] = uuid.uuid4().hex[:15]
 
         try:
-            resp = await loop.run_in_executor(
-                None,
-                lambda: self.session.post(
-                    url,
-                    json=body,
-                    headers=self._headers(),
-                ),
-            )
+            resp = await self._write_job_record("post", url, body)
             if resp.status_code in (200, 201):
                 return resp.json()
             logger.error(

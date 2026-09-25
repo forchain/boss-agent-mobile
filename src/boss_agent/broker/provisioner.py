@@ -79,6 +79,17 @@ RESUME_REVISIONS_FIELDS = [
 #: at digest-only. An explicit 0 also falls back to 5000, so a large cap is required.
 LONG_TEXT_FIELD_MAX_CHARS = 100_000
 
+#: The same bound in the two shapes PocketBase has used for field options: current releases
+#: keep `min`/`max`/`pattern` directly on the field, while older ones nest them under
+#: `options`. Only the flat shape is honoured by PocketBase 0.39 (a nested `options.max` is
+#: silently ignored — verified against a live server), and the nested one is what older
+#: releases read, so both are sent and whichever the server understands takes effect.
+LONG_TEXT_FIELD_OPTIONS: dict[str, Any] = {
+    "min": 0,
+    "max": LONG_TEXT_FIELD_MAX_CHARS,
+    "pattern": "",
+}
+
 JOB_RECORDS_FIELDS = [
     {"name": "id", "type": "text", "primaryKey": True, "required": False},
     {"name": "fingerprint", "type": "text", "required": True},
@@ -92,7 +103,9 @@ JOB_RECORDS_FIELDS = [
         "name": "job_description",
         "type": "text",
         "required": False,
-        "options": {"min": 0, "max": LONG_TEXT_FIELD_MAX_CHARS, "pattern": ""},
+        # Flat keys are what current PocketBase reads; `options` is the pre-0.24 shape.
+        **LONG_TEXT_FIELD_OPTIONS,
+        "options": dict(LONG_TEXT_FIELD_OPTIONS),
     },
     {"name": "company_scale", "type": "text", "required": False},
     {"name": "industry", "type": "text", "required": False},
@@ -531,6 +544,101 @@ def provision_sqlite_database(
         conn.close()
 
 
+def _stored_text_max(field: dict[str, Any]) -> int | None:
+    """A text field's configured character bound, in either PocketBase schema shape.
+
+    None means the field carries no usable bound, i.e. PocketBase's implicit 5000-char cap
+    applies. The flat key wins when both are present, because that is the one current
+    PocketBase reads.
+    """
+    if isinstance(field.get("max"), int) and field["max"] > 0:
+        return field["max"]
+    options = field.get("options")
+    if isinstance(options, dict) and isinstance(options.get("max"), int) and options["max"] > 0:
+        return options["max"]
+    return None
+
+
+def _widen_remote_text_field_cap(
+    session: Any,
+    base_url: str,
+    collection: str,
+    field_name: str,
+    max_chars: int,
+    timeout: float,
+) -> bool:
+    """Widen ``collection.field_name`` to ``max_chars`` on an already-provisioned instance.
+
+    Collections created before :data:`LONG_TEXT_FIELD_MAX_CHARS` existed carry PocketBase's
+    implicit 5000-character text cap, and the create loop skips every collection that already
+    exists — so such an instance rejects each expanded JD with
+    ``validation_max_text_constraint`` and drops the enriched record (Ticket #264).
+
+    PocketBase replaces the entire ``fields`` array on update, so the stored definition is
+    read back and re-sent with its field ids: any field omitted from the payload would be
+    deleted along with its data. Returns True when a widening update was accepted.
+    """
+    url = f"{base_url}/api/collections/{collection}"
+    try:
+        resp = session.get(url, timeout=timeout, verify=False)
+        if not resp.ok:
+            logger.warning(
+                "Cannot inspect collection '%s' for schema upgrade: %s", collection, resp.text
+            )
+            print(f"⚠️ Cannot inspect collection '{collection}': {resp.text}")
+            return False
+        stored = resp.json()
+    except Exception as ex:
+        logger.warning("Error inspecting collection '%s' for schema upgrade: %s", collection, ex)
+        return False
+
+    fields = stored.get("fields")
+    if not isinstance(fields, list):
+        logger.warning(
+            "Collection '%s' returned no usable field list; skipping upgrade", collection
+        )
+        return False
+
+    target = next((f for f in fields if isinstance(f, dict) and f.get("name") == field_name), None)
+    if target is None:
+        logger.warning("Collection '%s' has no '%s' field to widen", collection, field_name)
+        return False
+
+    current_max = _stored_text_max(target)
+    if current_max is not None and current_max >= max_chars:
+        print(
+            f"ℹ️ Collection '{collection}.{field_name}' already allows {current_max} chars, "
+            f"no schema upgrade needed."
+        )
+        return False
+
+    # Write the bound in both shapes: current PocketBase ignores a nested `options.max`
+    # entirely, while older releases ignore the flat keys. Only add `options` when the
+    # server's own definition already nests them, so a modern schema keeps its shape.
+    target.update(LONG_TEXT_FIELD_OPTIONS)
+    options = target.get("options")
+    if isinstance(options, dict):
+        options.update(LONG_TEXT_FIELD_OPTIONS)
+
+    try:
+        patch_resp = session.patch(url, json={"fields": fields}, timeout=timeout, verify=False)
+    except Exception as ex:
+        logger.warning("Failed to widen '%s.%s' text cap: %s", collection, field_name, ex)
+        return False
+
+    if patch_resp.ok:
+        logger.info("Widened %s.%s text cap to %d chars", collection, field_name, max_chars)
+        print(f"🛠️ Widened '{collection}.{field_name}' text limit to {max_chars} chars")
+        return True
+
+    logger.error("Failed to widen '%s.%s' text cap: %s", collection, field_name, patch_resp.text)
+    print(
+        f"⚠️ Failed to widen '{collection}.{field_name}' to {max_chars} chars: {patch_resp.text} "
+        f"(full job descriptions may still be truncated on write)"
+    )
+    return False
+
+
 def provision_remote_pocketbase(
     pb_url: str,
     email: str,
@@ -708,7 +816,9 @@ def provision_remote_pocketbase(
                     "name": "job_description",
                     "type": "text",
                     "required": False,
-                    "options": {"min": 0, "max": LONG_TEXT_FIELD_MAX_CHARS, "pattern": ""},
+                    # Flat keys are what current PocketBase reads; `options` is the pre-0.24 shape.
+                    **LONG_TEXT_FIELD_OPTIONS,
+                    "options": dict(LONG_TEXT_FIELD_OPTIONS),
                 },
                 {"name": "status", "type": "text", "required": True},
                 {"name": "match_score", "type": "number", "required": False},
@@ -736,6 +846,19 @@ def provision_remote_pocketbase(
                 print(f"❌ Failed to create collection '{c_name}': {create_resp.text}")
         else:
             print(f"ℹ️ Collection '{c_name}' already exists")
+
+    # 3b. Upgrade the schema of a pre-existing job_records collection. The create loop skips
+    # collections that already exist, so an instance provisioned before the wide text cap
+    # existed would keep rejecting every expanded JD (Ticket #264).
+    if "job_records" in existing_names:
+        _widen_remote_text_field_cap(
+            session,
+            base_url,
+            collection="job_records",
+            field_name="job_description",
+            max_chars=LONG_TEXT_FIELD_MAX_CHARS,
+            timeout=timeout,
+        )
 
     # 4. Seed saved_searches if empty
     try:
