@@ -73,6 +73,12 @@ RESUME_REVISIONS_FIELDS = [
     {"name": "updated", "type": "autodate", "onCreate": True, "onUpdate": True},
 ]
 
+#: PocketBase treats a text field with no explicit max as capped at 5000 chars
+#: (core/field_text.go), which silently rejected full expanded JDs (e.g. a 9031-char
+#: bilingual posting) with validation_max_text_constraint and left the record stuck
+#: at digest-only. An explicit 0 also falls back to 5000, so a large cap is required.
+LONG_TEXT_FIELD_MAX_CHARS = 100_000
+
 JOB_RECORDS_FIELDS = [
     {"name": "id", "type": "text", "primaryKey": True, "required": False},
     {"name": "fingerprint", "type": "text", "required": True},
@@ -82,7 +88,12 @@ JOB_RECORDS_FIELDS = [
     {"name": "salary_range", "type": "text", "required": False},
     {"name": "location", "type": "text", "required": False},
     {"name": "digest", "type": "text", "required": False},
-    {"name": "job_description", "type": "text", "required": False},
+    {
+        "name": "job_description",
+        "type": "text",
+        "required": False,
+        "options": {"min": 0, "max": LONG_TEXT_FIELD_MAX_CHARS, "pattern": ""},
+    },
     {"name": "company_scale", "type": "text", "required": False},
     {"name": "industry", "type": "text", "required": False},
     {"name": "tags", "type": "json", "required": False},
@@ -686,7 +697,12 @@ def provision_remote_pocketbase(
                 {"name": "salary_range", "type": "text", "required": False},
                 {"name": "location", "type": "text", "required": False},
                 {"name": "digest", "type": "text", "required": False},
-                {"name": "job_description", "type": "text", "required": False},
+                {
+                    "name": "job_description",
+                    "type": "text",
+                    "required": False,
+                    "options": {"min": 0, "max": LONG_TEXT_FIELD_MAX_CHARS, "pattern": ""},
+                },
                 {"name": "status", "type": "text", "required": True},
                 {"name": "match_score", "type": "number", "required": False},
                 {"name": "jd_key_requirements", "type": "json", "required": False},

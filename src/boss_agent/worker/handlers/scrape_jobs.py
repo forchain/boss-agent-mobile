@@ -543,7 +543,7 @@ class ScrapeJobsHandler(BaseTaskHandler):
                             "salary_range": job_posting.salary_range
                             or card_record.get("salary_range", ""),
                             "location": job_posting.location or card_record.get("location", ""),
-                            "digest": digest_text,
+                            "digest": digest_text or job_posting.digest,
                             "job_description": job_posting.job_description
                             or card_record.get("job_description", ""),
                             "status": JobRecordStatus.JD_SAVED.value,

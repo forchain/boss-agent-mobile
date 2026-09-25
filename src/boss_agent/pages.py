@@ -232,6 +232,23 @@ def parse_company_scale_industry(
     return comp_name, scale, industry
 
 
+def company_duplicates_card_title(company: str, title: str) -> bool:
+    """True when an extracted 'company' is the card's own job title instead of an employer.
+
+    Boss's recommendation popup cards reuse the position name in the company row, so a
+    locator can read the title text back as a company. Left alone, it poisons the
+    fingerprint (same job saved twice under different keys) and smuggles blacklisted
+    employers past company-name screening. A trailing badge-junk suffix (' &@') is
+    tolerated as the same mis-read, because a genuine employer does not begin with
+    its own posting's full title.
+    """
+    c = (company or "").strip()
+    t = (title or "").strip()
+    if not c or not t:
+        return False
+    return c == t or (c.startswith(t) and len(c) - len(t) <= 3)
+
+
 class BaseBossPage:
     """Base class for all Boss 直聘 Page Objects using key-based locator resolution."""
 
@@ -626,7 +643,9 @@ class JobListPage(BaseBossPage):
             company, scale, industry = parse_company_scale_industry(
                 raw_company, explicit_scale=raw_scale, explicit_industry=raw_industry
             )
-            if company and is_invalid_company_name(company):
+            if company and (
+                is_invalid_company_name(company) or company_duplicates_card_title(company, title)
+            ):
                 company = ""
             recruiter_name, recruiter_title, is_headhunter = parse_recruiter_info(raw_recruiter)
 
@@ -736,7 +755,11 @@ class JobListPage(BaseBossPage):
                     # 6. Company line detection (includes scale / industry heuristic)
                     if not company:
                         c_name, c_scale, c_ind = parse_company_scale_industry(t)
-                        if c_name and not is_invalid_company_name(c_name):
+                        if (
+                            c_name
+                            and not is_invalid_company_name(c_name)
+                            and not company_duplicates_card_title(c_name, title)
+                        ):
                             company = c_name
                             if c_scale and not scale:
                                 scale = c_scale

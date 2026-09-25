@@ -427,6 +427,27 @@ def test_extract_digest_and_tags_from_jd():
     assert "Java" in rec.tags
 
 
+def test_extract_digest_from_jd_english_headers_and_word_boundary():
+    """English/bilingual JDs: bracketed section headers must not leak into the digest,
+    and the 100-char truncation must not cut a Latin word in half."""
+    from boss_agent.models import extract_digest_from_jd
+
+    raw_jd = """【 Role Summary 】；
+We are seeking a passionate and experienced Senior Engineer to join our team to build the architecture of our shared coding agent platform used in your daily workflow and deeply integrated tooling.
+
+【 Key Responsibilities 】；
+Design and ship agentic developer tooling across the organization."""
+
+    digest = extract_digest_from_jd(raw_jd)
+    assert "Role Summary" not in digest
+    assert "Key Responsibilities" not in digest
+    assert digest.startswith("We are seeking")
+    assert len(digest) <= 103
+    body = digest[:-3] if digest.endswith("...") else digest
+    last_word = body.split(" ")[-1]
+    assert last_word in raw_jd.split()
+
+
 @pytest.mark.asyncio
 async def test_broker_rejects_unspecified_or_empty_title_or_company():
     """Verify upsert_job_record drops records with empty or placeholder title/company ('宁可不录入')."""
