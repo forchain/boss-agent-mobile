@@ -1,4 +1,5 @@
 import { buildTaskFilter, buildTaskQueryString, clampTaskLimit, clampTaskPage } from '$lib/taskQuery';
+import { rebuildRerunPayload } from '$lib/taskLaunch';
 import PocketBase from 'pocketbase';
 import type {
 	AutomationTask,
@@ -502,10 +503,16 @@ export async function getAutomationTask(taskId: string): Promise<AutomationTask 
 export async function rerunTask(taskId: string): Promise<AutomationTask | null> {
 	const original = await getAutomationTask(taskId);
 	if (!original) return null;
-	return createAutomationTask(original.task_type, {
-		...original.payload,
-		rerun_of: taskId
-	});
+	// Rebuilt from the original's inputs through the launch builder, not spread from its
+	// payload: a spread propagated whatever divergences the original carried — a stale
+	// min_score, a preview flag set by a builder that no longer exists.
+	return createAutomationTask(
+		original.task_type,
+		rebuildRerunPayload(
+			{ task_type: original.task_type, payload: original.payload || {} },
+			taskId
+		)
+	);
 }
 
 export async function resumeTask(taskId: string): Promise<boolean> {

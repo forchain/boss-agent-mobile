@@ -182,3 +182,84 @@ export function buildLaunch(
 	if (kind === 'login_diagnostic') return buildLoginDiagnosticLaunch(options);
 	throw new LaunchContractError(`unknown task kind ${kind}`);
 }
+
+/**
+ * Inputs a rerun must carry over verbatim.
+ *
+ * They are launch *inputs*, not contract output — the builder has no way to re-derive
+ * them from a previous payload — so they are named explicitly rather than
+ * spread-copied. A blind spread is what let a stale `min_score` or an inverted
+ * preview flag survive into a rerun.
+ */
+const RERUN_CARRIED_INPUTS = [
+	'direct_job_id',
+	'job_title',
+	'company_name',
+	'candidate_profile',
+	'screening_policy'
+] as const;
+
+/** The prior launch, as a rerun needs to read it. */
+export interface RerunSource {
+	task_type: string;
+	payload: Record<string, any>;
+}
+
+/**
+ * Rebuild a task's payload from the original's *inputs*, through the builder.
+ *
+ * The contract fields are re-derived, so a divergence carried by the original — an
+ * old default, a flag from a builder that no longer exists — cannot propagate. Only
+ * the fields the builder cannot derive are carried over, by name.
+ */
+export function rebuildRerunPayload(
+	original: RerunSource,
+	rerunOf: string,
+	source: LaunchSource = 'manual'
+): Record<string, unknown> {
+	const prior = original.payload || {};
+
+	if (original.task_type === 'CHECK_CHAT') {
+		const search =
+			prior.saved_search_id || prior.search_id
+				? { id: String(prior.saved_search_id ?? prior.search_id), name: prior.search_name }
+				: null;
+		const launch = buildChatCleanupLaunch({
+			source,
+			search,
+			// No mode: a rerun honours the configured drill mode, like the scheduler does.
+			mode: undefined,
+			chat: {
+				rejection_reply_text: prior.rejection_reply_text,
+				max_scan_depth: prior.max_scan_depth,
+				dry_run: prior.dry_run
+			}
+		});
+		return { ...launch.payload, rerun_of: rerunOf };
+	}
+
+	if (original.task_type === 'CHECK_LOGIN') {
+		return { ...buildLoginDiagnosticLaunch({ source }).payload, rerun_of: rerunOf };
+	}
+
+	const live = prior.preview_only === false && prior.auto_send === true;
+	const launch = buildSearchLaunch(
+		{
+			id: String(prior.saved_search_id ?? prior.search_id ?? ''),
+			name: prior.search_name,
+			keyword: prior.keyword,
+			enable_search: prior.enable_search,
+			enable_filter: prior.enable_filter,
+			filter: prior.filter,
+			target_action: prior.target_action,
+			max_jobs: prior.max_jobs
+		},
+		{ source, mode: live ? 'live' : 'draft' }
+	);
+
+	const carried: Record<string, unknown> = {};
+	for (const key of RERUN_CARRIED_INPUTS) {
+		if (prior[key] !== undefined) carried[key] = prior[key];
+	}
+	return { ...launch.payload, ...carried, rerun_of: rerunOf };
+}

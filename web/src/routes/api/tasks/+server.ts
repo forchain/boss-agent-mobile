@@ -2,6 +2,7 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { listAutomationTasks, createAutomationTask } from '$lib/pocketbase';
 import { clampTaskLimit, clampTaskPage } from '$lib/taskQuery';
+import { TASK_TYPES, type TaskType } from '$lib/types';
 
 export const GET: RequestHandler = async ({ url }) => {
 	try {
@@ -38,7 +39,19 @@ export const GET: RequestHandler = async ({ url }) => {
 export const POST: RequestHandler = async ({ request }) => {
 	try {
 		const body = await request.json();
-		const taskType = body.task_type || 'AUTO_APPLY';
+		// An absent task_type is a missing field, not an invitation to guess: defaulting
+		// to AUTO_APPLY meant a UI bug silently started a greeting run instead of being
+		// refused. Each kind is addressed explicitly by its own builder.
+		const taskType = body.task_type;
+		if (typeof taskType !== 'string' || !TASK_TYPES.includes(taskType as TaskType)) {
+			return json(
+				{
+					success: false,
+					message: `Unknown task_type ${JSON.stringify(taskType)}; expected one of ${TASK_TYPES.join(', ')}`
+				},
+				{ status: 400 }
+			);
+		}
 		const payload = body.payload || {};
 
 		const task = await createAutomationTask(taskType, payload);

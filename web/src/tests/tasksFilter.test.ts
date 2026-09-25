@@ -95,6 +95,20 @@ describe('GET /api/tasks forwards the filter to the broker', () => {
 		expect(sent).toContain("task_type='SCRAPE_JOBS'");
 	});
 
+	it('refuses an unknown or absent task_type instead of defaulting to AUTO_APPLY', async () => {
+		// The default turned a UI bug into a greeting run rather than a refusal.
+		const { POST: handleTasksPost } = await import('../routes/api/tasks/+server');
+		for (const body of [{ payload: {} }, { task_type: 'AUTO_APPLYY', payload: {} }]) {
+			const res = await handleTasksPost({
+				request: { json: async () => body }
+			} as any);
+			expect(res.status).toBe(400);
+			const json = await res.json();
+			expect(json.success).toBe(false);
+			expect(json.message).toContain('Unknown task_type');
+		}
+	});
+
 	it('still works when only a filter is supplied', async () => {
 		const { GET: handleTasksGet } = await import('../routes/api/tasks/+server');
 		const event: any = {

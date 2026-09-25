@@ -113,3 +113,80 @@ describe('AutomationTask launch contract parity', () => {
 		expect(explicit.payload.dry_run).toBe(false);
 	});
 });
+
+describe('rerun rebuilds through the builder', () => {
+	it('re-derives the contract fields instead of spreading the original', async () => {
+		const { rebuildRerunPayload } = await import('../lib/taskLaunch');
+		// An original carrying a stale threshold and a preview flag from a builder that
+		// no longer exists.
+		const rebuilt = rebuildRerunPayload(
+			{
+				task_type: 'AUTO_APPLY',
+				payload: {
+					saved_search_id: 's1',
+					search_name: '策略',
+					keyword: 'agent',
+					target_action: 'auto_apply',
+					min_score: 75,
+					preview_only: true,
+					auto_send: false,
+					triggered_manually: true
+				}
+			},
+			'orig-1'
+		);
+
+		expect(rebuilt.min_score).toBe(MIN_SCORE);
+		expect(rebuilt.preview_only).toBe(true);
+		expect(rebuilt.rerun_of).toBe('orig-1');
+		expect(rebuilt.source).toBe('manual');
+		expect('triggered_manually' in rebuilt).toBe(false);
+	});
+
+	it('carries the inputs the builder cannot derive', async () => {
+		const { rebuildRerunPayload } = await import('../lib/taskLaunch');
+		const rebuilt = rebuildRerunPayload(
+			{
+				task_type: 'AUTO_APPLY',
+				payload: {
+					saved_search_id: 's1',
+					target_action: 'auto_apply',
+					direct_job_id: 'job-9',
+					job_title: '工程师',
+					company_name: '深至科技'
+				}
+			},
+			'orig-2'
+		);
+		expect(rebuilt.direct_job_id).toBe('job-9');
+		expect(rebuilt.job_title).toBe('工程师');
+		expect(rebuilt.company_name).toBe('深至科技');
+	});
+
+	it('keeps a live run live and a draft run draft', async () => {
+		const { rebuildRerunPayload } = await import('../lib/taskLaunch');
+		const live = rebuildRerunPayload(
+			{
+				task_type: 'AUTO_APPLY',
+				payload: { saved_search_id: 's1', target_action: 'auto_apply', preview_only: false, auto_send: true }
+			},
+			'o'
+		);
+		expect(live.preview_only).toBe(false);
+		expect(live.auto_send).toBe(true);
+	});
+
+	it('lets the configured drill mode win for a chat cleanup rerun', async () => {
+		const { rebuildRerunPayload } = await import('../lib/taskLaunch');
+		const rebuilt = rebuildRerunPayload(
+			{
+				task_type: 'CHECK_CHAT',
+				payload: { saved_search_id: 'chat-1', search_name: '清扫', dry_run: true }
+			},
+			'o'
+		);
+		expect(rebuilt.dry_run).toBe(true);
+		expect(rebuilt.saved_search_id).toBe('chat-1');
+		expect(rebuilt.rerun_of).toBe('o');
+	});
+});

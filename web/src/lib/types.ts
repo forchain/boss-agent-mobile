@@ -163,6 +163,14 @@ export type TaskStatus =
 
 export type TaskType = 'AUTO_APPLY' | 'SCRAPE_JOBS' | 'CHECK_LOGIN' | 'CHECK_CHAT';
 
+/** The task types the worker's handler strategy accepts, in one place. */
+export const TASK_TYPES: readonly TaskType[] = [
+	'AUTO_APPLY',
+	'SCRAPE_JOBS',
+	'CHECK_LOGIN',
+	'CHECK_CHAT'
+];
+
 export interface AutomationTask {
 	id: string;
 	task_type: TaskType;
