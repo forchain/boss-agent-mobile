@@ -210,9 +210,18 @@ class AutomationScheduler:
             )
             dispatched_tasks.append(task)
 
-            # Update last_run_at timestamp on saved search
+            # Update last_run_at timestamp on saved search. A failed write does not undo
+            # the dispatch that already happened, so it is not fatal — but it does defeat
+            # the same-minute guard above, because the next tick re-reads the stale
+            # timestamp. Say so rather than let the search re-dispatch silently.
             search.last_run_at = now.isoformat()
-            await self.broker.saved_searches.save_saved_search(search)
+            if await self.broker.saved_searches.save_saved_search(search) is None:
+                logger.warning(
+                    "Could not persist last_run_at for search %s (%s); it may dispatch "
+                    "again within this minute",
+                    search.id,
+                    search.name,
+                )
             logger.info(
                 "Scheduled %s task %s dispatched for search %s (%s)",
                 task.task_type.value,

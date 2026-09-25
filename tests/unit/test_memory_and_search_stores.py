@@ -303,6 +303,47 @@ async def test_a_search_round_trips(pb_session: FakePocketBaseSession, index: in
     assert fetched.cron_expression == "0 9 * * *"
 
 
+class _RejectingSession(FakePocketBaseSession):
+    """A PocketBase that rejects every write, by status code or by transport error."""
+
+    def __init__(self, *, raise_instead: bool = False) -> None:
+        super().__init__()
+        self._raise_instead = raise_instead
+
+    def _reject(self, method: str, url: str) -> FakeResponse:
+        self.calls.append((method, url))
+        if self._raise_instead:
+            raise RuntimeError("connection reset")
+        return FakeResponse(500, {"message": "boom"})
+
+    def post(self, url: str, **kwargs: Any) -> FakeResponse:
+        return self._reject("POST", url)
+
+    def patch(self, url: str, **kwargs: Any) -> FakeResponse:
+        return self._reject("PATCH", url)
+
+
+@pytest.mark.parametrize("raise_instead", [False, True], ids=["http-500", "transport-error"])
+@pytest.mark.asyncio
+async def test_a_failed_search_write_reports_failure_rather_than_a_phantom(
+    raise_instead: bool,
+) -> None:
+    """A write must not come back looking persisted when PocketBase never took it.
+
+    Returning the input unchanged made a phantom indistinguishable from a stored preset,
+    and the Automation Scheduler's same-minute guard reads the ``last_run_at`` this write
+    is supposed to store — so a swallowed failure meant the same search dispatched again
+    on every tick for the rest of the minute. Reads may degrade; writes must speak up.
+    """
+    store = PocketBaseSavedSearchStore(
+        base_url="http://pb.test",
+        session=_RejectingSession(raise_instead=raise_instead),
+        headers=_headers,
+    )
+    assert await store.save_saved_search(_search()) is None
+    assert await store.list_saved_searches() == []
+
+
 @pytest.mark.parametrize("index", [0, 1], ids=["in-memory", "pocketbase"])
 @pytest.mark.asyncio
 async def test_deleting_a_missing_search_reports_false(

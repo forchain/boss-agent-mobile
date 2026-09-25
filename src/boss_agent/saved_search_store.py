@@ -45,8 +45,14 @@ class SavedSearchStore(ABC):
         """Fetch a saved search preset by ID."""
 
     @abstractmethod
-    async def save_saved_search(self, saved_search: SavedSearch) -> SavedSearch:
-        """Create or update a saved search preset."""
+    async def save_saved_search(self, saved_search: SavedSearch) -> SavedSearch | None:
+        """Create or update a saved search preset.
+
+        ``None`` means the preset did not land. A write cannot degrade the way a read
+        can: returning the input unchanged would let a caller believe it persisted a
+        record that PocketBase never saw, and the Automation Scheduler's same-minute
+        guard reads the ``last_run_at`` this write is supposed to store.
+        """
 
     @abstractmethod
     async def delete_saved_search(self, search_id: str) -> bool:
@@ -70,7 +76,7 @@ class InMemorySavedSearchStore(SavedSearchStore):
     async def get_saved_search(self, search_id: str) -> SavedSearch | None:
         return self._searches.get(search_id)
 
-    async def save_saved_search(self, saved_search: SavedSearch) -> SavedSearch:
+    async def save_saved_search(self, saved_search: SavedSearch) -> SavedSearch | None:
         self._searches[saved_search.id] = saved_search
         return saved_search
 
@@ -144,7 +150,7 @@ class PocketBaseSavedSearchStore(SavedSearchStore):
             logger.warning("PocketBase get_saved_search for %s failed: %s", search_id, e)
             return None
 
-    async def save_saved_search(self, saved_search: SavedSearch) -> SavedSearch:
+    async def save_saved_search(self, saved_search: SavedSearch) -> SavedSearch | None:
         url = self._collection_url()
         loop = asyncio.get_running_loop()
         body = _wire_body(saved_search)
@@ -164,9 +170,14 @@ class PocketBaseSavedSearchStore(SavedSearchStore):
             if resp.ok:
                 data = resp.json()
                 return SavedSearch.from_dict(data["id"], data)
+            logger.warning(
+                "PocketBase save_saved_search for %s failed: HTTP %s",
+                saved_search.id,
+                resp.status_code,
+            )
         except Exception as e:
             logger.warning("PocketBase save_saved_search failed: %s", e)
-        return saved_search
+        return None
 
     async def delete_saved_search(self, search_id: str) -> bool:
         url = f"{self._collection_url()}/{search_id}"
