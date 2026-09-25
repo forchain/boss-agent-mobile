@@ -13,6 +13,8 @@
 #   ./worker.sh restart           # Restart Worker daemon in foreground
 #   ./worker.sh restart --daemon  # Restart Worker daemon in background
 #   ./worker.sh status            # Check Worker daemon status
+#   ./worker.sh attach            # Attach to live Worker daemon log stream
+#   ./worker.sh logs              # Alias for attach
 #   ./wk.sh <cmd>                 # Symlink alias for ./worker.sh
 # ==============================================================================
 
@@ -90,7 +92,6 @@ get_running_worker_pid() {
 
 attach_worker_logs() {
     local PID="$1"
-    echo "ℹ️ Automation Worker Daemon is already running (PID: ${PID})."
     echo "👀 Attaching to live log stream (${WORKER_LOG_FILE})... (Press Ctrl+C to detach)"
     echo "----------------------------------------------------------------------"
 
@@ -102,6 +103,19 @@ attach_worker_logs() {
 
     exec tail -n 30 -f "${WORKER_LOG_FILE}"
 }
+
+cmd_attach() {
+    local PID
+    PID="$(get_running_worker_pid)"
+    if [[ -z "${PID}" ]] || ! process_alive "${PID}"; then
+        echo "🔴 Automation Worker daemon is NOT RUNNING." >&2
+        echo "   Cannot attach to log stream. Start worker first via: ./worker.sh" >&2
+        return 1
+    fi
+    echo "ℹ️ Automation Worker daemon is running (PID: ${PID})."
+    attach_worker_logs "${PID}"
+}
+
 
 cmd_status() {
     echo "🔍 Checking Automation Worker status..."
@@ -230,17 +244,6 @@ check_appium_health() {
 }
 
 cmd_start() {
-    local RUNNING_PID
-    RUNNING_PID="$(get_running_worker_pid)"
-    if [[ -n "${RUNNING_PID}" ]] && process_alive "${RUNNING_PID}"; then
-        attach_worker_logs "${RUNNING_PID}"
-    fi
-
-    # Run Pre-flight Gates
-    check_pocketbase_health
-    check_dedicated_avd_ready
-    check_appium_health
-
     local IS_DAEMON=0
     local WORKER_ARGS=()
     for arg in "$@"; do
@@ -251,13 +254,36 @@ cmd_start() {
         fi
     done
 
+    local RUNNING_PID
+    RUNNING_PID="$(get_running_worker_pid)"
+    if [[ -n "${RUNNING_PID}" ]] && process_alive "${RUNNING_PID}"; then
+        if [[ "${IS_DAEMON}" -eq 1 || "${DAEMON:-0}" -eq 1 ]]; then
+            echo "ℹ️ Automation Worker daemon is already running in background (PID: ${RUNNING_PID})."
+            echo "   Logs: ${WORKER_LOG_FILE}"
+            return 0
+        else
+            echo "ℹ️ Automation Worker daemon is already running (PID: ${RUNNING_PID})."
+            attach_worker_logs "${RUNNING_PID}"
+            return 0
+        fi
+    fi
+
+    # Run Pre-flight Gates
+    check_pocketbase_health
+    check_dedicated_avd_ready
+    check_appium_health
+
     echo "🤖 Starting Boss Agent Mobile Automation Worker Daemon..."
     echo "   PocketBase Broker : ${POCKETBASE_URL:-http://127.0.0.1:8090}"
     echo "   Dedicated AVD     : ${TARGET_AVD:-boss_avd_arm64}"
     echo "   Log File          : ${WORKER_LOG_FILE}"
 
     if [[ "${IS_DAEMON}" -eq 1 || "${DAEMON:-0}" -eq 1 ]]; then
-        nohup "${RUNNER[@]}" scripts/worker.py "${WORKER_ARGS[@]}" >> "${WORKER_LOG_FILE}" 2>&1 &
+        if [[ ${#WORKER_ARGS[@]} -gt 0 ]]; then
+            nohup "${RUNNER[@]}" scripts/worker.py "${WORKER_ARGS[@]}" >> "${WORKER_LOG_FILE}" 2>&1 &
+        else
+            nohup "${RUNNER[@]}" scripts/worker.py >> "${WORKER_LOG_FILE}" 2>&1 &
+        fi
         local PID=$!
         echo "${PID}" > "${WORKER_PID_FILE}"
         echo "✅ Automation Worker daemon started in background (PID: ${PID})."
@@ -268,7 +294,11 @@ cmd_start() {
     echo "   Press Ctrl+C to stop."
     echo ""
 
-    "${RUNNER[@]}" scripts/worker.py "${WORKER_ARGS[@]}" >> "${WORKER_LOG_FILE}" 2>&1 &
+    if [[ ${#WORKER_ARGS[@]} -gt 0 ]]; then
+        "${RUNNER[@]}" scripts/worker.py "${WORKER_ARGS[@]}" >> "${WORKER_LOG_FILE}" 2>&1 &
+    else
+        "${RUNNER[@]}" scripts/worker.py >> "${WORKER_LOG_FILE}" 2>&1 &
+    fi
     local PID=$!
     echo "${PID}" > "${WORKER_PID_FILE}"
 
@@ -300,7 +330,11 @@ case "${ACTION}" in
     status)
         cmd_status
         ;;
+    attach|logs)
+        cmd_attach
+        ;;
     *)
         cmd_start "$@"
         ;;
 esac
+

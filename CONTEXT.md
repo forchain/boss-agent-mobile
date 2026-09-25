@@ -302,7 +302,7 @@ The first-class shell lifecycle scripts managing process states (start, stop, re
 _Avoid_: helper scripts, launcher utils, batch scripts
 
 **Master Service Orchestrator (`run.sh`)**:
-The top-level orchestration entrypoint coordinating service groups (`infra`, `app`, `all`) and dispatching subsystem commands (`worker`, `web`, `pb`, `emu`, `appium`, `doctor`, `live`) without implementing inline process management.
+The top-level orchestration entrypoint coordinating service groups (`infra`, `app`, `all`) and dispatching subsystem commands (`worker`, `web`, `pb`, `emu`, `appium`, `doctor`, `live`) without implementing inline process management. Default bare execution (`./run.sh`) boots application services in the background and automatically attaches to the live Automation Worker log stream.
 _Avoid_: monolithic runner, kitchen-sink script
 
 **Infrastructure Services (基础服务)**:

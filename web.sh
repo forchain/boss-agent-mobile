@@ -195,11 +195,27 @@ cmd_stop() {
 }
 
 cmd_start() {
+    local IS_DAEMON=0
+    local VITE_ARGS=()
+    for arg in "$@"; do
+        if [[ "${arg}" == "--daemon" ]]; then
+            IS_DAEMON=1
+        else
+            VITE_ARGS+=("${arg}")
+        fi
+    done
+
     # Check if already running locally
     local RUNNING_PID
     RUNNING_PID="$(get_running_web_pid)"
     if curl -s -f "http://127.0.0.1:${WEB_PORT}" >/dev/null 2>&1 || curl -s -f "${WEB_URL}" >/dev/null 2>&1; then
-        attach_logs "${RUNNING_PID:-unknown}"
+        if [[ "${IS_DAEMON}" -eq 1 || "${DAEMON:-0}" -eq 1 ]]; then
+            echo "ℹ️ SvelteKit Web Dashboard is already running in background (PID: ${RUNNING_PID:-unknown}) at ${WEB_URL}"
+            return 0
+        else
+            attach_logs "${RUNNING_PID:-unknown}"
+            return 0
+        fi
     fi
 
     # Check Node / npm environment
@@ -249,16 +265,6 @@ cmd_start() {
     echo "   Log File       : ${LOG_FILE}"
     echo "   Press Ctrl+C to stop."
     echo ""
-
-    local IS_DAEMON=0
-    local VITE_ARGS=()
-    for arg in "$@"; do
-        if [[ "${arg}" == "--daemon" ]]; then
-            IS_DAEMON=1
-        else
-            VITE_ARGS+=("${arg}")
-        fi
-    done
 
     if [[ "${IS_DAEMON}" -eq 1 || "${DAEMON:-0}" -eq 1 ]]; then
         if [[ ${#VITE_ARGS[@]} -gt 0 ]]; then
