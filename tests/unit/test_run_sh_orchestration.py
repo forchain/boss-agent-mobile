@@ -152,3 +152,37 @@ def test_run_sh_status_dashboard(orchestrator_runtime: Path):
     assert "Service Status Dashboard" in res.stdout
     assert "Infrastructure Services Status:" in res.stdout
     assert "Application Services Status:" in res.stdout
+
+
+def test_run_sh_bare_invocation_starts_app_and_attaches_to_worker(orchestrator_runtime: Path):
+    calls_log = orchestrator_runtime / "calls.log"
+
+    res = _run(orchestrator_runtime)
+    assert res.returncode == 0
+    content = calls_log.read_text(encoding="utf-8")
+    assert "worker.sh start --daemon" in content
+    assert "web.sh start --daemon" in content
+    assert "worker.sh attach" in content
+
+
+def test_run_sh_explicit_start_does_not_attach(orchestrator_runtime: Path):
+    calls_log = orchestrator_runtime / "calls.log"
+
+    res = _run(orchestrator_runtime, "start")
+    assert res.returncode == 0
+    content = calls_log.read_text(encoding="utf-8")
+    assert "worker.sh start --daemon" in content
+    assert "web.sh start --daemon" in content
+    assert "worker.sh attach" not in content
+
+
+def test_run_sh_app_start_does_not_attach(orchestrator_runtime: Path):
+    calls_log = orchestrator_runtime / "calls.log"
+
+    res = _run(orchestrator_runtime, "app", "start")
+    assert res.returncode == 0
+    content = calls_log.read_text(encoding="utf-8")
+    assert "worker.sh start --daemon" in content
+    assert "web.sh start --daemon" in content
+    assert "worker.sh attach" not in content
+
