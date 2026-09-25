@@ -155,12 +155,12 @@ async def test_scrape_records_platform_historical_contact_and_backs_out(broker):
     assert finished.status == TaskStatus.SUCCESS
     assert any("既有沟通" in log for log in finished.logs)
 
-    records = await broker.list_job_records(status="applied")
+    records = await broker.job_store.list_job_records(status="applied")
     assert len(records) == 1
     assert records[0]["company_name"] == "深至科技"
     assert not records[0].get("applied_at")
     assert records[0].get("applied_source") == "platform_historical"
-    assert await broker.count_today_applied_jobs() == 0
+    assert await broker.job_store.count_today_applied_jobs() == 0
 
 
 @pytest.mark.asyncio
@@ -215,7 +215,7 @@ async def test_scrape_marks_expired_posting_as_ignored_and_backs_out(broker):
     assert finished.status == TaskStatus.SUCCESS
     assert any("岗位失效" in log for log in finished.logs)
 
-    records = await broker.list_job_records(status="ignored")
+    records = await broker.job_store.list_job_records(status="ignored")
     assert len(records) == 1
     assert "停止招聘" in records[0].get("screened_reason", "")
 
@@ -239,7 +239,7 @@ async def test_auto_apply_aborts_without_llm_waste_on_communicated_job(broker):
         handlers=[apply_handler],
     )
 
-    dispatched = await broker.upsert_job_record(
+    dispatched = await broker.job_store.upsert_job_record(
         {
             "fingerprint": "fp-dispatched-communicated",
             "title": "大模型算法工程师",
@@ -283,7 +283,7 @@ async def test_auto_apply_aborts_without_llm_waste_on_communicated_job(broker):
     assert finished is not None
     assert any("既有沟通" in log for log in finished.logs)
 
-    records = await broker.list_job_records(status="applied")
+    records = await broker.job_store.list_job_records(status="applied")
     assert len(records) == 1
     assert records[0].get("applied_source") == "platform_historical"
-    assert await broker.count_today_applied_jobs() == 0
+    assert await broker.job_store.count_today_applied_jobs() == 0

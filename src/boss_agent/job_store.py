@@ -204,54 +204,6 @@ class JobRecordStore(ABC):
         """Count how many greetings were dispatched today, in UTC."""
 
 
-class JobRecordStoreFacade:
-    """Legacy delegating surface keeping broker callers working during the migration.
-
-    ADR 0013 retains these wrappers for one transition cycle so existing worker daemons
-    and the web dashboard's broker handle keep operating while callers move to
-    ``broker.job_store``. New code should talk to the store directly.
-    """
-
-    job_store: JobRecordStore
-
-    async def upsert_job_record(self, record_data: dict[str, Any]) -> dict[str, Any]:
-        return await self.job_store.upsert_job_record(record_data)
-
-    async def get_job_record_by_fingerprint(self, fingerprint: str) -> dict[str, Any] | None:
-        return await self.job_store.get_job_record_by_fingerprint(fingerprint)
-
-    async def has_job_fingerprint(self, fingerprint: str) -> bool:
-        return await self.job_store.has_job_fingerprint(fingerprint)
-
-    async def get_job_record(self, record_id: str) -> dict[str, Any] | None:
-        return await self.job_store.get_job_record(record_id)
-
-    async def list_job_records(
-        self, status: str | None = None, limit: int = 50
-    ) -> list[dict[str, Any]]:
-        return await self.job_store.list_job_records(status=status, limit=limit)
-
-    async def update_job_record_status(
-        self,
-        record_id: str,
-        status: str,
-        match_data: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        return await self.job_store.update_job_record_status(record_id, status, match_data)
-
-    async def delete_job_record(self, record_id: str) -> bool:
-        return await self.job_store.delete_job_record(record_id)
-
-    async def get_applied_direct_companies(self, cooldown_days: int = 0) -> set[str]:
-        return await self.job_store.get_applied_direct_companies(cooldown_days=cooldown_days)
-
-    async def clear_job_communication(self, record_id: str) -> dict[str, Any]:
-        return await self.job_store.clear_job_communication(record_id)
-
-    async def count_today_applied_jobs(self) -> int:
-        return await self.job_store.count_today_applied_jobs()
-
-
 class InMemoryJobRecordStore(JobRecordStore):
     """Volatile job record store for tests and local development."""
 

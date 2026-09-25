@@ -41,7 +41,7 @@ async def test_in_memory_broker_job_records_deduplication():
     broker = InMemoryTaskBroker()
 
     # 1. Insert new job record
-    rec1 = await broker.upsert_job_record(
+    rec1 = await broker.job_store.upsert_job_record(
         {
             "title": "AI Agent 架构师",
             "company_name": "某科技公司",
@@ -56,18 +56,18 @@ async def test_in_memory_broker_job_records_deduplication():
     assert rec1["fingerprint"] == compute_job_fingerprint("某科技公司", "AI Agent 架构师", "王总")
 
     # 2. Update status to 'matched'
-    await broker.update_job_record_status(
+    await broker.job_store.update_job_record_status(
         record_id=rec1["id"],
         status="matched",
         match_data={"match_score": 88, "greeting_message": "您好王总..."},
     )
-    updated = await broker.get_job_record(rec1["id"])
+    updated = await broker.job_store.get_job_record(rec1["id"])
     assert updated is not None
     assert updated["status"] == "matched"
     assert updated["match_score"] == 88
 
     # 3. Duplicate ingestion of same job from another keyword
-    rec2 = await broker.upsert_job_record(
+    rec2 = await broker.job_store.upsert_job_record(
         {
             "title": "AI Agent 架构师",
             "company_name": "某科技公司",
@@ -87,20 +87,20 @@ async def test_in_memory_broker_job_records_deduplication():
 @pytest.mark.asyncio
 async def test_in_memory_broker_list_unmatched():
     broker = InMemoryTaskBroker()
-    r1 = await broker.upsert_job_record(
+    r1 = await broker.job_store.upsert_job_record(
         {"title": "T1", "company_name": "C1", "recruiter_name": "R1"}
     )
-    r2 = await broker.upsert_job_record(
+    r2 = await broker.job_store.upsert_job_record(
         {"title": "T2", "company_name": "C2", "recruiter_name": "R2"}
     )
 
-    unmatched = await broker.list_job_records(status="unmatched")
+    unmatched = await broker.job_store.list_job_records(status="unmatched")
     assert len(unmatched) == 2
 
     # Mark r1 as matched
-    await broker.update_job_record_status(r1["id"], status="matched")
+    await broker.job_store.update_job_record_status(r1["id"], status="matched")
 
-    unmatched_after = await broker.list_job_records(status="unmatched")
+    unmatched_after = await broker.job_store.list_job_records(status="unmatched")
     assert len(unmatched_after) == 1
     assert unmatched_after[0]["id"] == r2["id"]
 
@@ -121,7 +121,7 @@ async def test_pocketbase_broker_job_records_mocked(monkeypatch):
     mock_resp.json.return_value = {"items": [{"id": "rec-123"}]}
     mock_session.get.return_value = mock_resp
 
-    has_fp = await broker.has_job_fingerprint("test-fp")
+    has_fp = await broker.job_store.has_job_fingerprint("test-fp")
     assert has_fp is True
 
     # 2. upsert existing record patches last_seen_at
@@ -130,7 +130,7 @@ async def test_pocketbase_broker_job_records_mocked(monkeypatch):
     patch_resp.json.return_value = {"id": "rec-123", "status": "unmatched"}
     mock_session.patch.return_value = patch_resp
 
-    res = await broker.upsert_job_record(
+    res = await broker.job_store.upsert_job_record(
         {"title": "Job 1", "company_name": "Comp 1", "recruiter_name": "Rec 1", "fingerprint": "test-fp"}
     )
     assert res["id"] == "rec-123"
@@ -154,7 +154,7 @@ async def test_pocketbase_broker_job_records_no_fallback_on_empty(tmp_path, monk
     get_empty = MagicMock(status_code=200, json=lambda: {"items": [], "totalItems": 0})
     mock_session.get.return_value = get_empty
 
-    items = await broker.list_job_records(status="unmatched")
+    items = await broker.job_store.list_job_records(status="unmatched")
     assert items == []
     assert not Path(".boss_agent/job_records_fallback.json").exists()
 
@@ -176,17 +176,17 @@ async def test_pocketbase_broker_job_records_no_fallback_on_404(tmp_path, monkey
     mock_session.get.return_value = get_404
 
     # 1. has_job_fingerprint returns False and does not create fallback
-    has_fp = await broker.has_job_fingerprint("fp_test_123")
+    has_fp = await broker.job_store.has_job_fingerprint("fp_test_123")
     assert has_fp is False
     assert not Path(".boss_agent/job_records_fallback.json").exists()
 
     # 2. list_job_records returns [] on 404
-    items = await broker.list_job_records(status="unmatched")
+    items = await broker.job_store.list_job_records(status="unmatched")
     assert items == []
     assert not Path(".boss_agent/job_records_fallback.json").exists()
 
     # 3. get_job_record returns None on 404
-    fetched = await broker.get_job_record("nonexistent_id")
+    fetched = await broker.job_store.get_job_record("nonexistent_id")
     assert fetched is None
     assert not Path(".boss_agent/job_records_fallback.json").exists()
 
@@ -221,7 +221,7 @@ async def test_pocketbase_broker_upsert_persists_without_fallback_file(tmp_path,
     mock_session.get.return_value = check_resp
     mock_session.post.return_value = post_resp
 
-    rec = await broker.upsert_job_record(
+    rec = await broker.job_store.upsert_job_record(
         {
             "title": "Agent研发架构师",
             "company_name": "互联网大厂",
@@ -287,7 +287,7 @@ async def test_job_records_digest_and_job_description_decoupling():
 
     # 3. In-memory broker persistence preserves digest and updates job_description on enrichment
     broker = InMemoryTaskBroker()
-    saved = await broker.upsert_job_record(
+    saved = await broker.job_store.upsert_job_record(
         {
             "title": "AI Engineer",
             "company_name": "Google",
@@ -301,7 +301,7 @@ async def test_job_records_digest_and_job_description_decoupling():
     assert saved["job_description"] == ""
 
     # Simulate detail page enrichment
-    enriched = await broker.upsert_job_record(
+    enriched = await broker.job_store.upsert_job_record(
         {
             "title": "AI Engineer",
             "company_name": "Google",
@@ -320,7 +320,7 @@ async def test_in_memory_broker_delete_job_record_and_release_fingerprint():
     broker = InMemoryTaskBroker()
     fp = compute_job_fingerprint("OpenAI", "Prompt Engineer", "Sam")
 
-    saved = await broker.upsert_job_record(
+    saved = await broker.job_store.upsert_job_record(
         {
             "title": "Prompt Engineer",
             "company_name": "OpenAI",
@@ -332,21 +332,21 @@ async def test_in_memory_broker_delete_job_record_and_release_fingerprint():
     rec_id = saved["id"]
 
     # Verify presence
-    assert await broker.has_job_fingerprint(fp) is True
-    assert (await broker.get_job_record(rec_id)) is not None
-    assert len(await broker.list_job_records()) == 1
+    assert await broker.job_store.has_job_fingerprint(fp) is True
+    assert (await broker.job_store.get_job_record(rec_id)) is not None
+    assert len(await broker.job_store.list_job_records()) == 1
 
     # Delete the record
-    deleted = await broker.delete_job_record(rec_id)
+    deleted = await broker.job_store.delete_job_record(rec_id)
     assert deleted is True
 
     # Fingerprint must be released, allowing re-ingestion
-    assert await broker.has_job_fingerprint(fp) is False
-    assert (await broker.get_job_record(rec_id)) is None
-    assert len(await broker.list_job_records()) == 0
+    assert await broker.job_store.has_job_fingerprint(fp) is False
+    assert (await broker.job_store.get_job_record(rec_id)) is None
+    assert len(await broker.job_store.list_job_records()) == 0
 
     # Deleting non-existent record returns False
-    assert await broker.delete_job_record("non_existent_id") is False
+    assert await broker.job_store.delete_job_record("non_existent_id") is False
 
 
 @pytest.mark.asyncio
@@ -366,7 +366,7 @@ async def test_pocketbase_broker_delete_job_record():
     mock_resp.status_code = 204
     mock_session.delete.return_value = mock_resp
 
-    success = await broker.delete_job_record("rec_123")
+    success = await broker.job_store.delete_job_record("rec_123")
     assert success is True
     mock_session.delete.assert_called_with(
         "https://remote-pb:4433/api/collections/job_records/records/rec_123",
@@ -378,12 +378,12 @@ async def test_pocketbase_broker_delete_job_record():
     mock_resp_404.status_code = 404
     mock_session.delete.return_value = mock_resp_404
 
-    not_found = await broker.delete_job_record("rec_404")
+    not_found = await broker.job_store.delete_job_record("rec_404")
     assert not_found is False
 
     # 3. Network / RequestException
     mock_session.delete.side_effect = requests.RequestException("Connection error")
-    err_res = await broker.delete_job_record("rec_err")
+    err_res = await broker.job_store.delete_job_record("rec_err")
     assert err_res is False
 
 
@@ -455,7 +455,7 @@ async def test_broker_rejects_unspecified_or_empty_title_or_company():
 
     # Rejected titles
     for bad_title in ["", "   ", "未注明职位", "未注明岗位", "未知职位", "未知岗位"]:
-        res = await broker.upsert_job_record(
+        res = await broker.job_store.upsert_job_record(
             {
                 "title": bad_title,
                 "company_name": "正常公司",
@@ -466,7 +466,7 @@ async def test_broker_rejects_unspecified_or_empty_title_or_company():
 
     # Rejected companies
     for bad_company in ["", "   ", "未注明公司", "未知公司"]:
-        res = await broker.upsert_job_record(
+        res = await broker.job_store.upsert_job_record(
             {
                 "title": "Python工程师",
                 "company_name": bad_company,
@@ -475,7 +475,7 @@ async def test_broker_rejects_unspecified_or_empty_title_or_company():
         )
         assert res == {}, f"Should have rejected bad company '{bad_company}'"
 
-    assert len(await broker.list_job_records()) == 0
+    assert len(await broker.job_store.list_job_records()) == 0
 
 
 @pytest.mark.asyncio
@@ -483,7 +483,7 @@ async def test_broker_does_not_overwrite_title_with_unspecified_on_patch():
     """Verify patching an existing job record never overwrites its legitimate title with '未注明职位'."""
     broker = InMemoryTaskBroker()
 
-    rec = await broker.upsert_job_record(
+    rec = await broker.job_store.upsert_job_record(
         {
             "title": "全栈开发工程师",
             "company_name": "优质企业",
@@ -494,7 +494,7 @@ async def test_broker_does_not_overwrite_title_with_unspecified_on_patch():
     assert rec["title"] == "全栈开发工程师"
 
     # Try patching with "未注明职位"
-    patched = await broker.upsert_job_record(
+    patched = await broker.job_store.upsert_job_record(
         {
             "fingerprint": rec["fingerprint"],
             "title": "未注明职位",

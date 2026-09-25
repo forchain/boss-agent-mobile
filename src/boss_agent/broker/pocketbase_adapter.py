@@ -22,7 +22,6 @@ from boss_agent.broker.models import AutomationTask, TaskStatus, TaskType
 from boss_agent.job_store import (
     InMemoryJobRecordStore,
     JobRecordStore,
-    JobRecordStoreFacade,
     PocketBaseJobRecordStore,
 )
 from boss_agent.models import SavedSearch
@@ -160,7 +159,7 @@ class BaseTaskBroker(ABC):
         pass
 
 
-class InMemoryTaskBroker(JobRecordStoreFacade, BaseTaskBroker):
+class InMemoryTaskBroker(BaseTaskBroker):
     """Thread-safe & asyncio-safe in-memory broker for tests and local development."""
 
     def __init__(self) -> None:
@@ -388,7 +387,7 @@ class InMemoryTaskBroker(JobRecordStoreFacade, BaseTaskBroker):
                 logger.exception("Error in task subscription callback: %s", e)
 
 
-class PocketBaseTaskBroker(JobRecordStoreFacade, BaseTaskBroker):
+class PocketBaseTaskBroker(BaseTaskBroker):
     """Production PocketBase REST and SSE client adapter."""
 
     def __init__(

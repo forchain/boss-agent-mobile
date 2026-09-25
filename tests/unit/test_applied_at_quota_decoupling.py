@@ -117,7 +117,7 @@ async def test_historical_applied_record_without_applied_at_does_not_count_towar
     """Importing a platform historical contact must not consume today's greeting quota."""
     broker = InMemoryTaskBroker()
 
-    await broker.upsert_job_record(
+    await broker.job_store.upsert_job_record(
         {
             "fingerprint": "fp-historical-contact",
             "title": "大模型算法工程师",
@@ -127,7 +127,7 @@ async def test_historical_applied_record_without_applied_at_does_not_count_towar
         }
     )
 
-    assert await broker.count_today_applied_jobs() == 0
+    assert await broker.job_store.count_today_applied_jobs() == 0
 
 
 @pytest.mark.asyncio
@@ -137,7 +137,7 @@ async def test_only_applied_at_today_counts_toward_quota():
     today_iso = datetime.now(UTC).isoformat()
     stale_iso = (datetime.now(UTC) - timedelta(days=3)).isoformat()
 
-    await broker.upsert_job_record(
+    await broker.job_store.upsert_job_record(
         {
             "fingerprint": "fp-dispatched-today",
             "title": "Agent 平台开发",
@@ -147,7 +147,7 @@ async def test_only_applied_at_today_counts_toward_quota():
             "applied_at": today_iso,
         }
     )
-    await broker.upsert_job_record(
+    await broker.job_store.upsert_job_record(
         {
             "fingerprint": "fp-dispatched-earlier",
             "title": "Agent 平台开发",
@@ -158,7 +158,7 @@ async def test_only_applied_at_today_counts_toward_quota():
         }
     )
 
-    assert await broker.count_today_applied_jobs() == 1
+    assert await broker.job_store.count_today_applied_jobs() == 1
 
 
 @pytest.mark.asyncio
@@ -167,7 +167,7 @@ async def test_upsert_preserves_applied_at_on_later_rescrape():
     broker = InMemoryTaskBroker()
     applied_at = datetime.now(UTC).isoformat()
 
-    created = await broker.upsert_job_record(
+    created = await broker.job_store.upsert_job_record(
         {
             "fingerprint": "fp-preserve-applied-at",
             "title": "移动端 Agent 工程师",
@@ -179,7 +179,7 @@ async def test_upsert_preserves_applied_at_on_later_rescrape():
     )
     assert created["applied_at"] == applied_at
 
-    rescraped = await broker.upsert_job_record(
+    rescraped = await broker.job_store.upsert_job_record(
         {
             "fingerprint": "fp-preserve-applied-at",
             "title": "移动端 Agent 工程师",
@@ -273,12 +273,12 @@ async def test_auto_apply_records_applied_at_only_after_message_dispatch(broker,
     assert finished is not None
     assert finished.status == TaskStatus.SUCCESS
 
-    records = await broker.list_job_records(status="applied")
+    records = await broker.job_store.list_job_records(status="applied")
     assert len(records) == 1
     applied_at = str(records[0].get("applied_at") or "")
     assert applied_at.startswith(datetime.now(UTC).strftime("%Y-%m-%d"))
     assert records[0].get("applied_source") == "agent_auto_send"
-    assert await broker.count_today_applied_jobs() == 1
+    assert await broker.job_store.count_today_applied_jobs() == 1
 
 
 @pytest.mark.asyncio
@@ -309,10 +309,10 @@ async def test_auto_apply_draft_only_mode_leaves_applied_at_empty(broker, mock_d
 
     assert await worker.run_once() is True
 
-    records = await broker.list_job_records(status="matched")
+    records = await broker.job_store.list_job_records(status="matched")
     assert len(records) == 1
     assert not records[0].get("applied_at")
-    assert await broker.count_today_applied_jobs() == 0
+    assert await broker.job_store.count_today_applied_jobs() == 0
 
 
 def _hide_locator_keys(mock_driver: MagicMock, *keys: str) -> None:
@@ -370,17 +370,17 @@ async def test_auto_apply_does_not_record_applied_when_send_button_is_missing(br
 
     assert await worker.run_once() is True
 
-    assert await broker.list_job_records(status="applied") == [], (
+    assert await broker.job_store.list_job_records(status="applied") == [], (
         "An unsent greeting must not leave an `applied` record behind; it would seed a false "
         "same-company exclusion anchor with no applied_at to age out of."
     )
 
-    records = await broker.list_job_records(status="matched")
+    records = await broker.job_store.list_job_records(status="matched")
     assert len(records) == 1, "The tailored greeting should survive as a draft for manual sending."
     assert records[0].get("greeting_message")
     assert not records[0].get("applied_at")
     assert not records[0].get("applied_source")
-    assert await broker.count_today_applied_jobs() == 0
+    assert await broker.job_store.count_today_applied_jobs() == 0
 
     finished = await broker.get_task(task.id)
     assert finished is not None

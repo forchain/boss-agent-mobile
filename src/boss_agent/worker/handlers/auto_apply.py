@@ -15,7 +15,7 @@ from typing import Any
 
 from boss_agent.broker.models import AutomationTask, TaskType
 from boss_agent.broker.pocketbase_adapter import BaseTaskBroker
-from boss_agent.feed_pipeline import FeedStreamConfig, JobFeedPipeline, resolve_job_store
+from boss_agent.feed_pipeline import FeedStreamConfig, JobFeedPipeline
 from boss_agent.memory import StructuredCandidateProfile
 from boss_agent.models import JobRecordStatus, TargetAction, is_masked_company_name
 from boss_agent.screening import CandidateScreener
@@ -47,7 +47,7 @@ class AutoApplyHandler(BaseTaskHandler):
             return HandlerResult(success=False, error_message="Driver session is unavailable")
 
         payload = task.payload or {}
-        store = resolve_job_store(broker)
+        store = broker.job_store
         screener = CandidateScreener(llm_client=self.llm_client)
         profile = await self._resolve_profile(broker, payload)
 

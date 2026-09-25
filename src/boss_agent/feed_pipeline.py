@@ -232,15 +232,6 @@ def _element_y(elem: Any) -> float | None:
         return None
 
 
-def resolve_job_store(broker: Any) -> JobRecordStore:
-    """The job ledger behind a broker handle.
-
-    Falls back to the broker itself for callers that already are a JobRecordStore,
-    so a pipeline can be wired from either seam without a translation layer.
-    """
-    return getattr(broker, "job_store", broker)
-
-
 async def is_task_cancelled(broker: Any, task_id: str) -> bool:
     """Whether the user cancelled the task this run belongs to."""
     from .broker.models import TaskStatus
@@ -295,11 +286,13 @@ class JobFeedPipeline:
         """Wire a pipeline to a worker task: its job ledger, log sink and cancel probe.
 
         Both worker handlers compose their run this way, so task plumbing lives in one
-        place instead of being re-derived per handler.
+        place instead of being re-derived per handler. The broker's job ledger is
+        resolved here, at composition time, rather than by a duck-typing fallback that
+        let any broker-shaped object silently satisfy store-typed code.
         """
         return cls(
             driver=driver,
-            store=resolve_job_store(broker),
+            store=broker.job_store,
             screener=screener,
             log=lambda line: broker.append_log(task_id, line),
             is_cancelled=lambda: is_task_cancelled(broker, task_id),

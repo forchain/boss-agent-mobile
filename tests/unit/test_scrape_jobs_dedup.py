@@ -34,7 +34,7 @@ async def test_scrape_jobs_handler_skips_existing_and_scrapes_new():
 
     # Pre-populate an existing job into broker
     existing_fp = compute_job_fingerprint("字节跳动", "已抓取的岗位", "张HR")
-    await broker.upsert_job_record(
+    await broker.job_store.upsert_job_record(
         {
             "fingerprint": existing_fp,
             "title": "已抓取的岗位",
@@ -111,7 +111,7 @@ async def test_scrape_jobs_handler_skips_existing_and_scrapes_new():
     card1_elem.click.assert_not_called()
 
     # Verify new job was persisted into broker
-    unmatched_records = await broker.list_job_records(status="unmatched")
+    unmatched_records = await broker.job_store.list_job_records(status="unmatched")
     assert len(unmatched_records) == 1
     assert unmatched_records[0]["title"] == "新AI岗位"
     assert unmatched_records[0]["company_name"] == "新公司"
@@ -167,7 +167,7 @@ async def test_scrape_jobs_handler_direct_ingestion_even_when_detail_fails():
     assert result.success is True
     assert result.output["scraped_count"] == 1
     # Card is safely persisted in unmatched job records despite detail failure!
-    records = await broker.list_job_records(status="unmatched")
+    records = await broker.job_store.list_job_records(status="unmatched")
     assert len(records) == 1
     assert records[0]["title"] == "Agent研发架构师"
     assert records[0]["company_name"] == "知名互联网公司"
@@ -317,14 +317,14 @@ async def test_scrape_jobs_handler_preliminary_card_screening_and_enrichment():
     card2_elem.click.assert_called_once()
 
     # Verify Card 1 persisted as ignored
-    ignored_records = await broker.list_job_records(status="ignored")
+    ignored_records = await broker.job_store.list_job_records(status="ignored")
     assert len(ignored_records) == 1
     assert ignored_records[0]["title"] == "Python开发工程师"
     assert ignored_records[0]["digest"] == "此岗位需长期在客户现场驻场办公开发"
     assert ignored_records[0]["job_description"] == ""
 
     # Verify Card 2 persisted as unmatched with enriched full JD and digest
-    unmatched_records = await broker.list_job_records(status="unmatched")
+    unmatched_records = await broker.job_store.list_job_records(status="unmatched")
     assert len(unmatched_records) == 1
     assert unmatched_records[0]["title"] == "AI Agent研发架构师"
     assert unmatched_records[0]["digest"] == "负责核心智能体工作流平台搭建"
@@ -419,7 +419,7 @@ async def test_scrape_jobs_handler_facet_persistence_and_recruitment_type_teleme
     assert result.success is True
     assert result.output["scraped_count"] == 2
 
-    records = await broker.list_job_records()
+    records = await broker.job_store.list_job_records()
     assert len(records) == 2
 
     hh_rec = next(r for r in records if r["company_name"] == "某中型人工智能公司")
@@ -533,7 +533,7 @@ async def test_scrape_jobs_cancelled_task_does_not_execute_fallback():
 
     assert res.success is True
     mock_detail.extract_job_posting.assert_not_called()
-    assert len(await broker.list_job_records()) == 0
+    assert len(await broker.job_store.list_job_records()) == 0
 
 
 @pytest.mark.asyncio
@@ -569,7 +569,7 @@ async def test_scrape_jobs_fallback_ignores_unspecified_title():
         res = await handler.handle(task, broker, context)
 
     assert res.success is True
-    assert len(await broker.list_job_records()) == 0
+    assert len(await broker.job_store.list_job_records()) == 0
 
 
 @pytest.mark.asyncio
@@ -613,7 +613,7 @@ async def test_scrape_jobs_detail_enrichment_does_not_overwrite_title_with_unspe
         res = await handler.handle(task, broker, context)
 
     assert res.success is True
-    records = await broker.list_job_records()
+    records = await broker.job_store.list_job_records()
     assert len(records) == 1
     assert records[0]["title"] == "全栈技术负责人"
     assert records[0]["salary_range"] == "6-9万元"

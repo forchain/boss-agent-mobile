@@ -78,7 +78,7 @@ async def test_auto_apply_rescued_headhunter_job_persists_relaxation_audit():
     assert result.success is True
     assert result.output.get("applied") is False  # preview/offline draft mode
 
-    records = await broker.list_job_records()
+    records = await broker.job_store.list_job_records()
     rec = next(r for r in records if r.get("title") == "大模型 Agent 平台架构师")
     assert rec["status"] == "matched"
     assert rec.get("relaxed_by_whitelist") is True
@@ -135,7 +135,7 @@ async def test_auto_apply_app_rule_rejection_persists_ignored_record():
     assert result.output.get("status") == "filtered_by_app_rule"
     assert result.output.get("applied") is False
 
-    ignored = await broker.list_job_records(status="ignored")
+    ignored = await broker.job_store.list_job_records(status="ignored")
     assert len(ignored) == 1
     assert "direct_only" in (ignored[0].get("screened_reason") or "")
     assert ignored[0].get("relaxed_by_whitelist") in (False, None)
@@ -211,7 +211,7 @@ async def test_scrape_jobs_relaxed_headhunter_card_persists_audit_fields():
     assert result.output["scraped_count"] == 1
     card_elem.click.assert_called_once()
 
-    records = await broker.list_job_records()
+    records = await broker.job_store.list_job_records()
     rec = next(r for r in records if r.get("title") == "大模型技术负责人")
     assert rec.get("relaxed_by_whitelist") is True
     audit = rec.get("screening_audit") or ""
@@ -275,7 +275,7 @@ async def test_scrape_jobs_app_rule_violation_without_rescue_is_ignored():
     card_elem.click.assert_not_called()
     detail_cls.return_value.extract_job_posting.assert_not_called()
 
-    ignored = await broker.list_job_records(status="ignored")
+    ignored = await broker.job_store.list_job_records(status="ignored")
     assert len(ignored) == 1
     assert "direct_only" in (ignored[0].get("screened_reason") or "")
     assert "direct_only" in (ignored[0].get("screening_audit") or "")

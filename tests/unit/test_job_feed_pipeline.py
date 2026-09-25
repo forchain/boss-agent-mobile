@@ -19,7 +19,6 @@ from boss_agent.feed_pipeline import (
     JobAction,
     JobFeedPipeline,
     is_task_cancelled,
-    resolve_job_store,
 )
 from boss_agent.job_store import InMemoryJobRecordStore
 from boss_agent.memory import StructuredCandidateProfile
@@ -815,14 +814,18 @@ async def test_incomplete_jd_is_flagged_and_kept_for_retry():
 # ---------------------------------------------------------------------------
 
 
-def test_resolve_job_store_prefers_the_dedicated_seam():
+def test_for_task_wires_the_brokers_job_ledger():
+    """The pipeline takes the broker's job ledger at composition time.
+
+    This replaced a duck-typing helper that fell back to the broker itself when the
+    handle had no ledger, letting any broker-shaped object silently satisfy
+    store-typed code — so the type story no longer said which object was passed.
+    """
     from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
 
     broker = InMemoryTaskBroker()
-    assert resolve_job_store(broker) is broker.job_store
-
-    store = InMemoryJobRecordStore()
-    assert resolve_job_store(store) is store
+    pipeline = JobFeedPipeline.for_task(broker, "task-1", driver=None)
+    assert pipeline.store is broker.job_store
 
 
 @pytest.mark.asyncio

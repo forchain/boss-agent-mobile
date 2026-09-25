@@ -248,7 +248,7 @@ def test_broker_facade_delegates_to_the_store():
     broker = InMemoryTaskBroker()
     broker.job_store.upsert_job_record = AsyncMock(return_value={})  # type: ignore[method-assign]
 
-    asyncio.run(broker.upsert_job_record(_record("fp-delegated", "某公司")))
+    asyncio.run(broker.job_store.upsert_job_record(_record("fp-delegated", "某公司")))
     broker.job_store.upsert_job_record.assert_called_once()
 
 

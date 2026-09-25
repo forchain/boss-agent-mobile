@@ -98,7 +98,7 @@ def test_is_communication_expired_without_any_timestamp_is_not_expired():
 @pytest.mark.asyncio
 async def test_applied_direct_companies_excludes_headhunters_and_masked_names(broker):
     """Only genuine direct-hire enterprises with an active application form the exclusion pool."""
-    await broker.upsert_job_record(
+    await broker.job_store.upsert_job_record(
         {
             "fingerprint": "fp-direct-hired",
             "title": "大模型算法工程师",
@@ -109,7 +109,7 @@ async def test_applied_direct_companies_excludes_headhunters_and_masked_names(br
             "applied_at": _iso_days_ago(2),
         }
     )
-    await broker.upsert_job_record(
+    await broker.job_store.upsert_job_record(
         {
             "fingerprint": "fp-headhunter-hired",
             "title": "Agent 架构师",
@@ -120,7 +120,7 @@ async def test_applied_direct_companies_excludes_headhunters_and_masked_names(br
             "applied_at": _iso_days_ago(2),
         }
     )
-    await broker.upsert_job_record(
+    await broker.job_store.upsert_job_record(
         {
             "fingerprint": "fp-masked-hired",
             "title": "Agent 平台开发",
@@ -131,7 +131,7 @@ async def test_applied_direct_companies_excludes_headhunters_and_masked_names(br
             "applied_at": _iso_days_ago(2),
         }
     )
-    await broker.upsert_job_record(
+    await broker.job_store.upsert_job_record(
         {
             "fingerprint": "fp-direct-saved",
             "title": "Agent 工程师",
@@ -142,13 +142,13 @@ async def test_applied_direct_companies_excludes_headhunters_and_masked_names(br
         }
     )
 
-    assert await broker.get_applied_direct_companies() == {"深至科技"}
+    assert await broker.job_store.get_applied_direct_companies() == {"深至科技"}
 
 
 @pytest.mark.asyncio
 async def test_applied_direct_companies_honours_cooldown_window(broker):
     """Companies whose last communication fell outside the cool-down window are released."""
-    await broker.upsert_job_record(
+    await broker.job_store.upsert_job_record(
         {
             "fingerprint": "fp-recent-hired",
             "title": "大模型算法工程师",
@@ -159,7 +159,7 @@ async def test_applied_direct_companies_honours_cooldown_window(broker):
             "applied_at": _iso_days_ago(10),
         }
     )
-    await broker.upsert_job_record(
+    await broker.job_store.upsert_job_record(
         {
             "fingerprint": "fp-stale-hired",
             "title": "Agent 平台开发",
@@ -171,8 +171,8 @@ async def test_applied_direct_companies_honours_cooldown_window(broker):
         }
     )
 
-    assert await broker.get_applied_direct_companies(cooldown_days=30) == {"商汤科技"}
-    assert await broker.get_applied_direct_companies(cooldown_days=0) == {"商汤科技", "小红书"}
+    assert await broker.job_store.get_applied_direct_companies(cooldown_days=30) == {"商汤科技"}
+    assert await broker.job_store.get_applied_direct_companies(cooldown_days=0) == {"商汤科技", "小红书"}
 
 
 # --------------------------------------------------------------------------------------
@@ -184,7 +184,7 @@ async def test_applied_direct_companies_honours_cooldown_window(broker):
 async def test_scrape_skips_card_already_recorded_as_applied(broker, mock_driver):
     """A card whose fingerprint is already applied must be skipped without opening the detail page."""
     card = _card("大模型算法工程师", "深至科技")
-    await broker.upsert_job_record(
+    await broker.job_store.upsert_job_record(
         {
             "fingerprint": card.fingerprint,
             "title": card.title,
@@ -233,7 +233,7 @@ async def test_scrape_skips_card_already_recorded_as_applied(broker, mock_driver
 @pytest.mark.asyncio
 async def test_scrape_skips_other_roles_from_communicated_direct_hire_company(broker, mock_driver):
     """Another role at an already-contacted direct-hire enterprise must be skipped at card level."""
-    await broker.upsert_job_record(
+    await broker.job_store.upsert_job_record(
         {
             "fingerprint": "fp-company-anchor",
             "title": "大模型算法工程师",
@@ -282,7 +282,7 @@ async def test_scrape_skips_other_roles_from_communicated_direct_hire_company(br
 @pytest.mark.asyncio
 async def test_scrape_admits_headhunter_roles_from_same_company_name(broker, mock_driver):
     """Headhunter channels are exempt: the same company name must not trigger exclusion."""
-    await broker.upsert_job_record(
+    await broker.job_store.upsert_job_record(
         {
             "fingerprint": "fp-company-anchor-hh",
             "title": "大模型算法工程师",
@@ -332,7 +332,7 @@ async def test_scrape_admits_headhunter_roles_from_same_company_name(broker, moc
 @pytest.mark.asyncio
 async def test_masked_company_names_never_join_the_exclusion_pool(broker, mock_driver):
     """Masked employers (保密/某知名...) must never suppress other postings under that name."""
-    await broker.upsert_job_record(
+    await broker.job_store.upsert_job_record(
         {
             "fingerprint": "fp-masked-anchor",
             "title": "Agent 平台开发",
@@ -420,7 +420,7 @@ async def test_newly_communicated_company_is_cached_within_the_same_run(broker, 
 async def test_expired_communication_releases_card_for_reevaluation(broker, mock_driver):
     """A card whose communication fell outside the cool-down window must be re-evaluated."""
     card = _card("大模型算法工程师", "深至科技")
-    await broker.upsert_job_record(
+    await broker.job_store.upsert_job_record(
         {
             "fingerprint": card.fingerprint,
             "title": card.title,
@@ -466,7 +466,7 @@ async def test_expired_communication_releases_card_for_reevaluation(broker, mock
 @pytest.mark.asyncio
 async def test_clear_job_communication_clears_state_and_keeps_jd(broker):
     """Releasing a communication must reset status/applied_at while preserving the extracted JD."""
-    record = await broker.upsert_job_record(
+    record = await broker.job_store.upsert_job_record(
         {
             "fingerprint": "fp-release-keeps-jd",
             "title": "大模型算法工程师",
@@ -480,20 +480,20 @@ async def test_clear_job_communication_clears_state_and_keeps_jd(broker):
         }
     )
 
-    released = await broker.clear_job_communication(record["id"])
+    released = await broker.job_store.clear_job_communication(record["id"])
 
     assert released["status"] == "jd_saved"
     assert not released.get("applied_at")
     assert not released.get("applied_source")
     assert released["job_description"] == "负责大模型算法研发与落地（历史 JD）"
-    assert await broker.count_today_applied_jobs() == 0
+    assert await broker.job_store.count_today_applied_jobs() == 0
 
 
 @pytest.mark.asyncio
 async def test_expired_communication_releases_record_back_to_candidate_pool(broker, mock_driver):
     """An aged communication must transition back to jd_saved when its card is re-scanned."""
     card = _card("大模型算法工程师", "深至科技")
-    stale = await broker.upsert_job_record(
+    stale = await broker.job_store.upsert_job_record(
         {
             "fingerprint": card.fingerprint,
             "title": card.title,
@@ -533,7 +533,7 @@ async def test_expired_communication_releases_record_back_to_candidate_pool(brok
 
         assert await worker.run_once() is True
 
-    refreshed = await broker.get_job_record(stale["id"])
+    refreshed = await broker.job_store.get_job_record(stale["id"])
     assert refreshed is not None
     assert refreshed["status"] == "jd_saved"
     assert not refreshed.get("applied_at")
@@ -545,7 +545,7 @@ async def test_auto_apply_refuses_other_role_from_communicated_direct_hire_compa
     broker, mock_driver
 ):
     """A dispatched application to another role of a contacted direct-hire company is refused."""
-    await broker.upsert_job_record(
+    await broker.job_store.upsert_job_record(
         {
             "fingerprint": "fp-dispatched-company-anchor",
             "title": "大模型算法工程师",
@@ -556,7 +556,7 @@ async def test_auto_apply_refuses_other_role_from_communicated_direct_hire_compa
             "applied_at": _iso_days_ago(3),
         }
     )
-    target = await broker.upsert_job_record(
+    target = await broker.job_store.upsert_job_record(
         {
             "fingerprint": "fp-dispatched-target-role",
             "title": "Agent 平台开发工程师",
@@ -614,7 +614,7 @@ async def test_auto_apply_refuses_other_role_from_communicated_direct_hire_compa
 @pytest.mark.asyncio
 async def test_auto_apply_permits_headhunter_target_from_communicated_company(broker, mock_driver):
     """Headhunter channels are exempt from enterprise exclusion even under a matching name."""
-    await broker.upsert_job_record(
+    await broker.job_store.upsert_job_record(
         {
             "fingerprint": "fp-hh-company-anchor",
             "title": "大模型算法工程师",
@@ -625,7 +625,7 @@ async def test_auto_apply_permits_headhunter_target_from_communicated_company(br
             "applied_at": _iso_days_ago(3),
         }
     )
-    target = await broker.upsert_job_record(
+    target = await broker.job_store.upsert_job_record(
         {
             "fingerprint": "fp-hh-target-role",
             "title": "Agent 架构师",
@@ -677,7 +677,7 @@ async def test_auto_apply_permits_headhunter_target_from_communicated_company(br
 async def test_permanent_cooldown_keeps_excluding_old_communications(broker, mock_driver):
     """cooldown_days == 0 must keep suppressing a long-dormant communication."""
     card = _card("Agent 平台开发工程师", "深至科技")
-    await broker.upsert_job_record(
+    await broker.job_store.upsert_job_record(
         {
             "fingerprint": "fp-permanent-anchor",
             "title": "大模型算法工程师",
@@ -760,7 +760,7 @@ async def test_applied_companies_walk_every_page_of_the_collection():
     session = _paged_session([[_applied(f"企业{i}") for i in range(200)], [_applied("深至科技")]])
     broker = PocketBaseTaskBroker(base_url="http://mock-pb:8090", session=session)
 
-    companies = await broker.get_applied_direct_companies(cooldown_days=30)
+    companies = await broker.job_store.get_applied_direct_companies(cooldown_days=30)
 
     assert "深至科技" in companies, "Companies beyond the first page must still anchor exclusion."
     assert len(companies) == 201
@@ -773,7 +773,7 @@ async def test_applied_companies_request_projects_is_headhunter():
     session = _paged_session([[_applied("深至科技"), _applied("精英猎头", is_headhunter=True)]])
     broker = PocketBaseTaskBroker(base_url="http://mock-pb:8090", session=session)
 
-    companies = await broker.get_applied_direct_companies(cooldown_days=30)
+    companies = await broker.job_store.get_applied_direct_companies(cooldown_days=30)
 
     fields = session.get.call_args_list[0].kwargs["params"]["fields"]
     assert "is_headhunter" in fields
