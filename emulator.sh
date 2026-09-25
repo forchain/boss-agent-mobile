@@ -115,7 +115,7 @@ bounded_run() {
     # waiting until it wakes up.
     (
         sleep "${TIMEOUT_SEC}"
-        if kill -0 "${CMD_PID}" 2>/dev/null; then
+        if runner_process_alive "${CMD_PID}"; then
             kill -TERM "${CMD_PID}" 2>/dev/null || true
             sleep 0.5
             kill -KILL "${CMD_PID}" 2>/dev/null || true
@@ -308,7 +308,7 @@ start_remote_bridge() {
     if [[ -f "${BRIDGE_PID_FILE}" ]]; then
         local PID
         PID="$(cat "${BRIDGE_PID_FILE}" 2>/dev/null || true)"
-        if [[ -n "${PID}" ]] && kill -0 "${PID}" 2>/dev/null; then
+        if [[ -n "${PID}" ]] && runner_process_alive "${PID}"; then
             return 0
         fi
         rm -f "${BRIDGE_PID_FILE}"
@@ -344,7 +344,7 @@ start_remote_bridge() {
 
     local READY=0
     for _ in {1..30}; do
-        if [[ -f "${BRIDGE_READY_FILE}" ]] && kill -0 "${BRIDGE_PID}" 2>/dev/null; then
+        if [[ -f "${BRIDGE_READY_FILE}" ]] && runner_process_alive "${BRIDGE_PID}"; then
             READY=1
             break
         fi
@@ -475,7 +475,7 @@ cmd_status() {
         BRIDGE_PID="$(cat "${BRIDGE_PID_FILE}" 2>/dev/null || true)"
     fi
 
-    if [[ -n "${BRIDGE_PID}" ]] && kill -0 "${BRIDGE_PID}" 2>/dev/null; then
+    if [[ -n "${BRIDGE_PID}" ]] && runner_process_alive "${BRIDGE_PID}"; then
         echo "🟢 Remote ADB Bridge is LISTENING (PID: ${BRIDGE_PID}, Port: ${PORT}, LAN: ${LAN_IP}:${PORT})"
     else
         echo "⚪ Remote ADB Bridge is NOT RUNNING (Port: ${PORT})"

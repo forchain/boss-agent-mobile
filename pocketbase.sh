@@ -20,19 +20,18 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${ROOT_DIR}"
 
-GIT_COMMON_DIR="$(git rev-parse --git-common-dir 2>/dev/null || true)"
-if [[ -n "${GIT_COMMON_DIR}" ]]; then
-    COMMON_ROOT="$(cd "${GIT_COMMON_DIR}/.." && pwd)"
-else
-    COMMON_ROOT="${ROOT_DIR}"
-fi
-
-mkdir -p "${COMMON_ROOT}/.boss_agent"
-
 # Shared process-lifecycle primitives (pidfiles, liveness, LISTEN-only port probe,
-# graceful stop). Sourced so a sixth service inherits them instead of copying them.
+# graceful stop, and the runtime-directory policy). Sourced so a sixth service inherits
+# them instead of copying them.
 # shellcheck source=runner_lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/runner_lib.sh"
+
+# PocketBase is an Infrastructure Service: exactly one runs per machine, every worktree
+# shares it, so its state anchors at the git common root. That used to be re-derived
+# here; it is the library's stated policy now, so an un-symlinked worktree behaves the
+# same way instead of half-splitting.
+COMMON_ROOT="$(runner_common_root "${ROOT_DIR}")"
+RUNTIME_DIR="$(runner_runtime_dir infra "${ROOT_DIR}")"
 
 # Seconds to wait for a cooperative exit before escalating to SIGKILL.
 PB_STOP_TIMEOUT_SEC="${PB_STOP_TIMEOUT_SEC:-10}"
@@ -44,8 +43,8 @@ if [[ "${PB_DATA_DIR}" != /* ]]; then
 fi
 PB_PUBLIC_DIR="${PB_PUBLIC_DIR:-${ROOT_DIR}/pb_public}"
 PB_HTTP="${PB_HTTP:-0.0.0.0:8090}"
-PID_FILE="${COMMON_ROOT}/.boss_agent/pocketbase.pid"
-LOG_FILE="${COMMON_ROOT}/.boss_agent/pocketbase.log"
+PID_FILE="${RUNTIME_DIR}/pocketbase.pid"
+LOG_FILE="${RUNTIME_DIR}/pocketbase.log"
 
 find_pb_binary() {
     if command -v pocketbase >/dev/null 2>&1; then
