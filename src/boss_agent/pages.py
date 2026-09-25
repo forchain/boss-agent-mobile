@@ -66,6 +66,13 @@ COMMUTE_PROBE_MAX_SCROLLS = 6
 #: trails off well below the status bar and the detail page's own header.
 COMMUTE_PROBE_SCROLL_STRIDE_RATIO = 0.55
 
+#: Consecutive swipes that must leave the anchor exactly where it was before the probe
+#: accepts that it has reached the scroll container's end. One is not enough: an anchor that
+#: has scrolled just above the viewport can report a clamped, unchanging position for a
+#: swipe while the page is still moving, and calling "bottom" there would end the search
+#: early on precisely the long expanded JDs this probe exists for.
+COMMUTE_PROBE_STALLED_SWIPES = 2
+
 #: Separator in a communication card's `[Company] | [Position]` descriptor.
 CARD_DESCRIPTOR_SEPARATOR: str = "|"
 
@@ -1450,6 +1457,7 @@ class JobDetailPage(BaseBossPage):
         elem = self.find_by_key("job_detail.distance_tip", timeout_sec=1.0)
 
         scrolls = 0
+        stalled_swipes = 0
         while elem is None and scrolls < max_scrolls:
             scrolls += 1
             win_size = self._get_window_size()
@@ -1462,10 +1470,15 @@ class JobDetailPage(BaseBossPage):
                 int(win_size.get("height", 2400) * COMMUTE_PROBE_SCROLL_STRIDE_RATIO)
             )
             elem = self.find_by_key("job_detail.distance_tip", timeout_sec=1.0)
-            if elem is None and self._scroll_ended_at_bottom(offset_before):
+            if elem is not None:
+                break
+
+            stalled_swipes = stalled_swipes + 1 if self._swipe_moved_nothing(offset_before) else 0
+            if stalled_swipes >= COMMUTE_PROBE_STALLED_SWIPES:
                 _log_info(
-                    f"⏹️ [Commute Probe] Detail page is already scrolled to its bottom "
-                    f"after {scrolls} scroll(s); 'home_tip_vf' cannot appear below it."
+                    f"⏹️ [Commute Probe] Detail page has not moved for {stalled_swipes} "
+                    f"swipes ({scrolls} total); it is at its bottom and 'home_tip_vf' "
+                    f"cannot appear below it."
                 )
                 break
 
@@ -1511,8 +1524,8 @@ class JobDetailPage(BaseBossPage):
                 return float(rect["y"])
         return None
 
-    def _scroll_ended_at_bottom(self, offset_before: float | None) -> bool:
-        """Whether a full swipe left the page exactly where it was (container at its end)."""
+    def _swipe_moved_nothing(self, offset_before: float | None) -> bool:
+        """Whether a swipe left the page exactly where it was, i.e. this swipe moved nothing."""
         if offset_before is None:
             return False
         offset_after = self._detail_scroll_offset()

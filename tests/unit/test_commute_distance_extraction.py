@@ -117,11 +117,19 @@ def test_extract_commute_distance_default_budget_reaches_widget_beyond_three_scr
 
 
 def test_extract_commute_distance_default_budget_is_relaxed_to_at_least_six_scrolls():
-    """Absent widget: fail open only after spending the relaxed default budget."""
+    """Absent widget: fail open only after spending the relaxed default budget.
+
+    Both bounds are asserted on purpose: the ticket's floor of six swipes must hold even if
+    the constant is retuned, and the default the probe actually uses must be that constant
+    rather than a number copied into the method.
+    """
+    from boss_agent.pages import COMMUTE_PROBE_MAX_SCROLLS
+
     page = _page(None)
 
     assert page.extract_commute_distance() == (None, "")
     assert page._scroll_page_up.call_count >= 6
+    assert page._scroll_page_up.call_count == COMMUTE_PROBE_MAX_SCROLLS
 
 
 def test_extract_commute_distance_honours_explicit_budget_override():
@@ -143,7 +151,7 @@ def test_extract_commute_distance_stride_covers_most_of_the_viewport():
     assert 0.50 * 2400 <= stride_px <= 0.55 * 2400
 
 
-def _bottom_limited_page(bottom_after_swipes: int) -> JobDetailPage:
+def _bottom_limited_page(bottom_after_swipes: int, freeze_offset: float = -20.0) -> JobDetailPage:
     """A page whose scroll container cannot move past ``bottom_after_swipes`` swipes.
 
     Mirrors a device at the end of a long expanded JD: the description anchor keeps
@@ -164,7 +172,7 @@ def _bottom_limited_page(bottom_after_swipes: int) -> JobDetailPage:
 
     def custom_find(key, **kwargs):
         if key == "job_detail.desc":
-            frozen = max(-20.0, -10.0 * min(state["swipes"], bottom_after_swipes))
+            frozen = max(freeze_offset, -10.0 * min(state["swipes"], bottom_after_swipes))
             desc.rect = {"x": 0, "y": frozen, "width": 1080, "height": 4000}
             return desc
         return None
@@ -173,13 +181,48 @@ def _bottom_limited_page(bottom_after_swipes: int) -> JobDetailPage:
     return page
 
 
+def _stalling_then_moving_page() -> JobDetailPage:
+    """A page whose anchor reports one stalled position while the content still moves.
+
+    Models an anchor that has scrolled just above the viewport, where the driver clamps its
+    bounds for a swipe instead of letting them fall.
+    """
+    page = _bottom_limited_page(bottom_after_swipes=1)
+    # The anchor freezes for one swipe, then keeps moving again (which ends the clamp).
+    desc_state = {"observations": 0}
+
+    def custom_find(key, **kwargs):
+        if key != "job_detail.desc":
+            return None
+        desc_state["observations"] += 1
+        desc = MagicMock()
+        desc.text = "负责大模型应用与Agent工作流平台建设。" * 400
+        y = 0.0 if desc_state["observations"] <= 2 else -10.0 * (desc_state["observations"] - 2)
+        desc.rect = {"x": 0, "y": y, "width": 1080, "height": 4000}
+        return desc
+
+    page.find_by_key = MagicMock(side_effect=custom_find)
+    return page
+
+
 def test_extract_commute_distance_stops_early_when_container_reaches_bottom():
     """A container that can no longer move must end the probe before the budget, instead
-    of burning the remaining swipes on a widget that cannot come into view."""
+    of burning the remaining swipes on a widget that cannot come into view. Two stalled
+    swipes (not one) are required before the probe accepts the bottom, so the extra swipe
+    is the cost of not trusting a single clamped reading."""
     page = _bottom_limited_page(bottom_after_swipes=2)
 
     assert page.extract_commute_distance() == (None, "")
-    assert page._scroll_page_up.call_count == 3
+    assert page._scroll_page_up.call_count == 4
+
+
+def test_extract_commute_distance_ignores_a_single_stalled_reading():
+    """One immobile observation is not proof of the bottom: the probe must keep spending
+    its budget rather than call 'bottom' while the page is still moving (Ticket #263)."""
+    page = _stalling_then_moving_page()
+
+    assert page.extract_commute_distance() == (None, "")
+    assert page._scroll_page_up.call_count == 6
 
 
 def test_extract_commute_distance_fails_open_when_widget_absent():

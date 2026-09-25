@@ -639,17 +639,18 @@ async def test_pocketbase_upsert_honours_the_limit_reported_by_the_server():
 
 
 @pytest.mark.asyncio
-async def test_pocketbase_upsert_sends_full_jd_when_within_the_text_limit():
-    """Records that fit must not be truncated pre-emptively: provisioned collections allow
-    far more than 5000 characters and the full JD is what screening reads."""
+async def test_pocketbase_upsert_sends_over_5000_char_jd_whole_when_the_schema_allows_it():
+    """On a collection provisioned with the wide cap, a >5000-character JD must be written
+    untruncated on the first attempt: screening reads the full description, and truncation
+    is a recovery for capped instances only (Ticket #264)."""
     broker, mock_session = _pb_broker()
     check_resp = MagicMock(status_code=200, json=lambda: {"items": []})
     accepted = MagicMock(status_code=201, json=lambda: {"id": "rec-ok"})
     mock_session.get.return_value = check_resp
     mock_session.post.return_value = accepted
 
-    jd = "岗位职责：负责模型训练与评测。" * 200
-    assert len(jd) < 5000
+    jd = _long_expanded_jd()
+    assert len(jd) > 5000
 
     rec = await broker.upsert_job_record(
         {

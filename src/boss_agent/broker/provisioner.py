@@ -90,6 +90,17 @@ LONG_TEXT_FIELD_OPTIONS: dict[str, Any] = {
     "pattern": "",
 }
 
+#: The `job_description` field as both provisioning paths (local SQLite schema and remote
+#: collection create) must define it. Copy it per use — a shared dict would let one
+#: collection's definition be edited through the other.
+JOB_DESCRIPTION_FIELD: dict[str, Any] = {
+    "name": "job_description",
+    "type": "text",
+    "required": False,
+    **LONG_TEXT_FIELD_OPTIONS,
+    "options": dict(LONG_TEXT_FIELD_OPTIONS),
+}
+
 JOB_RECORDS_FIELDS = [
     {"name": "id", "type": "text", "primaryKey": True, "required": False},
     {"name": "fingerprint", "type": "text", "required": True},
@@ -99,14 +110,7 @@ JOB_RECORDS_FIELDS = [
     {"name": "salary_range", "type": "text", "required": False},
     {"name": "location", "type": "text", "required": False},
     {"name": "digest", "type": "text", "required": False},
-    {
-        "name": "job_description",
-        "type": "text",
-        "required": False,
-        # Flat keys are what current PocketBase reads; `options` is the pre-0.24 shape.
-        **LONG_TEXT_FIELD_OPTIONS,
-        "options": dict(LONG_TEXT_FIELD_OPTIONS),
-    },
+    dict(JOB_DESCRIPTION_FIELD),
     {"name": "company_scale", "type": "text", "required": False},
     {"name": "industry", "type": "text", "required": False},
     {"name": "tags", "type": "json", "required": False},
@@ -812,14 +816,7 @@ def provision_remote_pocketbase(
                 {"name": "salary_range", "type": "text", "required": False},
                 {"name": "location", "type": "text", "required": False},
                 {"name": "digest", "type": "text", "required": False},
-                {
-                    "name": "job_description",
-                    "type": "text",
-                    "required": False,
-                    # Flat keys are what current PocketBase reads; `options` is the pre-0.24 shape.
-                    **LONG_TEXT_FIELD_OPTIONS,
-                    "options": dict(LONG_TEXT_FIELD_OPTIONS),
-                },
+                dict(JOB_DESCRIPTION_FIELD),
                 {"name": "status", "type": "text", "required": True},
                 {"name": "match_score", "type": "number", "required": False},
                 {"name": "jd_key_requirements", "type": "json", "required": False},

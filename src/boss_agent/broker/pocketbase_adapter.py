@@ -59,13 +59,13 @@ TEXT_MAX_CONSTRAINT_CODE = "validation_max_text_constraint"
 LENGTH_RECOVERY_FIELD = "job_description"
 
 #: The rejected bound as PocketBase reports it. v0.39 answers with
-#: ``{"message":"Must be no more than 5000 character(s).","params":{"max":5000}}``, older
-#: releases phrase it "Must be shorter than 5000."; reading the number back means a
-#: deployment with a non-default cap is still recovered at the right boundary.
+#: ``{"message":"Must be no more than 5000 character(s).","params":{"max":5000}}`` — the
+#: structural `params.max` — while other releases only phrase it in prose ("Must be shorter
+#: than 5000."). Reading the number back means a deployment with a non-default cap is still
+#: recovered at the right boundary instead of at the assumed one.
 _SERVER_TEXT_LIMIT_PATTERNS = (
     re.compile(r'"max"\s*:\s*(\d+)'),
-    re.compile(r"no more than\s+(\d+)", re.IGNORECASE),
-    re.compile(r"shorter than\s+(\d+)", re.IGNORECASE),
+    re.compile(r"(?:no more than|shorter than)\s+(\d+)", re.IGNORECASE),
 )
 
 
@@ -80,8 +80,11 @@ def resolve_text_constraint_limit(response_text: Any) -> int:
     text = response_text if isinstance(response_text, str) else ""
     for pattern in _SERVER_TEXT_LIMIT_PATTERNS:
         match = pattern.search(text)
-        if match and int(match.group(1)) > 0:
-            return int(match.group(1))
+        if not match:
+            continue
+        limit = int(match.group(1))
+        if limit > 0:
+            return limit
     return POCKETBASE_DEFAULT_TEXT_MAX_CHARS
 
 
@@ -1492,17 +1495,19 @@ class PocketBaseTaskBroker(BaseTaskBroker):
             logger.warning("PocketBase clear_job_communication failed: %s", e)
         return {}
 
-    async def _write_job_record(self, verb: str, url: str, body: dict[str, Any]) -> Any:
+    async def _write_job_record(
+        self, send: Callable[..., Any], url: str, body: dict[str, Any]
+    ) -> Any:
         """Write a job record, truncating an over-long ``job_description`` and retrying once.
 
-        A collection still carrying PocketBase's implicit text cap rejects the whole write
-        for a full expanded JD, and the caller then reports an empty upsert — the enriched
-        record is lost for exactly the comprehensive postings the JD matters most for. One
-        retry at the server's own reported boundary keeps the record; the truncation is
-        logged as a warning because the tail is genuinely lost.
+        ``send`` is the bound session method to write with (``session.patch`` or
+        ``session.post``). A collection still carrying PocketBase's implicit text cap rejects
+        the whole write for a full expanded JD, and the caller then reports an empty upsert —
+        the enriched record is lost for exactly the comprehensive postings the JD matters most
+        for. One retry at the server's own reported boundary keeps the record; the truncation
+        is logged as a warning because the tail is genuinely lost.
         """
         loop = asyncio.get_running_loop()
-        send = self.session.patch if verb == "patch" else self.session.post
         response = await loop.run_in_executor(
             None, lambda: send(url, json=body, headers=self._headers())
         )
@@ -1700,7 +1705,9 @@ class PocketBaseTaskBroker(BaseTaskBroker):
                         patch_body["commute_distance_text"] = record_data["commute_distance_text"]
 
                     patch_url = f"{url}/{rec_id}"
-                    patch_resp = await self._write_job_record("patch", patch_url, patch_body)
+                    patch_resp = await self._write_job_record(
+                        self.session.patch, patch_url, patch_body
+                    )
                     if patch_resp.status_code == 200:
                         return patch_resp.json()
                     logger.error(
@@ -1767,7 +1774,7 @@ class PocketBaseTaskBroker(BaseTaskBroker):
             body["id"] = uuid.uuid4().hex[:15]
 
         try:
-            resp = await self._write_job_record("post", url, body)
+            resp = await self._write_job_record(self.session.post, url, body)
             if resp.status_code in (200, 201):
                 return resp.json()
             logger.error(
