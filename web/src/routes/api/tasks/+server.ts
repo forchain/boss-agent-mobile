@@ -1,16 +1,19 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { listAutomationTasks, createAutomationTask } from '$lib/pocketbase';
+import { clampTaskLimit, clampTaskPage } from '$lib/taskQuery';
 
 export const GET: RequestHandler = async ({ url }) => {
 	try {
 		const status = url.searchParams.get('status') || undefined;
-		const rawPage = parseInt(url.searchParams.get('page') || '1', 10);
-		const page = Math.max(1, isNaN(rawPage) ? 1 : rawPage);
-		const rawLimit = parseInt(url.searchParams.get('limit') || '20', 10);
-		const limit = Math.min(Math.max(1, isNaN(rawLimit) ? 20 : rawLimit), 100);
+		// The browser has always sent `filter`; this route silently dropped it, and the
+		// dashboard hid the bug by re-filtering client-side inside the newest-20 window —
+		// so an older running task missed the window and read as "no active task".
+		const filter = url.searchParams.get('filter') || undefined;
+		const page = clampTaskPage(url.searchParams.get('page'));
+		const limit = clampTaskLimit(url.searchParams.get('limit'));
 
-		const res = await listAutomationTasks({ status, page, limit });
+		const res = await listAutomationTasks({ status, filter, page, limit });
 		return json({
 			success: true,
 			tasks: res.items,

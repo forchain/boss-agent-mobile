@@ -1,3 +1,4 @@
+import { buildTaskFilter, buildTaskQueryString, clampTaskLimit, clampTaskPage } from '$lib/taskQuery';
 import PocketBase from 'pocketbase';
 import type {
 	AutomationTask,
@@ -369,23 +370,16 @@ export async function listAutomationTasks(options?: {
 	page?: number;
 	limit?: number;
 }): Promise<{ items: AutomationTask[]; totalItems: number; totalPages: number; page: number; perPage: number }> {
-	const rawPage = options?.page || 1;
-	const page = Math.max(1, isNaN(rawPage) ? 1 : rawPage);
-	const rawLimit = options?.limit || 20;
-	const limit = Math.min(Math.max(1, isNaN(rawLimit) ? 20 : rawLimit), 100);
+	const page = clampTaskPage(options?.page);
+	const limit = clampTaskLimit(options?.limit);
 	const status = options?.status;
 	const customFilter = options?.filter;
 
 	if (typeof window !== 'undefined') {
 		try {
-			const query = new URLSearchParams({
-				page: String(page),
-				limit: String(limit)
-			});
-			if (status) query.set('status', status);
-			if (customFilter) query.set('filter', customFilter);
-
-			const res = await fetch(`/api/tasks?${query.toString()}`);
+			const res = await fetch(
+				`/api/tasks?${buildTaskQueryString({ status, filter: customFilter, page, limit })}`
+			);
 			if (res.ok) {
 				const data = await res.json();
 				if (data.success && Array.isArray(data.tasks)) {
@@ -407,12 +401,10 @@ export async function listAutomationTasks(options?: {
 	}
 
 	try {
-		let filter = '';
-		if (customFilter) {
-			filter = customFilter;
-		} else if (status && status !== 'all') {
-			filter = `status='${status}'`;
-		}
+		// One builder, shared with the BFF route. This copy used to *replace* the status
+		// clause when a custom filter was supplied, where the route ANDs them — so the
+		// same call meant two different things depending on which transport answered it.
+		const filter = buildTaskFilter({ status, filter: customFilter });
 
 		const res = await pb.collection('automation_tasks').getList(page, limit, {
 			filter: filter || undefined,

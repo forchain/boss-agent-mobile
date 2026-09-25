@@ -18,6 +18,7 @@
 		clearJobCommunication,
 		postCommunicationAction
 	} from '$lib/pocketbase';
+	import { dashboardRealtime } from '$lib/dashboardRealtime';
 	import {
 		validateCanBlacklistCompany,
 		isMaskedCompanyName,
@@ -267,6 +268,9 @@
 		}
 	});
 
+	//: Removes this page's realtime handler on teardown.
+	let offJobRecords: (() => void) | null = null;
+
 	onMount(async () => {
 		await loadJobs();
 
@@ -294,9 +298,9 @@
 			}
 		} catch (e) {}
 
-		// Realtime SSE updates
-		try {
-			pb.collection('job_records').subscribe('*', (e) => {
+		// Realtime SSE updates, through the shared module: health-gated, retried, and
+		// unsubscribed by handle so leaving this page cannot silence the nav badge.
+		offJobRecords = dashboardRealtime().subscribeToCollection('job_records', (e) => {
 				if (e.action === 'create') {
 					const newRec = e.record as unknown as JobRecord;
 					if (
@@ -325,13 +329,10 @@
 					}
 				}
 			});
-		} catch (err) {}
 	});
 
 	onDestroy(() => {
-		try {
-			pb.collection('job_records').unsubscribe('*');
-		} catch (e) {}
+		offJobRecords?.();
 	});
 
 	async function handleEvaluateMatch() {

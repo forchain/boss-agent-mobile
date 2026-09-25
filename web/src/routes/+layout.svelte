@@ -3,6 +3,7 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { page } from '$app/state';
 	import { checkPocketBaseHealth, setPocketBaseUrl, getPocketBaseUrl, pb } from '$lib/pocketbase';
+	import { dashboardRealtime } from '$lib/dashboardRealtime';
 
 	let { data, children }: { data: any; children: any } = $props();
 	let isPocketBaseOnline = $state(false);
@@ -49,6 +50,9 @@
 		}
 	}
 
+	//: Removes this page's realtime handler on teardown.
+	let offJobRecords: (() => void) | null = null;
+
 	onMount(() => {
 		if (data?.pocketbaseUrl) {
 			setPocketBaseUrl(data.pocketbaseUrl);
@@ -56,11 +60,11 @@
 		}
 		updateHealthAndCount();
 
-		try {
-			pb.collection('job_records').subscribe('*', () => {
-				updateHealthAndCount();
-			});
-		} catch (e) {}
+		// Health-gated and retried by the shared Realtime module. This copy had no gate
+		// at all, so an unreachable broker meant the nav badge quietly stopped updating.
+		offJobRecords = dashboardRealtime().subscribeToCollection('job_records', () => {
+			updateHealthAndCount();
+		});
 
 		healthCheckTimer = setInterval(() => {
 			updateHealthAndCount();
@@ -72,9 +76,9 @@
 			clearInterval(healthCheckTimer);
 			healthCheckTimer = null;
 		}
-		try {
-			pb.collection('job_records').unsubscribe('*');
-		} catch (e) {}
+		// The handle removes *this* page's handler. The plain `unsubscribe('*')` it
+		// replaces also removed the jobs page's — both subscribe to this collection.
+		offJobRecords?.();
 	});
 </script>
 

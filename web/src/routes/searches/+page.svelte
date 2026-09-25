@@ -10,6 +10,7 @@
 		deleteSavedSearch,
 		createAutomationTask
 	} from '$lib/pocketbase';
+	import { dashboardRealtime } from '$lib/dashboardRealtime';
 	import { buildSearchLaunch } from '$lib/taskLaunch';
 
 	let { data }: { data: any } = $props();
@@ -449,25 +450,21 @@
 		}
 	}
 
+	//: Removes this page's realtime handler on teardown.
+	let offSavedSearches: (() => void) | null = null;
+
 	onMount(() => {
 		loadSearches();
 
-		// Subscribe to real-time updates from PocketBase saved_searches collection
-		try {
-			pb.collection('saved_searches').subscribe('*', (e) => {
-				if (e.action === 'create' || e.action === 'update' || e.action === 'delete') {
-					loadSearches();
-				}
-			});
-		} catch (e) {
-			console.warn('Realtime subscription not active on saved_searches:', e);
-		}
+		offSavedSearches = dashboardRealtime().subscribeToCollection('saved_searches', (e) => {
+			if (e.action === 'create' || e.action === 'update' || e.action === 'delete') {
+				loadSearches();
+			}
+		});
 	});
 
 	onDestroy(() => {
-		try {
-			pb.collection('saved_searches').unsubscribe('*');
-		} catch (e) {}
+		offSavedSearches?.();
 	});
 </script>
 
