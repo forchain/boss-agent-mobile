@@ -29,6 +29,7 @@ class JobApplicationState(TypedDict, total=False):
     screening_policy: dict[str, Any]  # Serialized ScreeningPolicy
     candidate_profile: dict[str, Any]  # Serialized StructuredCandidateProfile
     jd_text: str
+    commute_distance_km: float | None  # Probed detail-page commute distance (spec #209)
 
     # Intermediate / Output: Card Screener (keywords, App-Enforced Filters, relaxation)
     card_pass: bool
@@ -62,7 +63,10 @@ def make_card_screener_node(screener: CandidateScreener):
 
     def card_screener_node(state: JobApplicationState) -> dict[str, Any]:
         policy = ScreeningPolicy.from_dict(state.get("screening_policy") or {})
-        verdict = screener.evaluate_card(state.get("card") or {}, policy)
+        card = dict(state.get("card") or {})
+        if "commute_distance_km" in state and "commute_distance_km" not in card:
+            card["commute_distance_km"] = state.get("commute_distance_km")
+        verdict = screener.evaluate_card(card, policy)
         rejected_by_keywords = verdict.stage is CardVerdictStage.FILTERED_BY_KEYWORD
 
         return {
@@ -77,6 +81,92 @@ def make_card_screener_node(screener: CandidateScreener):
         }
 
     return card_screener_node
+
+
+def _card_facets(state: JobApplicationState) -> dict[str, Any]:
+    """Extract compact card facets (title, company, tags, digest) from graph state."""
+    card_dict = state.get("card") or {}
+    return {
+        "title": card_dict.get("title", ""),
+        "company_name": card_dict.get("company_name", ""),
+        "tags": card_dict.get("tags") or [],
+        "digest": card_dict.get("digest") or card_dict.get("snippet", ""),
+    }
+
+
+@traceable(name="app_enforced_filter_node", run_type="tool")
+def app_enforced_filter_node(state: JobApplicationState) -> dict[str, Any]:
+    """Deterministic node evaluating App-Enforced Filters (recruitment channel, commute distance).
+
+    These are constraints the Boss platform cannot express in its native search UI
+    and must be judged app-side after card retrieval. Violations are not final:
+    the downstream whitelist_relaxer router may still grant an exemption.
+    """
+    card_dict = state.get("card") or {}
+    policy_dict = state.get("screening_policy") or {}
+    policy = ScreeningPolicy.from_dict(policy_dict)
+
+    commute_distance_km = state.get("commute_distance_km")
+    if commute_distance_km is None:
+        commute_distance_km = card_dict.get("commute_distance_km")
+
+    passed, violation = policy.evaluate_app_enforced_filters(
+        is_headhunter=bool(card_dict.get("is_headhunter", False)),
+        commute_distance_km=commute_distance_km,
+    )
+
+    return {
+        "app_rule_pass": passed,
+        "app_rule_violation": violation,
+    }
+
+
+@traceable(name="whitelist_relaxer", run_type="tool")
+def whitelist_relaxer(state: JobApplicationState) -> str:
+    """Conditional edge router applying Whitelist Relaxation after the App-Enforced Filter."""
+    if state.get("app_rule_pass", True):
+        return "proceed"
+
+    policy_dict = state.get("screening_policy") or {}
+    policy = ScreeningPolicy.from_dict(policy_dict)
+
+    is_relaxed, _matched_token = policy.evaluate_whitelist_relaxation(
+        **_card_facets(state),
+    )
+    if is_relaxed:
+        return "relax"
+    return "reject"
+
+
+@traceable(name="apply_relaxation_node", run_type="tool")
+def apply_relaxation_node(state: JobApplicationState) -> dict[str, Any]:
+    """Grant the whitelist exemption: tag the job and record the relaxation audit trail."""
+    policy_dict = state.get("screening_policy") or {}
+    policy = ScreeningPolicy.from_dict(policy_dict)
+
+    is_relaxed, matched_token = policy.evaluate_whitelist_relaxation(**_card_facets(state))
+    violation = state.get("app_rule_violation", "")
+    reason = (
+        f"【白名单放宽】命中兴趣/专长关键词 '{matched_token}'，"
+        f"豁免 App 端强制过滤违例: {violation}"
+        if is_relaxed
+        else ""
+    )
+
+    return {
+        "relaxed_by_whitelist": bool(is_relaxed),
+        "relaxation_reason": reason,
+        "status": "relaxed_by_whitelist" if is_relaxed else state.get("status", "pending"),
+    }
+
+
+@traceable(name="record_rejection_node", run_type="tool")
+def record_rejection_node(state: JobApplicationState) -> dict[str, Any]:
+    """Cleanly record an unredeemable App-Enforced Filter rejection."""
+    return {
+        "status": "filtered_by_app_rule",
+        "relaxed_by_whitelist": False,
+    }
 
 
 def make_job_evaluation_node(screener: CandidateScreener):
@@ -175,6 +265,8 @@ def run_job_application_graph(
             "digest": card.digest or card.snippet,
             "snippet": card.snippet or card.digest,
             "is_headhunter": card.is_headhunter,
+            "commute_distance_km": card.commute_distance_km,
+            "commute_distance_text": card.commute_distance_text,
         }
     else:
         card_dict = dict(card)
@@ -198,6 +290,7 @@ def run_job_application_graph(
         "screening_policy": policy_dict,
         "candidate_profile": profile_dict,
         "jd_text": jd_text,
+        "commute_distance_km": card_dict.get("commute_distance_km"),
         "status": "pending",
     }
 

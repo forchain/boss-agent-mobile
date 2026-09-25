@@ -287,3 +287,24 @@ def test_restart_stops_existing_server_and_reclaims_port(web_runtime: Path, dumm
     assert "Stopping SvelteKit Web Dashboard" in result.stdout
     assert "Restarting SvelteKit Web Dashboard" in result.stdout
 
+
+def test_start_daemon_when_already_running_does_not_attach(web_runtime: Path, dummy_server):
+    process, port = dummy_server()
+    env = dict(os.environ)
+    env["WEB_HOST"] = "127.0.0.1"
+    env["WEB_PORT"] = str(port)
+    bash = shutil.which("bash") or "/bin/bash"
+
+    result = subprocess.run(
+        [bash, "web.sh", "start", "--daemon"],
+        cwd=str(web_runtime),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=5.0,
+    )
+    assert result.returncode == 0
+    assert "already running" in result.stdout
+    assert "Attaching to live log stream" not in result.stdout
+
+

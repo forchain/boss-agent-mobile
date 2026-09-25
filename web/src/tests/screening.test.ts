@@ -182,6 +182,45 @@ describe('Masked Company Guardrail & Screening Utilities', () => {
 		expect(postData.rejected_companies[0].name).toBe('某中型人工智能公司');
 	});
 
+	// Spec #209 / Ticket #210: the commute ceiling is edited from the same panel,
+	// so it must round-trip through the policy endpoint and be clearable (null).
+	it('round-trips max_commute_distance_km through /api/screening/policy', async () => {
+		const { GET: getPolicy, POST: postPolicy } = await import('../routes/api/screening/policy/+server');
+
+		const post = async (body: Record<string, unknown>) => {
+			const req = new Request('http://localhost/api/screening/policy', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ policy: body })
+			});
+			const resp = await postPolicy({ request: req } as any);
+			expect(resp.status).toBe(200);
+			return (await resp.json()).policy;
+		};
+
+		const saved = await post({
+			enable_screening: true,
+			title_whitelist: [],
+			title_blacklist: [],
+			company_blacklist: [],
+			jd_blacklist: [],
+			max_commute_distance_km: 27.5
+		});
+		expect(saved.max_commute_distance_km).toBe(27.5);
+
+		const getResp = await getPolicy({} as any);
+		expect((await getResp.json()).policy.max_commute_distance_km).toBe(27.5);
+
+		// An absent key preserves the stored ceiling on partial saves.
+		const partial = await post({ title_whitelist: ['大模型'] });
+		expect(partial.max_commute_distance_km).toBe(27.5);
+
+		// Explicit null (or a blank field) disables distance filtering.
+		const cleared = await post({ ...partial, max_commute_distance_km: null });
+		expect(cleared.max_commute_distance_km).toBeNull();
+		expect((await post({ ...cleared, max_commute_distance_km: '' })).max_commute_distance_km).toBeNull();
+	});
+
 	// Byte-guard against issue #185 recurrences: runs after every save above.
 	it('left the developer settings file untouched', () => sandbox.assertRealConfigUntouched());
 

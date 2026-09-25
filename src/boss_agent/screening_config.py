@@ -269,6 +269,12 @@ def save_policy(policy: ScreeningPolicy, config_path: str | Path | None = None) 
         lines = [
             f"enable_screening: {'true' if policy.enable_screening else 'false'}",
             f'channel_preference: "{policy.channel_preference}"',
+            "max_commute_distance_km: "
+            + (
+                "null"
+                if policy.max_commute_distance_km is None
+                else repr(float(policy.max_commute_distance_km))
+            ),
             "title_whitelist:",
             *[f"  - {json.dumps(w, ensure_ascii=False)}" for w in policy.title_whitelist],
             "title_blacklist:",

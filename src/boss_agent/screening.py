@@ -82,6 +82,8 @@ class CardFacets:
     salary_range: str = ""
     location: str = ""
     is_headhunter: bool = False
+    commute_distance_km: float | None = None
+    commute_distance_text: str = ""
 
     @classmethod
     def from_card(cls, card: Any) -> "CardFacets":
@@ -105,6 +107,8 @@ class CardFacets:
                 is_headhunter=resolve_headhunter_channel(
                     card.get("is_headhunter"), recruiter_name, recruiter_title
                 ),
+                commute_distance_km=card.get("commute_distance_km"),
+                commute_distance_text=str(card.get("commute_distance_text") or ""),
             )
         digest = getattr(card, "digest", "") or getattr(card, "snippet", "")
         recruiter_name = str(getattr(card, "recruiter_name", "") or "")
@@ -122,6 +126,8 @@ class CardFacets:
             is_headhunter=resolve_headhunter_channel(
                 declared_channel, recruiter_name, recruiter_title
             ),
+            commute_distance_km=getattr(card, "commute_distance_km", None),
+            commute_distance_text=str(getattr(card, "commute_distance_text", "") or ""),
         )
 
     def to_job_posting(self, jd_text: str) -> JobPosting:
@@ -136,6 +142,8 @@ class CardFacets:
             recruiter_name=self.recruiter_name,
             recruiter_title=self.recruiter_title,
             is_headhunter=self.is_headhunter,
+            commute_distance_km=self.commute_distance_km,
+            commute_distance_text=self.commute_distance_text,
         )
 
 
@@ -274,7 +282,8 @@ class CandidateScreener:
             return CardScreeningVerdict.rejected_by_keywords(reason)
 
         app_pass, violation = resolved.evaluate_app_enforced_filters(
-            is_headhunter=facets.is_headhunter
+            is_headhunter=facets.is_headhunter,
+            commute_distance_km=facets.commute_distance_km,
         )
         if app_pass:
             return CardScreeningVerdict.approved()

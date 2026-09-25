@@ -154,3 +154,68 @@ def test_worker_preflight_gate_fails_on_unreachable_appium(worker_runtime: Path,
         finally:
             pb_srv.shutdown()
             t.join(timeout=3)
+
+
+def test_worker_attach_reports_error_when_idle(worker_runtime: Path):
+    result = _run_worker_cmd(worker_runtime, "attach")
+    assert result.returncode != 0
+    combined = result.stdout + result.stderr
+    assert "NOT RUNNING" in combined
+    assert "Cannot attach" in combined
+
+
+def test_worker_start_daemon_when_already_running_does_not_attach(worker_runtime: Path):
+    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        pid_file = worker_runtime / ".boss_agent" / "worker.pid"
+        pid_file.write_text(str(proc.pid), encoding="utf-8")
+
+        result = _run_worker_cmd(worker_runtime, "start", "--daemon")
+        assert result.returncode == 0
+        assert "already running" in result.stdout
+        assert "Attaching to live log stream" not in result.stdout
+    finally:
+        proc.kill()
+        proc.wait(timeout=5)
+
+
+def test_worker_start_daemon_empty_args_executes_without_unbound_variable(worker_runtime: Path):
+    fake_emu = worker_runtime / "emulator.sh"
+    fake_emu.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    fake_emu.chmod(0o755)
+
+    import http.server
+    import socketserver
+    import threading
+
+    class _OkHandler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"{}")
+        def log_message(self, *args):
+            pass
+
+    with socketserver.TCPServer(("127.0.0.1", 0), _OkHandler) as http_srv:
+        srv_port = http_srv.server_address[1]
+        t = threading.Thread(target=http_srv.serve_forever, daemon=True)
+        t.start()
+        try:
+            scripts_dir = worker_runtime / "scripts"
+            scripts_dir.mkdir(parents=True, exist_ok=True)
+            mock_worker = scripts_dir / "worker.py"
+            mock_worker.write_text("import time; time.sleep(60)\n", encoding="utf-8")
+
+            env = {
+                "POCKETBASE_URL": f"http://127.0.0.1:{srv_port}",
+                "APPIUM_URL": f"http://127.0.0.1:{srv_port}",
+            }
+            result = _run_worker_cmd(worker_runtime, "start", "--daemon", env=env)
+            assert result.returncode == 0
+            assert "unbound variable" not in result.stderr
+            assert "started in background" in result.stdout
+        finally:
+            http_srv.shutdown()
+            t.join(timeout=3)
+            _run_worker_cmd(worker_runtime, "stop")
+

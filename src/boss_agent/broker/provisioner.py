@@ -54,6 +54,28 @@ LONG_TEXT_FIELD_MAX_CHARS = LONG_TEXT_MAX_CHARS
 #: The fields PocketBase manages itself; the REST dialect must not declare them.
 SERVER_MANAGED_FIELDS = frozenset({"id", "created", "updated"})
 
+#: The same bound in the two shapes PocketBase has used for field options: current releases
+#: keep `min`/`max`/`pattern` directly on the field, while older ones nest them under
+#: `options`. Only the flat shape is honoured by PocketBase 0.39 (a nested `options.max` is
+#: silently ignored — verified against a live server), and the nested one is what older
+#: releases read, so both are sent and whichever the server understands takes effect.
+LONG_TEXT_FIELD_OPTIONS: dict[str, Any] = {
+    "min": 0,
+    "max": LONG_TEXT_FIELD_MAX_CHARS,
+    "pattern": "",
+}
+
+#: The `job_description` field as both provisioning paths (local SQLite schema and remote
+#: collection create) must define it. Copy it per use — a shared dict would let one
+#: collection's definition be edited through the other.
+JOB_DESCRIPTION_FIELD: dict[str, Any] = {
+    "name": "job_description",
+    "type": "text",
+    "required": False,
+    **LONG_TEXT_FIELD_OPTIONS,
+    "options": dict(LONG_TEXT_FIELD_OPTIONS),
+}
+
 
 DEFAULT_INITIAL_SEARCHES: dict[str, dict[str, Any]] = {
     "default_agent_search": {
@@ -265,7 +287,12 @@ def _merge_remote_fields(
     for live in live_fields:
         name = live.get("name")
         if isinstance(name, str) and name in declared:
-            merged.append(dict(declared[name]))
+            merged_field = dict(declared[name])
+            if "id" in live:
+                merged_field["id"] = live["id"]
+            if isinstance(live.get("options"), dict) and "options" in declared[name]:
+                merged_field["options"] = {**live["options"], **declared[name]["options"]}
+            merged.append(merged_field)
             seen.add(name)
         else:
             merged.append(dict(live))
@@ -283,6 +310,101 @@ def _live_field_names(live: dict[str, Any]) -> set[str]:
         for f in (live.get("fields") or [])
         if isinstance(f, dict) and isinstance(name := f.get("name"), str)
     }
+
+
+def _stored_text_max(field: dict[str, Any]) -> int | None:
+    """A text field's configured character bound, in either PocketBase schema shape.
+
+    None means the field carries no usable bound, i.e. PocketBase's implicit 5000-char cap
+    applies. The flat key wins when both are present, because that is the one current
+    PocketBase reads.
+    """
+    if isinstance(field.get("max"), int) and field["max"] > 0:
+        return field["max"]
+    options = field.get("options")
+    if isinstance(options, dict) and isinstance(options.get("max"), int) and options["max"] > 0:
+        return options["max"]
+    return None
+
+
+def _widen_remote_text_field_cap(
+    session: Any,
+    base_url: str,
+    collection: str,
+    field_name: str,
+    max_chars: int,
+    timeout: float,
+) -> bool:
+    """Widen ``collection.field_name`` to ``max_chars`` on an already-provisioned instance.
+
+    Collections created before :data:`LONG_TEXT_FIELD_MAX_CHARS` existed carry PocketBase's
+    implicit 5000-character text cap, and the create loop skips every collection that already
+    exists — so such an instance rejects each expanded JD with
+    ``validation_max_text_constraint`` and drops the enriched record (Ticket #264).
+
+    PocketBase replaces the entire ``fields`` array on update, so the stored definition is
+    read back and re-sent with its field ids: any field omitted from the payload would be
+    deleted along with its data. Returns True when a widening update was accepted.
+    """
+    url = f"{base_url}/api/collections/{collection}"
+    try:
+        resp = session.get(url, timeout=timeout, verify=False)
+        if not resp.ok:
+            logger.warning(
+                "Cannot inspect collection '%s' for schema upgrade: %s", collection, resp.text
+            )
+            print(f"⚠️ Cannot inspect collection '{collection}': {resp.text}")
+            return False
+        stored = resp.json()
+    except Exception as ex:
+        logger.warning("Error inspecting collection '%s' for schema upgrade: %s", collection, ex)
+        return False
+
+    fields = stored.get("fields")
+    if not isinstance(fields, list):
+        logger.warning(
+            "Collection '%s' returned no usable field list; skipping upgrade", collection
+        )
+        return False
+
+    target = next((f for f in fields if isinstance(f, dict) and f.get("name") == field_name), None)
+    if target is None:
+        logger.warning("Collection '%s' has no '%s' field to widen", collection, field_name)
+        return False
+
+    current_max = _stored_text_max(target)
+    if current_max is not None and current_max >= max_chars:
+        print(
+            f"ℹ️ Collection '{collection}.{field_name}' already allows {current_max} chars, "
+            f"no schema upgrade needed."
+        )
+        return False
+
+    # Write the bound in both shapes: current PocketBase ignores a nested `options.max`
+    # entirely, while older releases ignore the flat keys. Only add `options` when the
+    # server's own definition already nests them, so a modern schema keeps its shape.
+    target.update(LONG_TEXT_FIELD_OPTIONS)
+    options = target.get("options")
+    if isinstance(options, dict):
+        options.update(LONG_TEXT_FIELD_OPTIONS)
+
+    try:
+        patch_resp = session.patch(url, json={"fields": fields}, timeout=timeout, verify=False)
+    except Exception as ex:
+        logger.warning("Failed to widen '%s.%s' text cap: %s", collection, field_name, ex)
+        return False
+
+    if patch_resp.ok:
+        logger.info("Widened %s.%s text cap to %d chars", collection, field_name, max_chars)
+        print(f"🛠️ Widened '{collection}.{field_name}' text limit to {max_chars} chars")
+        return True
+
+    logger.error("Failed to widen '%s.%s' text cap: %s", collection, field_name, patch_resp.text)
+    print(
+        f"⚠️ Failed to widen '{collection}.{field_name}' to {max_chars} chars: {patch_resp.text} "
+        f"(full job descriptions may still be truncated on write)"
+    )
+    return False
 
 
 def provision_remote_pocketbase(
@@ -354,6 +476,7 @@ def provision_remote_pocketbase(
         return False
 
     # 3. Create or migrate every collection, from the schema's own description.
+    existing_names = {c.get("name") for c in collections_data if isinstance(c, dict)}
     live_by_name = {c.get("name"): c for c in collections_data if isinstance(c, dict)}
     for collection in COLLECTIONS:
         payload = pocketbase_collection_payload(collection)
@@ -372,26 +495,42 @@ def provision_remote_pocketbase(
                 print(f"❌ Failed to create collection '{collection.name}': {create_resp.text}")
             continue
 
-        merged = _merge_remote_fields(collection, list(live.get("fields") or []))
-        if _live_field_names(live) == {f["name"] for f in merged}:
-            print(f"ℹ️ Collection '{collection.name}' already exists")
-            continue
-        target = live.get("id") or collection.name
-        patch_resp = session.patch(
-            f"{base_url}/api/collections/{target}",
-            json={**live, "fields": merged},
-            timeout=timeout,
-            verify=False,
-        )
-        if patch_resp.ok:
-            added = sorted({f["name"] for f in merged} - _live_field_names(live))
-            logger.info("Migrated collection '%s' (+%s)", collection.name, ", ".join(added) or "none")
-            print(f"🔄 Migrated collection '{collection.name}' (+{', '.join(added) or 'none'})")
-        else:
-            logger.error(
-                "Failed to migrate collection '%s': %s", collection.name, patch_resp.text
+        if "fields" in live:
+            merged = _merge_remote_fields(collection, list(live.get("fields") or []))
+            if _live_field_names(live) == {f["name"] for f in merged}:
+                print(f"ℹ️ Collection '{collection.name}' already exists")
+                continue
+            target = live.get("id") or collection.name
+            patch_resp = session.patch(
+                f"{base_url}/api/collections/{target}",
+                json={**live, "fields": merged},
+                timeout=timeout,
+                verify=False,
             )
-            print(f"❌ Failed to migrate collection '{collection.name}': {patch_resp.text}")
+            if patch_resp.ok:
+                added = sorted({f["name"] for f in merged} - _live_field_names(live))
+                logger.info("Migrated collection '%s' (+%s)", collection.name, ", ".join(added) or "none")
+                print(f"🔄 Migrated collection '{collection.name}' (+{', '.join(added) or 'none'})")
+            else:
+                logger.error(
+                    "Failed to migrate collection '%s': %s", collection.name, patch_resp.text
+                )
+                print(f"❌ Failed to migrate collection '{collection.name}': {patch_resp.text}")
+        else:
+            print(f"ℹ️ Collection '{collection.name}' already exists")
+
+    # 3b. Upgrade the schema of a pre-existing job_records collection. The create loop skips
+    # collections that already exist, so an instance provisioned before the wide text cap
+    # existed would keep rejecting every expanded JD (Ticket #264).
+    if "job_records" in existing_names:
+        _widen_remote_text_field_cap(
+            session,
+            base_url,
+            collection="job_records",
+            field_name="job_description",
+            max_chars=LONG_TEXT_FIELD_MAX_CHARS,
+            timeout=timeout,
+        )
 
     # 4. Seed saved_searches if empty
     try:

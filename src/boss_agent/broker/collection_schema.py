@@ -135,6 +135,9 @@ class Field:
         if self.primary_key:
             pb["primaryKey"] = True
         if self.max_chars is not None:
+            pb["min"] = 0
+            pb["max"] = self.max_chars
+            pb["pattern"] = ""
             pb["options"] = {"min": 0, "max": self.max_chars, "pattern": ""}
         if self.kind == AUTODATE:
             pb["onCreate"] = self.on_create
@@ -428,6 +431,8 @@ JOB_RECORDS = Collection(
         Field("screening_audit", TEXT, default=""),
         Field("applied_at", DATE),
         Field("applied_source", TEXT, default=""),
+        Field("commute_distance_km", NUMBER),
+        Field("commute_distance_text", TEXT, default=""),
         Field("first_seen_at", DATE),
         Field("last_seen_at", DATE),
         Field("source_task_id", TEXT),

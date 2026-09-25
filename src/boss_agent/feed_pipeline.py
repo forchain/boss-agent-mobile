@@ -33,6 +33,7 @@ from .models import (
     APPLIED_SOURCE_AGENT,
     APPLIED_SOURCE_PLATFORM_HISTORICAL,
     EXPIRED_POSTING_REASON,
+    HEADHUNTER_COMMUTE_PROBE_SKIP_REASON,
     STATE_RANK,
     TARGET_ACTION_RANK,
     ChatButtonState,
@@ -107,6 +108,7 @@ class FeedStreamResult:
     """Aggregate outcome of one feed streaming run."""
 
     outcome: str = "no_candidates"
+    reason: str = ""
     scanned: int = 0
     processed: int = 0
     skipped: int = 0
@@ -145,6 +147,7 @@ class FeedStreamConfig:
     # A targeted application acts on the posting already on screen instead of scanning.
     single_screen: bool = False
     direct_job_id: str | None = None
+    is_headhunter: bool | None = None
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any] | None) -> "FeedStreamConfig":
@@ -199,6 +202,7 @@ class FeedStreamConfig:
             source_task_id=data.get("source_task_id"),
             single_screen=bool(data.get("direct_job_id")),
             direct_job_id=data.get("direct_job_id"),
+            is_headhunter=data.get("is_headhunter"),
         )
 
 
@@ -318,6 +322,12 @@ class JobFeedPipeline:
 
         if self.startup_page and self.startup_page.is_dialog_present():
             self.startup_page.dismiss_dialog()
+
+        if config.screening_policy and config.screening_policy.is_commute_filter_active:
+            await self._log(
+                f"📍 [App端强制过滤] Active ceiling {config.screening_policy.max_commute_distance_km:.1f}km; "
+                f"probing detail page bottom for the distance widget (direct-hire postings only)."
+            )
 
         if config.single_screen:
             await self._evaluate_current_posting(
@@ -672,7 +682,7 @@ class JobFeedPipeline:
         try:
             if await self._back_out_if_contacted(run, card.fingerprint):
                 return
-            posting = self._extract_posting(card)
+            posting = await self._extract_posting(card, run.config.screening_policy)
             if posting is None:
                 return
             await self._evaluate_and_act(run, posting)
@@ -750,17 +760,30 @@ class JobFeedPipeline:
         )
         return True
 
-    def _extract_posting(self, card: JobCardBrief) -> Any | None:
+    async def _extract_posting(
+        self, card: JobCardBrief, policy: ScreeningPolicy | None = None
+    ) -> Any | None:
         """Read the detail page, returning None when no usable title is on screen.
 
         A missing detail-page title is not fatal: the card's own title still identifies
         the posting, and dropping the enrichment would lose a job we already hold.
         """
+        card_is_headhunter = getattr(card, "is_headhunter", False)
+        resolved_policy = policy or ScreeningPolicy()
+        should_probe = resolved_policy.should_probe_commute_distance(card_is_headhunter)
+        if resolved_policy.is_commute_filter_active and not should_probe:
+            await self._log(
+                f"📍 [App端强制过滤] '{card.title}' @ '{card.company_name}' "
+                f"{HEADHUNTER_COMMUTE_PROBE_SKIP_REASON}"
+            )
+
         try:
             posting = self.detail_page.extract_job_posting(
                 timeout_sec=4.0,
                 fallback_company=card.company_name,
                 fallback_title=card.title,
+                probe_commute_distance=should_probe,
+                is_headhunter=card_is_headhunter,
             )
         except Exception as e:
             logger.error("Failed to extract detail for '%s': %s", card.title, e)
@@ -793,6 +816,79 @@ class JobFeedPipeline:
             verdict=run.verdict,
         )
         is_headhunter = enriched["is_headhunter"]
+
+        # Commute distance App-Enforced Filter (spec #209). The
+        # distance widget only exists at the bottom of the detail page,
+        # so this verdict can only be rendered here.
+        commute_dist = getattr(posting, "commute_distance_km", None)
+        if commute_dist is not None:
+            commute_pass, _ = config.screening_policy.evaluate_commute_distance(commute_dist)
+            await self._log(
+                f"📍 [App端强制过滤] '{posting_title}' 距家庭住址 {commute_dist:.1f}km"
+                + (
+                    " (在通勤上限内)"
+                    if commute_pass
+                    else f" (超过上限 {config.screening_policy.max_commute_distance_km:.1f}km)"
+                )
+            )
+
+        commute_pass, commute_violation = config.screening_policy.evaluate_commute_distance(
+            commute_dist
+        )
+        if not commute_pass:
+            commute_relaxed, commute_token = config.screening_policy.evaluate_whitelist_relaxation(
+                title=posting_title,
+                company_name=posting_company,
+                tags=getattr(card, "tags", None) or [],
+                digest=getattr(card, "digest", "") or getattr(card, "snippet", "") or "",
+            )
+            audit_parts = [
+                enriched.get("screening_audit", ""),
+                f"App端强制过滤违例: {commute_violation}",
+            ]
+            if not commute_relaxed:
+                enriched["relaxed_by_whitelist"] = False
+                enriched["screening_audit"] = "；".join(p for p in audit_parts if p)
+                enriched["status"] = JobRecordStatus.IGNORED.value
+                enriched["screened_reason"] = commute_violation
+                run.result.skipped += 1
+                if run.jobs_index is not None and run.result.jobs:
+                    run.result.jobs.pop(run.jobs_index)
+                    run.jobs_index = None
+                saved = await self.store.upsert_job_record(enriched)
+                await self._log(
+                    f"🛑 [App端强制过滤] '{posting_title}' @ '{posting_company}': "
+                    f"{commute_violation}，已标记为淘汰并停止采集"
+                )
+                await self._emit(
+                    run,
+                    JobOutcome(
+                        fingerprint=card.fingerprint,
+                        title=posting_title,
+                        company_name=posting_company,
+                        status=JobRecordStatus.IGNORED.value,
+                        action=JobAction.SKIPPED,
+                        reason=commute_violation,
+                        record=saved or {},
+                    ),
+                )
+                if run.result.outcome == "no_candidates":
+                    run.result.outcome = CardVerdictStage.FILTERED_BY_APP_RULE.value
+                    run.result.reason = commute_violation
+                    run.result.job = {
+                        "title": posting_title,
+                        "company_name": posting_company,
+                        "salary_range": getattr(posting, "salary_range", ""),
+                    }
+                return
+
+            enriched["relaxed_by_whitelist"] = True
+            audit_parts.append(f"【白名单放宽】命中关键词 '{commute_token}'，予以豁免")
+            enriched["screening_audit"] = "；".join(p for p in audit_parts if p)
+            await self._log(
+                f"🎗️ [白名单放宽] '{posting_title}' 命中 '{commute_token}' "
+                f"豁免通勤距离限制，继续采集"
+            )
 
         evaluation = self.screener.evaluate_job(
             card=card,
@@ -1070,8 +1166,23 @@ class JobFeedPipeline:
             self.detail_page.navigate_back()
             return
 
+        policy = run.config.screening_policy or ScreeningPolicy()
+        target_is_headhunter = run.config.is_headhunter
+        if target_is_headhunter is None and target_record:
+            target_is_headhunter = target_record.get("is_headhunter")
+        probe_commute_distance = policy.should_probe_commute_distance(target_is_headhunter)
+        if policy.is_commute_filter_active and not probe_commute_distance:
+            target_desc = (target_record and target_record.get("title")) or "当前岗位"
+            await self._log(
+                f"📍 [App端强制过滤] '{target_desc}' {HEADHUNTER_COMMUTE_PROBE_SKIP_REASON}"
+            )
+
         try:
-            posting = self.detail_page.extract_job_posting(timeout_sec=5.0)
+            posting = self.detail_page.extract_job_posting(
+                timeout_sec=5.0,
+                probe_commute_distance=probe_commute_distance,
+                is_headhunter=target_is_headhunter,
+            )
         except Exception as e:
             run.result.error_message = str(e)
             await self._log(f"Could not extract current job posting: {e}")
@@ -1100,6 +1211,8 @@ class JobFeedPipeline:
             salary_range=posting.salary_range,
             location=posting.location or "",
             tags=list(getattr(posting, "tags", None) or []),
+            commute_distance_km=getattr(posting, "commute_distance_km", None),
+            commute_distance_text=str(getattr(posting, "commute_distance_text", "") or ""),
         )
         run.card = card
         run.card_record = card_facets_record(
@@ -1125,6 +1238,13 @@ class JobFeedPipeline:
                 }
             )
             run.result.outcome = run.verdict.stage.value
+            run.result.reason = run.verdict.reason
+            if run.result.job is None:
+                run.result.job = {
+                    "title": title,
+                    "company_name": posting.company_name,
+                    "salary_range": posting.salary_range,
+                }
             return
         if run.verdict.relaxed_by_whitelist:
             await self._log(

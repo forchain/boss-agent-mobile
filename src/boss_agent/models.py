@@ -498,6 +498,11 @@ APPLIED_SOURCE_PLATFORM_HISTORICAL = "platform_historical"
 
 EXPIRED_POSTING_REASON = "岗位已失效/停止招聘"
 
+# Telemetry shared by both detail-inspecting handlers when a headhunter posting is
+# spared the bottom commute probe (ticket #255). Kept in one place so the two paths
+# cannot drift into reporting the skip differently.
+HEADHUNTER_COMMUTE_PROBE_SKIP_REASON = "猎头岗位（企业信息保密），跳过底部通勤距离探测以节省耗时"
+
 DEFAULT_COMMUNICATION_COOLDOWN_DAYS = 30
 
 
@@ -529,6 +534,10 @@ class JobCardBrief:
     industry: str = ""
     recruiter_title: str = ""
     is_headhunter: bool = False
+    # App-Enforced commute distance carried over from the detail page probe
+    # (spec #209). None = unknown; screening fails open on it.
+    commute_distance_km: float | None = None
+    commute_distance_text: str = ""
 
     def __post_init__(self) -> None:
         if self.title:
@@ -736,6 +745,10 @@ class JobPosting:
     company_scale: str = ""
     industry: str = ""
     is_headhunter: bool = False
+    # App-Enforced commute distance, probed from the detail page bottom widget
+    # (spec #209). None means unknown/absent — screening must fail open on it.
+    commute_distance_km: float | None = None
+    commute_distance_text: str = ""
 
     def __post_init__(self) -> None:
         if self.title:
@@ -758,6 +771,20 @@ class JobPosting:
             company_name=self.company_name,
             title=self.title,
         )
+
+
+def commute_columns(posting: JobPosting | None) -> dict[str, Any]:
+    """The job-record columns carrying the probed commute distance (spec #209).
+
+    Persisted with every record regardless of the screening verdict, so the Web UI
+    can show how far a job is even when the commute filter rejected it — matching
+    the screening_audit trail. An absent posting (rejection before detail
+    inspection) contributes the columns' empty values.
+    """
+    return {
+        "commute_distance_km": posting.commute_distance_km if posting else None,
+        "commute_distance_text": (posting.commute_distance_text if posting else "") or "",
+    }
 
 
 @dataclass
@@ -945,12 +972,14 @@ class ScreeningPolicy:
     jd_blacklist: list[str] = field(default_factory=list)
     enable_screening: bool = True
     channel_preference: str = ChannelPreference.ALL
+    max_commute_distance_km: float | None = 40.0
     #: Config file `load_default` resolved this policy from; where blacklist
     #: additions are written back. Excluded from equality and serialization.
     source_path: str | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         self.channel_preference = self._normalize_channel_preference(self.channel_preference)
+        self.max_commute_distance_km = self._normalize_commute_limit(self.max_commute_distance_km)
 
     @staticmethod
     def _normalize_channel_preference(value: Any) -> str:
@@ -960,32 +989,114 @@ class ScreeningPolicy:
         except ValueError:
             return ChannelPreference.ALL.value
 
-    def evaluate_app_enforced_filters(self, is_headhunter: bool = False) -> tuple[bool, str]:
+    @staticmethod
+    def _normalize_commute_limit(value: Any) -> float | None:
+        """Coerce a commute ceiling to a float in kilometers, or None when filtering is off.
+
+        Blank strings, ``null`` sentinels and unparseable values all mean "no ceiling":
+        a corrupt config must widen the filter, never silently impose an unexpected one.
+        """
+        if value is None:
+            return None
+        if isinstance(value, str):
+            text = value.strip()
+            if not text or text.lower() in ("null", "none", "~"):
+                return None
+            try:
+                return float(text)
+            except ValueError:
+                return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    @property
+    def is_commute_filter_active(self) -> bool:
+        """True when the commute ceiling can actually reject something.
+
+        Handlers gate the detail-page bottom probe on this: with the filter off,
+        scrolling to find the distance widget would cost latency for nothing.
+        """
+        return (
+            self.enable_screening
+            and self.max_commute_distance_km is not None
+            and self.max_commute_distance_km > 0
+        )
+
+    def should_probe_commute_distance(self, is_headhunter: bool | None) -> bool:
+        """Whether this posting's detail page is worth probing for the distance widget.
+
+        Narrower than ``is_commute_filter_active`` because the probe only buys anything
+        for direct-hire postings: the platform conceals the hiring enterprise and its
+        office address for headhunter roles, so ``home_tip_vf`` is never rendered for
+        them and the scroll budget would be spent discovering that. An unknown channel
+        (``None``) still probes — an unrecognised direct hire must not be silently
+        spared distance screening.
+        """
+        return self.is_commute_filter_active and is_headhunter is not True
+
+    def evaluate_commute_distance(self, commute_distance_km: float | None) -> tuple[bool, str]:
+        """Evaluate the commute distance App-Enforced Filter on its own.
+
+        Split out because the distance is only knowable from the detail page bottom,
+        after the card-level channel verdict was already rendered and audited — so the
+        detail-stage check must not re-report a channel violation already adjudicated.
+
+        Fails open (passes) whenever the distance is unknown or the ceiling is disabled
+        (None or <= 0): an absent widget must never reject a job.
+        """
+        limit = self.max_commute_distance_km
+        if not self.enable_screening or limit is None or limit <= 0:
+            return True, ""
+
+        if commute_distance_km is None or commute_distance_km <= limit:
+            return True, ""
+
+        return (
+            False,
+            f"【App端强制过滤】距离家庭住址 {commute_distance_km:.1f}km "
+            f"超过通勤上限 {limit:.1f}km",
+        )
+
+    def evaluate_app_enforced_filters(
+        self,
+        is_headhunter: bool = False,
+        commute_distance_km: float | None = None,
+    ) -> tuple[bool, str]:
         """Evaluate App-Enforced Filters the Boss platform cannot express natively.
 
-        Currently the recruitment channel preference (direct-hire vs headhunter).
-        Commute distance ceilings and future app-side conditions hook in here.
-        Returns (passed: bool, violation: str); ``violation`` is an empty string when
-        the card satisfies all App-Enforced Filters, otherwise a human-readable
-        description of the violated condition, which the Whitelist Relaxation router
-        may still exempt.
+        Currently the recruitment channel preference (direct-hire vs headhunter) and
+        the commute distance ceiling. Returns (passed: bool, violation: str);
+        ``violation`` is an empty string when the card satisfies all App-Enforced
+        Filters, otherwise every violated condition joined by '；', which the
+        Whitelist Relaxation router may still exempt. Reporting each violated
+        dimension — rather than the first one checked — keeps this caller's audit
+        trail equivalent to SCRAPE_JOBS', which adjudicates the two dimensions at
+        different stages and can therefore record both.
         """
         if not self.enable_screening:
             return True, ""
 
+        violations: list[str] = []
+
+        passed, commute_violation = self.evaluate_commute_distance(commute_distance_km)
+        if not passed:
+            violations.append(commute_violation)
+
         if self.channel_preference == ChannelPreference.DIRECT_ONLY and is_headhunter:
-            return (
-                False,
-                "【App端强制过滤】猎头代招岗位违反直聘渠道偏好 (channel_preference='direct_only')",
+            violations.append(
+                "【App端强制过滤】猎头代招岗位违反直聘渠道偏好 (channel_preference='direct_only')"
+            )
+        elif self.channel_preference == ChannelPreference.HEADHUNTER_ONLY and not is_headhunter:
+            violations.append(
+                "【App端强制过滤】直招岗位违反猎头渠道偏好 (channel_preference='headhunter_only')"
             )
 
-        if self.channel_preference == ChannelPreference.HEADHUNTER_ONLY and not is_headhunter:
-            return (
-                False,
-                "【App端强制过滤】直招岗位违反猎头渠道偏好 (channel_preference='headhunter_only')",
-            )
+        if not violations:
+            return True, ""
 
-        return True, ""
+        return False, "；".join(violations)
 
     def evaluate_whitelist_relaxation(
         self,
@@ -1138,6 +1249,7 @@ class ScreeningPolicy:
             "jd_blacklist": self.jd_blacklist,
             "enable_screening": self.enable_screening,
             "channel_preference": self.channel_preference,
+            "max_commute_distance_km": self.max_commute_distance_km,
         }
 
     @classmethod
@@ -1152,6 +1264,12 @@ class ScreeningPolicy:
             enable_screening=bool(data.get("enable_screening", True)),
             channel_preference=cls._normalize_channel_preference(
                 data.get("channel_preference", ChannelPreference.ALL.value)
+            ),
+            # Absent key keeps the 40km default; an explicit null/blank means "disabled".
+            max_commute_distance_km=cls._normalize_commute_limit(
+                data["max_commute_distance_km"]
+                if "max_commute_distance_km" in data
+                else cls.__dataclass_fields__["max_commute_distance_km"].default
             ),
         )
 
@@ -1219,6 +1337,7 @@ class ScreeningPolicy:
                             "jd_blacklist",
                             "company_blacklist",
                             "channel_preference",
+                            "max_commute_distance_km",
                         )
                         if config_path or any(k in data for k in screening_keys):
                             policy = cls.from_dict(data)

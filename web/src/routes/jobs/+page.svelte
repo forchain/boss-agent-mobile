@@ -25,6 +25,7 @@
 		extractDigestFromJd,
 		extractTagsFromText
 	} from '$lib/screening';
+	import { formatCommuteDistance } from '$lib/commute';
 
 	// State
 	let jobs = $state<JobRecord[]>([]);
@@ -990,6 +991,13 @@
 											<span class="text-slate-600">·</span>
 											<span class="text-slate-500 truncate">{job.location}</span>
 										{/if}
+										{#if formatCommuteDistance(job)}
+											<span class="text-slate-600">·</span>
+											<span
+												class="shrink-0 px-1.5 py-0.5 rounded bg-slate-800/80 text-[10px] text-slate-300 border border-slate-700/60"
+												title={job.commute_distance_text || '距家庭住址'}
+											>📍 {formatCommuteDistance(job.commute_distance_km)}</span>
+										{/if}
 									</div>
 
 									<div class="flex items-center space-x-1.5 shrink-0">
@@ -1169,6 +1177,13 @@
 								{#if selectedJob.location}
 									<span class="text-slate-600">·</span>
 									<span class="text-slate-400">📍 {selectedJob.location}</span>
+								{/if}
+								{#if formatCommuteDistance(selectedJob)}
+									<span class="text-slate-600">·</span>
+									<span
+										class="px-1.5 py-0.5 rounded bg-slate-800/80 text-slate-300 border border-slate-700/60"
+										title={selectedJob.commute_distance_text || '距家庭住址'}
+									>📍 {formatCommuteDistance(selectedJob.commute_distance_km)}</span>
 								{/if}
 							</div>
 
