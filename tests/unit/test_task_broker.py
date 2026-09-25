@@ -288,10 +288,10 @@ async def test_saved_search_broker_crud():
         cron_expression="0 9 * * *",
         is_enabled=True,
     )
-    saved = await broker.save_saved_search(search)
+    saved = await broker.saved_searches.save_saved_search(search)
     assert saved.id == "search-1"
 
-    fetched = await broker.get_saved_search("search-1")
+    fetched = await broker.saved_searches.get_saved_search("search-1")
     assert fetched is not None
     assert fetched.name == "Python Engineer"
     assert fetched.search.keyword == "python"
@@ -299,13 +299,13 @@ async def test_saved_search_broker_crud():
     assert fetched.cron_expression == "0 9 * * *"
     assert fetched.is_enabled is True
 
-    searches = await broker.list_saved_searches()
+    searches = await broker.saved_searches.list_saved_searches()
     assert len(searches) == 1
     assert searches[0].id == "search-1"
 
-    deleted = await broker.delete_saved_search("search-1")
+    deleted = await broker.saved_searches.delete_saved_search("search-1")
     assert deleted is True
-    assert await broker.get_saved_search("search-1") is None
+    assert await broker.saved_searches.get_saved_search("search-1") is None
 
 
 @pytest.mark.asyncio

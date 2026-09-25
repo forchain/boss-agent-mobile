@@ -511,11 +511,11 @@ class ResumeMemoryManager:
                 import concurrent.futures
 
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                    data = pool.submit(asyncio.run, broker.get_candidate_profile()).result(
+                    data = pool.submit(asyncio.run, broker.candidate_memory.get_candidate_profile()).result(
                         timeout=3.0
                     )
             except RuntimeError:
-                data = asyncio.run(broker.get_candidate_profile())
+                data = asyncio.run(broker.candidate_memory.get_candidate_profile())
 
             if data and (
                 data.get("name")
@@ -641,10 +641,10 @@ class ResumeMemoryManager:
 
                     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
                         pool.submit(
-                            asyncio.run, broker.save_candidate_profile(profile.to_dict())
+                            asyncio.run, broker.candidate_memory.save_candidate_profile(profile.to_dict())
                         ).result(timeout=5.0)
                 except RuntimeError:
-                    asyncio.run(broker.save_candidate_profile(profile.to_dict()))
+                    asyncio.run(broker.candidate_memory.save_candidate_profile(profile.to_dict()))
                 console.print(
                     "✅ [bold green]Structured candidate profile saved to PocketBase database.[/bold green]"
                 )

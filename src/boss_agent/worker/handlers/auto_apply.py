@@ -106,7 +106,7 @@ class AutoApplyHandler(BaseTaskHandler):
     ) -> StructuredCandidateProfile:
         profile_data = payload.get("candidate_profile")
         if not profile_data:
-            profile_data = await broker.get_candidate_profile(user_id="default")
+            profile_data = await broker.candidate_memory.get_candidate_profile(user_id="default")
         return (
             StructuredCandidateProfile.from_dict(profile_data)
             if profile_data

@@ -132,9 +132,9 @@ async def test_scheduler_run_once():
         target_task_type="SCRAPE_JOBS",
     )
 
-    await broker.save_saved_search(search_active)
-    await broker.save_saved_search(search_disabled)
-    await broker.save_saved_search(search_other_time)
+    await broker.saved_searches.save_saved_search(search_active)
+    await broker.saved_searches.save_saved_search(search_disabled)
+    await broker.saved_searches.save_saved_search(search_other_time)
 
     scheduler = AutomationScheduler(broker=broker)
 
@@ -153,7 +153,7 @@ async def test_scheduler_run_once():
     assert task.payload["filter"]["education"] == "硕士"
 
     # Verify search's last_run_at was updated
-    updated_search = await broker.get_saved_search("search_active_1")
+    updated_search = await broker.saved_searches.get_saved_search("search_active_1")
     assert updated_search is not None
     assert updated_search.last_run_at is not None
 
@@ -178,7 +178,7 @@ async def test_scheduler_dispatches_check_chat_task_for_inbox_cleanup_strategy()
     from boss_agent.rejection import ChatAcknowledgmentSettings
 
     broker = InMemoryTaskBroker()
-    await broker.save_saved_search(
+    await broker.saved_searches.save_saved_search(
         SavedSearch(
             id="inbox_cleanup",
             name="收件箱拒信清扫",
@@ -226,7 +226,7 @@ async def test_scheduled_chat_cleanup_honours_the_configured_drill_mode():
     from boss_agent.rejection import ChatAcknowledgmentSettings
 
     broker = InMemoryTaskBroker()
-    await broker.save_saved_search(
+    await broker.saved_searches.save_saved_search(
         SavedSearch(
             id="inbox_cleanup",
             name="仅沟通拒信清扫",

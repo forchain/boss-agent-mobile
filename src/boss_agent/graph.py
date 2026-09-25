@@ -374,11 +374,11 @@ def make_resume_diff_analyzer_node(broker: Any | None = None):
 
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
                 existing = pool.submit(
-                    asyncio.run, broker.get_candidate_profile(user_id=user_id)
+                    asyncio.run, broker.candidate_memory.get_candidate_profile(user_id=user_id)
                 ).result(timeout=3.0)
         except Exception:
             try:
-                existing = asyncio.run(broker.get_candidate_profile(user_id=user_id))
+                existing = asyncio.run(broker.candidate_memory.get_candidate_profile(user_id=user_id))
             except Exception:
                 existing = None
 
@@ -506,7 +506,7 @@ def make_resume_persister_node(broker: Any | None = None):
             )
 
         async def _save():
-            saved_prof = await broker.save_candidate_profile(final, user_id=user_id)
+            saved_prof = await broker.candidate_memory.save_candidate_profile(final, user_id=user_id)
             f_name = state.get("file_name") or "resume.txt"
             f_type = Path(f_name).suffix.lstrip(".") or "txt"
             raw_text = state.get("raw_resume_text", "")
@@ -518,7 +518,7 @@ def make_resume_persister_node(broker: Any | None = None):
                 "extracted_text": raw_text,
                 "diff_summary": state.get("diff_summary", "画像更新"),
             }
-            rev_rec = await broker.create_resume_revision(rev_data, user_id=user_id)
+            rev_rec = await broker.candidate_memory.create_resume_revision(rev_data, user_id=user_id)
             return saved_prof, rev_rec
 
         try:

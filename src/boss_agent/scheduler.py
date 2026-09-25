@@ -163,7 +163,7 @@ class AutomationScheduler:
         if now is None:
             now = datetime.now(UTC)
 
-        saved_searches = await self.broker.list_saved_searches()
+        saved_searches = await self.broker.saved_searches.list_saved_searches()
         dispatched_tasks: list[AutomationTask] = []
 
         for search in saved_searches:
@@ -211,7 +211,7 @@ class AutomationScheduler:
 
             # Update last_run_at timestamp on saved search
             search.last_run_at = now.isoformat()
-            await self.broker.save_saved_search(search)
+            await self.broker.saved_searches.save_saved_search(search)
             logger.info(
                 "Scheduled %s task %s dispatched for search %s (%s)",
                 task_type.value,

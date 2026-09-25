@@ -311,11 +311,11 @@ def test_sqlite_single_source_roundtrip(tmp_path, monkeypatch):
     }
 
     # Save candidate profile into SQLite fallback
-    saved = asyncio.run(broker.save_candidate_profile(profile_data, user_id="test_candidate"))
+    saved = asyncio.run(broker.candidate_memory.save_candidate_profile(profile_data, user_id="test_candidate"))
     assert saved["name"] == "李四"
 
     # Query candidate profile back from SQLite fallback
-    queried = asyncio.run(broker.get_candidate_profile(user_id="test_candidate"))
+    queried = asyncio.run(broker.candidate_memory.get_candidate_profile(user_id="test_candidate"))
     assert queried is not None
     assert queried["name"] == "李四"
     assert queried["years_of_experience"] == 8
@@ -328,7 +328,7 @@ def test_sqlite_single_source_roundtrip(tmp_path, monkeypatch):
 
     # Test resume revisions
     rev = asyncio.run(
-        broker.create_resume_revision(
+        broker.candidate_memory.create_resume_revision(
             {
                 "file_name": "resume_2026.md",
                 "file_type": "md",
@@ -341,7 +341,7 @@ def test_sqlite_single_source_roundtrip(tmp_path, monkeypatch):
     )
     assert rev["id"] is not None
 
-    revs = asyncio.run(broker.list_resume_revisions(user_id="test_candidate"))
+    revs = asyncio.run(broker.candidate_memory.list_resume_revisions(user_id="test_candidate"))
     assert len(revs) == 1
     assert revs[0]["file_name"] == "resume_2026.md"
     assert revs[0]["diff_summary"] == "+ 新增 2024-2026 后端总监履历"
