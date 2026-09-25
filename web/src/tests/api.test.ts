@@ -16,7 +16,29 @@ function trackTask<T extends { id: string }>(task: T): T {
 	return task;
 }
 
+// The same rule for job records. `POST /api/jobs` writes one for real when a broker is
+// reachable, and the Unmatched Job Stream is user-visible: a test run must not leave a
+// card behind for a posting nobody scraped. This suite deliberately still runs against
+// whatever broker answers, which is why the cleanup is the guarantee rather than
+// hermeticity — making it hermetic is the Web data-access seam spec's job, and until
+// then anything else this file persists needs the same treatment.
+const createdJobRecordIds: string[] = [];
+
+function trackJobRecord<T extends { id: string }>(record: T): T {
+	createdJobRecordIds.push(record.id);
+	return record;
+}
+
 afterAll(async () => {
+	for (const id of createdJobRecordIds) {
+		try {
+			await pb.collection('job_records').delete(id);
+		} catch (err) {
+			console.warn(`[api.test] failed to delete test job record ${id}`, err);
+		}
+	}
+	createdJobRecordIds.length = 0;
+
 	for (const id of createdTaskIds) {
 		try {
 			await pb.collection('automation_tasks').delete(id);
@@ -274,6 +296,7 @@ describe('SvelteKit Server Endpoints', () => {
 		expect(postRes.status).toBe(200);
 		expect(postJson.success).toBe(true);
 		expect(postJson.record.fingerprint).toBeDefined();
+		trackJobRecord(postJson.record);
 
 		const getEvent: any = {
 			url: new URL('http://localhost/api/jobs?status=unmatched')
