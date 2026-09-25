@@ -2,6 +2,7 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { getPocketBaseUrl } from '$lib/pocketbase';
 import { cleanJobTitle } from '$lib/screening';
+import { buildJobFilter, clampJobLimit, clampJobPage } from '$lib/jobQuery';
 import { computeFingerprint } from '$lib/server/jobFingerprint';
 
 import type { JobRecordsCounts } from '$lib/types';
@@ -10,38 +11,15 @@ export const GET: RequestHandler = async ({ url }) => {
 	const status = url.searchParams.get('status');
 	const channel = url.searchParams.get('channel');
 	const search = url.searchParams.get('search');
-	const rawPage = parseInt(url.searchParams.get('page') || '1', 10);
-	const page = Math.max(1, isNaN(rawPage) ? 1 : rawPage);
-	const rawLimit = parseInt(url.searchParams.get('limit') || '30', 10);
-	const limit = Math.min(Math.max(1, isNaN(rawLimit) ? 30 : rawLimit), 100);
+	const page = clampJobPage(url.searchParams.get('page'));
+	const limit = clampJobLimit(url.searchParams.get('limit'));
 	const pbBase = getPocketBaseUrl();
 
-	const filterParts: string[] = ["company_name != ''", "company_name != '未知公司'"];
+	// One builder, shared with the client lib. The two copies disagreed on what an
+	// absent `status` means — the route excluded `ignored`, the lib included it — so the
+	// same list differed between the SSR fetch and the browser fetch.
+	const finalFilter = buildJobFilter({ status, channel, search });
 
-	if (status === 'all' || !status) {
-		filterParts.push("status != 'ignored'");
-	} else if (status === 'jd_saved') {
-		filterParts.push("(status = 'jd_saved' || status = 'unmatched' || status = 'digest_only')");
-	} else {
-		filterParts.push(`status = '${status}'`);
-	}
-
-	if (channel === 'direct') {
-		filterParts.push('is_headhunter = false');
-	} else if (channel === 'headhunter') {
-		filterParts.push('is_headhunter = true');
-	}
-
-	if (search && search.trim()) {
-		const sanitized = search.replace(/['"\\]/g, '').trim();
-		if (sanitized) {
-			filterParts.push(
-				`(title ~ '${sanitized}' || company_name ~ '${sanitized}' || recruiter_name ~ '${sanitized}' || digest ~ '${sanitized}')`
-			);
-		}
-	}
-
-	const finalFilter = filterParts.map((p) => `(${p})`).join(' && ');
 
 	let items: any[] = [];
 	let totalItems = 0;

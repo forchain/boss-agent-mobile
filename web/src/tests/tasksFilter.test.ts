@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { buildJobFilter, clampJobLimit as clampJobPageSize } from '../lib/jobQuery';
 import {
 	MAX_TASK_PAGE_SIZE,
 	DEFAULT_TASK_PAGE_SIZE,
@@ -123,5 +124,43 @@ describe('GET /api/tasks forwards the filter to the broker', () => {
 			capturedUrls.find((u) => u.includes('/api/collections/automation_tasks')) || ''
 		);
 		expect(sent).toContain("task_type='CHECK_CHAT'");
+	});
+});
+
+describe('job_records query builder', () => {
+	it('excludes ignored records when no status is stated', () => {
+		// The divergence: the route excluded `ignored` for an absent status while the
+		// client lib included it, so the same list differed between the SSR fetch and the
+		// browser fetch. The route's stricter rule wins.
+		expect(buildJobFilter({})).toContain("(status != 'ignored')");
+		expect(buildJobFilter({ status: 'all' })).toContain("(status != 'ignored')");
+	});
+
+	it('still lets a caller ask for ignored records explicitly', () => {
+		expect(buildJobFilter({ status: 'ignored' })).toContain("(status = 'ignored')");
+	});
+
+	it('treats jd_saved as the whole pre-JD pool', () => {
+		const filter = buildJobFilter({ status: 'jd_saved' });
+		for (const status of ['jd_saved', 'unmatched', 'digest_only']) {
+			expect(filter).toContain(`status = '${status}'`);
+		}
+	});
+
+	it('always excludes records with no usable employer', () => {
+		const filter = buildJobFilter({ status: 'matched' });
+		expect(filter).toContain("(company_name != '')");
+		expect(filter).toContain("(company_name != '未知公司')");
+	});
+
+	it('strips filter-injection characters from the search term', () => {
+		const filter = buildJobFilter({ search: `o'brien"\\` });
+		expect(filter).toContain('obrien');
+		expect(filter).not.toContain("o'brien");
+	});
+
+	it('clamps the page size like the task builder does', () => {
+		expect(clampJobPageSize('9999')).toBe(100);
+		expect(clampJobPageSize(null)).toBe(30);
 	});
 });

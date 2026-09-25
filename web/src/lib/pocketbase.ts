@@ -1,4 +1,5 @@
 import { buildTaskFilter, buildTaskQueryString, clampTaskLimit, clampTaskPage } from '$lib/taskQuery';
+import { buildJobFilter } from '$lib/jobQuery';
 import { rebuildRerunPayload } from '$lib/taskLaunch';
 import PocketBase from 'pocketbase';
 import type {
@@ -644,31 +645,8 @@ export async function getJobRecords(
 	}
 
 	try {
-		const filterParts: string[] = ["company_name != ''", "company_name != '未知公司'"];
-		if (status && status !== 'all') {
-			if (status === 'jd_saved') {
-				filterParts.push("(status = 'jd_saved' || status = 'unmatched' || status = 'digest_only')");
-			} else {
-				filterParts.push(`status = '${status}'`);
-			}
-		} else if (status === 'all') {
-			filterParts.push("status != 'ignored'");
-		}
-		if (channel === 'direct') {
-			filterParts.push('is_headhunter = false');
-		} else if (channel === 'headhunter') {
-			filterParts.push('is_headhunter = true');
-		}
-		if (search && search.trim()) {
-			const sanitized = search.replace(/['"\\]/g, '').trim();
-			if (sanitized) {
-				filterParts.push(
-					`(title ~ '${sanitized}' || company_name ~ '${sanitized}' || recruiter_name ~ '${sanitized}' || digest ~ '${sanitized}')`
-				);
-			}
-		}
-
-		const filter = filterParts.map((p) => `(${p})`).join(' && ');
+		// One builder, shared with the BFF route.
+		const filter = buildJobFilter({ status, channel, search });
 
 		const result = await pb.collection('job_records').getList(page, limit, {
 			filter: filter || undefined,
