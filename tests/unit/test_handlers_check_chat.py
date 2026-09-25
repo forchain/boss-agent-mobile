@@ -7,7 +7,8 @@ ingestion and the polite acknowledgment sequence (Issues #206-#208, #239).
 """
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 import yaml
@@ -15,7 +16,7 @@ import yaml
 from boss_agent.broker.models import TaskType
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
 from boss_agent.models import ScreeningPolicy
-from boss_agent.pages import CommunicationCard
+from boss_agent.pages import CommunicationCard, CommunicationListPage
 from boss_agent.rejection import (
     DEFAULT_REJECTION_REPLY_TEXT,
     DISINTEREST_REASON,
@@ -24,13 +25,16 @@ from boss_agent.rejection import (
 )
 from boss_agent.worker.config import WorkerConfig
 from boss_agent.worker.context import WorkerContext
-from boss_agent.worker.handlers import check_chat as check_chat_module
-from boss_agent.worker.handlers.check_chat import CheckChatHandler
+from boss_agent.worker.handlers.check_chat import CheckChatHandler, CheckChatPages
 
 #: The `stop_reason` a first-screen scan ends on, pinned as a literal rather than
 #: imported from the handler: the value is the contract, so a rename inside the
 #: handler must fail this suite rather than silently move the contract with it.
 FIRST_SCREEN_EXHAUSTED = "first_screen_exhausted"
+
+#: The terminal safety ceiling on cards inspected in one run, pinned as a literal
+#: for the same reason: it is the termination guarantee, not a tuning knob.
+MAX_INSPECTED_CARDS = 300
 
 REJECTION_TEXT = "我们感谢您的投递，但您的专业技能与我们目前的职位需求并不完全吻合。"
 INVITATION_TEXT = "您好，方便约个时间聊聊吗？"
@@ -144,6 +148,25 @@ class Harness:
         return {m.message_text for m in self.cards if f"open:{m.message_text}" in self.events}
 
 
+class EndlessOutboundHarness(Harness):
+    """A screen that keeps yielding fresh outbound cards, and never settles.
+
+    Skipping an outbound card is free, so neither the LLM budget nor the screen's
+    width can bound a run against it: the terminal safety ceiling is the only exit.
+    """
+
+    def __init__(self) -> None:
+        super().__init__([], viewport_size=10)
+        self.reads = 0
+
+    def extract_visible_messages(self, max_items: int = 10) -> list[CommunicationCard]:
+        self.reads += 1
+        return [
+            card(DELIVERED_TEXT, sender=f"招聘者{self.reads}-{i}", status="[送达]")
+            for i in range(max_items)
+        ]
+
+
 class FakeChatPage:
     def __init__(self, harness: Harness) -> None:
         self.harness = harness
@@ -173,12 +196,19 @@ def policy(config_path: Path) -> ScreeningPolicy:
     return ScreeningPolicy.load_default(config_path=config_path)
 
 
-def make_handler(classifier=None, policy=None, settings=None):
+def scripted_pages(harness: Harness, chat_page: Any | None = None) -> Any:
+    """The device world one run drives: the harness standing in for both pages."""
+    chat = chat_page if chat_page is not None else FakeChatPage(harness)
+    return lambda driver: CheckChatPages(list_page=harness, chat_page=chat)
+
+
+def make_handler(pages=None, classifier=None, policy=None, settings=None) -> CheckChatHandler:
     """Handler pinned to explicit settings/policy so no test reads or writes local config."""
     return CheckChatHandler(
         classifier=classifier,
         settings=settings or ChatAcknowledgmentSettings(),
         policy=policy or ScreeningPolicy(),
+        pages=pages,
     )
 
 
@@ -198,11 +228,7 @@ def context():
 async def _run_async(broker, context, harness, handler, payload=None):
     """Execute one CHECK_CHAT task against the harness and return (result, finished_task)."""
     task = await broker.create_task(task_type=TaskType.CHECK_CHAT, payload=payload or {})
-    with (
-        patch.object(check_chat_module, "CommunicationListPage", return_value=harness),
-        patch.object(check_chat_module, "ChatPage", return_value=FakeChatPage(harness)),
-    ):
-        result = await handler.handle(task, broker, context)
+    result = await handler.handle(task, broker, context)
     return result, await broker.get_task(task.id)
 
 
@@ -217,7 +243,7 @@ async def test_confirmed_rejection_blacklists_company_then_acknowledges(
 ):
     """#206: descriptor -> company_blacklist -> persisted config -> polite close."""
     harness = Harness([card(REJECTION_TEXT, sender="严胜", descriptor=DESCRIPTOR)])
-    handler = make_handler(classifier=FakeClassifier({REJECTION_TEXT: True}), policy=policy)
+    handler = make_handler(pages=scripted_pages(harness), classifier=FakeClassifier({REJECTION_TEXT: True}), policy=policy)
 
     result, task = await _run_async(broker, context, harness, handler)
 
@@ -239,7 +265,7 @@ async def test_blacklist_is_written_before_the_chat_is_opened(broker, context, p
     harness = Harness(
         [card(REJECTION_TEXT, sender="严胜", descriptor=DESCRIPTOR)], open_message_ok=False
     )
-    handler = make_handler(classifier=FakeClassifier({REJECTION_TEXT: True}), policy=policy)
+    handler = make_handler(pages=scripted_pages(harness), classifier=FakeClassifier({REJECTION_TEXT: True}), policy=policy)
 
     result, _ = await _run_async(broker, context, harness, handler)
 
@@ -251,7 +277,7 @@ async def test_blacklist_is_written_before_the_chat_is_opened(broker, context, p
 @pytest.mark.asyncio
 async def test_employer_is_parsed_from_a_company_position_descriptor(broker, context, policy):
     harness = Harness([card(REJECTION_TEXT, sender="宋女士", descriptor="磐基技术 | 技术总监")])
-    handler = make_handler(classifier=FakeClassifier({REJECTION_TEXT: True}), policy=policy)
+    handler = make_handler(pages=scripted_pages(harness), classifier=FakeClassifier({REJECTION_TEXT: True}), policy=policy)
 
     result, _ = await _run_async(broker, context, harness, handler)
 
@@ -266,7 +292,7 @@ async def test_no_rewrite_when_the_company_is_already_blacklisted(
     before = config_path.read_text(encoding="utf-8")
     policy.add_company_to_blacklist(COMPANY)
     harness = Harness([card(REJECTION_TEXT, sender="严胜", descriptor=DESCRIPTOR)])
-    handler = make_handler(classifier=FakeClassifier({REJECTION_TEXT: True}), policy=policy)
+    handler = make_handler(pages=scripted_pages(harness), classifier=FakeClassifier({REJECTION_TEXT: True}), policy=policy)
 
     result, task = await _run_async(broker, context, harness, handler)
 
@@ -278,7 +304,7 @@ async def test_no_rewrite_when_the_company_is_already_blacklisted(
 @pytest.mark.asyncio
 async def test_masked_company_is_refused_by_the_guardrail(broker, context, policy, config_path):
     harness = Harness([card(REJECTION_TEXT, sender="HR", descriptor="某中型人工智能公司 | 算法")])
-    handler = make_handler(classifier=FakeClassifier({REJECTION_TEXT: True}), policy=policy)
+    handler = make_handler(pages=scripted_pages(harness), classifier=FakeClassifier({REJECTION_TEXT: True}), policy=policy)
 
     result, task = await _run_async(broker, context, harness, handler)
 
@@ -295,7 +321,7 @@ async def test_headhunter_agency_is_refused_by_the_guardrail(broker, context, po
     harness = Harness(
         [card(REJECTION_TEXT, sender="陈格", descriptor="杭州脉享人力资源 | 大模型算法")]
     )
-    handler = make_handler(classifier=FakeClassifier({REJECTION_TEXT: True}), policy=policy)
+    handler = make_handler(pages=scripted_pages(harness), classifier=FakeClassifier({REJECTION_TEXT: True}), policy=policy)
 
     result, _ = await _run_async(broker, context, harness, handler)
 
@@ -309,7 +335,7 @@ async def test_unparseable_descriptor_skips_blacklisting_but_still_acknowledges(
     broker, context, policy
 ):
     harness = Harness([card(REJECTION_TEXT, sender="严胜", descriptor="")])
-    handler = make_handler(classifier=FakeClassifier({REJECTION_TEXT: True}), policy=policy)
+    handler = make_handler(pages=scripted_pages(harness), classifier=FakeClassifier({REJECTION_TEXT: True}), policy=policy)
 
     result, task = await _run_async(broker, context, harness, handler)
 
@@ -339,7 +365,7 @@ async def test_outbound_cards_are_skipped_without_any_llm_call(broker, context, 
         viewport_size=3,
     )
     classifier = FakeClassifier(default=True)
-    handler = make_handler(classifier=classifier, policy=policy)
+    handler = make_handler(pages=scripted_pages(harness), classifier=classifier, policy=policy)
 
     result, _ = await _run_async(broker, context, harness, handler)
 
@@ -360,7 +386,7 @@ async def test_an_unrecognised_badge_is_evaluated_rather_than_skipped(broker, co
         ]
     )
     classifier = FakeClassifier({REJECTION_TEXT: True})
-    handler = make_handler(classifier=classifier, policy=policy)
+    handler = make_handler(pages=scripted_pages(harness), classifier=classifier, policy=policy)
 
     result, task = await _run_async(broker, context, harness, handler)
 
@@ -382,7 +408,7 @@ async def test_outbound_cards_do_not_consume_the_scan_budget(broker, context, po
         viewport_size=3,
     )
     classifier = FakeClassifier({REJECTION_TEXT: True})
-    handler = make_handler(classifier=classifier, policy=policy)
+    handler = make_handler(pages=scripted_pages(harness), classifier=classifier, policy=policy)
 
     result, _ = await _run_async(broker, context, harness, handler, payload={"max_scan_depth": 1})
 
@@ -393,22 +419,16 @@ async def test_outbound_cards_do_not_consume_the_scan_budget(broker, context, po
 
 
 @pytest.mark.asyncio
-async def test_a_long_first_screen_terminates_at_the_scan_ceiling(
-    broker, context, policy, monkeypatch
-):
+async def test_a_screen_that_never_runs_out_terminates_at_the_scan_ceiling(broker, context, policy):
     """Skipping is free, so the LLM budget alone cannot bound a wide screen."""
-    monkeypatch.setattr(check_chat_module, "MAX_INSPECTED_CARDS", 5)
-    harness = Harness(
-        [card(DELIVERED_TEXT, sender=f"招聘者{i}", status="[送达]") for i in range(20)],
-        viewport_size=10,
-    )
+    harness = EndlessOutboundHarness()
     classifier = FakeClassifier(default=True)
-    handler = make_handler(classifier=classifier, policy=policy)
+    handler = make_handler(pages=scripted_pages(harness), classifier=classifier, policy=policy)
 
     result, task = await _run_async(broker, context, harness, handler)
 
     assert classifier.calls == []
-    assert result.output["scanned"] == 5
+    assert result.output["scanned"] == MAX_INSPECTED_CARDS
     assert result.output["stop_reason"] == "scan_ceiling"
     assert any("上限" in log for log in task.logs)
 
@@ -426,7 +446,7 @@ async def test_mixed_list_evaluates_only_the_untagged_cards(broker, context, pol
         viewport_size=4,
     )
     classifier = FakeClassifier({REJECTION_TEXT: True, other_rejection: True})
-    handler = make_handler(classifier=classifier, policy=policy)
+    handler = make_handler(pages=scripted_pages(harness), classifier=classifier, policy=policy)
 
     result, _ = await _run_async(broker, context, harness, handler)
 
@@ -447,7 +467,7 @@ async def test_mixed_list_evaluates_only_the_untagged_cards(broker, context, pol
 async def test_positive_invitation_is_preserved_untouched(broker, context, policy):
     """#205-AC8: a genuine invitation must never be touched or blacklisted."""
     harness = Harness([card(INVITATION_TEXT, sender="张先生", descriptor="深至科技 | 后端")])
-    handler = make_handler(classifier=FakeClassifier({INVITATION_TEXT: False}), policy=policy)
+    handler = make_handler(pages=scripted_pages(harness), classifier=FakeClassifier({INVITATION_TEXT: False}), policy=policy)
 
     result, _ = await _run_async(broker, context, harness, handler)
 
@@ -468,7 +488,7 @@ async def test_llm_failure_preserves_message_conservatively(broker, context, pol
         def classify(self, message_text: str, sender_name: str = "") -> RejectionVerdict:
             return RejectionVerdict(is_rejection=False, rationale="llm down", error="boom")
 
-    handler = make_handler(classifier=ExplodingClassifier(), policy=policy)
+    handler = make_handler(pages=scripted_pages(harness), classifier=ExplodingClassifier(), policy=policy)
 
     result, _ = await _run_async(broker, context, harness, handler)
 
@@ -490,7 +510,7 @@ async def test_dry_run_classifies_without_any_write_action(broker, context, poli
     before = config_path.read_text(encoding="utf-8")
     harness = Harness([card(REJECTION_TEXT, sender="严胜", descriptor=DESCRIPTOR)])
     classifier = FakeClassifier({REJECTION_TEXT: True})
-    handler = make_handler(classifier=classifier, policy=policy)
+    handler = make_handler(pages=scripted_pages(harness), classifier=classifier, policy=policy)
 
     result, task = await _run_async(broker, context, harness, handler, payload={"dry_run": True})
 
@@ -507,7 +527,7 @@ async def test_dry_run_classifies_without_any_write_action(broker, context, poli
 @pytest.mark.asyncio
 async def test_empty_list_stops_without_interaction(broker, context, policy):
     harness = Harness([])
-    handler = make_handler(classifier=FakeClassifier(), policy=policy)
+    handler = make_handler(pages=scripted_pages(harness), classifier=FakeClassifier(), policy=policy)
 
     result, _ = await _run_async(broker, context, harness, handler)
 
@@ -525,7 +545,7 @@ async def test_all_outbound_list_ends_when_the_screen_holds_nothing_new(broker, 
         viewport_size=2,
     )
     classifier = FakeClassifier(default=True)
-    handler = make_handler(classifier=classifier, policy=policy)
+    handler = make_handler(pages=scripted_pages(harness), classifier=classifier, policy=policy)
 
     result, _ = await _run_async(broker, context, harness, handler)
 
@@ -540,7 +560,7 @@ async def test_all_positive_list_ends_when_the_screen_holds_nothing_new(broker, 
     texts = ["方便聊聊吗？", "方便发一下简历吗？", "我们约个面试吧"]
     harness = Harness([card(t, sender=f"招聘者{i}") for i, t in enumerate(texts)], viewport_size=2)
     classifier = FakeClassifier(default=False)
-    handler = make_handler(classifier=classifier, policy=policy)
+    handler = make_handler(pages=scripted_pages(harness), classifier=classifier, policy=policy)
 
     result, _ = await _run_async(broker, context, harness, handler)
 
@@ -555,7 +575,7 @@ async def test_max_scan_depth_bounds_the_scan(broker, context, policy):
     texts = [f"抱歉，暂不匹配 #{i}" for i in range(5)]
     harness = Harness([card(t, sender=f"招聘者{i}") for i, t in enumerate(texts)], viewport_size=2)
     classifier = FakeClassifier({t: True for t in texts})
-    handler = make_handler(classifier=classifier, policy=policy)
+    handler = make_handler(pages=scripted_pages(harness), classifier=classifier, policy=policy)
 
     result, _ = await _run_async(
         broker, context, harness, handler, payload={"max_scan_depth": 2, "dry_run": True}
@@ -574,7 +594,7 @@ async def test_visited_keys_prevent_reprocessing_preserved_messages(broker, cont
     texts = ["方便聊聊吗？", "方便发简历吗？"]
     harness = Harness([card(t, sender=f"招聘者{i}") for i, t in enumerate(texts)], viewport_size=2)
     classifier = FakeClassifier(default=False)
-    handler = make_handler(classifier=classifier, policy=policy)
+    handler = make_handler(pages=scripted_pages(harness), classifier=classifier, policy=policy)
 
     result, _ = await _run_async(broker, context, harness, handler)
 
@@ -586,7 +606,7 @@ async def test_visited_keys_prevent_reprocessing_preserved_messages(broker, cont
 @pytest.mark.asyncio
 async def test_reply_text_and_scan_depth_come_from_payload(broker, context, policy):
     harness = Harness([card(REJECTION_TEXT, sender="严胜", descriptor=DESCRIPTOR)])
-    handler = make_handler(classifier=FakeClassifier({REJECTION_TEXT: True}), policy=policy)
+    handler = make_handler(pages=scripted_pages(harness), classifier=FakeClassifier({REJECTION_TEXT: True}), policy=policy)
 
     result, _ = await _run_async(
         broker,
@@ -608,7 +628,7 @@ async def test_failed_disinterest_is_reported_and_recovers_to_list(
     harness = Harness(
         [card(REJECTION_TEXT, sender="严胜", descriptor=DESCRIPTOR)], mark_disinterest_ok=False
     )
-    handler = make_handler(classifier=FakeClassifier({REJECTION_TEXT: True}), policy=policy)
+    handler = make_handler(pages=scripted_pages(harness), classifier=FakeClassifier({REJECTION_TEXT: True}), policy=policy)
 
     result, task = await _run_async(broker, context, harness, handler)
 
@@ -631,7 +651,7 @@ async def test_scan_stops_when_the_platform_never_returns_to_the_list(broker, co
         ],
         return_to_list_ok=False,
     )
-    handler = make_handler(classifier=FakeClassifier({REJECTION_TEXT: True}), policy=policy)
+    handler = make_handler(pages=scripted_pages(harness), classifier=FakeClassifier({REJECTION_TEXT: True}), policy=policy)
 
     result, task = await _run_async(broker, context, harness, handler)
 
@@ -656,7 +676,7 @@ async def test_cards_below_the_fold_are_never_reached(broker, context, policy):
         viewport_size=3,
     )
     classifier = FakeClassifier(default=False)
-    handler = make_handler(classifier=classifier, policy=policy)
+    handler = make_handler(pages=scripted_pages(harness), classifier=classifier, policy=policy)
 
     result, task = await _run_async(broker, context, harness, handler)
 
@@ -689,7 +709,7 @@ async def test_the_screen_is_re_read_after_an_acknowledgment_moves_a_card_up(
         viewport_size=3,
     )
     classifier = FakeClassifier({first: True, second: True})
-    handler = make_handler(classifier=classifier, policy=policy)
+    handler = make_handler(pages=scripted_pages(harness), classifier=classifier, policy=policy)
 
     result, _ = await _run_async(broker, context, harness, handler)
 
@@ -716,7 +736,7 @@ async def test_a_preserved_card_is_not_judged_twice_across_re_reads(broker, cont
         viewport_size=3,
     )
     classifier = FakeClassifier({first: True, second: True})
-    handler = make_handler(classifier=classifier, policy=policy)
+    handler = make_handler(pages=scripted_pages(harness), classifier=classifier, policy=policy)
 
     result, _ = await _run_async(broker, context, harness, handler)
 
@@ -736,7 +756,7 @@ async def test_a_second_run_over_an_unchanged_screen_judges_it_again(broker, con
     texts = ["方便聊聊吗？", "方便发一下简历吗？"]
     harness = Harness([card(t, sender=f"招聘者{i}") for i, t in enumerate(texts)], viewport_size=3)
     classifier = FakeClassifier(default=False)
-    handler = make_handler(classifier=classifier, policy=policy)
+    handler = make_handler(pages=scripted_pages(harness), classifier=classifier, policy=policy)
 
     first, _ = await _run_async(broker, context, harness, handler)
     second, _ = await _run_async(broker, context, harness, handler)
@@ -767,7 +787,7 @@ async def test_missing_driver_fails_fast(broker, policy):
 @pytest.mark.asyncio
 async def test_unreachable_list_fails_the_task(broker, context, policy):
     harness = Harness([card(REJECTION_TEXT)], on_list=False, open_list_ok=False)
-    handler = make_handler(classifier=FakeClassifier({REJECTION_TEXT: True}), policy=policy)
+    handler = make_handler(pages=scripted_pages(harness), classifier=FakeClassifier({REJECTION_TEXT: True}), policy=policy)
 
     result, task = await _run_async(broker, context, harness, handler)
 
@@ -779,7 +799,7 @@ async def test_unreachable_list_fails_the_task(broker, context, policy):
 async def test_recovers_into_the_list_from_an_arbitrary_screen(broker, context, policy):
     """#228: a dispatch that lands mid-app navigates itself onto the list and scans."""
     harness = Harness([card(REJECTION_TEXT, sender="严胜", descriptor=DESCRIPTOR)], on_list=False)
-    handler = make_handler(classifier=FakeClassifier({REJECTION_TEXT: True}), policy=policy)
+    handler = make_handler(pages=scripted_pages(harness), classifier=FakeClassifier({REJECTION_TEXT: True}), policy=policy)
 
     result, task = await _run_async(broker, context, harness, handler)
 
@@ -826,13 +846,18 @@ async def test_handler_processes_single_card_through_the_real_page_object(broker
     driver.find_elements.side_effect = mock_find
 
     context = WorkerContext(config=WorkerConfig(worker_id="real-page"), driver=driver)
-    handler = make_handler(classifier=FakeClassifier({REJECTION_TEXT: True}), policy=policy)
+    chat_double = MagicMock()
+    # Only the chat is scripted: the 仅沟通 list stays the real page object reading
+    # the mock hierarchy above.
+    pages = lambda driver: CheckChatPages(  # noqa: E731 - a one-line injected seam
+        list_page=CommunicationListPage(driver), chat_page=chat_double
+    )
+    handler = make_handler(
+        pages=pages, classifier=FakeClassifier({REJECTION_TEXT: True}), policy=policy
+    )
 
     task = await broker.create_task(task_type=TaskType.CHECK_CHAT, payload={})
-    chat_double = MagicMock()
-
-    with patch.object(check_chat_module, "ChatPage", return_value=chat_double):
-        result = await handler.handle(task, broker, context)
+    result = await handler.handle(task, broker, context)
 
     assert result.success is True
     assert result.output["blacklisted_companies"] == [COMPANY]

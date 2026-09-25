@@ -23,6 +23,10 @@ from walking the whole backlog on every dispatch (Issues #239, ADR 0014).
 
 The cost is coverage, and it is deliberate: a card below the fold is reached
 only after the cards above it leave the list. See ADR 0015.
+
+The two page objects a run drives arrive through the injectable ``pages`` seam
+rather than being constructed inline, so a test scripts the device world instead
+of patching this module's globals (spec #267).
 """
 
 import logging
@@ -96,6 +100,31 @@ class TriageOutcome:
     lost_list: bool = False
 
 
+@dataclass(frozen=True)
+class CheckChatPages:
+    """The device collaborators one CHECK_CHAT run drives.
+
+    A run's device world is composed from its driver and handed in, so a test can
+    script the 仅沟通 screen and the chat without reaching into this module.
+    """
+
+    list_page: Any
+    chat_page: Any
+
+    @classmethod
+    def for_driver(cls, driver: Any) -> "CheckChatPages":
+        """Compose the production device world for ``driver``.
+
+        The startup dialog is dismissed here, before any page object is handed to a
+        run: a dispatch can land on it, and a dialog left up would swallow the
+        clicks the run is about to make.
+        """
+        startup_page = StartupDialogPage(driver)
+        if startup_page.is_dialog_present():
+            startup_page.dismiss_dialog()
+        return cls(list_page=CommunicationListPage(driver), chat_page=ChatPage(driver))
+
+
 class CheckChatHandler(BaseTaskHandler):
     """Executes 仅沟通 rejection triage with blacklist ingestion."""
 
@@ -105,12 +134,15 @@ class CheckChatHandler(BaseTaskHandler):
         classifier: Any | None = None,
         settings: ChatAcknowledgmentSettings | None = None,
         policy: ScreeningPolicy | None = None,
+        pages: Any | None = None,
     ) -> None:
         self.llm_client = llm_client
         self.classifier = classifier or RejectionClassifier(llm_client=llm_client)
         # Resolved lazily so constructing a handler never reads local config.
         self._settings = settings
         self._policy = policy
+        # A factory over the driver, because the driver only exists at dispatch time.
+        self._pages = pages or CheckChatPages.for_driver
 
     @property
     def task_type(self) -> TaskType:
@@ -156,12 +188,9 @@ class CheckChatHandler(BaseTaskHandler):
             f"reply='{reply_text}')",
         )
 
-        startup_page = StartupDialogPage(driver)
-        if startup_page.is_dialog_present():
-            startup_page.dismiss_dialog()
-
-        comm_list = CommunicationListPage(driver)
-        chat_page = ChatPage(driver)
+        pages = self._pages(driver)
+        comm_list = pages.list_page
+        chat_page = pages.chat_page
 
         if not comm_list.is_on_list(timeout_sec=1.0):
             # The dispatch can land while the app sits on a job detail, an open chat,
