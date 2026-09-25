@@ -1,0 +1,29 @@
+{
+  "_comment": "The Configuration Realm's baseline values, shared by the pytest tier (tests/unit/test_config_defaults_parity.py) and the vitest tier (web/src/tests/defaultsParity.test.ts). Each language asserts its own loader's baseline against every entry; a drift like the LLM realm's 16384-vs-262144 max_tokens is a CI failure instead of a comment nobody reads.",
+  "shared_defaults": {
+    "device": "emulator-5554",
+    "avd_name": "boss_avd_arm64",
+    "server_url": "http://127.0.0.1:4723",
+    "pocketbase_url": "http://127.0.0.1:8090",
+    "provider": "openai",
+    "base_url": "https://api.minimaxi.com/v1",
+    "model": "MiniMax-M3",
+    "temperature": 0.2,
+    "timeout_sec": 120.0,
+    "max_tokens": 262144,
+    "langsmith_tracing": false,
+    "langsmith_project": "boss-agent-mobile",
+    "daily_greeting_limit": 20,
+    "preview_timeout_sec": 3.0,
+    "enable_greeting": true,
+    "communication_cooldown_days": 30,
+    "enable_screening": true,
+    "channel_preference": "all",
+    "run_cleanup_on_startup": true
+  },
+  "chat_defaults": {
+    "rejection_reply_text": "收到 谢谢",
+    "max_scan_depth": 30,
+    "dry_run": false
+  }
+}

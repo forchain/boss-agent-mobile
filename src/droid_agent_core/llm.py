@@ -8,6 +8,7 @@ import json
 import os
 import re
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,39 @@ import requests
 import yaml
 from langsmith import traceable
 from langsmith.run_helpers import get_current_run_tree
+
+#: Characters a masked secret is rendered with, and the template's placeholder. Kept
+#: local because this layer must not know which application is using it; the
+#: application's own predicate is asserted equal to these by
+#: `test_framework_defaults_match_the_realm`, so the two cannot drift apart.
+MASK_MARKERS: tuple[str, ...] = ("•", "****")
+PLACEHOLDER_API_KEY: str = "your-api-key-here"
+
+
+def _is_mask_placeholder(value: Any) -> bool:
+    """Whether ``value`` is a masked display string rather than a usable secret."""
+    if value is None:
+        return False
+    text = str(value)
+    return not text or text == PLACEHOLDER_API_KEY or any(m in text for m in MASK_MARKERS)
+
+
+def _read_config_file(path: Path) -> dict[str, Any]:
+    """Parse one YAML/JSON config file, or return ``{}`` when it is absent or unreadable."""
+    if not path.is_file():
+        return {}
+    try:
+        content = path.read_text(encoding="utf-8")
+        loaded = json.loads(content) if path.suffix == ".json" else (yaml.safe_load(content) or {})
+    except Exception:
+        return {}
+    if not isinstance(loaded, dict):
+        return {}
+    return {
+        k: v
+        for k, v in loaded.items()
+        if v is not None and not (k == "api_key" and _is_mask_placeholder(v))
+    }
 
 
 class LLMError(Exception):
@@ -30,15 +64,30 @@ class LLMTimeoutError(LLMError):
     """Request timed out while waiting for LLM response."""
 
 
+#: Framework-neutral fallbacks, used only when a host supplies no configuration. A host
+#: owns its defaults table and passes it as ``settings``; these exist so the framework
+#: is usable standalone, and `test_framework_defaults_match_the_realm` keeps them
+#: agreeing with the host's table so the fallback can never be a second opinion.
+FRAMEWORK_DEFAULTS: dict[str, Any] = {
+    "provider": "openai",
+    "base_url": "https://api.minimaxi.com/v1",
+    "model": "MiniMax-M3",
+    "temperature": 0.2,
+    "timeout_sec": 120.0,
+    "max_tokens": 262144,
+    "langsmith_project": "boss-agent-mobile",
+}
+
+
 @dataclass
 class LLMConfig:
-    provider: str = "openai"
-    base_url: str = "https://api.minimaxi.com/v1"
+    provider: str = FRAMEWORK_DEFAULTS["provider"]
+    base_url: str = FRAMEWORK_DEFAULTS["base_url"]
     api_key: str | None = None
-    model: str = "MiniMax-M3"
-    temperature: float = 0.2
-    timeout_sec: float = 300.0
-    max_tokens: int = 16384
+    model: str = FRAMEWORK_DEFAULTS["model"]
+    temperature: float = FRAMEWORK_DEFAULTS["temperature"]
+    timeout_sec: float = FRAMEWORK_DEFAULTS["timeout_sec"]
+    max_tokens: int = FRAMEWORK_DEFAULTS["max_tokens"]
     extra_params: dict[str, Any] = field(default_factory=dict)
     langsmith_tracing: bool = False
     langsmith_api_key: str | None = None
@@ -46,47 +95,27 @@ class LLMConfig:
     langsmith_endpoint: str | None = None
 
     @classmethod
-    def from_env_or_file(cls, config_path: str | Path | None = None) -> "LLMConfig":
-        """Load LLM configuration with priority: config_path -> config/llm.local.yaml -> env vars -> defaults."""
-        data: dict[str, Any] = {}
+    def from_env_or_file(
+        cls,
+        config_path: str | Path | None = None,
+        *,
+        settings: Mapping[str, Any] | None = None,
+    ) -> "LLMConfig":
+        """Build a config from a host-supplied baseline, one optional file, and the env.
 
-        # 1. Search for config files with priority: example defaults -> legacy llm.local -> settings.local
-        search_paths: list[Path] = []
+        Priority: ``settings`` / ``config_path`` -> LLM-specific environment variables
+        -> :data:`FRAMEWORK_DEFAULTS`.
+
+        The host owns the defaults and the file chain: this layer is deliberately
+        app-agnostic and does not read the host's configuration realm itself. A host
+        that resolved its realm passes the result as ``settings`` — that is the whole
+        delegation, and it is what stops a second defaults table from existing here.
+        """
+        data: dict[str, Any] = {k: v for k, v in (settings or {}).items() if k != "chat"}
         if config_path:
-            search_paths.append(Path(config_path))
-        else:
-            search_paths.extend(
-                [
-                    Path("config/settings.example.yaml"),
-                    Path("config/llm_config.yaml"),
-                    Path("config/llm.local.json"),
-                    Path("config/llm.local.yaml"),
-                    Path("config/settings.yaml"),
-                    Path("config/settings.local.json"),
-                    Path("config/settings.local.yaml"),
-                ]
-            )
+            data.update(_read_config_file(Path(config_path)))
 
-        for p in search_paths:
-            if p.is_file():
-                try:
-                    content = p.read_text(encoding="utf-8")
-                    if p.suffix in [".yaml", ".yml"]:
-                        loaded = yaml.safe_load(content) or {}
-                    else:
-                        loaded = json.loads(content) or {}
-                    if isinstance(loaded, dict):
-                        for k, v in loaded.items():
-                            if v is not None:
-                                if k == "api_key" and (
-                                    v == "your-api-key-here" or "•" in str(v) or "****" in str(v)
-                                ):
-                                    continue
-                                data[k] = v
-                except Exception:
-                    pass
-
-        # 2. Check environment variables (highest priority over config file)
+        # Environment sits above every file, as it does for the rest of the realm.
         api_key = (
             os.getenv("LLM_API_KEY")
             or os.getenv("MINIMAX_API_KEY")
@@ -97,14 +126,22 @@ class LLMConfig:
             os.getenv("LLM_BASE_URL")
             or os.getenv("MINIMAX_BASE_URL")
             or data.get("base_url")
-            or "https://api.minimaxi.com/v1"
+            or FRAMEWORK_DEFAULTS["base_url"]
         )
-        model = os.getenv("LLM_MODEL") or data.get("model") or "MiniMax-M3"
-        provider = os.getenv("LLM_PROVIDER") or data.get("provider") or "openai"
+        model = os.getenv("LLM_MODEL") or data.get("model") or FRAMEWORK_DEFAULTS["model"]
+        provider = (
+            os.getenv("LLM_PROVIDER") or data.get("provider") or FRAMEWORK_DEFAULTS["provider"]
+        )
 
-        temperature = float(os.getenv("LLM_TEMPERATURE") or data.get("temperature") or 0.2)
-        timeout_sec = float(os.getenv("LLM_TIMEOUT_SEC") or data.get("timeout_sec") or 300.0)
-        max_tokens = int(os.getenv("LLM_MAX_TOKENS") or data.get("max_tokens") or 16384)
+        temperature = float(
+            os.getenv("LLM_TEMPERATURE") or data.get("temperature") or FRAMEWORK_DEFAULTS["temperature"]
+        )
+        timeout_sec = float(
+            os.getenv("LLM_TIMEOUT_SEC") or data.get("timeout_sec") or FRAMEWORK_DEFAULTS["timeout_sec"]
+        )
+        max_tokens = int(
+            os.getenv("LLM_MAX_TOKENS") or data.get("max_tokens") or FRAMEWORK_DEFAULTS["max_tokens"]
+        )
         extra_params = data.get("extra_params") or {}
 
         # 3. LangSmith Tracing Configuration
@@ -217,8 +254,9 @@ class OpenAIChatClient(LLMDecisionClient):
         }
         api_key = self.config.api_key
         if api_key:
+            # A masked display value must never be sent as a bearer token.
             s_key = str(api_key).strip()
-            if s_key and "•" not in s_key and "****" not in s_key and s_key != "your-api-key-here":
+            if s_key and not _is_mask_placeholder(s_key):
                 headers["Authorization"] = f"Bearer {s_key}"
         return headers
 

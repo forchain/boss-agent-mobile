@@ -4,12 +4,12 @@ src/boss_agent/settings.py
 Centralized configuration loading and PocketBase URL/database path resolution.
 """
 
-import json
 import logging
 import os
 from pathlib import Path
 from typing import Any
 
+from . import config_realm
 from .rejection import (
     DEFAULT_MAX_SCAN_DEPTH,
     DEFAULT_REJECTION_REPLY_TEXT,
@@ -19,28 +19,37 @@ from .rejection import (
 )
 
 try:
+    # Rebound to None by tests that exercise the no-PyYAML fallback parser. The realm
+    # reads this module attribute late, so the rebinding still has its effect.
     import yaml
 except ImportError:
     yaml = None  # type: ignore[assignment]
 
 logger = logging.getLogger("boss_agent.settings")
 
-DEFAULT_CONFIG_SEARCH_PATHS: list[Path] = [
-    Path("config/settings.local.yaml"),
-    Path("config/settings.local.json"),
-    Path("config/settings.yaml"),
-    Path("config/settings.example.yaml"),
-]
+#: The Configuration Realm's chain, highest precedence first. Declared here because this
+#: name is the historical test/embedder seam; the realm reads it late so a rebinding is
+#: honoured. The values themselves live in :mod:`boss_agent.config_realm`.
+DEFAULT_CONFIG_SEARCH_PATHS: list[Path] = list(config_realm.CONFIG_CHAIN)
 
-DEFAULT_POCKETBASE_URL: str = "http://127.0.0.1:8090"
-DEFAULT_POCKETBASE_DATA_DIR: str = ".boss_agent/pb_data"
-DEFAULT_POCKETBASE_DB_PATH: str = ".boss_agent/pb_data/data.db"
-DEFAULT_SERVER_URL: str = "http://127.0.0.1:4723"
+DEFAULT_POCKETBASE_URL: str = config_realm.DEFAULT_POCKETBASE_URL
+DEFAULT_POCKETBASE_DATA_DIR: str = config_realm.DEFAULT_POCKETBASE_DATA_DIR
+DEFAULT_POCKETBASE_DB_PATH: str = config_realm.DEFAULT_POCKETBASE_DB_PATH
+DEFAULT_SERVER_URL: str = config_realm.DEFAULT_SERVER_URL
+
+#: The one masked-secret predicate, re-exported for the scripts that used to carry
+#: their own copy of it.
+is_mask_placeholder = config_realm.is_mask_placeholder
 
 
 def normalize_url(url: str) -> str:
     """Normalize URL by stripping surrounding whitespace and trailing slashes."""
-    return url.strip().rstrip("/")
+    return config_realm.normalize_url(url)
+
+
+def invalidate_cache() -> None:
+    """Drop the cached Configuration Realm load (the explicit invalidation seam)."""
+    config_realm.invalidate_cache()
 
 
 def resolve_chat_acknowledgment_settings(
@@ -288,152 +297,9 @@ def resolve_communication_cooldown_days(overrides: dict[str, Any] | None = None)
 
 
 def load_settings(config_path: str | Path | None = None) -> dict[str, Any]:
-    """Load merged settings from configuration files with lowest to highest priority."""
-    search_paths: list[Path] = []
-    if config_path:
-        search_paths.append(Path(config_path))
-    else:
-        search_paths.extend(DEFAULT_CONFIG_SEARCH_PATHS)
+    """The merged Configuration Realm, from the realm's one chain and defaults table.
 
-    merged: dict[str, Any] = {
-        "device": "emulator-5554",
-        "avd_name": "boss_avd_arm64",
-        "server_url": "http://127.0.0.1:4723",
-        "pocketbase_url": DEFAULT_POCKETBASE_URL,
-        "pocketbase_data_dir": None,
-        "pocketbase_db_path": None,
-        "provider": "openai",
-        "base_url": "https://api.minimaxi.com/v1",
-        "api_key": None,
-        "model": "MiniMax-M3",
-        "temperature": 0.2,
-        "timeout_sec": 120.0,
-        "max_tokens": 262144,
-        "langsmith_tracing": False,
-        "langsmith_api_key": None,
-        "langsmith_project": "boss-agent-mobile",
-        "daily_greeting_limit": 20,
-        "preview_timeout_sec": 3.0,
-        "enable_greeting": True,
-        "communication_cooldown_days": 30,
-    }
-
-    # Load from lowest to highest priority so higher priority files overwrite
-    for p in reversed(search_paths):
-        if p.is_file():
-            try:
-                content = p.read_text(encoding="utf-8")
-                if p.suffix in [".yaml", ".yml"]:
-                    if yaml is not None:
-                        loaded = yaml.safe_load(content)
-                    else:
-                        loaded = {}
-                        for line in content.splitlines():
-                            s = line.strip()
-                            if s and not s.startswith("#") and ":" in s:
-                                k, v = s.split(":", 1)
-                                v = v.strip()
-                                if " #" in v:
-                                    v = v.split(" #", 1)[0].strip()
-                                elif "\t#" in v:
-                                    v = v.split("\t#", 1)[0].strip()
-                                loaded[k.strip()] = v.strip('"').strip("'")
-                else:
-                    loaded = json.loads(content)
-                if isinstance(loaded, dict):
-                    for k, v in loaded.items():
-                        if v is None:
-                            continue
-                        if k == "chat" and isinstance(v, dict):
-                            # Nested block: merge per-key so a partial local override
-                            # (e.g. only rejection_reply_text) does not drop the
-                            # sibling max_scan_depth that the example declared. The
-                            # Web settings writer deep-merges the same way (ADR 0010).
-                            merged["chat"] = {**(merged.get("chat") or {}), **v}
-                        else:
-                            merged[k] = v
-                    if "pb_url" in loaded and loaded["pb_url"] is not None:
-                        merged["pocketbase_url"] = loaded["pb_url"]
-                    if "appium_url" in loaded and loaded["appium_url"] is not None:
-                        merged["server_url"] = loaded["appium_url"]
-                    if "pb_data_dir" in loaded and loaded["pb_data_dir"] is not None:
-                        merged["pocketbase_data_dir"] = loaded["pb_data_dir"]
-                    if "pb_db_path" in loaded and loaded["pb_db_path"] is not None:
-                        merged["pocketbase_db_path"] = loaded["pb_db_path"]
-            except Exception:
-                pass
-
-    # Legacy fallback: if api_key is missing or template default, check config/llm.local.yaml
-    if not config_path and merged.get("api_key") in (None, "", "your-api-key-here"):
-        legacy_llm_file = Path("config/llm.local.yaml")
-        if legacy_llm_file.is_file():
-            try:
-                legacy_content = legacy_llm_file.read_text(encoding="utf-8")
-                legacy_data = yaml.safe_load(legacy_content) if yaml else {}
-                if isinstance(legacy_data, dict):
-                    for k in (
-                        "provider",
-                        "base_url",
-                        "api_key",
-                        "model",
-                        "temperature",
-                        "timeout_sec",
-                        "max_tokens",
-                        "langsmith_tracing",
-                        "langsmith_api_key",
-                        "langsmith_project",
-                    ):
-                        val = legacy_data.get(k)
-                        if val is not None:
-                            if k == "api_key" and val == "your-api-key-here":
-                                continue
-                            merged[k] = val
-            except Exception:
-                pass
-
-    env_pb_url = os.getenv("POCKETBASE_URL")
-    if env_pb_url and env_pb_url.strip():
-        merged["pocketbase_url"] = env_pb_url
-
-    env_server_url = os.getenv("APPIUM_SERVER_URL") or os.getenv("APPIUM_URL")
-    if env_server_url and env_server_url.strip():
-        merged["server_url"] = env_server_url.strip()
-
-    env_pb_data_dir = os.getenv("PB_DATA_DIR") or os.getenv("POCKETBASE_DATA_DIR")
-    if env_pb_data_dir and env_pb_data_dir.strip():
-        merged["pocketbase_data_dir"] = env_pb_data_dir.strip()
-
-    env_pb_db_path = os.getenv("PB_DB_PATH") or os.getenv("POCKETBASE_DB_PATH")
-    if env_pb_db_path and env_pb_db_path.strip():
-        merged["pocketbase_db_path"] = env_pb_db_path.strip()
-
-    env_llm_key = (
-        os.getenv("LLM_API_KEY") or os.getenv("MINIMAX_API_KEY") or os.getenv("OPENAI_API_KEY")
-    )
-    if env_llm_key and env_llm_key.strip():
-        merged["api_key"] = env_llm_key.strip()
-
-    env_llm_base = os.getenv("LLM_BASE_URL") or os.getenv("MINIMAX_BASE_URL")
-    if env_llm_base and env_llm_base.strip():
-        merged["base_url"] = env_llm_base.strip()
-
-    env_llm_model = os.getenv("LLM_MODEL")
-    if env_llm_model and env_llm_model.strip():
-        merged["model"] = env_llm_model.strip()
-
-    # Reciprocally derive db_path / data_dir if only one was specified
-    if merged["pocketbase_data_dir"] and not merged["pocketbase_db_path"]:
-        merged["pocketbase_db_path"] = str(Path(merged["pocketbase_data_dir"]) / "data.db")
-    elif merged["pocketbase_db_path"] and not merged["pocketbase_data_dir"]:
-        merged["pocketbase_data_dir"] = str(Path(merged["pocketbase_db_path"]).parent)
-    elif not merged["pocketbase_data_dir"] and not merged["pocketbase_db_path"]:
-        merged["pocketbase_data_dir"] = DEFAULT_POCKETBASE_DATA_DIR
-        merged["pocketbase_db_path"] = DEFAULT_POCKETBASE_DB_PATH
-
-    if "pocketbase_url" in merged and isinstance(merged["pocketbase_url"], str):
-        merged["pocketbase_url"] = normalize_url(merged["pocketbase_url"])
-
-    if "server_url" in merged and isinstance(merged["server_url"], str):
-        merged["server_url"] = normalize_url(merged["server_url"])
-
-    return merged
+    Cached against the chain's stat signature: `WorkerConfig` construction alone used
+    to trigger three full read-and-parse passes over the same files.
+    """
+    return config_realm.load_settings(config_path=config_path)

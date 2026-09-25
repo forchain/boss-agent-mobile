@@ -15,6 +15,7 @@ root_dir = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(root_dir))
 sys.path.insert(0, str(root_dir / "src"))
 
+from boss_agent.llm_config import load_llm_config  # noqa: E402
 from boss_agent.matching import JobMatchGreetingService  # noqa: E402
 from boss_agent.memory import StructuredCandidateProfile  # noqa: E402
 from boss_agent.models import JobPosting  # noqa: E402
@@ -36,10 +37,13 @@ def parse_args() -> argparse.Namespace:
 
 
 def _is_masked_key(val: str | None) -> bool:
+    """Whether a configured key is unset or still a masked/placeholder display value."""
+    from boss_agent.config_realm import PLACEHOLDER_API_KEY, is_mask_placeholder
+
     if not val:
         return True
     s = str(val).strip()
-    return not s or "•" in s or "****" in s or s == "your-api-key-here"
+    return not s or s == PLACEHOLDER_API_KEY or is_mask_placeholder(s)
 
 
 def build_llm_client(llm_config_arg: str | None) -> OpenAIChatClient:
@@ -52,7 +56,7 @@ def build_llm_client(llm_config_arg: str | None) -> OpenAIChatClient:
                 model = config_data.get("model") or "MiniMax-M3"
                 temp = float(config_data.get("temperature") or 0.2)
 
-                default_cfg = LLMConfig.from_env_or_file()
+                default_cfg = load_llm_config()
                 if _is_masked_key(api_key):
                     api_key = default_cfg.api_key
                 if (not base_url or base_url == "https://api.openai.com/v1") and _is_masked_key(config_data.get("api_key")):
@@ -70,7 +74,7 @@ def build_llm_client(llm_config_arg: str | None) -> OpenAIChatClient:
         except Exception as e:
             sys.stderr.write(f"Warning: Failed to parse custom LLM config ({e}), falling back.\n")
 
-    return OpenAIChatClient(LLMConfig.from_env_or_file())
+    return OpenAIChatClient(load_llm_config())
 
 
 def main() -> None:
