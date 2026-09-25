@@ -40,12 +40,20 @@ build-backend = "hatchling.build"
 packages = ["src/droid_agent_core", "src/boss_agent"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+# Default tier: unadorned runs collect the fast in-memory unit suite only.
+testpaths = ["tests/unit"]
+# Default isolation, both markers: `live` tests drive the shared Android emulator and
+# `e2e` tests drive real services, so neither belongs in an unadorned run. Opt in
+# deliberately — `pytest tests/e2e` for the E2E tier, `-m live` for device tests. See
+# docs/agents/testing.md and the root conftest.py that keeps those invocations working.
+addopts = "-m 'not live and not e2e'"
 asyncio_mode = "strict"
 markers = [
     "live: marks tests requiring live Android device or emulator",
+    "e2e: marks service-level end-to-end tests that run without a device",
 ]
-pythonpath = [".", "src"]
+# `tests` carries the shared `_service_harness` plumbing both tiers import.
+pythonpath = [".", "src", "tests"]
 
 [tool.ruff]
 line-length = 100

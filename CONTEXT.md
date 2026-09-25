@@ -52,6 +52,14 @@ _Avoid_: API gateway, microservice gateway, proxy service
 The lightweight persistence and event mechanism utilizing PocketBase tables and Realtime SSE subscriptions for task queueing, optimistic lease locks, and live UI status updates.
 _Avoid_: Redis broker, RabbitMQ cluster, in-memory queue
 
+**Job Record Store (`JobRecordStore`)**:
+The dedicated repository seam managing Job Record persistence, canonical deduplication fingerprints, direct-hire enterprise exclusion pools, daily greeting quota counting, and re-application cool-down lifecycle calculations independently from task lease brokerage.
+_Avoid_: db helper, raw collection query, job cache
+
+**Mobile Job Feed Pipeline (`JobFeedPipeline`)**:
+The deep feed navigation and extraction engine encapsulating Two-Anchor Search Entry, bounded Back-only recovery, viewport card pagination, call-to-action button state checking, inline description hotspot expansion, and feed boundary termination without procedural handler micromanagement.
+_Avoid_: scroll helper, feed crawler, page looper
+
 **Automation Worker**:
 The dedicated out-of-process execution daemon bound 1:1 to a Virtual Device Session that claims pending tasks from the State Stream Broker, executes mobile UI automation workflows, and reports execution telemetry.
 _Avoid_: In-process background task, Celery pool, worker thread
@@ -71,6 +79,26 @@ _Avoid_: test job, mock task, fake run, 测试用例任务
 **Manual Task (`source="manual"`)**:
 An automation task triggered intentionally by the user via the Task Management Dashboard or CLI for live job discovery or application workflows.
 _Avoid_: user test, real task, active test, 主动测试
+
+**Graceful Shutdown Protocol**:
+The POSIX signal contract by which the Automation Worker and the Web Dashboard runner stop cooperatively: acknowledge the termination signal in their own log stream, halt the polling loop, abort or release in-flight resources (State Stream Broker task cancellation, Virtual Device Session release, port release), then confirm completion — so supervisors and test fixtures never have to rely on arbitrary sleeps or force-kills.
+_Avoid_: hard stop, force quit, kill -9 policy
+
+**E2E Pre-Test Teardown Gate**:
+The session-scoped, opt-in test fixture (`BOSS_AGENT_ENFORCE_TEARDOWN=1`) that stops residual Automation Worker and Web Dashboard instances located through the shared runtime directory and verifies their shutdown feedback, guaranteeing exclusive use of the Virtual Device Session and the dashboard port when a run genuinely needs it. Left unopted, E2E runs touch nothing outside their own temporary state. Shared infrastructure (State Stream Broker, Appium, AVD) is deliberately out of its scope either way.
+_Avoid_: test cleanup hook, pre-test reset script, teardown helper
+
+**Fast Unit Test**:
+The in-memory verification tier (`tests/unit/`) that exercises module interfaces against mocked collaborators — no Automation Worker, no Appium session, no bound host port, and no live LLM endpoint. It is the tier an unadorned `pytest` runs, and the one that must finish in tens of seconds with zero side effects on the machine.
+_Avoid_: quick check, small spec, unit suite
+
+**Service Integration Test (`@pytest.mark.e2e`)**:
+The end-to-end tier that drives real services — the Automation Worker CLI, the SvelteKit Web Dashboard, nested test sessions — against ephemeral ports and per-test temporary state directories, so a run neither collides with nor shuts down services belonging to other worktrees. Opted into explicitly, never part of the default run. Live Device Tests deliberately do not carry this marker, so marker selection can never reach the emulator.
+_Avoid_: integration spec, heavy test, slow suite
+
+**Live Device Test (`@pytest.mark.live`)**:
+The device tier that drives the shared Android Virtual Device through Appium, guarded by an explicit marker that no default, broad-path, or E2E-marker invocation can override — waking the emulator out from under another worktree is the failure this tier exists to prevent.
+_Avoid_: real test, device suite, emulator spec
 
 **Job Record**:
 The persisted entity representing a job posting discovered from mobile search results or scraping workflows in the Boss app.
@@ -136,6 +164,10 @@ _Avoid_: runtime config, app data folder, temporary settings
 The system-managed directory housing runtime database state (`pb_data`), caches, execution logs, and transient artifacts. Never used as a manual configuration store.
 _Avoid_: config store, settings dir, user preference folder
 
+
+**Candidate Screener (`CandidateScreener`)**:
+The unified deep module consolidating zero-token card preliminary keyword checks, App-Enforced Filters, Whitelist Relaxation, JD semantic blacklist evaluation, and living Greeting Prompt drafting behind a minimal two-method interface (`evaluate_card` and `evaluate_job`). Supersedes shallow pass-through graph wrappers.
+_Avoid_: filter runner, card checker, matcher script
 
 **Candidate Screener Graph (`JobApplicationState`)**:
 The stateful LangGraph orchestrator governing the complete multi-tier lifecycle from card-level keyword filtering, JD extraction, semantic screening, to targeted greeting generation.
