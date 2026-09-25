@@ -1,4 +1,5 @@
 import contextlib
+import hashlib
 import logging
 import re
 import time
@@ -35,6 +36,7 @@ from .models import (
     is_likely_location,
     sanitize_tags,
 )
+from .rejection import DISINTEREST_REASON
 
 logger = logging.getLogger("boss_agent.pages")
 ui_logger = logging.getLogger("droid_agent_core.ui")
@@ -44,6 +46,36 @@ console = Console()
 # not a fixed interval: a perfectly regular Back rhythm is exactly the timing
 # signature the humanized-interaction policy (ADR-0005) exists to avoid.
 BACK_INTERVAL_SEC: tuple[float, float] = (0.35, 0.65)
+
+#: Separator in a communication card's `[Company] | [Position]` descriptor.
+CARD_DESCRIPTOR_SEPARATOR: str = "|"
+
+#: Fullwidth vertical bar (U+FF5C). The divider is a rendered glyph rather than a
+#: protocol value, so both forms are accepted: a build or font that emits the
+#: fullwidth bar would otherwise yield no employer on any card, and the blacklist
+#: would silently never be populated.
+FULLWIDTH_CARD_DESCRIPTOR_SEPARATOR: str = "｜"
+
+#: Locator key of the on-screen back affordance tried before the hardware Back key.
+BACK_BUTTON_KEY: str = "communication_list.back_btn"
+
+#: XPath to a card's text nodes, the fallback for fields the platform leaves unlabelled.
+CARD_CHILD_TEXT_XPATH: str = ".//android.widget.TextView"
+
+#: Bounded recovery steps the 仅沟通 list navigation may spend unwinding the app.
+LIST_RECOVERY_MAX_STEPS: int = 6
+
+
+def _normalize_card_descriptors(text: str) -> str:
+    """Collapse fullwidth vertical bars onto the ASCII card-descriptor separator."""
+    return (text or "").replace(FULLWIDTH_CARD_DESCRIPTOR_SEPARATOR, CARD_DESCRIPTOR_SEPARATOR)
+
+
+#: Badge texts the platform renders in `iv_msg_status` for a thread whose last
+#: message is the candidate's own or an unsent draft (spec #205). Matched explicitly
+#: rather than keyed on the node's mere presence: a future badge with different wording
+#: would otherwise silently stop every rejection from being detected.
+OUTBOUND_STATUS_MARKERS: tuple[str, ...] = ("送达", "已读", "草稿")
 
 
 def _log_selector_lookup(selector: UISelector, outcome: str, started_at: float) -> None:
@@ -126,6 +158,121 @@ class JobCardBrief:
                 title=self.title,
                 recruiter_name=self.recruiter_name,
             )
+
+
+def _whitespace_digest(text: str) -> str:
+    normalized = re.sub(r"\s+", "", text or "")
+    return hashlib.sha1(normalized.encode("utf-8")).hexdigest()[:12]
+
+
+def compute_card_key(
+    sender_name: str,
+    message_text: str,
+    row_text: str = "",
+    descriptor: str = "",
+) -> str:
+    """Signature identifying one communication card for visited-set deduplication.
+
+    Sender, the card's employer descriptor, and a whitespace-insensitive hash of the
+    message text: stable across re-reads of the same card, and distinct for two
+    recruiters sending identical text.
+
+    The descriptor earns its place because platform rejection templates are canned
+    and generic sender names ('李女士', 'HR', '招聘负责人') repeat across employers:
+    sender plus text alone collapses two different companies onto one key, and the
+    later card is skipped as already-visited -- silently costing it its blacklist
+    entry, which is the one durable action this path takes.
+
+    When the sender node cannot be read, the row's own rendered text stands in for
+    it. Falling back to a constant would collapse identical rejection templates
+    from different recruiters onto one key, silently skipping the later ones.
+    """
+    sender = re.sub(r"\s+", "", sender_name or "").strip()
+    if not sender:
+        source = re.sub(r"\s+", "", row_text or "") or re.sub(r"\s+", "", message_text or "")
+        sender = f"row-{hashlib.sha1(source.encode('utf-8')).hexdigest()[:8]}"
+    employer = _normalize_card_descriptors(descriptor)
+    return f"{sender}:{_whitespace_digest(employer)}:{_whitespace_digest(message_text)}"
+
+
+def parse_company_from_descriptor(descriptor: str, sender_name: str = "") -> str:
+    """Extract the employer from a card's `[Company] | [Position]` descriptor.
+
+    Examples:
+        "传音控股 | 算法工程师"        -> "传音控股"
+        "严胜 传音控股 | 算法工程师"   -> "传音控股"   (sender_name="严胜")
+        "小米集团 | 算法工程师"        -> "小米集团"   (sender_name="小米")
+        "我们感谢您的投递"            -> ""            (no separator)
+
+    Anything after the first separator is the position and is discarded: only the
+    employer is ever blacklisted.
+
+    A leading recruiter name is stripped because the row-text fallback can glue it
+    onto the descriptor -- but only when a delimiter actually separates the two.
+    This value feeds a substring-matched *global* blacklist, so a sender whose
+    nickname merely prefixes the employer must leave it intact: stripping "小米"
+    off "小米集团" leaves the generic token "集团", which would then reject every
+    集团 employer in the country. An undelimited prefix is left alone deliberately:
+    the worst case is an employer name that matches nothing, against a worst case of
+    blacklisting an entire class of employers.
+    """
+    text = _normalize_card_descriptors(descriptor).strip()
+    if CARD_DESCRIPTOR_SEPARATOR not in text:
+        return ""
+
+    company = text.split(CARD_DESCRIPTOR_SEPARATOR, 1)[0].strip()
+    sender = (sender_name or "").strip()
+    if sender and company != sender:
+        glued = re.match(rf"^{re.escape(sender)}[\s·•・:：\-—－]+(?P<employer>.+)$", company)
+        if glued:
+            company = glued.group("employer").strip()
+    return company
+
+
+@dataclass
+class CommunicationCard:
+    """One conversation card read from the 仅沟通 communication list.
+
+    Everything the triage needs is on the card itself: the outbound indicator
+    says whether the thread is waiting on the recruiter, and the descriptor
+    carries the employer.
+    """
+
+    sender_name: str
+    message_text: str
+    element: Any = None
+    row_text: str = ""
+    key: str = ""
+    #: Raw Outbound Message Indicator text (`iv_msg_status`), e.g. "[送达]".
+    outbound_status: str = ""
+    #: The card's `[Company] | [Position]` descriptor, e.g. "传音控股 | 算法工程师".
+    company_position: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.key:
+            self.key = compute_card_key(
+                self.sender_name,
+                self.message_text,
+                self.row_text,
+                descriptor=self.company_position,
+            )
+
+    @property
+    def has_outbound_indicator(self) -> bool:
+        """Whether the candidate sent the last message and the recruiter has not replied.
+
+        True only for a badge carrying a known marker (``[送达]`` / ``[已读]``). An
+        unrecognised badge is treated as an inbound message instead of being
+        skipped: a missed skip costs one LLM call, while a wrong skip would stop
+        every rejection from ever being blacklisted, silently and invisibly.
+        """
+        status = (self.outbound_status or "").strip()
+        return any(marker in status for marker in OUTBOUND_STATUS_MARKERS)
+
+    @property
+    def company_name(self) -> str:
+        """Employer parsed from the card descriptor, or "" when unavailable."""
+        return parse_company_from_descriptor(self.company_position, self.sender_name)
 
 
 def parse_recruiter_info(raw_text: str) -> tuple[str, str, bool]:
@@ -232,6 +379,23 @@ def parse_company_scale_industry(
     return comp_name, scale, industry
 
 
+def company_duplicates_card_title(company: str, title: str) -> bool:
+    """True when an extracted 'company' is the card's own job title instead of an employer.
+
+    Boss's recommendation popup cards reuse the position name in the company row, so a
+    locator can read the title text back as a company. Left alone, it poisons the
+    fingerprint (same job saved twice under different keys) and smuggles blacklisted
+    employers past company-name screening. A trailing badge-junk suffix (' &@') is
+    tolerated as the same mis-read, because a genuine employer does not begin with
+    its own posting's full title.
+    """
+    c = (company or "").strip()
+    t = (title or "").strip()
+    if not c or not t:
+        return False
+    return c == t or (c.startswith(t) and len(c) - len(t) <= 3)
+
+
 class BaseBossPage:
     """Base class for all Boss 直聘 Page Objects using key-based locator resolution."""
 
@@ -280,6 +444,49 @@ class BaseBossPage:
             if elems:
                 return elems[0]
         return None
+
+    def _find_elements_by_key(
+        self, key: str, format_args: dict[str, Any] | None = None
+    ) -> list[Any]:
+        """Return every element matched by the first locator for `key` that hits anything."""
+        if not self.driver:
+            return []
+        for sel in self.locators.get_selectors(key, format_args=format_args):
+            started_at = time.monotonic()
+            try:
+                elems = self.driver.find_elements(by=sel.by.value, value=sel.value)
+            except Exception as exc:
+                _log_selector_lookup(sel, f"error:{exc}", started_at)
+                continue
+            _log_selector_lookup(sel, "match" if elems else "none", started_at)
+            if elems:
+                return list(elems)
+        return []
+
+    def _extract_card_field_text(self, card_elem: Any, key: str) -> str:
+        """Extract text from a sub-element inside a list card using configured selectors."""
+        selectors = self.locators.get_selectors(key)
+        for sel in selectors:
+            try:
+                if sel.by.value == "id":
+                    elems = card_elem.find_elements(by="id", value=sel.value)
+                elif sel.by.value == "xpath":
+                    val = sel.value
+                    if not val.startswith("."):
+                        val = "." + val
+                    elems = card_elem.find_elements(by="xpath", value=val)
+                else:
+                    elems = card_elem.find_elements(by=sel.by.value, value=sel.value)
+                if elems:
+                    for el in elems:
+                        raw_t = getattr(el, "text", None)
+                        if raw_t is not None:
+                            txt = str(raw_t).strip()
+                            if txt and txt not in ("猎", "新", "急", "热", "置顶"):
+                                return txt
+            except Exception:
+                continue
+        return ""
 
     def find_by_key(
         self,
@@ -571,31 +778,6 @@ class JobListPage(BaseBossPage):
             return True
         return False
 
-    def _extract_card_field_text(self, card_elem: Any, key: str) -> str:
-        """Extract text from a sub-element inside a job card using configured selectors."""
-        selectors = self.locators.get_selectors(key)
-        for sel in selectors:
-            try:
-                if sel.by.value == "id":
-                    elems = card_elem.find_elements(by="id", value=sel.value)
-                elif sel.by.value == "xpath":
-                    val = sel.value
-                    if not val.startswith("."):
-                        val = "." + val
-                    elems = card_elem.find_elements(by="xpath", value=val)
-                else:
-                    elems = card_elem.find_elements(by=sel.by.value, value=sel.value)
-                if elems:
-                    for el in elems:
-                        raw_t = getattr(el, "text", None)
-                        if raw_t is not None:
-                            txt = str(raw_t).strip()
-                            if txt and txt not in ("猎", "新", "急", "热", "置顶"):
-                                return txt
-            except Exception:
-                continue
-        return ""
-
     def extract_visible_job_cards(self, max_cards: int = 10) -> list[JobCardBrief]:
         """Extract visible job card briefs (title, company, recruiter, salary, location, tags, snippet)."""
         if not self.driver:
@@ -626,7 +808,9 @@ class JobListPage(BaseBossPage):
             company, scale, industry = parse_company_scale_industry(
                 raw_company, explicit_scale=raw_scale, explicit_industry=raw_industry
             )
-            if company and is_invalid_company_name(company):
+            if company and (
+                is_invalid_company_name(company) or company_duplicates_card_title(company, title)
+            ):
                 company = ""
             recruiter_name, recruiter_title, is_headhunter = parse_recruiter_info(raw_recruiter)
 
@@ -736,7 +920,11 @@ class JobListPage(BaseBossPage):
                     # 6. Company line detection (includes scale / industry heuristic)
                     if not company:
                         c_name, c_scale, c_ind = parse_company_scale_industry(t)
-                        if c_name and not is_invalid_company_name(c_name):
+                        if (
+                            c_name
+                            and not is_invalid_company_name(c_name)
+                            and not company_duplicates_card_title(c_name, title)
+                        ):
                             company = c_name
                             if c_scale and not scale:
                                 scale = c_scale
@@ -1553,7 +1741,9 @@ class ChatPage(BaseBossPage):
             return True
         return False
 
-    def type_greeting_message(self, message: str, timeout_sec: float = 5.0) -> bool:
+    def type_greeting_message(
+        self, message: str, timeout_sec: float = 5.0, clear_first: bool = False
+    ) -> bool:
         """Type greeting message into the chat message input box.
 
         IMPORTANT SAFETY GUARANTEE: Does NOT click the send button.
@@ -1561,8 +1751,20 @@ class ChatPage(BaseBossPage):
         """
         elem = self.find_by_key("chat.message_input", timeout_sec=timeout_sec)
         if elem:
-            self.gestures.human_type(elem, message)
+            if clear_first:
+                self.gestures.human_type(elem, message, clear_first=True)
+            else:
+                self.gestures.human_type(elem, message)
             return True
+        return False
+
+    def clear_message_input(self, timeout_sec: float = 3.0) -> bool:
+        """Clear any text from the chat message input box to avoid leaving drafts."""
+        elem = self.find_by_key("chat.message_input", timeout_sec=timeout_sec)
+        if elem and hasattr(elem, "clear"):
+            with contextlib.suppress(Exception):
+                elem.clear()
+                return True
         return False
 
     def click_send(self, timeout_sec: float = 3.0) -> bool:
@@ -1572,6 +1774,19 @@ class ChatPage(BaseBossPage):
             self.gestures.human_click(elem)
             return True
         return False
+
+    def send_message(self, message: str, timeout_sec: float = 5.0) -> bool:
+        """Type and send a chat message in one step.
+
+        Only ever reached for messages already judged safe to send (e.g. a
+        rejection acknowledgment). Blank text is refused so an empty input box
+        can never be submitted.
+        """
+        if not (message or "").strip():
+            return False
+        if not self.type_greeting_message(message, timeout_sec=timeout_sec, clear_first=True):
+            return False
+        return self.click_send(timeout_sec=timeout_sec)
 
     def navigate_back(self, timeout_sec: float = 3.0) -> bool:
         """Click back button from chat dialog."""
@@ -1585,3 +1800,206 @@ class ChatPage(BaseBossPage):
             return True
         except Exception:
             return False
+
+
+class CommunicationListPage(BaseBossPage):
+    """Page Object for the 仅沟通 communication list under the 消息 tab.
+
+    Cards carry everything the triage needs — the Outbound Message Indicator, the
+    `[Company] | [Position]` descriptor and the last message text — so neither
+    classification nor employer extraction ever requires opening a chat (spec #205).
+    """
+
+    def is_on_list(self, timeout_sec: float = 2.0) -> bool:
+        """Check whether the 仅沟通 communication list is currently displayed."""
+        return (
+            self.find_by_key("communication_list.communication_tab", timeout_sec=timeout_sec)
+            is not None
+        )
+
+    def wait_for_list_return(self, timeout_sec: float = 5.0) -> bool:
+        """Wait for the platform to drop the conversation and land back on the list."""
+        return self.is_on_list(timeout_sec=timeout_sec)
+
+    def open_list(self, timeout_sec: float = 5.0, max_steps: int = LIST_RECOVERY_MAX_STEPS) -> bool:
+        """Navigate into the 仅沟通 list from whatever screen the app is currently on.
+
+        The first check means an app already showing the list is never clicked at all.
+        From anywhere else the loop spends at most ``max_steps`` screens trying to
+        reach the message column, then clicks 消息 -> 仅沟通 and confirms the landing.
+
+        A CHECK_CHAT dispatch can arrive while the app sits on a job detail, an open
+        chat, a filter sheet or the launcher, so "the 消息 tab is right there" cannot
+        be assumed: unwinding first, and clicking the column the moment it appears,
+        is what makes the navigation self-healing instead of an instant task failure.
+
+        The per-step probes fast-fail; only the landing confirmation inside
+        `_open_message_column` spends the caller's ``timeout_sec``, because polling
+        out the full element budget on each of ``max_steps`` screens turns one
+        unreachable list into a multi-minute stall.
+        """
+        for step in range(max_steps + 1):
+            if self.is_on_list(timeout_sec=0.0):
+                return True
+            if self._open_message_column(timeout_sec=timeout_sec):
+                return True
+            if step == max_steps:
+                break
+            ui_logger.debug("[UI] 仅沟通 recovery step %d/%d", step + 1, max_steps)
+            self._recover_one_step()
+        return False
+
+    def _open_message_column(self, timeout_sec: float) -> bool:
+        """Click the bottom 消息 tab then the 仅沟通 sub-tab; True once landed on the list."""
+        tab = self.find_now("communication_list.entry_tab")
+        if not tab:
+            return False
+        self.gestures.human_click(tab)
+
+        sub_tab = self.find_by_key("communication_list.communication_tab", timeout_sec=timeout_sec)
+        if not sub_tab:
+            return False
+        self.gestures.human_click(sub_tab)
+        return self.is_on_list(timeout_sec=timeout_sec)
+
+    def _recover_one_step(self) -> None:
+        """Unwind exactly one screen: on-screen back button first, hardware key second.
+
+        The on-screen affordance is preferred because it keeps the app inside Boss,
+        whereas a hardware Back from a chat room or the message column can leave the
+        app entirely. The probe stays a single short locator list on purpose (ADR
+        0011 measured each missed candidate at ~1s), the foreground guard re-activates
+        Boss if a Back press did escape, and the settle pause after either action is
+        what stops the loop degenerating into a runaway burst of clicks.
+        """
+        self._ensure_foreground()
+        back = self.find_now(BACK_BUTTON_KEY)
+        if back:
+            self.gestures.human_click(back)
+        else:
+            self.press_back()
+        self.gestures.random_sleep(*BACK_INTERVAL_SEC)
+
+    def _find_message_cards(self) -> list[Any]:
+        """Locate communication rows, falling back to the message nodes' parents."""
+        cards = self._find_elements_by_key("communication_list.message_card")
+        if cards:
+            return cards
+        text_nodes = self._find_elements_by_key("communication_list.message_text")
+        if not text_nodes:
+            return []
+        resolved: list[Any] = []
+        for node in text_nodes:
+            try:
+                parent = node.find_element(by="xpath", value="..")
+                resolved.append(parent if parent else node)
+            except Exception:
+                resolved.append(node)
+        return resolved
+
+    def extract_visible_messages(self, max_items: int = 10) -> list[CommunicationCard]:
+        """Extract every visible card's sender, outbound badge, descriptor and text."""
+        if not self.driver:
+            return []
+
+        cards: list[CommunicationCard] = []
+        for card in self._find_message_cards()[:max_items]:
+            row_text = (getattr(card, "text", "") or "").strip()
+            sender = self._extract_card_field_text(card, "communication_list.sender_name")
+            text = self._extract_card_field_text(card, "communication_list.message_text")
+            if not text:
+                # A card may itself be the message node (fallback locator path).
+                text = row_text
+            if not text:
+                continue
+            cards.append(
+                CommunicationCard(
+                    sender_name=sender,
+                    message_text=text,
+                    element=card,
+                    row_text=row_text,
+                    outbound_status=self._extract_card_field_text(
+                        card, "communication_list.outbound_status"
+                    ),
+                    company_position=self._extract_company_position(card, sender, text),
+                )
+            )
+        return cards
+
+    def _scan_card_text_nodes(self, card: Any) -> list[str]:
+        """The text of a card's child TextViews, in document order.
+
+        The fallback behind the fields the platform leaves unlabelled: the descriptor
+        is rendered into a text node with no resource-id measured on hardware, and a
+        node walk is what reads it. A card whose layer cannot be read at all yields
+        nothing, which the caller reads as "this field is not on the card" rather
+        than as an error.
+        """
+        try:
+            children = card.find_elements(by="xpath", value=CARD_CHILD_TEXT_XPATH)
+        except Exception:
+            return []
+        return [(getattr(child, "text", "") or "").strip() for child in children]
+
+    def _extract_company_position(self, card: Any, sender: str, message_text: str) -> str:
+        """Read the `[Company] | [Position]` descriptor off a card.
+
+        Falls back to the card's own child nodes when the configured resource-ids
+        miss, because the descriptor node has no measured id on a live device.
+
+        The sender, the message and the rendered row are all excluded: a rejection
+        message may itself contain a `|`, and mistaking the message for an employer
+        would blacklist a company that was never named on the card.
+
+        Fullwidth bars are folded onto the ASCII separator before every comparison --
+        the separator is a rendered glyph, and normalising only the configured field
+        would leave the node scan blind on a device that draws `｜`.
+        """
+        descriptor = _normalize_card_descriptors(
+            self._extract_card_field_text(card, "communication_list.company_position")
+        )
+        if CARD_DESCRIPTOR_SEPARATOR in descriptor:
+            return descriptor
+
+        message = _normalize_card_descriptors((message_text or "").strip())
+        sender = (sender or "").strip()
+        for candidate in self._scan_card_text_nodes(card):
+            candidate = _normalize_card_descriptors(candidate)
+            if not candidate or candidate == sender:
+                continue
+            if message and (candidate in message or message in candidate):
+                continue
+            if CARD_DESCRIPTOR_SEPARATOR in candidate:
+                return candidate
+        return ""
+
+    def open_message(self, message: CommunicationCard) -> bool:
+        """Click a communication card to enter its chat dialog."""
+        if message.element is None:
+            return False
+        self.gestures.human_click(message.element)
+        return True
+
+    def mark_disinterest(self, timeout_sec: float = 3.0) -> bool:
+        """Submit disinterest feedback with the standardized 重复推荐 reason.
+
+        Fails fast rather than guessing: if either the 不感兴趣 button or the
+        reason option does not appear, the sequence aborts without a second click
+        so the caller can report the unexpected UI. The reason is deliberately not
+        a parameter: the platform feedback category is standardized and never
+        branched on.
+        """
+        button = self.find_by_key("chat.disinterest_btn", timeout_sec=timeout_sec)
+        if not button:
+            return False
+        self.gestures.human_click(button)
+
+        option = self.find_by_key(
+            "chat.disinterest_reason_option",
+            timeout_sec=timeout_sec,
+            format_args={"reason": DISINTEREST_REASON},
+        )
+        if not option:
+            return False
+        self.gestures.human_click(option)
+        return True

@@ -15,10 +15,12 @@ from typing import Any
 
 from boss_agent.broker.pocketbase_adapter import PocketBaseTaskBroker
 from boss_agent.settings import resolve_pocketbase_url, resolve_server_url
+from boss_agent.startup_cleanup import StartupCleanupGate
 from boss_agent.worker.config import WorkerConfig
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.daemon import AutomationWorker
 from boss_agent.worker.handlers.auto_apply import AutoApplyHandler
+from boss_agent.worker.handlers.check_chat import CheckChatHandler
 from boss_agent.worker.handlers.check_login import CheckLoginHandler
 from boss_agent.worker.handlers.scrape_jobs import ScrapeJobsHandler
 from droid_agent_core.driver import AppiumSession, DriverConfig
@@ -159,13 +161,20 @@ def main() -> None:
         CheckLoginHandler(),
         ScrapeJobsHandler(),
         AutoApplyHandler(),
+        CheckChatHandler(),
     ]
+
+    # One gate shared by both services in this process, so --enable-scheduler queues
+    # the startup 拒信清扫 exactly once even though the worker and the scheduler
+    # initialize together (issue #230).
+    startup_gate = StartupCleanupGate(broker, enabled=config.run_cleanup_on_startup)
 
     worker = AutomationWorker(
         config=config,
         broker=broker,
         context=context,
         handlers=handlers,
+        startup_gate=startup_gate,
     )
 
     logger.info(
@@ -179,7 +188,9 @@ def main() -> None:
     if args.enable_scheduler:
         from boss_agent.scheduler import AutomationScheduler
 
-        scheduler = AutomationScheduler(broker=broker, poll_interval_sec=30.0)
+        scheduler = AutomationScheduler(
+            broker=broker, poll_interval_sec=30.0, startup_gate=startup_gate
+        )
         logger.info("Integrated Cron scheduler enabled")
         service_coros.append(scheduler.run_forever())
 
