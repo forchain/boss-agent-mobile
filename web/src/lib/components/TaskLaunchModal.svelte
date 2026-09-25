@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { resolveTargetAction, type AutomationTask, type SavedSearch, type TaskType, type TargetAction } from '$lib/types';
 	import { listSavedSearches, createAutomationTask, getCandidateProfile } from '$lib/pocketbase';
-	import { DEFAULT_CHAT_ACKNOWLEDGMENT, normalizeChatAcknowledgment } from '$lib/chatAcknowledgment';
+	import { DEFAULT_CHAT_ACKNOWLEDGMENT, DEFAULT_LAUNCH_CHAT_DRY_RUN, normalizeChatAcknowledgment } from '$lib/chatAcknowledgment';
 
 	let {
 		isOpen = false,
@@ -31,9 +31,10 @@
 	let minScore = $state(75);
 	let taskMode = $state<'preview' | 'auto_send'>('preview');
 
-	// New Greeting Inbox rejection cleanup (issue #208). Dry-run defaults ON so a
-	// one-click trigger can never send real messages by accident.
-	let chatDryRun = $state(true);
+	// 仅沟通 rejection cleanup (issue #208). Drill mode starts ON — see
+	// DEFAULT_LAUNCH_CHAT_DRY_RUN — so this one-click trigger never sends real
+	// messages by accident, regardless of the configured `chat.dry_run`.
+	let chatDryRun = $state(DEFAULT_LAUNCH_CHAT_DRY_RUN);
 	let chat = $state({ ...DEFAULT_CHAT_ACKNOWLEDGMENT });
 
 	async function loadChatAcknowledgmentDefaults() {
@@ -132,7 +133,7 @@
 		}
 	}
 
-	/** One-click New Greeting Inbox rejection cleanup trigger (issue #208). */
+	/** One-click 仅沟通 rejection cleanup trigger (issue #208). */
 	async function handleLaunchChatCleanup() {
 		isSubmitting = true;
 		errorMessage = '';
@@ -408,7 +409,7 @@
 							扫描「仅沟通」列表，跳过带「送达/已读」出站标签的会话，识别明确拒信后拉黑该企业并礼貌收尾，不触发任何职位投递：
 						</p>
 
-						<!-- New Greeting Inbox rejection cleanup (issue #208) -->
+						<!-- 仅沟通 rejection cleanup (issue #208) -->
 						<div class="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3">
 							<div class="flex items-center space-x-2">
 								<span class="text-xl">💬</span>

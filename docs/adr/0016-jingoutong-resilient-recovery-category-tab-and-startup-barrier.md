@@ -1,4 +1,4 @@
-# 0013. 仅沟通 Cleanup: On-Screen Back Recovery, a Dedicated Category Tab, and the Startup Cleanup Barrier
+# 0016. 仅沟通 Cleanup: On-Screen Back Recovery, a Dedicated Category Tab, and the Startup Cleanup Barrier
 
 We decided that the rejection cleanup (`CHECK_CHAT`) navigates itself onto the 仅沟通 list from any screen — preferring an on-screen back affordance over the hardware Back key — that it gets its own category tab in the task launch modal, and that a starting service queues one cleanup and holds every search task back until it settles. **This amends ADR 0011**, which decided that recovery scans no back buttons anywhere.
 

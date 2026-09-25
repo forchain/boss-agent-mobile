@@ -105,7 +105,7 @@
 		jd_blacklist: []
 	});
 
-	// New Greeting Inbox rejection auto-acknowledgment (issue #208). Mirrors the
+	// 仅沟通 rejection auto-acknowledgment (issue #208). Mirrors the
 	// nested `chat:` block; synced into `settings.chat` on save.
 	let chatAck = $state<ChatAcknowledgmentConfig>({ ...DEFAULT_CHAT_ACKNOWLEDGMENT });
 
@@ -1389,11 +1389,11 @@
 						type="text"
 						maxlength="200"
 						bind:value={chatAck.rejection_reply_text}
-						placeholder="收到 谢谢"
+						placeholder={DEFAULT_CHAT_ACKNOWLEDGMENT.rejection_reply_text}
 						class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:outline-none focus:border-cyan-500"
 					/>
 					<p class="text-[11px] text-slate-500 mt-1">
-						留空将回退为默认文案「收到 谢谢」；仅在明确拒信会话中发送，面试邀约永不触发
+						留空将回退为默认文案「{DEFAULT_CHAT_ACKNOWLEDGMENT.rejection_reply_text}」；仅在明确拒信会话中发送，面试邀约永不触发
 					</p>
 				</div>
 

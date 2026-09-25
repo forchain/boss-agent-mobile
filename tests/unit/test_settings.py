@@ -604,7 +604,7 @@ def test_partial_chat_override_keeps_the_sibling_setting(tmp_path: Path):
 
 def test_settings_example_declares_chat_acknowledgment_defaults():
     """The shipped template must document the configurable reply text and scan bound."""
-    example = Path("config/settings.example.yaml")
+    example = Path(__file__).parents[2] / "config" / "settings.example.yaml"
     assert example.is_file(), "config/settings.example.yaml is missing"
 
     with patch.dict("os.environ", {}, clear=True):
@@ -623,7 +623,7 @@ def test_settings_example_declares_chat_acknowledgment_defaults():
 
 def test_settings_example_declares_the_startup_cleanup_switch():
     """The shipped template must document the 开服清扫 switch and its safe default."""
-    example = Path("config/settings.example.yaml")
+    example = Path(__file__).parents[2] / "config" / "settings.example.yaml"
     assert example.is_file(), "config/settings.example.yaml is missing"
 
     with patch.dict("os.environ", {}, clear=True):

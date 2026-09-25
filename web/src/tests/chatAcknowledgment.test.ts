@@ -147,6 +147,12 @@ describe('Chat acknowledgment settings (issue #208)', () => {
 		// A bare key followed by indented `k: v` is a map, not an empty list.
 		const nested = parseSimpleYaml('chat:\n  max_scan_depth: 9\n');
 		expect(nested.chat).toEqual({ max_scan_depth: 9 });
+
+		// A quoted nested scalar coerces like an unquoted one. The save path
+		// interpolates the value straight back into YAML, so `"30"` landing as the
+		// string '30' would round-trip as a quoted scalar rather than a number.
+		const nestedQuoted = parseSimpleYaml('chat:\n  max_scan_depth: "30"\n');
+		expect(nestedQuoted.chat).toEqual({ max_scan_depth: 30 });
 	});
 
 	it('left the real settings file untouched', () => {

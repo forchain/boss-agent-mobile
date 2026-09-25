@@ -118,7 +118,7 @@ export interface SystemSettings {
 	jd_blacklist?: string[];
 	channel_preference?: 'all' | 'direct_only' | 'headhunter_only';
 
-	// New Greeting Inbox rejection auto-acknowledgment (issue #208)
+	// 仅沟通 rejection auto-acknowledgment (issue #208)
 	chat?: ChatAcknowledgmentConfig;
 
 	// Startup 拒信清扫 barrier: queue a CHECK_CHAT before the first search of a
@@ -257,7 +257,7 @@ export interface SavedSearch {
 }
 
 /**
- * True for strategies that run New Greeting Inbox rejection cleanup (issue #208)
+ * True for strategies that run 仅沟通 rejection cleanup (issue #208)
  * instead of a keyword search. Such strategies carry no keyword or filter payload.
  */
 export function isChatCleanupStrategy(search: {

@@ -406,11 +406,14 @@
 		if (action === 'check_chat') {
 			triggerStatus[search.id] = '正在下发 [收件箱清理] 任务...';
 			try {
+				// No `dry_run` here on purpose: omitting it lets the task fall through
+				// to configured `chat.dry_run`, so an operator who turned drill mode on
+				// is not overridden by this one-click trigger. Passing `false` would win
+				// over the configured default and send real messages.
 				const task = await createAutomationTask('CHECK_CHAT', {
 					saved_search_id: search.id,
 					search_id: search.id,
-					search_name: search.name,
-					dry_run: false
+					search_name: search.name
 				});
 				triggerStatus[search.id] = `✅ 已派发 [收件箱清理]: ${task.id}`;
 				triggerTaskIds[search.id] = task.id;
@@ -597,26 +600,32 @@
 									</span>
 								{/if}
 							</div>
-							<div class="flex items-center gap-1.5">
-								{#if search.enable_search === false}
-									<span class="text-[10px] px-2 py-0.5 rounded bg-amber-950/60 text-amber-300 border border-amber-800/60 font-medium">
-										🏠 推荐流
-									</span>
-								{:else}
-									<span class="text-[10px] px-2 py-0.5 rounded bg-cyan-950/60 text-cyan-300 border border-cyan-800/60 font-medium">
-										🔍 关键词搜索
-									</span>
-								{/if}
-								{#if search.enable_filter === false}
-									<span class="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700 font-medium">
-										🚫 筛选已关闭
-									</span>
-								{:else}
-									<span class="text-[10px] px-2 py-0.5 rounded bg-emerald-950/60 text-emerald-300 border border-emerald-800/60 font-medium">
-										🎯 筛选已开启
-									</span>
-								{/if}
-							</div>
+							<!-- Search semantics only: a CHECK_CHAT strategy carries
+							     enable_search=false / enable_filter=false by construction,
+							     so these would read 「推荐流」「筛选已关闭」 on a card whose
+							     job is scanning 仅沟通. The 扫描范围 line above covers it. -->
+							{#if !isChatCleanup}
+								<div class="flex items-center gap-1.5">
+									{#if search.enable_search === false}
+										<span class="text-[10px] px-2 py-0.5 rounded bg-amber-950/60 text-amber-300 border border-amber-800/60 font-medium">
+											🏠 推荐流
+										</span>
+									{:else}
+										<span class="text-[10px] px-2 py-0.5 rounded bg-cyan-950/60 text-cyan-300 border border-cyan-800/60 font-medium">
+											🔍 关键词搜索
+										</span>
+									{/if}
+									{#if search.enable_filter === false}
+										<span class="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700 font-medium">
+											🚫 筛选已关闭
+										</span>
+									{:else}
+										<span class="text-[10px] px-2 py-0.5 rounded bg-emerald-950/60 text-emerald-300 border border-emerald-800/60 font-medium">
+											🎯 筛选已开启
+										</span>
+									{/if}
+								</div>
+							{/if}
 						</div>
 
 						<!-- Filters Tags Grid -->

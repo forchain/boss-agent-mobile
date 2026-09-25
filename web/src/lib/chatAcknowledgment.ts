@@ -13,6 +13,16 @@ export const DEFAULT_CHAT_ACKNOWLEDGMENT: ChatAcknowledgmentConfig = {
 };
 
 /**
+ * Initial drill-mode state for the launch modal's one-click `CHECK_CHAT` trigger.
+ *
+ * Deliberately stricter than `DEFAULT_CHAT_ACKNOWLEDGMENT.dry_run`, and not
+ * overridden by the loaded `chat.dry_run`: this button replies to real recruiters
+ * and marks conversations 不感兴趣 with no further confirmation, so it starts in
+ * drill mode whatever the configured value and a live run is an explicit opt-in.
+ */
+export const DEFAULT_LAUNCH_CHAT_DRY_RUN = true;
+
+/**
  * Clamp a chat acknowledgment block. A blank reply text or a non-positive scan
  * bound degrades to the documented default rather than disabling the workflow
  * or letting the worker scan unbounded. Anything that is not explicitly true
