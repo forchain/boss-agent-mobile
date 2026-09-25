@@ -297,8 +297,25 @@ _Avoid_: pagination, infinite scroll, full-list sweep
 The holistic health diagnostic and remediation CLI tool that inspects end-to-end operational readiness across PocketBase State Stream, SvelteKit Web Dashboard, Python Worker, Appium automation server, Android Virtual Device, and LLM configuration with actionable remediation steps.
 _Avoid_: sanity script, health checker, debug helper
 
-**Dedicated Runner Scripts (`emulator.sh`, `appium.sh`, `pocketbase.sh`, `web.sh`, `run.sh`)**:
-The first-class shell lifecycle scripts managing process states (start, stop, status, daemon mode) with persistent logging and auto-attach log streaming across all operational infrastructure tiers.
+**Dedicated Runner Scripts (`emulator.sh`, `appium.sh`, `pocketbase.sh`, `web.sh`, `worker.sh`)**:
+The first-class shell lifecycle scripts managing process states (start, stop, restart, status, daemon mode) with persistent logging and auto-attach log streaming across all operational infrastructure tiers.
 _Avoid_: helper scripts, launcher utils, batch scripts
+
+**Master Service Orchestrator (`run.sh`)**:
+The top-level orchestration entrypoint coordinating service groups (`infra`, `app`, `all`) and dispatching subsystem commands (`worker`, `web`, `pb`, `emu`, `appium`, `doctor`, `live`) without implementing inline process management.
+_Avoid_: monolithic runner, kitchen-sink script
+
+**Infrastructure Services (基础服务)**:
+The machine-shared backend services (`pocketbase.sh`, `emulator.sh`, `appium.sh`) that maintain persistent state, device emulation, and OS automation bridges, remaining running across multiple parallel worktree switches.
+_Avoid_: worker services, client tier, host daemons
+
+**Application Services (应用服务)**:
+The per-worktree operational components (`worker.sh`, `web.sh`) that execute automation tasks and render the user dashboard, subject to worktree-level preemption and restart.
+_Avoid_: backend services, shared infra, base daemons
+
+**Cross-Worktree Service Preemption**:
+The operational contract whereby executing `restart` on an application service (`web.sh restart`, `worker.sh restart`, or `run.sh restart`) gracefully stops lingering processes from other worktrees per the Graceful Shutdown Protocol and binds the port or mobile device session exclusively to the active worktree.
+_Avoid_: port clash, session steal, silent conflict
+
 
 
