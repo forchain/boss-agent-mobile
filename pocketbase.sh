@@ -37,13 +37,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/runner_lib.sh"
 # Seconds to wait for a cooperative exit before escalating to SIGKILL.
 PB_STOP_TIMEOUT_SEC="${PB_STOP_TIMEOUT_SEC:-10}"
 
-if [[ -z "${PB_DATA_DIR:-}" && -f "config/settings.local.yaml" ]]; then
-    PB_DATA_DIR="$(grep -E "^[[:space:]]*(pocketbase_data_dir|pb_data_dir):" config/settings.local.yaml 2>/dev/null | awk '{print $2}' | tr -d '"' | tr -d "'" || true)"
-fi
-if [[ -z "${PB_DATA_DIR:-}" && -f "config/settings.yaml" ]]; then
-    PB_DATA_DIR="$(grep -E "^[[:space:]]*(pocketbase_data_dir|pb_data_dir):" config/settings.yaml 2>/dev/null | awk '{print $2}' | tr -d '"' | tr -d "'" || true)"
-fi
-PB_DATA_DIR="${PB_DATA_DIR:-${COMMON_ROOT}/.boss_agent/pb_data}"
+# One config read, through the library.
+PB_DATA_DIR="${PB_DATA_DIR:-$(runner_config_value pocketbase_data_dir "${COMMON_ROOT}/.boss_agent/pb_data" pb_data_dir)}"
 if [[ "${PB_DATA_DIR}" != /* ]]; then
     PB_DATA_DIR="${COMMON_ROOT}/${PB_DATA_DIR}"
 fi

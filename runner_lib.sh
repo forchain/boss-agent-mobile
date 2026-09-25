@@ -272,3 +272,53 @@ runner_ack_shutdown() {
     local EXTRA="${4:-}"
     runner_log_event "${LOG_FILE}" "🛑 [${LABEL}] ${RUNNER_WEB_SHUTDOWN_ACK}, shutting down ${EXTRA}... (PID: ${PID})"
 }
+
+# --------------------------------------------------------------------------- #
+# Configuration reads
+# --------------------------------------------------------------------------- #
+
+# Resolve one Configuration Realm value for a runner script.
+#
+# Prefers the settings CLI (`scripts/resolve_config.py`), which knows the precedence
+# chain, the environment overrides and the defaults table. Falls back to the YAML
+# extraction this function replaces when the CLI is unavailable — a copied script root
+# (the test harness), or no Python on PATH — so a runner never depends on Python to
+# start.
+#
+# Either way the `grep|awk|tr` pipeline exists exactly once, here, instead of being
+# copy-pasted across every runner that needs a URL, a data directory or an AVD name.
+#
+# `ALIASES` is a `|`-separated list of legacy key spellings, e.g. `pb_url`.
+runner_config_value() {
+    local KEY="$1"
+    local FALLBACK="${2:-}"
+    local ALIASES="${3:-}"
+    local LIB_ROOT
+    LIB_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+    if [[ -f "${LIB_ROOT}/scripts/resolve_config.py" ]] && command -v python3 >/dev/null 2>&1; then
+        local RESOLVED
+        RESOLVED="$(python3 "${LIB_ROOT}/scripts/resolve_config.py" "${KEY}" --key "${KEY}" 2>/dev/null || true)"
+        if [[ -n "${RESOLVED}" ]]; then
+            printf '%s\n' "${RESOLVED}"
+            return 0
+        fi
+    fi
+
+    local PATTERN="^[[:space:]]*(${KEY}"
+    if [[ -n "${ALIASES}" ]]; then
+        PATTERN="${PATTERN}|${ALIASES}"
+    fi
+    PATTERN="${PATTERN}):"
+
+    local FILE VALUE
+    for FILE in config/settings.local.yaml config/settings.yaml config/settings.example.yaml; do
+        VALUE="$(grep -E "${PATTERN}" "${FILE}" 2>/dev/null | head -n 1 | awk '{print $2}' | tr -d '"' | tr -d "'" || true)"
+        if [[ -n "${VALUE}" ]]; then
+            printf '%s\n' "${VALUE}"
+            return 0
+        fi
+    done
+
+    printf '%s\n' "${FALLBACK}"
+}

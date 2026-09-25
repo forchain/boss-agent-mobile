@@ -200,13 +200,9 @@ cmd_start() {
     fi
 
     # Check dependency: PocketBase health
-    if [[ -z "${POCKETBASE_URL:-}" && -f "config/settings.local.yaml" ]]; then
-        POCKETBASE_URL="$(grep -E "^[[:space:]]*(pocketbase_url|pb_url):" config/settings.local.yaml 2>/dev/null | awk '{print $2}' | tr -d '"' | tr -d "'" || true)"
-    fi
-    if [[ -z "${POCKETBASE_URL:-}" && -f "config/settings.yaml" ]]; then
-        POCKETBASE_URL="$(grep -E "^[[:space:]]*(pocketbase_url|pb_url):" config/settings.yaml 2>/dev/null | awk '{print $2}' | tr -d '"' | tr -d "'" || true)"
-    fi
-    export POCKETBASE_URL="${POCKETBASE_URL:-http://127.0.0.1:8090}"
+    # One config read, through the library: the CLI resolves the precedence chain and
+    # the environment; its single grep fallback covers a copied script root.
+    export POCKETBASE_URL="${POCKETBASE_URL:-$(runner_config_value pocketbase_url http://127.0.0.1:8090 pb_url)}"
     export VITE_POCKETBASE_URL="${POCKETBASE_URL}"
     export PUBLIC_POCKETBASE_URL="${POCKETBASE_URL}"
     HEALTH_URL="${POCKETBASE_URL%/}/api/health"

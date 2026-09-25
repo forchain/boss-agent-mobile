@@ -15,6 +15,11 @@ set -uo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${ROOT_DIR}"
 
+# Shared lifecycle primitives and the one config read. This script only *displays*
+# resolved values and probes readiness; its remediation flows are its own.
+# shellcheck source=runner_lib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/runner_lib.sh"
+
 mkdir -p ".boss_agent"
 
 # ANSI Colors
@@ -59,13 +64,7 @@ echo -e "${BOLD}${CYAN}═══════════════════
 # 1. PocketBase State Stream Broker Check
 # ------------------------------------------------------------------------------
 echo -e "${BOLD}${BLUE}[1/5] PocketBase State Stream 数据库与状态流${NC}"
-if [[ -z "${POCKETBASE_URL:-}" && -f "config/settings.local.yaml" ]]; then
-    POCKETBASE_URL="$(grep -E "^[[:space:]]*(pocketbase_url|pb_url):" config/settings.local.yaml 2>/dev/null | awk '{print $2}' | tr -d '"' | tr -d "'" || true)"
-fi
-if [[ -z "${POCKETBASE_URL:-}" && -f "config/settings.yaml" ]]; then
-    POCKETBASE_URL="$(grep -E "^[[:space:]]*(pocketbase_url|pb_url):" config/settings.yaml 2>/dev/null | awk '{print $2}' | tr -d '"' | tr -d "'" || true)"
-fi
-POCKETBASE_URL="${POCKETBASE_URL:-http://127.0.0.1:8090}"
+POCKETBASE_URL="${POCKETBASE_URL:-$(runner_config_value pocketbase_url http://127.0.0.1:8090 pb_url)}"
 HEALTH_URL="${POCKETBASE_URL%/}/api/health"
 
 
@@ -152,11 +151,7 @@ echo ""
 # ------------------------------------------------------------------------------
 echo -e "${BOLD}${BLUE}[4/5] Appium 服务与专用 Android AVD 模拟器${NC}"
 
-TARGET_AVD="${ANDROID_AVD:-${AVD_NAME:-}}"
-if [[ -z "${TARGET_AVD}" && -f "config/settings.local.yaml" ]]; then
-    TARGET_AVD="$(grep -E "^[[:space:]]*avd_name:" config/settings.local.yaml 2>/dev/null | awk '{print $2}' | tr -d '"' | tr -d "'" || true)"
-fi
-TARGET_AVD="${TARGET_AVD:-boss_avd_arm64}"
+TARGET_AVD="${ANDROID_AVD:-${AVD_NAME:-$(runner_config_value avd_name boss_avd_arm64)}}"
 
 if command -v adb >/dev/null 2>&1; then
     RUNNING_AVD_SERIAL=""
@@ -183,14 +178,7 @@ else
     log_warn "未在 PATH 中找到 'adb' 命令" "请安装 Android Platform Tools: brew install android-platform-tools"
 fi
 
-APPIUM_URL="${APPIUM_URL:-}"
-if [[ -z "${APPIUM_URL}" && -f "config/settings.local.yaml" ]]; then
-    APPIUM_URL="$(grep -E "^[[:space:]]*(server_url|appium_url):" config/settings.local.yaml 2>/dev/null | awk '{print $2}' | tr -d '"' | tr -d "'" || true)"
-fi
-if [[ -z "${APPIUM_URL}" && -f "config/settings.yaml" ]]; then
-    APPIUM_URL="$(grep -E "^[[:space:]]*(server_url|appium_url):" config/settings.yaml 2>/dev/null | awk '{print $2}' | tr -d '"' | tr -d "'" || true)"
-fi
-APPIUM_URL="${APPIUM_URL:-http://127.0.0.1:4723}"
+APPIUM_URL="${APPIUM_URL:-$(runner_config_value server_url http://127.0.0.1:4723 appium_url)}"
 
 CHECK_URL="${APPIUM_URL%/}"
 CHECK_URL="${CHECK_URL/0.0.0.0/127.0.0.1}"
@@ -212,9 +200,12 @@ echo ""
 echo -e "${BOLD}${BLUE}[5/5] LLM 大模型破冰与评分配置${NC}"
 
 LLM_CONFIG_EXISTS=0
-if [[ -f "config/settings.local.yaml" ]] && grep -E "^[[:space:]]*api_key:" config/settings.local.yaml 2>/dev/null | grep -v "your-api-key-here" | grep -qv '""'; then
+if [[ -n "$(runner_config_value api_key "")" ]]; then
+    # The realm resolves the chain *and* rejects a masked or template value, so this
+    # is the same question the grep chain asked, asked once and through the guard that
+    # stops a `••••` display value being mistaken for a key.
     LLM_CONFIG_EXISTS=1
-    log_pass "检测到本地配置文件 config/settings.local.yaml 中的大模型 API Key"
+    log_pass "检测到可用的本地大模型 API Key"
 elif [[ -f "config/llm.local.yaml" ]]; then
     LLM_CONFIG_EXISTS=1
     log_pass "检测到本地大模型配置文件 config/llm.local.yaml"

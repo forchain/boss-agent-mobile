@@ -35,31 +35,10 @@ PID_FILE=".boss_agent/appium.pid"
 LOG_FILE=".boss_agent/appium.log"
 
 resolve_config_url() {
-    # 1. Try python3 if available to query centralized loader
-    if command -v python3 >/dev/null 2>&1; then
-        local PY_URL
-        PY_URL="$(python3 -c "import sys; sys.path.insert(0, 'src'); from boss_agent.settings import resolve_server_url; print(resolve_server_url())" 2>/dev/null || true)"
-        if [[ -n "${PY_URL}" ]]; then
-            echo "${PY_URL}"
-            return 0
-        fi
-    fi
-
-    # 2. Fallback: simple grep across config files in precedence order
-    for conf in "config/settings.local.yaml" "config/settings.local.json" "config/settings.yaml" "config/settings.example.yaml"; do
-        if [[ -f "${conf}" ]]; then
-            local LINE VAL
-            LINE="$(grep -E "^[[:space:]]*(server_url|appium_url):" "${conf}" 2>/dev/null | head -n 1 || true)"
-            if [[ -n "${LINE}" ]]; then
-                VAL="$(echo "${LINE}" | awk '{print $2}' | tr -d '"' | tr -d "'" || true)"
-                if [[ -n "${VAL}" ]]; then
-                    echo "${VAL}"
-                    return 0
-                fi
-            fi
-        fi
-    done
-    echo ""
+    # One read, through the library. This used to be a Python probe with its own
+    # `sys.path` juggling followed by a `grep|awk|tr` loop over four files — the same
+    # value, resolved three ways, in one function.
+    runner_config_value server_url "" appium_url
 }
 
 parse_host_port() {

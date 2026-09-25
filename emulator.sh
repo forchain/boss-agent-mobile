@@ -27,6 +27,10 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${ROOT_DIR}"
 
+# Shared process-lifecycle primitives and the one config read.
+# shellcheck source=runner_lib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/runner_lib.sh"
+
 mkdir -p ".boss_agent"
 
 PID_FILE=".boss_agent/emulator.pid"
@@ -186,22 +190,12 @@ resolve_target_avd() {
         return 0
     fi
 
-    if [[ -f "config/settings.local.yaml" ]]; then
-        local CONF_AVD
-        CONF_AVD="$(grep -E "^[[:space:]]*avd_name:" config/settings.local.yaml 2>/dev/null | awk '{print $2}' | tr -d '"' | tr -d "'" || true)"
-        if [[ -n "${CONF_AVD}" ]]; then
-            echo "${CONF_AVD}"
-            return 0
-        fi
-    fi
-
-    if [[ -f "config/settings.example.yaml" ]]; then
-        local CONF_AVD
-        CONF_AVD="$(grep -E "^[[:space:]]*avd_name:" config/settings.example.yaml 2>/dev/null | awk '{print $2}' | tr -d '"' | tr -d "'" || true)"
-        if [[ -n "${CONF_AVD}" ]]; then
-            echo "${CONF_AVD}"
-            return 0
-        fi
+    # One config read, through the library.
+    local CONF_AVD
+    CONF_AVD="$(runner_config_value avd_name "")"
+    if [[ -n "${CONF_AVD}" ]]; then
+        echo "${CONF_AVD}"
+        return 0
     fi
 
     if [[ -n "${EMULATOR_BIN}" ]]; then
