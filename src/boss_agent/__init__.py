@@ -29,7 +29,10 @@ from .models import (
     SavedSearch,
     ScreeningPolicy,
     SearchConfig,
+    append_company_blacklist_entry,
+    is_headhunter_agency_name,
     is_masked_company_name,
+    resolve_writable_screening_config_path,
 )
 
 with contextlib.suppress(ImportError):
@@ -101,13 +104,16 @@ __all__ = [
     "StartupDialogPage",
     "StructuredCandidateProfile",
     "TakeoverHandler",
+    "append_company_blacklist_entry",
     "build_job_application_graph",
     "build_resume_lifecycle_graph",
     "get_global_search_registry",
+    "is_headhunter_agency_name",
     "is_masked_company_name",
     "load_greeting_prompt",
     "load_settings",
     "resolve_git_common_root",
+    "resolve_writable_screening_config_path",
     "resolve_pocketbase_data_dir",
     "resolve_pocketbase_db_path",
     "resolve_pocketbase_url",

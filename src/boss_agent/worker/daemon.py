@@ -13,6 +13,7 @@ from typing import Any, cast
 
 from boss_agent.broker.models import AutomationTask, TaskStatus, TaskType
 from boss_agent.broker.pocketbase_adapter import BaseTaskBroker
+from boss_agent.startup_cleanup import StartupCleanupGate
 from boss_agent.worker.config import WorkerConfig
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.handlers.base import BaseTaskHandler, HandlerResult
@@ -105,10 +106,14 @@ class AutomationWorker:
         context: WorkerContext | None = None,
         handlers: Sequence[BaseTaskHandler] | None = None,
         driver: Any | None = None,
+        startup_gate: StartupCleanupGate | None = None,
     ) -> None:
         self.config = config
         self.broker = broker
         self.context = context or WorkerContext(config=config, driver=driver)
+        self.startup_gate = startup_gate or StartupCleanupGate(
+            broker, enabled=config.run_cleanup_on_startup
+        )
         self._handlers: dict[TaskType, BaseTaskHandler] = {}
         if handlers:
             for h in handlers:
@@ -145,7 +150,15 @@ class AutomationWorker:
         """Evaluate task outcome, log completion status and update state in broker."""
         duration = time.monotonic() - start_time
         cur = await self.broker.get_task(task.id)
-        if cur and cur.status == TaskStatus.CANCELLED:
+        if cur is None:
+            logger.warning(
+                "⚠️ Task %s record no longer exists (purged during execution?); "
+                "outcome update skipped (%.2fs)",
+                task.id,
+                duration,
+            )
+            return
+        if cur.status == TaskStatus.CANCELLED:
             logger.info(
                 "⚠️ Task %s was cancelled during execution (%.2fs); preserving CANCELLED status",
                 task.id,
@@ -206,7 +219,15 @@ class AutomationWorker:
         except Exception as e:
             duration = time.monotonic() - start_time
             cur = await self.broker.get_task(claimed_task.id)
-            if cur and cur.status == TaskStatus.CANCELLED:
+            if cur is None:
+                logger.warning(
+                    "⚠️ Task %s record no longer exists; uncaught exception not "
+                    "persisted: %s (%.2fs)",
+                    claimed_task.id,
+                    e,
+                    duration,
+                )
+            elif cur.status == TaskStatus.CANCELLED:
                 logger.info(
                     "⚠️ Task %s was cancelled, ignoring exception: %s (%.2fs)",
                     claimed_task.id,
@@ -233,13 +254,31 @@ class AutomationWorker:
                 await heartbeat_task
 
     async def run_once(self) -> bool:
-        """Attempt to claim and process one pending task."""
-        pending_tasks = await self.broker.list_pending_tasks(limit=5)
+        """Attempt to claim and process one pending task.
+
+        The startup 拒信清扫 is claimed ahead of anything queued before it, and every
+        search task is held back until it settles (#230).
+
+        The scan window is the gate's: a cleanup queued at startup sits behind any
+        task left pending by an earlier run, so a narrower window could leave the
+        cleanup unseen while its own barrier held every task in view.
+        """
+        pending_tasks = await self.broker.list_pending_tasks(
+            limit=self.startup_gate.queue_scan_limit
+        )
         if not pending_tasks:
             return False
 
         claimed_task: AutomationTask | None = None
-        for task in pending_tasks:
+        held = await self.startup_gate.held_types()
+        for task in self.startup_gate.prioritize(pending_tasks):
+            if task.task_type in held:
+                logger.info(
+                    "⏸️ Task %s [%s] held back until the startup 拒信清扫 settles",
+                    task.id,
+                    task.task_type.value,
+                )
+                continue
             claimed = await self.broker.claim_task(task.id, worker_id=self.config.worker_id)
             if claimed:
                 claimed_task = claimed
@@ -385,6 +424,12 @@ class AutomationWorker:
             self.config.device_id,
             self.config.poll_interval_sec,
         )
+        # Queued before the loop so the first claim of this startup is the cleanup
+        # rather than a search task that could re-apply to a rejecting employer.
+        try:
+            await self.startup_gate.arm()
+        except Exception as e:
+            logger.warning("Could not arm startup 拒信清扫 barrier: %s", e)
         runs = 0
         while self._running:
             try:

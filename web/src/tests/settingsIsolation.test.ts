@@ -165,6 +165,20 @@ describe('Settings persistence isolation (issue #185)', () => {
 		expect(readScreeningPolicy().max_commute_distance_km).toBeNull();
 	});
 
+	// Ticket #230: the 开服清扫闸门 switch is a top-level setting, and the writer
+	// rebuilds the local file from a fixed template — so a save made anywhere else
+	// in the settings UI would silently drop it and re-enable the barrier default.
+	it('run_cleanup_on_startup survives save round-trips and partial saves', async () => {
+		const { saveSettingsToLocalYaml, loadMergedSettings } = await import('../lib/server/settings');
+
+		saveSettingsToLocalYaml({ ...loadMergedSettings(), run_cleanup_on_startup: false } as any);
+		expect(loadMergedSettings().run_cleanup_on_startup).toBe(false);
+
+		// An unrelated partial save must not flip the barrier back on.
+		saveSettingsToLocalYaml({ title_whitelist: ['大模型'] } as any);
+		expect(loadMergedSettings().run_cleanup_on_startup).toBe(false);
+	});
+
 	// Byte-guard against issue #185 recurrences: runs after every save above.
 	it('left the developer settings file untouched', () => sandbox.assertRealConfigUntouched());
 });

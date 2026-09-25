@@ -1,25 +1,68 @@
 import { getProjectRoot } from '$lib/server/pythonRunner';
 import path from 'path';
 import fs from 'fs';
+import { DEFAULT_CHAT_ACKNOWLEDGMENT, normalizeChatAcknowledgment } from '$lib/chatAcknowledgment';
 import type { SystemSettings } from '$lib/types';
 import { normalizeCommuteLimit } from '$lib/commute';
+
+export { DEFAULT_CHAT_ACKNOWLEDGMENT, normalizeChatAcknowledgment };
+
+/**
+ * Interpret a YAML scalar. Callers pass the value with surrounding quotes
+ * already stripped, so a quoted `"30"` still coerces to a number exactly as it
+ * did before the nested-block support was added.
+ */
+function coerceScalar(val: string): any {
+	if (val.toLowerCase() === 'true') return true;
+	if (val.toLowerCase() === 'false') return false;
+	if (/^-?\d+$/.test(val)) return parseInt(val, 10);
+	if (/^-?\d+\.\d+$/.test(val)) return parseFloat(val);
+	return val;
+}
 
 export function parseSimpleYaml(content: string): Record<string, any> {
 	const result: Record<string, any> = {};
 	const lines = content.split('\n');
-	let currentListKey: string | null = null;
+	// Dotted path of the collection currently being filled (a flat list, a flat
+	// nested map, or a list nested inside a map). Null means top-level scalars.
+	let targetPath: string[] | null = null;
 
-	for (const line of lines) {
-		const trimmed = line.trim();
+	// A bare `key:` line is ambiguous. The first following non-blank, non-comment
+	// line decides: an indented `- item` is a list, an indented `k: v` is a map.
+	const blockKind = (startIndex: number): 'list' | 'map' | 'empty' => {
+		for (let j = startIndex + 1; j < lines.length; j++) {
+			const candidate = lines[j];
+			if (!candidate.trim() || candidate.trim().startsWith('#')) continue;
+			if (!/^\s/.test(candidate)) return 'empty';
+			return candidate.trim().startsWith('- ') ? 'list' : 'map';
+		}
+		return 'empty';
+	};
+
+	const containerAt = (path: string[]): any => {
+		let node = result;
+		for (const segment of path.slice(0, -1)) {
+			if (typeof node[segment] !== 'object' || node[segment] === null) node[segment] = {};
+			node = node[segment];
+		}
+		return node;
+	};
+
+	for (let i = 0; i < lines.length; i++) {
+		const raw = lines[i];
+		const trimmed = raw.trim();
 		if (!trimmed || trimmed.startsWith('#')) continue;
+		const indented = /^[ \t]/.test(raw);
 
 		// Support multi-line list items: - "item"
-		if (trimmed.startsWith('- ') && currentListKey) {
-			const item = trimmed.slice(2).trim().replace(/^["']|["']$/g, '');
-			if (!Array.isArray(result[currentListKey])) {
-				result[currentListKey] = [];
+		if (trimmed.startsWith('- ')) {
+			if (targetPath) {
+				const item = trimmed.slice(2).trim().replace(/^["']|["']$/g, '');
+				const parent = containerAt(targetPath);
+				const leaf = targetPath[targetPath.length - 1];
+				if (!Array.isArray(parent[leaf])) parent[leaf] = [];
+				parent[leaf].push(item);
 			}
-			result[currentListKey].push(item);
 			continue;
 		}
 
@@ -51,6 +94,20 @@ export function parseSimpleYaml(content: string): Record<string, any> {
 			}
 		}
 
+		// A member of the nested block currently being read (e.g. `chat:` children).
+		if (indented && targetPath && targetPath.length === 1) {
+			const parent = containerAt(targetPath);
+			const block = parent[targetPath[targetPath.length - 1]];
+			if (val === '' && !wasQuoted) {
+				const kind = blockKind(i);
+				block[key] = kind === 'map' ? {} : [];
+				if (kind === 'list') targetPath = [...targetPath, key];
+			} else {
+				block[key] = coerceScalar(val.replace(/^["']|["']$/g, ''));
+			}
+			continue;
+		}
+
 		// Support inline array [...]
 		if (val.startsWith('[') && val.endsWith(']')) {
 			try {
@@ -63,7 +120,7 @@ export function parseSimpleYaml(content: string): Record<string, any> {
 					result[key] = inner.split(',').map((s) => s.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
 				}
 			}
-			currentListKey = null;
+			targetPath = null;
 			continue;
 		}
 
@@ -71,29 +128,21 @@ export function parseSimpleYaml(content: string): Record<string, any> {
 			if (wasQuoted) {
 				// An explicit "" is an empty string, not an (empty) list header
 				result[key] = '';
-				currentListKey = null;
-			} else {
-				// A bare `key:` line introduces a multi-line list
-				result[key] = [];
-				currentListKey = key;
+				targetPath = null;
+				continue;
 			}
+			const kind = blockKind(i);
+			if (kind === 'map') {
+				result[key] = {};
+			} else {
+				result[key] = [];
+			}
+			targetPath = [key];
 			continue;
 		}
 
-		currentListKey = null;
-		val = val.replace(/^["']|["']$/g, '');
-
-		if (val.toLowerCase() === 'true') {
-			result[key] = true;
-		} else if (val.toLowerCase() === 'false') {
-			result[key] = false;
-		} else if (/^-?\d+$/.test(val)) {
-			result[key] = parseInt(val, 10);
-		} else if (/^-?\d+\.\d+$/.test(val)) {
-			result[key] = parseFloat(val);
-		} else {
-			result[key] = val;
-		}
+		targetPath = null;
+		result[key] = coerceScalar(val.replace(/^["']|["']$/g, ''));
 	}
 	return result;
 }
@@ -156,6 +205,15 @@ export function sanitizeLlmSettingsForRunner(settings: any): any {
 	return cleaned;
 }
 
+/** Merge a parsed settings file, deep-merging the nested `chat:` block. */
+function mergeParsedFile(base: SystemSettings, parsed: Record<string, any>): SystemSettings {
+	const merged: SystemSettings = { ...base, ...parsed };
+	if (parsed.chat && typeof parsed.chat === 'object' && !Array.isArray(parsed.chat)) {
+		merged.chat = { ...(base.chat || {}), ...parsed.chat } as SystemSettings['chat'];
+	}
+	return merged;
+}
+
 export function loadMergedSettings(): SystemSettings {
 	const projectRoot = getProjectRoot();
 
@@ -185,7 +243,9 @@ export function loadMergedSettings(): SystemSettings {
 		title_whitelist: [],
 		title_blacklist: ['销售', '电话销售', '电销', '管培生', '实习', '助理', '讲师', '课程顾问', '客服'],
 		company_blacklist: [],
-		jd_blacklist: ['驻场', '外包', '电销', '无底薪', '纯提成']
+		jd_blacklist: ['驻场', '外包', '电销', '无底薪', '纯提成'],
+		run_cleanup_on_startup: true,
+		chat: { ...DEFAULT_CHAT_ACKNOWLEDGMENT }
 	};
 
 	// 1. Read base example file
@@ -193,7 +253,7 @@ export function loadMergedSettings(): SystemSettings {
 	if (fs.existsSync(exampleFile)) {
 		try {
 			const parsed = parseSimpleYaml(fs.readFileSync(exampleFile, 'utf-8'));
-			settings = { ...settings, ...parsed };
+			settings = mergeParsedFile(settings, parsed);
 		} catch (e) {
 			console.warn('Failed to parse settings.example.yaml:', e);
 		}
@@ -231,7 +291,7 @@ export function loadMergedSettings(): SystemSettings {
 	if (fs.existsSync(localFile)) {
 		try {
 			const parsed = parseSimpleYaml(fs.readFileSync(localFile, 'utf-8'));
-			settings = { ...settings, ...parsed };
+			settings = mergeParsedFile(settings, parsed);
 			if (parsed.pocketbase_url) {
 				localPbUrl = parsed.pocketbase_url;
 			}
@@ -273,6 +333,8 @@ export function loadMergedSettings(): SystemSettings {
 	// Filter out template placeholder strings
 	if (settings.api_key === 'your-api-key-here') settings.api_key = '';
 	if (settings.langsmith_api_key === 'your-langsmith-api-key-here') settings.langsmith_api_key = '';
+
+	settings.chat = normalizeChatAcknowledgment(settings.chat);
 
 	return settings;
 }
@@ -333,6 +395,11 @@ export function saveSettingsToLocalYaml(
 		return out;
 	};
 	const merged = { ...existing, ...definedOnly(newSettings), api_key: finalApiKey, langsmith_api_key: finalLangsmithKey };
+
+	// The chat acknowledgment block is nested, so a partial save must merge into
+	// the on-disk block instead of replacing it wholesale.
+	const incomingChat = (definedOnly(newSettings) as any).chat;
+	const chat = normalizeChatAcknowledgment({ ...(existing.chat || {}), ...(incomingChat || {}) });
 
 	const yamlContent = [
 		`# ==============================================================================`,
@@ -403,6 +470,17 @@ export function saveSettingsToLocalYaml(
 		`title_blacklist: ${JSON.stringify(merged.title_blacklist || [])}`,
 		`company_blacklist: ${JSON.stringify(merged.company_blacklist || [])}`,
 		`jd_blacklist: ${JSON.stringify(merged.jd_blacklist || [])}`,
+		``,
+		`# ------------------------------------------------------------------------------`,
+		`# 7. 「仅沟通」列表 · 拒信清扫与公司拉黑 (Rejection Triage & Company Blacklisting)`,
+		`# ------------------------------------------------------------------------------`,
+		// Startup barrier (issue #230). Only an explicit false disables it, so a
+		// partial save that omits the switch can never turn the barrier off.
+		`run_cleanup_on_startup: ${merged.run_cleanup_on_startup !== false}`,
+		`chat:`,
+		`  rejection_reply_text: ${JSON.stringify(chat.rejection_reply_text)}`,
+		`  max_scan_depth: ${chat.max_scan_depth}`,
+		`  dry_run: ${chat.dry_run ? 'true' : 'false'}`,
 		``
 	].join('\n');
 

@@ -368,6 +368,86 @@ async def test_worker_logs_truncated_payload_on_task_claim(broker, mock_driver, 
     assert "+10 more items" in log_msg
 
 
+async def _delete_task_record(broker, task_id: str) -> None:
+    """Simulate an external purge of the task record while the worker is mid-execution."""
+    async with broker._lock:
+        broker._tasks.pop(task_id, None)
+
+
+@pytest.mark.asyncio
+async def test_worker_survives_task_record_vanishing_before_finalize(broker, mock_driver, caplog):
+    """A record deleted during execution must not crash the worker on failure finalization.
+
+    PocketBase answers the outcome PATCH with 404 and InMemory raises KeyError once the
+    record is gone; finalize must treat the vanished record as terminal and move on.
+    """
+    import logging
+
+    from boss_agent.worker.handlers.base import BaseTaskHandler, HandlerResult
+
+    class VanishingFailureHandler(BaseTaskHandler):
+        @property
+        def task_type(self) -> TaskType:
+            return TaskType.SCRAPE_JOBS
+
+        async def handle(self, task, broker, context) -> HandlerResult:
+            await _delete_task_record(broker, task.id)
+            return HandlerResult(success=False, error_message="simulated failure")
+
+    config = WorkerConfig(worker_id="worker-vanish-finalize", poll_interval_sec=0.01)
+    context = WorkerContext(config=config, driver=mock_driver)
+    worker = AutomationWorker(
+        config=config,
+        broker=broker,
+        context=context,
+        handlers=[VanishingFailureHandler()],
+    )
+
+    task = await broker.create_task(task_type=TaskType.SCRAPE_JOBS)
+
+    with caplog.at_level(logging.WARNING, logger="boss_agent.worker"):
+        executed = await worker.run_once()
+
+    assert executed is True
+    log_records = [r.message for r in caplog.records if r.name == "boss_agent.worker"]
+    assert any(task.id in msg and "no longer exists" in msg for msg in log_records)
+
+
+@pytest.mark.asyncio
+async def test_worker_survives_uncaught_exception_with_vanished_record(broker, mock_driver, caplog):
+    """An uncaught handler exception must not escalate when the record was already purged."""
+    import logging
+
+    from boss_agent.worker.handlers.base import BaseTaskHandler, HandlerResult
+
+    class VanishingThrowingHandler(BaseTaskHandler):
+        @property
+        def task_type(self) -> TaskType:
+            return TaskType.SCRAPE_JOBS
+
+        async def handle(self, task, broker, context) -> HandlerResult:
+            await _delete_task_record(broker, task.id)
+            raise RuntimeError("simulated crash")
+
+    config = WorkerConfig(worker_id="worker-vanish-exception", poll_interval_sec=0.01)
+    context = WorkerContext(config=config, driver=mock_driver)
+    worker = AutomationWorker(
+        config=config,
+        broker=broker,
+        context=context,
+        handlers=[VanishingThrowingHandler()],
+    )
+
+    task = await broker.create_task(task_type=TaskType.SCRAPE_JOBS)
+
+    with caplog.at_level(logging.WARNING, logger="boss_agent.worker"):
+        executed = await worker.run_once()
+
+    assert executed is True
+    log_records = [r.message for r in caplog.records if r.name == "boss_agent.worker"]
+    assert any(task.id in msg and "no longer exists" in msg for msg in log_records)
+
+
 
 
 

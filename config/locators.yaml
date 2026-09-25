@@ -170,7 +170,67 @@ system_dialog:
     - "//*[@text='允许' or @text='同意' or @text='确定' or @text='好的']"
     - "//*[@text='SKIP' or @text='Skip' or @text='跳过' or @text='CANCEL' or @text='Cancel' or @text='取消' or @text='稍后']"
 
+communication_list:
+  # Anchored on the two resource-ids measured on a live 仅沟通 screen
+  # (`iv_tab_3` bottom 消息 tab, `iv_msg_status`) plus accessibility TEXT for the
+  # rest. The TEXT-only entries below are the first to re-check on hardware.
+  # Bottom navigation "消息" tab that leads to the communication list.
+  entry_tab:
+    - "com.hpbr.bosszhipin:id/tv_tab_3"
+    - "com.hpbr.bosszhipin:id/iv_tab_3"
+    - "//*[@resource-id='com.hpbr.bosszhipin:id/tv_tab_3']"
+    - "//*[@text='消息']"
+  # The 仅沟通 sub-tab filter is both the entry point and the on-screen anchor.
+  # Deliberately not nested under the bottom tab: that node is the 消息 tab, and
+  # 仅沟通 lives on the screen it navigates to, not inside it.
+  communication_tab:
+    - "//android.widget.TextView[@resource-id='com.hpbr.bosszhipin:id/tv_title' and contains(@text, '仅沟通')]"
+    - "//*[@resource-id='com.hpbr.bosszhipin:id/tv_title' and contains(@text, '仅沟通')]"
+    - "//*[@text='仅沟通']"
+  message_card:
+    - "//*[@resource-id='com.hpbr.bosszhipin:id/recyclerView']/android.view.ViewGroup"
+    - "//*[@resource-id='com.hpbr.bosszhipin:id/recyclerView']/*"
+    - "com.hpbr.bosszhipin:id/view_chat_item"
+    - "//*[contains(@resource-id, 'chat_item') or contains(@resource-id, 'item_chat') or contains(@resource-id, 'msg_item') or contains(@resource-id, 'message_item')]"
+    - "//*[@resource-id='com.hpbr.bosszhipin:id/tv_msg']/.."
+  sender_name:
+    - "com.hpbr.bosszhipin:id/tv_name"
+    - "//*[contains(@resource-id, 'tv_name') or contains(@resource-id, 'tv_nick') or contains(@resource-id, 'tv_employer')]"
+  # The card's `[Company] | [Position]` descriptor (e.g. "传音控股 | 算法工程师"),
+  # which carries the employer without opening the chat (spec #205).
+  company_position:
+    - "com.hpbr.bosszhipin:id/tv_position"
+    - "com.hpbr.bosszhipin:id/tv_company"
+    - "//*[contains(@resource-id, 'tv_position') or contains(@resource-id, 'tv_company') or contains(@resource-id, 'company_name')]"
+    - "//*[contains(@resource-id, 'tv_job_name')]"
+  # `tv_msg` carries the full last-message text directly on the list item, which
+  # is what lets classification happen without opening every chat (spec #205).
+  message_text:
+    - "com.hpbr.bosszhipin:id/tv_msg"
+    - "//*[contains(@resource-id, 'tv_msg') or contains(@resource-id, 'tv_last_msg')]"
+  # Outbound Message Indicator: prefixed to cards whose last message is the
+  # candidate's own (`[送达]` / `[已读]`) or an unsent draft (`[草稿]`). Its mere presence means
+  # the thread is waiting on the recruiter or is a draft, so those cards are bypassed without any LLM call.
+  outbound_status:
+    - "com.hpbr.bosszhipin:id/iv_msg_status"
+    - "//*[@resource-id='com.hpbr.bosszhipin:id/iv_msg_status']"
+  # On-screen back affordance, probed once per recovery step *before* the hardware
+  # Back key (issue #228): a page back button always stays inside Boss, where a
+  # hardware Back from a chat room or the message column can walk out to the
+  # launcher. Deliberately a short list — ADR 0011 measured every missed candidate
+  # at roughly one accessibility-tree scan (~1s), and this probe runs per step.
+  back_btn:
+    - "com.hpbr.bosszhipin:id/iv_back"
+    - "com.hpbr.bosszhipin:id/iv_back_ai"
+    - "//*[@content-desc='返回']"
+
 chat:
+  disinterest_btn:
+    - "//*[@resource-id='com.hpbr.bosszhipin:id/tv_disinterest' or @text='不感兴趣']"
+    - "//*[@text='不感兴趣']"
+  disinterest_reason_option:
+    - "//*[@resource-id='com.hpbr.bosszhipin:id/tv_reason' and @text='{reason}']"
+    - "//*[@text='{reason}']"
   chat_entry_btn:
     - "//*[@text='立即沟通' or @text='继续沟通' or @text='聊一聊' or @text='发消息']"
     - "//*[contains(@resource-id, 'btn_chat') or contains(@resource-id, 'btn_communicate') or contains(@resource-id, 'tv_chat')]"
@@ -182,9 +242,10 @@ chat:
     - "//*[@resource-id='com.hpbr.bosszhipin:id/et_message']"
     - "//android.widget.EditText[@hint='介绍自己回复率更高哦~']"
     - "//android.widget.EditText[contains(@resource-id, 'scrollbar') or contains(@resource-id, 'chat') or contains(@resource-id, 'send') or contains(@resource-id, 'msg') or contains(@resource-id, 'editor')]"
+  # Single verified anchor for the paper-airplane send button inside ChatRoomActivity
+  # (ADR 0011: no bloated fallback cascade; exactly 1 verified XPath to prevent ~5s miss penalties).
   send_btn:
-    - "//*[@resource-id='com.hpbr.bosszhipin:id/btn_send']"
-    - "//*[@text='发送']"
+    - "//android.widget.LinearLayout[@resource-id='com.hpbr.bosszhipin:id/chat_functions']/android.widget.LinearLayout/android.widget.ImageView"
   back_btn:
     - "//*[@resource-id='com.hpbr.bosszhipin:id/iv_back']"
     - "//*[@content-desc='返回' or contains(@resource-id, 'iv_back') or contains(@resource-id, 'btn_back')]"

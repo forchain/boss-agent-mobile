@@ -9,11 +9,14 @@ from pathlib import Path
 from unittest.mock import patch
 
 from boss_agent.broker.pocketbase_adapter import PocketBaseTaskBroker
+from boss_agent.rejection import ChatAcknowledgmentSettings
 from boss_agent.settings import (
     load_settings,
+    resolve_chat_acknowledgment_settings,
     resolve_pocketbase_data_dir,
     resolve_pocketbase_db_path,
     resolve_pocketbase_url,
+    resolve_run_cleanup_on_startup,
     resolve_server_url,
 )
 from boss_agent.worker.config import WorkerConfig
@@ -471,3 +474,179 @@ def test_load_settings_legacy_llm_fallback(tmp_path: Path, monkeypatch):
 
 
 
+
+
+# ---------------------------------------------------------------------------
+# Chat acknowledgment settings (Issue #208)
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_chat_acknowledgment_settings_defaults():
+    """Nothing configured: polite closing text and scan bound fall back to defaults."""
+    with patch.dict("os.environ", {}, clear=True):
+        resolved = resolve_chat_acknowledgment_settings(settings={})
+
+    assert resolved.rejection_reply_text == "收到 谢谢"
+    assert resolved.max_scan_depth == 30
+
+
+def test_resolve_chat_acknowledgment_settings_reads_nested_chat_block(monkeypatch):
+    with patch.dict("os.environ", {}, clear=True):
+        resolved = resolve_chat_acknowledgment_settings(
+            settings={"chat": {"rejection_reply_text": "谢谢，祝招聘顺利", "max_scan_depth": 12}}
+        )
+
+    assert resolved.rejection_reply_text == "谢谢，祝招聘顺利"
+    assert resolved.max_scan_depth == 12
+
+
+def test_resolve_chat_acknowledgment_settings_env_overrides_files(monkeypatch):
+    monkeypatch.setenv("CHAT_REJECTION_REPLY_TEXT", "感谢您的回复")
+    monkeypatch.setenv("CHAT_MAX_SCAN_DEPTH", "5")
+
+    resolved = resolve_chat_acknowledgment_settings(
+        settings={"chat": {"rejection_reply_text": "ignored", "max_scan_depth": 99}}
+    )
+
+    assert resolved.rejection_reply_text == "感谢您的回复"
+    assert resolved.max_scan_depth == 5
+
+
+def test_resolve_chat_acknowledgment_settings_ignores_invalid_values():
+    """A corrupt config must degrade to the safe default, never to 0 or a blank reply."""
+    with patch.dict("os.environ", {}, clear=True):
+        resolved = resolve_chat_acknowledgment_settings(
+            settings={"chat": {"rejection_reply_text": "   ", "max_scan_depth": "not-a-number"}}
+        )
+        zero_depth = resolve_chat_acknowledgment_settings(
+            settings={"chat": {"max_scan_depth": 0}}
+        )
+
+    assert resolved.rejection_reply_text == "收到 谢谢"
+    assert resolved.max_scan_depth == 30
+    assert zero_depth.max_scan_depth == 30
+
+
+def test_load_settings_preserves_nested_chat_block(tmp_path: Path):
+    custom_yaml = tmp_path / "settings.local.yaml"
+    custom_yaml.write_text(
+        "chat:\n  rejection_reply_text: '多谢'\n  max_scan_depth: 9\n", encoding="utf-8"
+    )
+
+    with patch.dict("os.environ", {}, clear=True):
+        merged = load_settings(config_path=custom_yaml)
+        resolved = resolve_chat_acknowledgment_settings(config_path=custom_yaml)
+
+    assert merged["chat"]["rejection_reply_text"] == "多谢"
+    assert resolved.rejection_reply_text == "多谢"
+    assert resolved.max_scan_depth == 9
+
+
+def test_resolve_chat_settings_defaults_to_a_live_run():
+    """dry_run must stay off unless it is explicitly configured."""
+    with patch.dict("os.environ", {}, clear=True):
+        resolved = resolve_chat_acknowledgment_settings(settings={})
+
+    assert resolved.dry_run is False
+
+
+def test_resolve_chat_settings_reads_the_dry_run_toggle(monkeypatch):
+    with patch.dict("os.environ", {}, clear=True):
+        from_config = resolve_chat_acknowledgment_settings(settings={"chat": {"dry_run": True}})
+
+    monkeypatch.setenv("CHAT_DRY_RUN", "1")
+    from_env = resolve_chat_acknowledgment_settings(settings={"chat": {"dry_run": False}})
+
+    assert from_config.dry_run is True
+    assert from_env.dry_run is True
+
+
+def test_resolve_chat_settings_ignores_an_unparsable_dry_run():
+    with patch.dict("os.environ", {}, clear=True):
+        resolved = resolve_chat_acknowledgment_settings(settings={"chat": {"dry_run": "maybe"}})
+
+    assert resolved.dry_run is False
+
+
+def test_payload_overrides_can_re_enable_a_live_run():
+    """A scheduled drill must still be promotable per task."""
+    configured = ChatAcknowledgmentSettings(dry_run=True)
+
+    assert configured.with_overrides({"dry_run": False}).dry_run is False
+    assert configured.with_overrides({}).dry_run is True
+    assert ChatAcknowledgmentSettings().with_overrides({"dry_run": True}).dry_run is True
+    # A stringified "false" must not read as truthy.
+    assert configured.with_overrides({"dry_run": "false"}).dry_run is False
+    assert ChatAcknowledgmentSettings().with_overrides({"dry_run": "maybe"}).dry_run is False
+
+
+def test_partial_chat_override_keeps_the_sibling_setting(tmp_path: Path):
+    """A hand-edited block with only one key must not drop the other (ADR 0010)."""
+    example = tmp_path / "settings.example.yaml"
+    example.write_text(
+        "chat:\n  rejection_reply_text: '收到 谢谢'\n  max_scan_depth: 30\n", encoding="utf-8"
+    )
+    partial = tmp_path / "settings.local.yaml"
+    partial.write_text("chat:\n  rejection_reply_text: '多谢'\n", encoding="utf-8")
+
+    with (
+        patch.dict("os.environ", {}, clear=True),
+        patch(
+            "boss_agent.settings.DEFAULT_CONFIG_SEARCH_PATHS",
+            [partial, example],
+        ),
+    ):
+        resolved = resolve_chat_acknowledgment_settings()
+
+    assert resolved.rejection_reply_text == "多谢"
+    assert resolved.max_scan_depth == 30
+
+
+def test_settings_example_declares_chat_acknowledgment_defaults():
+    """The shipped template must document the configurable reply text and scan bound."""
+    example = Path(__file__).parents[2] / "config" / "settings.example.yaml"
+    assert example.is_file(), "config/settings.example.yaml is missing"
+
+    with patch.dict("os.environ", {}, clear=True):
+        declared = resolve_chat_acknowledgment_settings(
+            settings=load_settings(config_path=example)
+        )
+
+    assert declared.rejection_reply_text == "收到 谢谢"
+    assert declared.max_scan_depth == 30
+
+
+# ---------------------------------------------------------------------------
+# Startup 拒信清扫 gating (issue #230)
+# ---------------------------------------------------------------------------
+
+
+def test_settings_example_declares_the_startup_cleanup_switch():
+    """The shipped template must document the 开服清扫 switch and its safe default."""
+    example = Path(__file__).parents[2] / "config" / "settings.example.yaml"
+    assert example.is_file(), "config/settings.example.yaml is missing"
+
+    with patch.dict("os.environ", {}, clear=True):
+        declared = load_settings(config_path=example)
+
+    assert declared["run_cleanup_on_startup"] is True
+
+
+def test_run_cleanup_on_startup_defaults_on_when_config_is_silent():
+    """Searching before the blacklist is refreshed is the failure this prevents."""
+    with patch.dict("os.environ", {}, clear=True):
+        assert resolve_run_cleanup_on_startup(settings={}) is True
+
+
+def test_run_cleanup_on_startup_reads_a_disabled_setting(monkeypatch):
+    monkeypatch.delenv("RUN_CLEANUP_ON_STARTUP", raising=False)
+
+    assert resolve_run_cleanup_on_startup(settings={"run_cleanup_on_startup": False}) is False
+    # YAML and shell spellings agree, so `false` in a file is not a truthy string.
+    assert resolve_run_cleanup_on_startup(settings={"run_cleanup_on_startup": "false"}) is False
+
+
+def test_run_cleanup_on_startup_env_overrides_the_file(monkeypatch):
+    monkeypatch.setenv("RUN_CLEANUP_ON_STARTUP", "0")
+
+    assert resolve_run_cleanup_on_startup(settings={"run_cleanup_on_startup": True}) is False
