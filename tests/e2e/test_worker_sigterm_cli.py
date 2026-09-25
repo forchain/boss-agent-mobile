@@ -1,12 +1,15 @@
 """
-tests/unit/test_worker_sigterm_cli.py
-=====================================
+tests/e2e/test_worker_sigterm_cli.py
+====================================
 Integration test for the Automation Worker CLI termination seam (spec #218, ticket #220).
 
 Launches a real `scripts/worker.py` process and delivers a real POSIX signal, asserting
 the externally observable contract: acknowledgment log, completion log, and exit code 0
 inside the shutdown budget. The broker points at a closed port so no device is touched and
 no State Stream Broker is required.
+
+It belongs to the E2E tier (spec #247, ticket #249): a real daemon process is not a fast
+in-memory test, however briefly it lives.
 """
 
 import signal
@@ -16,7 +19,10 @@ import time
 from pathlib import Path
 
 import pytest
+
 from _service_harness import REPO_ROOT, subprocess_env, wait_for_log
+
+pytestmark = pytest.mark.e2e
 
 UNREACHABLE_URL = "http://127.0.0.1:1"
 READINESS_MARKER = "Worker daemon loop started"

@@ -1,11 +1,16 @@
 """
-tests/unit/_service_harness.py
-==============================
+tests/_service_harness.py
+=========================
 Shared process/port plumbing for the service-lifecycle tests (spec #218, tickets #220-#222).
 
 Not a test module (no `test_` prefix, so pytest never collects it): these helpers are
 imported by the Worker CLI, Web Dashboard runner, and E2E gate suites so that port
-allocation, log polling, process reaping, and subprocess environments are defined once.
+allocation, log polling, stub-process reaping, and subprocess environments are defined once.
+It lives at the `tests/` root because both tiers use it — the fast unit suites drive
+throwaway stubs, and the E2E suites drive real services on ephemeral ports.
+
+A suite that starts a *process group* (npm plus the server it spawns, say) reaps the group
+itself: the `spawn` fixture ends the one process it started, which cannot reach children.
 """
 
 import os
@@ -17,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def free_port() -> int:
@@ -40,7 +45,9 @@ def wait_for_port_bound(port: int, timeout: float = 10.0) -> None:
         if not is_port_free(port):
             return
         time.sleep(0.05)
-    raise AssertionError(f"stub server never bound port {port}")
+    # Neither tier is named: the unit suites wait on throwaway stubs, the E2E gate suites on
+    # the real Worker CLI, and a post-mortem should not be told which one it was looking at.
+    raise AssertionError(f"never bound port {port} within {timeout}s")
 
 
 def wait_for_log(log_file: Path, marker: str, timeout: float = 30.0) -> None:

@@ -1,7 +1,10 @@
 """
-tests/e2e/test_smoke_job_extraction.py
-======================================
-Integration smoke test verifying end-to-end job detail extraction (Criterion 4).
+tests/unit/test_smoke_harness_extraction.py
+===========================================
+Smoke Harness extraction contract (Criterion 4), driven entirely by MagicMock.
+
+Every driver interaction is mocked, so this belongs to the fast unit tier: it needs no
+emulator, no Appium session, and no child process (spec #247, ticket #249).
 """
 
 from unittest.mock import MagicMock, patch

@@ -20,5 +20,9 @@ Zero git history bloat rule: NEVER commit binary media files (`.mp4`, `.mov`, `.
 
 ### Test guidelines
 
-Device tests require the explicit `live` marker; E2E runs stop residual Worker / Web Dashboard instances first. See `docs/agents/testing.md`.
+Three tiers: iterate on the one file you changed, run the fast unit tier
+(`uv run --extra dev pytest`) before finishing, and run E2E (`uv run --extra dev pytest
+tests/e2e`) only when the change is end-to-end. Device tests require the explicit `live`
+marker; E2E runs leave running Worker / Web Dashboard instances alone unless
+`BOSS_AGENT_ENFORCE_TEARDOWN=1` is set. See `docs/agents/testing.md`.
 
