@@ -265,6 +265,11 @@ _Avoid_: UI logging, debug prints, action trace
 **Daily Greeting Limit**:
 The system safety threshold restricting outbound mobile greeting volume per calendar day to protect user accounts from platform rate limits and anti-bot challenges, evaluated strictly against successful agent greeting dispatches (`applied_at` within today), automatically degrading `auto_apply` to an offline draft (`status: matched`) upon exhaustion while job discovery continues uninterrupted.
 _Avoid_: daily quota, message cap, max chats
+
+**Chat Triage (`ChatTriage`)**:
+The deep module that owns the 仅沟通 rejection story end to end: the bounded First-Screen Scan of the opening screen, the zero-token Outbound Message Indicator bypass (where an unrecognised badge is evaluated, never skipped), the classify → guardrail → blacklist-ingest → acknowledge ordering, the dry run that touches nothing, and the stop-reason taxonomy a run can end on (`first_screen_exhausted`, `empty_list`, `cancelled`, `max_scan_depth`, `scan_ceiling`, `lost_list`). Its whole interface is one verb — `scan()` — returning a Triage Report of outcomes rather than call sequences, and its device world crosses two injected ports (a list reader and a chat actor) whose production adapters wrap the page objects, so a card arrives as data with an opaque handle and never as a device reference. It owns the Communication-Only Filter, the Outbound Message Indicator, Rejection Blacklist Ingestion and the Headhunter Agency Guardrail as concepts; 仅沟通 List Recovery stays inside the page object behind its list reader (ADR 0016), the company blacklist itself stays owned by the Screening Policy, and `CHECK_CHAT` is only the dispatcher that resolves a run's settings and policy from the task payload and maps the report into the task telemetry the dashboard renders.
+_Avoid_: chat handler, message triage loop, 拒信处理流程
+
 **Outbound Message Indicator**:
 The deterministic status badge (`iv_msg_status` displaying `[送达]` or `[已读]`) prefixed to a conversation card in the communication list, signalling that the candidate sent the last message and allowing automation to instantly bypass threads awaiting recruiter reply.
 _Avoid_: message badge, read tag, delivery marker
