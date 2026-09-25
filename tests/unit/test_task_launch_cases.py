@@ -69,6 +69,8 @@ def test_python_builder_matches_the_shared_case(case: dict) -> None:
         launch = task_launch.build_launch(**kwargs)
 
     assert launch.task_type.value == case["expected"]["task_type"]
+    # Provenance is a task attribute, not a payload key.
+    assert launch.source.value == case["expected"]["source"]
     for key in case["contract"]:
         assert launch.payload.get(key) == case["expected"]["payload"][key], key
 
@@ -78,7 +80,6 @@ def test_the_declared_defaults_are_the_shared_ones() -> None:
     assert defaults["min_score"] == task_launch.MIN_SCORE
     assert defaults["max_jobs"] == task_launch.DEFAULT_MAX_JOBS
     assert defaults["preview_timeout_sec"] == task_launch.DEFAULT_PREVIEW_TIMEOUT_SEC
-    assert defaults["source_key"] == task_launch.SOURCE_KEY
 
 
 def test_a_scheduled_and_a_manual_launch_of_one_search_are_the_same_task() -> None:
@@ -101,10 +102,10 @@ def test_a_scheduled_and_a_manual_launch_of_one_search_are_the_same_task() -> No
         search, source=task_launch.LaunchSource.SCHEDULER, mode=task_launch.LaunchMode.DRAFT
     )
 
-    differing = {"source"}
-    assert {
-        k: v for k, v in manual.payload.items() if k not in differing
-    } == {k: v for k, v in scheduled.payload.items() if k not in differing}
+    assert manual.payload == scheduled.payload
+    assert manual.task_type == scheduled.task_type
+    # Only provenance differs, and it is an attribute rather than a payload key.
+    assert manual.source is not scheduled.source
 
 
 def test_a_malformed_target_action_is_rejected_not_defaulted() -> None:
@@ -142,7 +143,8 @@ def test_the_min_score_baseline_is_not_a_competing_default() -> None:
 def test_the_login_probe_carries_provenance_and_nothing_else() -> None:
     """Its handler reads no payload, and the `mode: diagnostic` key had no reader."""
     launch = task_launch.build_login_diagnostic_launch(source=task_launch.LaunchSource.TEST)
-    assert launch.payload == {"source": "test"}
+    assert launch.payload == {}
+    assert launch.source is task_launch.LaunchSource.TEST
 
 
 def test_legacy_tasks_without_provenance_are_treated_as_manual() -> None:

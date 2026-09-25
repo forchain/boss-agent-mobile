@@ -301,13 +301,17 @@ export async function createResumeRevision(
 // In-memory fallback map for automation tasks
 const localAutomationTasksMap: Record<string, AutomationTask> = {};
 
-export async function createAutomationTask(taskType: string, payload: Record<string, any>): Promise<AutomationTask> {
+export async function createAutomationTask(
+	taskType: string,
+	payload: Record<string, any>,
+	source: string = 'manual'
+): Promise<AutomationTask> {
 	if (typeof window !== 'undefined') {
 		try {
 			const res = await fetch('/api/tasks', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ task_type: taskType, payload })
+				body: JSON.stringify({ task_type: taskType, payload, source })
 			});
 			if (res.ok) {
 				const data = await res.json();
@@ -328,6 +332,7 @@ export async function createAutomationTask(taskType: string, payload: Record<str
 		task_type: taskType as any,
 		status: 'pending' as const,
 		payload: payload,
+		source,
 		logs: [`[System] Task created and waiting for worker dispatch...`],
 		created: now,
 		updated: now
@@ -506,13 +511,11 @@ export async function rerunTask(taskId: string): Promise<AutomationTask | null> 
 	// Rebuilt from the original's inputs through the launch builder, not spread from its
 	// payload: a spread propagated whatever divergences the original carried — a stale
 	// min_score, a preview flag set by a builder that no longer exists.
-	return createAutomationTask(
-		original.task_type,
-		rebuildRerunPayload(
-			{ task_type: original.task_type, payload: original.payload || {} },
-			taskId
-		)
+	const rebuilt = rebuildRerunPayload(
+		{ task_type: original.task_type, payload: original.payload || {} },
+		taskId
 	);
+	return createAutomationTask(original.task_type, rebuilt.payload, rebuilt.source);
 }
 
 export async function resumeTask(taskId: string): Promise<boolean> {

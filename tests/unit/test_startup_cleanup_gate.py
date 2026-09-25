@@ -55,7 +55,7 @@ class EarlyRacerBroker(InMemoryTaskBroker):
         super().__init__()
         self._injected = False
 
-    async def create_task(self, task_type, payload=None):
+    async def create_task(self, task_type, payload=None, source="manual"):
         if not self._injected and payload and payload.get(STARTUP_CLEANUP_MARKER):
             self._injected = True
             await super().create_task(
@@ -71,7 +71,7 @@ class LateRacerBroker(InMemoryTaskBroker):
         super().__init__()
         self._injected = False
 
-    async def create_task(self, task_type, payload=None):
+    async def create_task(self, task_type, payload=None, source="manual"):
         mine = await super().create_task(task_type, payload)
         if not self._injected and payload and payload.get(STARTUP_CLEANUP_MARKER):
             self._injected = True

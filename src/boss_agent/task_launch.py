@@ -42,9 +42,6 @@ DEFAULT_MAX_JOBS = 30
 #: Seconds the worker previews a drafted greeting before moving on.
 DEFAULT_PREVIEW_TIMEOUT_SEC = 3.0
 
-#: The launch payload key carrying task provenance.
-SOURCE_KEY = "source"
-
 
 class LaunchSource(StrEnum):
     """Task Provenance — where a task came from, as CONTEXT.md defines it.
@@ -114,10 +111,16 @@ def _target_action_for(search: SavedSearch) -> TargetAction:
 
 @dataclass(frozen=True)
 class TaskLaunch:
-    """A validated launch: the task type the broker records and the payload it carries."""
+    """A validated launch: the task type, the payload, and where it came from.
+
+    Provenance travels as a *task attribute*, not a payload key: the worker's startup
+    sweep and the dashboard both need to read it, and neither should have to do payload
+    archaeology for a field the record already has a column for.
+    """
 
     task_type: TaskType
     payload: dict[str, Any] = field(default_factory=dict)
+    source: LaunchSource = LaunchSource.MANUAL
 
 
 def build_search_launch(
@@ -157,13 +160,12 @@ def build_search_launch(
         "preview_only": preview_only,
         "auto_send": auto_send,
         "preview_timeout_sec": DEFAULT_PREVIEW_TIMEOUT_SEC,
-        SOURCE_KEY: source.value,
     }
     if search_dict.get("screening_policy"):
         payload["screening_policy"] = search_dict["screening_policy"]
     if candidate_profile:
         payload["candidate_profile"] = candidate_profile
-    return TaskLaunch(task_type=task_type, payload=payload)
+    return TaskLaunch(task_type=task_type, payload=payload, source=source)
 
 
 def _preview_flags(action: TargetAction, mode: LaunchMode | None) -> tuple[bool, bool]:
@@ -202,13 +204,12 @@ def build_chat_cleanup_launch(
             ack.rejection_reply_text if rejection_reply_text is None else rejection_reply_text
         ),
         "max_scan_depth": ack.max_scan_depth if max_scan_depth is None else int(max_scan_depth),
-        SOURCE_KEY: source.value,
     }
     if search is not None:
         payload["saved_search_id"] = search.id
         payload["search_id"] = search.id
         payload["search_name"] = search.name
-    return TaskLaunch(task_type=TaskType.CHECK_CHAT, payload=payload)
+    return TaskLaunch(task_type=TaskType.CHECK_CHAT, payload=payload, source=source)
 
 
 def build_login_diagnostic_launch(*, source: LaunchSource) -> TaskLaunch:
@@ -216,9 +217,9 @@ def build_login_diagnostic_launch(*, source: LaunchSource) -> TaskLaunch:
 
     It carries provenance and nothing else: the handler reads no payload at all, and the
     ``mode: "diagnostic"`` key it used to be given had no reader — the diagnostic intent
-    is provenance, which is what ``source`` says.
+    is provenance, which the record now carries as an attribute.
     """
-    return TaskLaunch(task_type=TaskType.CHECK_LOGIN, payload={SOURCE_KEY: source.value})
+    return TaskLaunch(task_type=TaskType.CHECK_LOGIN, payload={}, source=source)
 
 
 def build_launch(

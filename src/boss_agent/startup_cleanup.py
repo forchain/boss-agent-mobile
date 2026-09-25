@@ -101,7 +101,9 @@ class StartupCleanupGate:
                     logger.info("Startup 拒信清扫 already queued; not queueing a second one")
                     return None
                 task = await self.broker.create_task(
-                    task_type=TaskType.CHECK_CHAT, payload=_startup_cleanup_payload()
+                    task_type=TaskType.CHECK_CHAT,
+                    payload=_startup_cleanup_payload(),
+                    source=LaunchSource.SCHEDULER.value,
                 )
 
             return await self._settle_race(task)

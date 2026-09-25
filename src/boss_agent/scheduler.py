@@ -9,9 +9,8 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
-from typing import Any
 
-from boss_agent.broker.models import AutomationTask, TaskType
+from boss_agent.broker.models import AutomationTask
 from boss_agent.broker.pocketbase_adapter import BaseTaskBroker
 from boss_agent.models import SavedSearch
 from boss_agent.settings import resolve_run_cleanup_on_startup
@@ -20,6 +19,7 @@ from boss_agent.task_launch import (
     LaunchMode,
     LaunchSource,
     TaskKind,
+    TaskLaunch,
     build_chat_cleanup_launch,
     build_launch,
 )
@@ -201,11 +201,12 @@ class AutomationScheduler:
                     pass
 
             # Resolve what this strategy dispatches
-            task_type, payload = self._build_dispatch(search)
+            launch = self._build_dispatch(search)
 
             task = await self.broker.create_task(
-                task_type=task_type,
-                payload=payload,
+                task_type=launch.task_type,
+                payload=launch.payload,
+                source=launch.source.value,
             )
             dispatched_tasks.append(task)
 
@@ -214,7 +215,7 @@ class AutomationScheduler:
             await self.broker.saved_searches.save_saved_search(search)
             logger.info(
                 "Scheduled %s task %s dispatched for search %s (%s)",
-                task_type.value,
+                task.task_type.value,
                 task.id,
                 search.id,
                 search.name,
@@ -222,7 +223,7 @@ class AutomationScheduler:
 
         return dispatched_tasks
 
-    def _build_dispatch(self, search: SavedSearch) -> tuple[TaskType, dict[str, Any]]:
+    def _build_dispatch(self, search: SavedSearch) -> TaskLaunch:
         """Resolve the worker task a strategy dispatches, and its payload.
 
         Both shapes come from the shared launch builder, so a scheduled run of a
@@ -249,7 +250,7 @@ class AutomationScheduler:
                 search=search,
                 mode=LaunchMode.DRAFT,
             )
-        return launch.task_type, launch.payload
+        return launch
 
     async def run_forever(self) -> None:
         """Background continuous scheduler loop."""

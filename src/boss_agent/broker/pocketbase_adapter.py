@@ -57,9 +57,17 @@ class BaseTaskBroker(ABC):
 
     @abstractmethod
     async def create_task(
-        self, task_type: TaskType | str, payload: dict[str, Any] | None = None
+        self,
+        task_type: TaskType | str,
+        payload: dict[str, Any] | None = None,
+        source: str = "manual",
     ) -> AutomationTask:
-        """Create and persist a new task with PENDING status."""
+        """Create and persist a new task with PENDING status.
+
+        ``source`` is Task Provenance: where the task came from. The worker's startup
+        sweep cancels ``test``-sourced tasks so an automated suite never contends with
+        the live worker for the device.
+        """
         pass
 
     @abstractmethod
@@ -137,7 +145,10 @@ class InMemoryTaskBroker(BaseTaskBroker):
         self._subscribers: list[Callable[[str, AutomationTask], Any]] = []
 
     async def create_task(
-        self, task_type: TaskType | str, payload: dict[str, Any] | None = None
+        self,
+        task_type: TaskType | str,
+        payload: dict[str, Any] | None = None,
+        source: str = "manual",
     ) -> AutomationTask:
         resolved_type = task_type if isinstance(task_type, TaskType) else TaskType(task_type)
         now = datetime.now(UTC)
@@ -145,6 +156,7 @@ class InMemoryTaskBroker(BaseTaskBroker):
             task_type=resolved_type,
             status=TaskStatus.PENDING,
             payload=payload or {},
+            source=source,
             worker_id=None,
             locked_at=None,
             last_heartbeat_at=None,
@@ -339,7 +351,10 @@ class PocketBaseTaskBroker(BaseTaskBroker):
         return f"{self.base_url}/api/collections/{self.collection_name}/records"
 
     async def create_task(
-        self, task_type: TaskType | str, payload: dict[str, Any] | None = None
+        self,
+        task_type: TaskType | str,
+        payload: dict[str, Any] | None = None,
+        source: str = "manual",
     ) -> AutomationTask:
         resolved_type = task_type if isinstance(task_type, TaskType) else TaskType(task_type)
         url = self._collection_url()
@@ -348,6 +363,7 @@ class PocketBaseTaskBroker(BaseTaskBroker):
             "task_type": resolved_type.value,
             "status": TaskStatus.PENDING.value,
             "payload": payload or {},
+            "source": source,
             "worker_id": None,
             "locked_at": None,
             "last_heartbeat_at": None,
@@ -561,6 +577,9 @@ class PocketBaseTaskBroker(BaseTaskBroker):
             task_type=TaskType(record["task_type"]),
             status=TaskStatus(record["status"]),
             payload=payload,
+            # A task created before provenance existed carries no column; it reads as
+            # manual, so the startup sweep never reclaims what it cannot attribute.
+            source=record.get("source") or "manual",
             worker_id=record.get("worker_id"),
             locked_at=self._parse_dt(record.get("locked_at")),
             last_heartbeat_at=self._parse_dt(record.get("last_heartbeat_at")),

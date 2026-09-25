@@ -6,7 +6,6 @@ import {
 	MIN_SCORE,
 	DEFAULT_MAX_JOBS,
 	DEFAULT_PREVIEW_TIMEOUT_SEC,
-	SOURCE_KEY,
 	buildLaunch,
 	buildSearchLaunch,
 	LaunchContractError,
@@ -59,6 +58,8 @@ describe('AutomationTask launch contract parity', () => {
 			});
 
 			expect(launch.task_type).toBe(testCase.expected.task_type);
+			// Provenance is a task attribute, not a payload key.
+			expect(launch.source).toBe((testCase.expected as any).source);
 			for (const key of testCase.contract) {
 				expect(launch.payload[key], key).toEqual(testCase.expected.payload[key]);
 			}
@@ -70,7 +71,6 @@ describe('AutomationTask launch contract parity', () => {
 		expect(MIN_SCORE).toBe(defaults.min_score);
 		expect(DEFAULT_MAX_JOBS).toBe(defaults.max_jobs);
 		expect(DEFAULT_PREVIEW_TIMEOUT_SEC).toBe(defaults.preview_timeout_sec);
-		expect(SOURCE_KEY).toBe(defaults.source_key);
 	});
 
 	it('makes a manual and a scheduled launch of one search the same task', () => {
@@ -85,9 +85,10 @@ describe('AutomationTask launch contract parity', () => {
 		const manual = buildSearchLaunch(search, { source: 'manual', mode: 'draft' });
 		const scheduled = buildSearchLaunch(search, { source: 'scheduler', mode: 'draft' });
 
-		const { source: _m, ...manualRest } = manual.payload;
-		const { source: _s, ...scheduledRest } = scheduled.payload;
-		expect(manualRest).toEqual(scheduledRest);
+		expect(manual.payload).toEqual(scheduled.payload);
+		expect(manual.task_type).toBe(scheduled.task_type);
+		// Only provenance differs, and it is an attribute rather than a payload key.
+		expect(manual.source).not.toBe(scheduled.source);
 	});
 
 	it('rejects a malformed target_action instead of defaulting to save_jd', () => {
@@ -136,11 +137,11 @@ describe('rerun rebuilds through the builder', () => {
 			'orig-1'
 		);
 
-		expect(rebuilt.min_score).toBe(MIN_SCORE);
-		expect(rebuilt.preview_only).toBe(true);
-		expect(rebuilt.rerun_of).toBe('orig-1');
+		expect(rebuilt.payload.min_score).toBe(MIN_SCORE);
+		expect(rebuilt.payload.preview_only).toBe(true);
+		expect(rebuilt.payload.rerun_of).toBe('orig-1');
 		expect(rebuilt.source).toBe('manual');
-		expect('triggered_manually' in rebuilt).toBe(false);
+		expect('triggered_manually' in rebuilt.payload).toBe(false);
 	});
 
 	it('carries the inputs the builder cannot derive', async () => {
@@ -158,9 +159,9 @@ describe('rerun rebuilds through the builder', () => {
 			},
 			'orig-2'
 		);
-		expect(rebuilt.direct_job_id).toBe('job-9');
-		expect(rebuilt.job_title).toBe('工程师');
-		expect(rebuilt.company_name).toBe('深至科技');
+		expect(rebuilt.payload.direct_job_id).toBe('job-9');
+		expect(rebuilt.payload.job_title).toBe('工程师');
+		expect(rebuilt.payload.company_name).toBe('深至科技');
 	});
 
 	it('keeps a live run live and a draft run draft', async () => {
@@ -172,8 +173,8 @@ describe('rerun rebuilds through the builder', () => {
 			},
 			'o'
 		);
-		expect(live.preview_only).toBe(false);
-		expect(live.auto_send).toBe(true);
+		expect(live.payload.preview_only).toBe(false);
+		expect(live.payload.auto_send).toBe(true);
 	});
 
 	it('lets the configured drill mode win for a chat cleanup rerun', async () => {
@@ -185,8 +186,8 @@ describe('rerun rebuilds through the builder', () => {
 			},
 			'o'
 		);
-		expect(rebuilt.dry_run).toBe(true);
-		expect(rebuilt.saved_search_id).toBe('chat-1');
-		expect(rebuilt.rerun_of).toBe('o');
+		expect(rebuilt.payload.dry_run).toBe(true);
+		expect(rebuilt.payload.saved_search_id).toBe('chat-1');
+		expect(rebuilt.payload.rerun_of).toBe('o');
 	});
 });

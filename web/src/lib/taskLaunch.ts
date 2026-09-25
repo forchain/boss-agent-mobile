@@ -21,9 +21,6 @@ export const DEFAULT_MAX_JOBS = 30;
 /** Seconds the worker previews a drafted greeting before moving on. */
 export const DEFAULT_PREVIEW_TIMEOUT_SEC = 3.0;
 
-/** The launch payload key carrying task provenance. */
-export const SOURCE_KEY = 'source';
-
 /** Task Provenance — where a task came from (CONTEXT.md). */
 export type LaunchSource = 'manual' | 'test' | 'scheduler';
 
@@ -45,6 +42,12 @@ export type TargetActionName = 'save_jd' | 'auto_apply';
 export interface TaskLaunch {
 	task_type: TaskTypeName;
 	payload: Record<string, unknown>;
+	/**
+	 * Task Provenance — a *task attribute*, not a payload key. The worker's startup
+	 * sweep and the dashboard both read it, and neither should have to do payload
+	 * archaeology for a field the record has a column for.
+	 */
+	source: LaunchSource;
 }
 
 /** The SavedSearch fields the launch contract reads. */
@@ -122,12 +125,15 @@ export function buildSearchLaunch(
 		min_score: options.minScore === undefined ? MIN_SCORE : Number(options.minScore),
 		preview_only: previewOnly,
 		auto_send: autoSend,
-		preview_timeout_sec: DEFAULT_PREVIEW_TIMEOUT_SEC,
-		[SOURCE_KEY]: options.source
+		preview_timeout_sec: DEFAULT_PREVIEW_TIMEOUT_SEC
 	};
 	if (search.screening_policy) payload.screening_policy = search.screening_policy;
 	if (options.candidateProfile) payload.candidate_profile = options.candidateProfile;
-	return { task_type: action === 'auto_apply' ? 'AUTO_APPLY' : 'SCRAPE_JOBS', payload };
+	return {
+		task_type: action === 'auto_apply' ? 'AUTO_APPLY' : 'SCRAPE_JOBS',
+		payload,
+		source: options.source
+	};
 }
 
 export function buildChatCleanupLaunch(options: {
@@ -144,15 +150,14 @@ export function buildChatCleanupLaunch(options: {
 		// which surface produced it.
 		dry_run: options.mode === undefined ? chat.dry_run === true : options.mode === 'draft',
 		rejection_reply_text: chat.rejection_reply_text ?? '',
-		max_scan_depth: chat.max_scan_depth ?? 0,
-		[SOURCE_KEY]: options.source
+		max_scan_depth: chat.max_scan_depth ?? 0
 	};
 	if (options.search) {
 		payload.saved_search_id = options.search.id;
 		payload.search_id = options.search.id;
 		payload.search_name = options.search.name ?? '';
 	}
-	return { task_type: 'CHECK_CHAT', payload };
+	return { task_type: 'CHECK_CHAT', payload, source: options.source };
 }
 
 /**
@@ -160,7 +165,7 @@ export function buildChatCleanupLaunch(options: {
  * payload, and the `mode: 'diagnostic'` key it used to be given had no reader.
  */
 export function buildLoginDiagnosticLaunch(options: { source: LaunchSource }): TaskLaunch {
-	return { task_type: 'CHECK_LOGIN', payload: { [SOURCE_KEY]: options.source } };
+	return { task_type: 'CHECK_LOGIN', payload: {}, source: options.source };
 }
 
 export function buildLaunch(
@@ -216,7 +221,7 @@ export function rebuildRerunPayload(
 	original: RerunSource,
 	rerunOf: string,
 	source: LaunchSource = 'manual'
-): Record<string, unknown> {
+): { payload: Record<string, unknown>; source: LaunchSource } {
 	const prior = original.payload || {};
 
 	if (original.task_type === 'CHECK_CHAT') {
@@ -235,11 +240,11 @@ export function rebuildRerunPayload(
 				dry_run: prior.dry_run
 			}
 		});
-		return { ...launch.payload, rerun_of: rerunOf };
+		return { payload: { ...launch.payload, rerun_of: rerunOf }, source };
 	}
 
 	if (original.task_type === 'CHECK_LOGIN') {
-		return { ...buildLoginDiagnosticLaunch({ source }).payload, rerun_of: rerunOf };
+		return { payload: { ...buildLoginDiagnosticLaunch({ source }).payload, rerun_of: rerunOf }, source };
 	}
 
 	const live = prior.preview_only === false && prior.auto_send === true;
@@ -261,5 +266,5 @@ export function rebuildRerunPayload(
 	for (const key of RERUN_CARRIED_INPUTS) {
 		if (prior[key] !== undefined) carried[key] = prior[key];
 	}
-	return { ...launch.payload, ...carried, rerun_of: rerunOf };
+	return { payload: { ...launch.payload, ...carried, rerun_of: rerunOf }, source };
 }

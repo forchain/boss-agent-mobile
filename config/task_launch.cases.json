@@ -1,10 +1,9 @@
 {
-  "_comment": "The AutomationTask launch contract, shared by the pytest tier (tests/unit/test_task_launch_cases.py) and the vitest tier (web/src/tests/taskLaunchCases.test.ts). Only the keys listed in `contract` are compared: they are the ones the builder owns, so a difference in how each language normalizes a nested SavedSearch filter cannot masquerade as contract drift.",
+  "_comment": "The AutomationTask launch contract, shared by the pytest tier (tests/unit/test_task_launch_cases.py) and the vitest tier (web/src/tests/taskLaunchCases.test.ts). `source` is compared as a task attribute rather than a payload key. Only the keys listed in `contract` are compared: they are the ones the builder owns, so a difference in how each language normalizes a nested SavedSearch filter cannot masquerade as contract drift.",
   "defaults": {
     "min_score": 70,
     "max_jobs": 30,
-    "preview_timeout_sec": 3.0,
-    "source_key": "source"
+    "preview_timeout_sec": 3.0
   },
   "cases": [
     {
@@ -35,8 +34,7 @@
         "min_score",
         "preview_only",
         "auto_send",
-        "preview_timeout_sec",
-        "source"
+        "preview_timeout_sec"
       ],
       "expected": {
         "task_type": "SCRAPE_JOBS",
@@ -52,9 +50,9 @@
           "min_score": 70,
           "preview_only": true,
           "auto_send": false,
-          "preview_timeout_sec": 3.0,
-          "source": "manual"
-        }
+          "preview_timeout_sec": 3.0
+        },
+        "source": "manual"
       }
     },
     {
@@ -85,8 +83,7 @@
         "min_score",
         "preview_only",
         "auto_send",
-        "preview_timeout_sec",
-        "source"
+        "preview_timeout_sec"
       ],
       "expected": {
         "task_type": "AUTO_APPLY",
@@ -102,9 +99,9 @@
           "min_score": 70,
           "preview_only": true,
           "auto_send": false,
-          "preview_timeout_sec": 3.0,
-          "source": "manual"
-        }
+          "preview_timeout_sec": 3.0
+        },
+        "source": "manual"
       }
     },
     {
@@ -135,8 +132,7 @@
         "min_score",
         "preview_only",
         "auto_send",
-        "preview_timeout_sec",
-        "source"
+        "preview_timeout_sec"
       ],
       "expected": {
         "task_type": "AUTO_APPLY",
@@ -152,9 +148,9 @@
           "min_score": 70,
           "preview_only": false,
           "auto_send": true,
-          "preview_timeout_sec": 3.0,
-          "source": "manual"
-        }
+          "preview_timeout_sec": 3.0
+        },
+        "source": "manual"
       }
     },
     {
@@ -185,8 +181,7 @@
         "min_score",
         "preview_only",
         "auto_send",
-        "preview_timeout_sec",
-        "source"
+        "preview_timeout_sec"
       ],
       "expected": {
         "task_type": "AUTO_APPLY",
@@ -202,9 +197,9 @@
           "min_score": 70,
           "preview_only": true,
           "auto_send": false,
-          "preview_timeout_sec": 3.0,
-          "source": "manual"
-        }
+          "preview_timeout_sec": 3.0
+        },
+        "source": "manual"
       }
     },
     {
@@ -235,8 +230,7 @@
         "min_score",
         "preview_only",
         "auto_send",
-        "preview_timeout_sec",
-        "source"
+        "preview_timeout_sec"
       ],
       "expected": {
         "task_type": "AUTO_APPLY",
@@ -252,9 +246,9 @@
           "min_score": 85,
           "preview_only": true,
           "auto_send": false,
-          "preview_timeout_sec": 3.0,
-          "source": "manual"
-        }
+          "preview_timeout_sec": 3.0
+        },
+        "source": "manual"
       }
     },
     {
@@ -285,8 +279,7 @@
         "min_score",
         "preview_only",
         "auto_send",
-        "preview_timeout_sec",
-        "source"
+        "preview_timeout_sec"
       ],
       "expected": {
         "task_type": "AUTO_APPLY",
@@ -302,9 +295,9 @@
           "min_score": 70,
           "preview_only": true,
           "auto_send": false,
-          "preview_timeout_sec": 3.0,
-          "source": "scheduler"
-        }
+          "preview_timeout_sec": 3.0
+        },
+        "source": "scheduler"
       }
     },
     {
@@ -322,17 +315,16 @@
       "contract": [
         "dry_run",
         "rejection_reply_text",
-        "max_scan_depth",
-        "source"
+        "max_scan_depth"
       ],
       "expected": {
         "task_type": "CHECK_CHAT",
         "payload": {
           "dry_run": false,
           "rejection_reply_text": "收到 谢谢",
-          "max_scan_depth": 30,
-          "source": "manual"
-        }
+          "max_scan_depth": 30
+        },
+        "source": "manual"
       }
     },
     {
@@ -359,7 +351,6 @@
         "dry_run",
         "rejection_reply_text",
         "max_scan_depth",
-        "source",
         "saved_search_id",
         "search_id",
         "search_name"
@@ -370,11 +361,11 @@
           "dry_run": true,
           "rejection_reply_text": "收到 谢谢",
           "max_scan_depth": 30,
-          "source": "manual",
           "saved_search_id": "s_chat",
           "search_id": "s_chat",
           "search_name": "仅沟通清扫"
-        }
+        },
+        "source": "manual"
       }
     },
     {
@@ -401,7 +392,6 @@
         "dry_run",
         "rejection_reply_text",
         "max_scan_depth",
-        "source",
         "saved_search_id",
         "search_id",
         "search_name"
@@ -412,11 +402,11 @@
           "dry_run": false,
           "rejection_reply_text": "收到 谢谢",
           "max_scan_depth": 30,
-          "source": "scheduler",
           "saved_search_id": "s_chat",
           "search_id": "s_chat",
           "search_name": "仅沟通清扫"
-        }
+        },
+        "source": "scheduler"
       }
     },
     {
@@ -427,14 +417,11 @@
       "search": null,
       "min_score": null,
       "chat": null,
-      "contract": [
-        "source"
-      ],
+      "contract": [],
       "expected": {
         "task_type": "CHECK_LOGIN",
-        "payload": {
-          "source": "test"
-        }
+        "payload": {},
+        "source": "test"
       }
     }
   ]

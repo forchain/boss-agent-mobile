@@ -53,8 +53,10 @@ export const POST: RequestHandler = async ({ request }) => {
 			);
 		}
 		const payload = body.payload || {};
+		// Provenance is a record attribute; a caller that states none is a manual launch.
+		const source = typeof body.source === 'string' && body.source ? body.source : 'manual';
 
-		const task = await createAutomationTask(taskType, payload);
+		const task = await createAutomationTask(taskType, payload, source);
 		return json({
 			success: true,
 			task
