@@ -206,6 +206,73 @@ def test_extract_job_posting_skips_probing_when_disabled(monkeypatch):
     assert page._scroll_page_up.call_count == 0
 
 
+def _probing_detail_page(distance_text: str | None = None) -> tuple[JobDetailPage, list[str]]:
+    """A detail page whose JD is already expanded, recording every locator key it probes.
+
+    ``distance_text`` puts the bottom commute widget on the screen; ``_scroll_page_up``
+    stays a mock so a test can assert how much gesture budget the probe actually spent.
+    """
+    page = JobDetailPage(driver=MagicMock())
+    page.wait_for_key = MagicMock(return_value=True)
+    page._get_window_size = MagicMock(return_value={"width": 1080, "height": 2400})
+    page._scroll_page_up = MagicMock()
+
+    title = MagicMock()
+    title.text = "大模型 Agent 平台架构师"
+    desc = MagicMock()
+    desc.text = "负责大模型应用与Agent工作流平台建设，覆盖推理链编排与多智能体协同。"
+
+    elements: dict[str, MagicMock] = {"job_detail.title": title, "job_detail.desc": desc}
+    if distance_text is not None:
+        elements["job_detail.distance_tip"] = _distance_element(distance_text)
+
+    probed_keys: list[str] = []
+
+    def custom_find(key, **kwargs):
+        probed_keys.append(key)
+        return elements.get(key)
+
+    page.find_by_key = MagicMock(side_effect=custom_find)
+    return page, probed_keys
+
+
+def test_extract_job_posting_skips_probing_for_headhunter_posting(monkeypatch):
+    """A headhunter posting conceals the hiring enterprise and its address, so the
+    platform never renders the distance tip for it (Ticket #255). Probing would burn
+    up to 3 swipes plus element-discovery timeouts on a widget that cannot exist, so
+    the page must not scroll at all even while the ceiling is active."""
+    import time
+
+    monkeypatch.setattr(time, "sleep", lambda s: None)
+    page, probed_keys = _probing_detail_page(distance_text="距离家庭住址19.5千米")
+
+    posting = page.extract_job_posting(
+        timeout_sec=2.0, probe_commute_distance=True, is_headhunter=True
+    )
+
+    assert posting.commute_distance_km is None
+    assert posting.commute_distance_text == ""
+    assert "job_detail.distance_tip" not in probed_keys
+    assert page._scroll_page_up.call_count == 0
+
+
+def test_extract_job_posting_probes_when_headhunter_status_unknown(monkeypatch):
+    """Fail-open: an unknown recruitment channel must keep probing, because a direct
+    hire misclassified as unknown would otherwise never be distance-screened."""
+    import time
+
+    monkeypatch.setattr(time, "sleep", lambda s: None)
+    page, probed_keys = _probing_detail_page(distance_text="距离家庭住址19.5千米")
+
+    posting = page.extract_job_posting(
+        timeout_sec=2.0, probe_commute_distance=True, is_headhunter=None
+    )
+
+    assert "job_detail.distance_tip" in probed_keys
+    assert posting.commute_distance_km == pytest.approx(19.5)
+    assert posting.commute_distance_text == "距离家庭住址19.5千米"
+
+
 def test_job_posting_defaults_distance_fields():
     posting = JobPosting(
         title="AI 工程师",

@@ -1486,12 +1486,19 @@ class JobDetailPage(BaseBossPage):
         fallback_company: str = "",
         fallback_title: str = "",
         probe_commute_distance: bool = False,
+        is_headhunter: bool | None = None,
     ) -> JobPosting:
         """Extract structured JobPosting from current job detail screen.
 
         ``probe_commute_distance`` triggers the bottom-widget scroll probe, so it is
         only enabled while the commute ceiling is active — otherwise every detail
         inspection would pay swipe latency for a filter that cannot reject anything.
+
+        ``is_headhunter`` suppresses that probe for headhunter postings: the platform
+        conceals the hiring enterprise and its address there, so the distance tip is
+        never rendered and the scroll could only burn gesture budget and
+        element-discovery timeouts. An unknown channel (``None``) still probes, so an
+        unrecognised direct hire is never silently spared distance screening.
 
         Raises RuntimeError if job details are not found on the screen.
         """
@@ -1566,9 +1573,13 @@ class JobDetailPage(BaseBossPage):
                 "The current screen is not a valid job detail page."
             )
 
+        # Headhunter postings conceal the hiring enterprise, so the platform never draws
+        # the distance tip for them: the probe cannot succeed and would only spend gesture
+        # budget. Guarded here as well as in the caller's policy so that no caller can buy
+        # a scroll for a widget the platform cannot render.
         commute_distance_km: float | None = None
         commute_distance_text = ""
-        if probe_commute_distance:
+        if probe_commute_distance and is_headhunter is not True:
             commute_distance_km, commute_distance_text = self.extract_commute_distance()
 
         return JobPosting(

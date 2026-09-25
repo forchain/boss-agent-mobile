@@ -9,6 +9,7 @@ from boss_agent.models import (
     APPLIED_SOURCE_AGENT,
     APPLIED_SOURCE_PLATFORM_HISTORICAL,
     EXPIRED_POSTING_REASON,
+    HEADHUNTER_COMMUTE_PROBE_SKIP_REASON,
     ChatButtonState,
     FilterConfig,
     JobRecordStatus,
@@ -271,18 +272,26 @@ class AutoApplyHandler(BaseTaskHandler):
 
         # Bottom-probe the commute widget only while the ceiling is active; otherwise
         # every inspection would pay swipe latency for a filter that cannot reject.
-        probe_commute_distance = policy.is_commute_filter_active
+        # A target already known to be a headhunter posting is exempt: the platform
+        # conceals the hiring enterprise there, so no distance widget is ever rendered.
+        probe_commute_distance = policy.should_probe_commute_distance(target_is_headhunter)
         if probe_commute_distance:
             await broker.append_log(
                 task.id,
                 f"📍 [App端强制过滤] Active ceiling {policy.max_commute_distance_km:.1f}km; "
                 f"probing detail page bottom for the distance widget.",
             )
+        elif policy.is_commute_filter_active:
+            await broker.append_log(
+                task.id,
+                f"📍 [App端强制过滤] '{target_title or '当前岗位'}' {HEADHUNTER_COMMUTE_PROBE_SKIP_REASON}",
+            )
 
         try:
             job_posting = detail_page.extract_job_posting(
                 timeout_sec=5.0,
                 probe_commute_distance=probe_commute_distance,
+                is_headhunter=target_is_headhunter,
             )
         except Exception as e:
             await broker.append_log(task.id, f"Could not extract current job posting: {e}")

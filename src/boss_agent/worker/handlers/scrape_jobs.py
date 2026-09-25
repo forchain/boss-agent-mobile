@@ -12,6 +12,7 @@ from boss_agent.broker.pocketbase_adapter import BaseTaskBroker
 from boss_agent.models import (
     APPLIED_SOURCE_PLATFORM_HISTORICAL,
     EXPIRED_POSTING_REASON,
+    HEADHUNTER_COMMUTE_PROBE_SKIP_REASON,
     INVALID_COMPANY_NAMES,
     STATE_RANK,
     TARGET_ACTION_RANK,
@@ -209,13 +210,14 @@ class ScrapeJobsHandler(BaseTaskHandler):
             ScreeningPolicy.from_dict(policy_raw) if policy_raw else ScreeningPolicy.load_default()
         )
         # Commute distance can only be read off the detail page bottom, so the probe is
-        # armed here and the verdict rendered once the posting has been extracted.
-        probe_commute_distance = policy.is_commute_filter_active
-        if probe_commute_distance:
+        # armed here and the verdict rendered once the posting has been extracted. Which
+        # cards are worth probing is decided per card, once its channel is known.
+        commute_filter_active = policy.is_commute_filter_active
+        if commute_filter_active:
             await broker.append_log(
                 task.id,
                 f"📍 [App端强制过滤] Active ceiling {policy.max_commute_distance_km:.1f}km; "
-                f"probing detail page bottom for the distance widget.",
+                f"probing detail page bottom for the distance widget (direct-hire postings only).",
             )
 
         cooldown_days = resolve_communication_cooldown_days(payload)
@@ -519,12 +521,27 @@ class ScrapeJobsHandler(BaseTaskHandler):
                         detail_page.navigate_back()
                         continue
 
+                    # Headhunter postings conceal the hiring enterprise, so the platform
+                    # renders no distance widget on their detail page: probing would spend
+                    # the swipe budget on a widget that cannot exist (ticket #255).
+                    card_is_headhunter = getattr(card, "is_headhunter", False)
+                    card_probe_commute_distance = policy.should_probe_commute_distance(
+                        card_is_headhunter
+                    )
+                    if commute_filter_active and not card_probe_commute_distance:
+                        await broker.append_log(
+                            task.id,
+                            f"📍 [App端强制过滤] '{card.title}' @ '{card.company_name}' "
+                            f"{HEADHUNTER_COMMUTE_PROBE_SKIP_REASON}",
+                        )
+
                     try:
                         job_posting = detail_page.extract_job_posting(
                             timeout_sec=4.0,
                             fallback_company=card.company_name,
                             fallback_title=card.title,
-                            probe_commute_distance=probe_commute_distance,
+                            probe_commute_distance=card_probe_commute_distance,
+                            is_headhunter=card_is_headhunter,
                         )
                         post_title = (job_posting.title or "").strip()
                         card_title = (card.title or "").strip()

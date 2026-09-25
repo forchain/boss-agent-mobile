@@ -105,6 +105,21 @@ def test_commute_filter_active_only_with_positive_ceiling():
     )
 
 
+def test_commute_probe_gated_on_channel_with_fail_open_unknown():
+    """Ticket #255: only a posting positively known to be a headhunter is spared the
+    probe — the platform renders no distance widget for those. An unknown channel must
+    still probe, so an unrecognised direct hire is never silently spared screening."""
+    active = ScreeningPolicy(max_commute_distance_km=40.0)
+    assert active.should_probe_commute_distance(is_headhunter=False) is True
+    assert active.should_probe_commute_distance(is_headhunter=None) is True
+    assert active.should_probe_commute_distance(is_headhunter=True) is False
+
+    # With no ceiling to enforce, nothing is probed whatever the channel.
+    inactive = ScreeningPolicy(max_commute_distance_km=None)
+    assert inactive.should_probe_commute_distance(is_headhunter=False) is False
+    assert inactive.should_probe_commute_distance(is_headhunter=True) is False
+
+
 def test_commute_violation_still_relaxable_by_whitelist():
     """Every App-Enforced Filter violation remains subject to Whitelist Relaxation."""
     policy = ScreeningPolicy(max_commute_distance_km=20.0, title_whitelist=["大模型"])

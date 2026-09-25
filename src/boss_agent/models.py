@@ -438,6 +438,11 @@ APPLIED_SOURCE_PLATFORM_HISTORICAL = "platform_historical"
 
 EXPIRED_POSTING_REASON = "岗位已失效/停止招聘"
 
+# Telemetry shared by both detail-inspecting handlers when a headhunter posting is
+# spared the bottom commute probe (ticket #255). Kept in one place so the two paths
+# cannot drift into reporting the skip differently.
+HEADHUNTER_COMMUTE_PROBE_SKIP_REASON = "猎头岗位（企业信息保密），跳过底部通勤距离探测以节省耗时"
+
 DEFAULT_COMMUNICATION_COOLDOWN_DAYS = 30
 
 
@@ -830,6 +835,18 @@ class ScreeningPolicy:
             and self.max_commute_distance_km is not None
             and self.max_commute_distance_km > 0
         )
+
+    def should_probe_commute_distance(self, is_headhunter: bool | None) -> bool:
+        """Whether this posting's detail page is worth probing for the distance widget.
+
+        Narrower than ``is_commute_filter_active`` because the probe only buys anything
+        for direct-hire postings: the platform conceals the hiring enterprise and its
+        office address for headhunter roles, so ``home_tip_vf`` is never rendered for
+        them and the scroll budget would be spent discovering that. An unknown channel
+        (``None``) still probes — an unrecognised direct hire must not be silently
+        spared distance screening.
+        """
+        return self.is_commute_filter_active and is_headhunter is not True
 
     def evaluate_commute_distance(self, commute_distance_km: float | None) -> tuple[bool, str]:
         """Evaluate the commute distance App-Enforced Filter on its own.

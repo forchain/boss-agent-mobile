@@ -225,6 +225,10 @@ _Avoid_: search mode, scrape level, crawl stage
 The coordinate targeting mechanism that taps the fixed inline ClickableSpan touch hotspot located in the bottom-right area of the job description text module (`tv_description`) to trigger full description expansion, bypassing Android accessibility node limitations without external coordinate configuration.
 _Avoid_: blind tap, ocr clicker, hardcoded absolute coordinates
 
+**Commute Distance Probe (`home_tip_vf`)**:
+The bottom-of-page scroll search for the distance widget (`home_tip_vf`) on a Job Detail Page, executed only while the commute ceiling is active and only for direct-hire postings. Headhunter postings conceal the hiring enterprise and its office address, so the platform never renders the tip for them: probing there spends swipe budget and element-discovery timeouts on a widget that cannot exist. A headhunter posting therefore keeps `commute_distance_km` at `None` and passes commute screening fail-open, exactly like any other unknown distance.
+_Avoid_: distance filter, geolocation check, address lookup
+
 
 **Job Lifecycle State**:
 The progression state of a Job Record tracking its data richness and application stage across mobile automation and backend manual actions (`ignored`, `jd_saved`, `matched`, `applied`; historical `digest_only` records map to `jd_saved`). The terminal `applied` state encompasses both Agent-Dispatched (`agent_auto_send`) greetings and Platform Historical Contacts (`platform_historical`); upon cool-down expiry or manual clearance, an `applied` record transitions back to `jd_saved` with its JD preserved for re-engagement.

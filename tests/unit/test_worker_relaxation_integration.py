@@ -501,6 +501,107 @@ async def test_auto_apply_skips_distance_probe_when_filter_disabled():
 
 
 @pytest.mark.asyncio
+async def test_auto_apply_headhunter_target_skips_distance_probe_and_proceeds():
+    """Ticket #255: a target known to be a headhunter posting gets no bottom probe,
+    and the fail-open distance keeps it eligible for the normal pipeline."""
+    broker = InMemoryTaskBroker()
+    context = WorkerContext(
+        config=WorkerConfig(worker_id="w-distance-apply-hh"), driver=_mock_driver()
+    )
+    handler = AutoApplyHandler(llm_client=_drafting_llm())
+
+    task = await broker.create_task(
+        task_type=TaskType.AUTO_APPLY,
+        payload={
+            "keyword": "大模型",
+            "preview_only": True,
+            "is_headhunter": True,
+            "screening_policy": {"max_commute_distance_km": 40.0},
+        },
+    )
+
+    with (
+        patch("boss_agent.worker.handlers.auto_apply.StartupDialogPage") as startup_cls,
+        patch("boss_agent.worker.handlers.auto_apply.JobListPage"),
+        patch("boss_agent.worker.handlers.auto_apply.SearchPage") as search_cls,
+        patch("boss_agent.worker.handlers.auto_apply.JobDetailPage") as detail_cls,
+        patch("boss_agent.worker.handlers.auto_apply.ChatPage"),
+    ):
+        startup_cls.return_value.is_dialog_present.return_value = False
+        search_cls.return_value.is_search_page.return_value = True
+        search_cls.return_value.search.return_value = True
+        detail_cls.return_value.extract_job_posting.return_value = _commute_posting(
+            None, recruiter_name="钟先生 · 猎头顾问", is_headhunter=True
+        )
+
+        result = await handler.handle(task, broker, context)
+
+    assert result.success is True
+    probe_kwargs = detail_cls.return_value.extract_job_posting.call_args.kwargs
+    assert probe_kwargs["probe_commute_distance"] is False
+    assert probe_kwargs["is_headhunter"] is True
+
+    records = await broker.list_job_records()
+    rec = next(r for r in records if r.get("title") == "大模型 Agent 平台架构师")
+    assert rec["status"] == "matched"
+    assert rec["commute_distance_km"] is None
+
+    finished = await broker.get_task(task.id)
+    assert any("猎头岗位（企业信息保密），跳过底部通勤距离探测" in log for log in finished.logs)
+
+
+@pytest.mark.asyncio
+async def test_scrape_jobs_headhunter_card_skips_distance_probe_and_fails_open():
+    """Ticket #255: a headhunter card must never pay the bottom-probe cost, and the
+    unknown distance it leaves behind must fail open rather than reject the job."""
+    broker = InMemoryTaskBroker()
+    context = WorkerContext(
+        config=WorkerConfig(worker_id="w-distance-scrape-hh"), driver=_mock_driver()
+    )
+    handler = ScrapeJobsHandler()
+    card, _card_elem = _scrape_card(recruiter_name="钟先生 · 猎头顾问")
+    assert card.is_headhunter is True
+
+    task = await broker.create_task(
+        task_type=TaskType.SCRAPE_JOBS,
+        payload={
+            "keyword": "大模型",
+            "max_jobs": 5,
+            "screening_policy": {"max_commute_distance_km": 40.0},
+        },
+    )
+
+    with (
+        patch("boss_agent.worker.handlers.scrape_jobs.StartupDialogPage") as startup_cls,
+        patch("boss_agent.worker.handlers.scrape_jobs.JobListPage") as list_cls,
+        patch("boss_agent.worker.handlers.scrape_jobs.SearchPage") as search_cls,
+        patch("boss_agent.worker.handlers.scrape_jobs.JobDetailPage") as detail_cls,
+    ):
+        startup_cls.return_value.is_dialog_present.return_value = False
+        list_cls.return_value.extract_visible_job_cards.return_value = [card]
+        search_cls.return_value.is_search_page.return_value = True
+        detail_cls.return_value.extract_job_posting.return_value = _commute_posting(
+            None, recruiter_name="钟先生 · 猎头顾问", is_headhunter=True
+        )
+
+        result = await handler.handle(task, broker, context)
+
+    assert result.success is True
+    probe_kwargs = detail_cls.return_value.extract_job_posting.call_args.kwargs
+    assert probe_kwargs["probe_commute_distance"] is False
+    assert probe_kwargs["is_headhunter"] is True
+
+    records = await broker.list_job_records()
+    rec = next(r for r in records if r.get("title") == "大模型 Agent 平台架构师")
+    assert rec["status"] == "jd_saved"
+    assert rec["commute_distance_km"] is None
+    assert result.output["scraped_count"] == 1
+
+    finished = await broker.get_task(task.id)
+    assert any("猎头岗位（企业信息保密），跳过底部通勤距离探测" in log for log in finished.logs)
+
+
+@pytest.mark.asyncio
 async def test_scrape_jobs_distant_job_is_ingested_as_ignored():
     """A distant job is persisted as ignored instead of jd_saved/unmatched."""
     broker = InMemoryTaskBroker()
