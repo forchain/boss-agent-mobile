@@ -16,6 +16,7 @@ import time
 from pathlib import Path
 
 import pytest
+
 from _service_harness import REPO_ROOT, free_port, is_port_free, wait_for_port_bound
 
 WEB_SH = REPO_ROOT / "web.sh"

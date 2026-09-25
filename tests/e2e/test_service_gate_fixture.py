@@ -1,13 +1,16 @@
 """
-tests/unit/test_e2e_gate_fixture.py
-===================================
-Verifies the E2E pre-test teardown gate wiring in `tests/e2e/conftest.py`
-(spec #218, ticket #222).
+tests/e2e/test_service_gate_fixture.py
+======================================
+Verifies the opt-in E2E pre-test teardown gate wiring in `tests/e2e/conftest.py`
+(spec #218 ticket #222; revised by spec #247 tickets #249/#250).
 
 Each scenario assembles a throwaway repository root (a copy of `web.sh`, the real conftest,
 and a dummy test module) and runs a nested pytest session against it. The gate inside that
 session therefore manages the temporary `.boss_agent` runtime directory only, never the
 services used by other worktrees.
+
+The scenarios spawn nested pytest sessions and real daemons, which is why they live in the
+E2E tier (spec #247, ticket #249).
 """
 
 import shutil
@@ -16,6 +19,7 @@ import sys
 from pathlib import Path
 
 import pytest
+
 from _service_harness import (
     REPO_ROOT,
     free_port,
@@ -28,8 +32,10 @@ from _service_harness import (
     spawn as spawn,  # noqa: PLC0414 - re-exported so pytest discovers the fixture
 )
 
+pytestmark = pytest.mark.e2e
+
 CONFTEST_SOURCE = REPO_ROOT / "tests" / "e2e" / "conftest.py"
-SKIP_ENV_VAR = "BOSS_AGENT_SKIP_SERVICE_GATE"
+ENFORCE_ENV_VAR = "BOSS_AGENT_ENFORCE_TEARDOWN"
 INNER_TIMEOUT_SEC = 120.0
 
 SILENT_WORKER_STUB = """
@@ -65,8 +71,8 @@ def e2e_project(tmp_path: Path) -> Path:
 
 
 def _inner_env(**overrides: str) -> dict[str, str]:
-    """Child environment with any inherited skip flag removed, so the gate really runs."""
-    return subprocess_env(strip=[SKIP_ENV_VAR], **overrides)
+    """Child environment with any inherited opt-in removed, so each scenario decides."""
+    return subprocess_env(strip=[ENFORCE_ENV_VAR], **overrides)
 
 
 def _run_inner_pytest(project: Path, env: dict[str, str]) -> subprocess.CompletedProcess:
@@ -114,8 +120,27 @@ def _spawn_real_worker(spawn, project: Path) -> subprocess.Popen:
     return process
 
 
+def _spawn_silent_worker(spawn, project: Path) -> subprocess.Popen:
+    """Leave a residual worker stub in `project`: exits on SIGTERM, says nothing about it.
+
+    The PID file is written the way `run.sh` writes it, so the gate treats the stub as a
+    residual service — one that cannot account for its shutdown, which is the point.
+    """
+    log_file = project / ".boss_agent" / "worker.log"
+    log_handle = open(log_file, "ab")  # noqa: SIM115 - kept open for the process lifetime
+    stub = spawn(
+        [sys.executable, "-c", SILENT_WORKER_STUB, str(log_file)],
+        stdout=log_handle,
+        stderr=subprocess.STDOUT,
+        env=_inner_env(),
+    )
+    (project / ".boss_agent" / "worker.pid").write_text(str(stub.pid), encoding="utf-8")
+    wait_for_log(log_file, "worker loop started")
+    return stub
+
+
 def test_gate_stops_residual_services_before_e2e_tests(e2e_project: Path, spawn):
-    """Verify the session fixture stops a residual Worker and Web Dashboard, then runs the suite."""
+    """Verify the opted-in gate stops a residual Worker and Web Dashboard, then runs the suite."""
     worker = _spawn_real_worker(spawn, e2e_project)
     web_port = free_port()
     web = spawn(
@@ -125,7 +150,9 @@ def test_gate_stops_residual_services_before_e2e_tests(e2e_project: Path, spawn)
     wait_for_port_bound(web_port)
     (e2e_project / ".boss_agent" / "web.pid").write_text(str(web.pid), encoding="utf-8")
 
-    result = _run_inner_pytest(e2e_project, _inner_env(WEB_PORT=str(web_port)))
+    result = _run_inner_pytest(
+        e2e_project, _inner_env(WEB_PORT=str(web_port), **{ENFORCE_ENV_VAR: "1"})
+    )
 
     assert result.returncode == 0, f"nested e2e run failed:\n{result.stdout}\n{result.stderr}"
     assert worker.poll() is not None, "residual Automation Worker survived the gate"
@@ -139,39 +166,27 @@ def test_gate_stops_residual_services_before_e2e_tests(e2e_project: Path, spawn)
 
 def test_gate_aborts_session_when_shutdown_cannot_be_verified(e2e_project: Path, spawn):
     """Verify a worker that exits without shutdown feedback fails the suite loudly."""
-    log_file = e2e_project / ".boss_agent" / "worker.log"
-    log_handle = open(log_file, "ab")  # noqa: SIM115 - kept open for the process lifetime
-    stub = spawn(
-        [sys.executable, "-c", SILENT_WORKER_STUB, str(log_file)],
-        stdout=log_handle,
-        stderr=subprocess.STDOUT,
-        env=_inner_env(),
-    )
-    (e2e_project / ".boss_agent" / "worker.pid").write_text(str(stub.pid), encoding="utf-8")
-    wait_for_log(log_file, "worker loop started")
+    stub = _spawn_silent_worker(spawn, e2e_project)
 
-    result = _run_inner_pytest(e2e_project, _inner_env())
+    result = _run_inner_pytest(e2e_project, _inner_env(**{ENFORCE_ENV_VAR: "1"}))
 
     assert result.returncode != 0, f"gate did not block the run:\n{result.stdout}"
     assert "teardown gate" in result.stdout.lower(), result.stdout
     assert stub.poll() is not None, "silent worker was left running"
 
 
-def test_gate_can_be_skipped_explicitly(e2e_project: Path, spawn):
-    """Verify the documented escape hatch leaves residual services untouched."""
-    log_file = e2e_project / ".boss_agent" / "worker.log"
-    log_handle = open(log_file, "ab")  # noqa: SIM115 - kept open for the process lifetime
-    stub = spawn(
-        [sys.executable, "-c", SILENT_WORKER_STUB, str(log_file)],
-        stdout=log_handle,
-        stderr=subprocess.STDOUT,
-        env=_inner_env(),
-    )
-    (e2e_project / ".boss_agent" / "worker.pid").write_text(str(stub.pid), encoding="utf-8")
-    wait_for_log(log_file, "worker loop started")
+def test_gate_stays_dormant_unless_opted_in(e2e_project: Path, spawn):
+    """Verify an E2E run leaves residual services untouched without the opt-in.
 
-    result = _run_inner_pytest(e2e_project, _inner_env(**{SKIP_ENV_VAR: "1"}))
+    This is the isolation contract: another worktree's Automation Worker (or this one's Web
+    Dashboard) must survive a routine `pytest tests/e2e`.
+    """
+    stub = _spawn_silent_worker(spawn, e2e_project)
+    pid_file = e2e_project / ".boss_agent" / "worker.pid"
+
+    result = _run_inner_pytest(e2e_project, _inner_env())
 
     assert result.returncode == 0, f"nested run failed:\n{result.stdout}\n{result.stderr}"
-    assert stub.poll() is None, "escape hatch must leave residual services running"
-    assert SKIP_ENV_VAR in result.stdout, result.stdout
+    assert stub.poll() is None, "an E2E run must not stop a service nobody asked it to stop"
+    assert "teardown gate" not in result.stdout.lower(), result.stdout
+    assert pid_file.exists(), "a dormant gate must not touch the runtime directory"

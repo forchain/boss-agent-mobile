@@ -150,7 +150,15 @@ class AutomationWorker:
         """Evaluate task outcome, log completion status and update state in broker."""
         duration = time.monotonic() - start_time
         cur = await self.broker.get_task(task.id)
-        if cur and cur.status == TaskStatus.CANCELLED:
+        if cur is None:
+            logger.warning(
+                "⚠️ Task %s record no longer exists (purged during execution?); "
+                "outcome update skipped (%.2fs)",
+                task.id,
+                duration,
+            )
+            return
+        if cur.status == TaskStatus.CANCELLED:
             logger.info(
                 "⚠️ Task %s was cancelled during execution (%.2fs); preserving CANCELLED status",
                 task.id,
@@ -211,7 +219,15 @@ class AutomationWorker:
         except Exception as e:
             duration = time.monotonic() - start_time
             cur = await self.broker.get_task(claimed_task.id)
-            if cur and cur.status == TaskStatus.CANCELLED:
+            if cur is None:
+                logger.warning(
+                    "⚠️ Task %s record no longer exists; uncaught exception not "
+                    "persisted: %s (%.2fs)",
+                    claimed_task.id,
+                    e,
+                    duration,
+                )
+            elif cur.status == TaskStatus.CANCELLED:
                 logger.info(
                     "⚠️ Task %s was cancelled, ignoring exception: %s (%.2fs)",
                     claimed_task.id,

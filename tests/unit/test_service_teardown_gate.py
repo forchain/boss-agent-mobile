@@ -19,6 +19,7 @@ import time
 from pathlib import Path
 
 import pytest
+
 from _service_harness import (
     free_port,
     is_alive,
@@ -30,7 +31,6 @@ from _service_harness import (
 from _service_harness import (
     spawn as spawn,  # noqa: PLC0414 - re-exported so pytest discovers the fixture
 )
-
 from boss_agent.services.teardown import ServiceTeardownGate, TeardownGateError
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent

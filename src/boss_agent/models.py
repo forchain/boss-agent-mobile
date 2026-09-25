@@ -272,6 +272,27 @@ def sanitize_tags(
     return cleaned
 
 
+_CN_JD_HEADER_WORDS = (
+    "岗位职责|工作职责|职位描述|任职要求|任职资格|加分项|基本要求|必须要求|关于我们|公司介绍|加分条件|薪酬福利"
+)
+_EN_JD_HEADER_WORDS = (
+    r"role summary|role overview|job summary|job description|responsibilit(?:y|ies)|"
+    r"requirement(?:s)?|qualification(?:s)?|preferred (?:qualifications|requirements)|"
+    r"skills|about (?:us|the (?:company|team|role|job))|benefits|compensation|perks"
+)
+_JD_HEADER_ANNOTATION = r"(?:\s*[【\[(（][^】\]）]*[】\]）])?"
+_JD_HEADER_STANDALONE_RE = re.compile(
+    rf"^\s*[【\[(（]?\s*(?:{_CN_JD_HEADER_WORDS}|{_EN_JD_HEADER_WORDS})\s*[】\]）]?"
+    rf"{_JD_HEADER_ANNOTATION}\s*[:：]?\s*[；;，,。.]?\s*$",
+    re.IGNORECASE,
+)
+_JD_HEADER_PREFIX_RE = re.compile(
+    rf"^[【\[(（]\s*(?:{_CN_JD_HEADER_WORDS}|{_EN_JD_HEADER_WORDS})\s*[】\]）]{_JD_HEADER_ANNOTATION}?"
+    rf"\s*[:：]?\s*[；;，,。.]?\s*",
+    re.IGNORECASE,
+)
+
+
 def extract_digest_from_jd(jd: str, max_chars: int = 100) -> str:
     """Extract a concise 1-2 sentence digest from raw job description text."""
     if not jd or not jd.strip():
@@ -280,24 +301,21 @@ def extract_digest_from_jd(jd: str, max_chars: int = 100) -> str:
     substantive: list[str] = []
     for line in lines:
         stripped = re.sub(r"^[0-9一二三四五六七八九十、.·•*\s\-]+", "", line).strip()
-        if (
-            not stripped
-            or len(stripped) < 5
-            or re.match(
-                r"^(?:岗位职责|工作职责|职位描述|任职要求|任职资格|加分项|基本要求|必须要求|关于我们|公司介绍|加分条件|薪酬福利)[:：]?$",
-                stripped,
-            )
-            or re.match(
-                r"^【(?:岗位职责|工作职责|职位描述|任职要求|任职资格|加分项|关于我们)】$", stripped
-            )
-        ):
+        stripped = _JD_HEADER_PREFIX_RE.sub("", stripped, count=1).strip()
+        if not stripped or len(stripped) < 5 or _JD_HEADER_STANDALONE_RE.match(stripped):
             continue
         substantive.append(stripped)
         if len("；".join(substantive)) >= 35:
             break
     res = "；".join(substantive) if substantive else (lines[0] if lines else "")
     if len(res) > max_chars:
-        res = re.sub(r"[，；、\s]+$", "", res[:max_chars]) + "..."
+        cut = res[:max_chars]
+        # Never end on a half-cut Latin word: fall back to the last full word boundary.
+        if cut[-1:].isascii() and cut[-1:].isalpha():
+            boundary = cut.rfind(" ")
+            if boundary > max_chars // 2:
+                cut = cut[:boundary]
+        res = re.sub(r"[，；、\s.]+$", "", cut) + "..."
     return res
 
 

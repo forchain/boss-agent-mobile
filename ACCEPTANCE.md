@@ -145,7 +145,11 @@ Each acceptance criterion is defined with Gherkin semantics and an exact verific
   4. The agent gracefully navigates back to the list.
 - **Verification Command**:
   ```bash
-  pytest tests/e2e/test_smoke_job_extraction.py
+  # Live device run — the Given above: boots the app and parses a real job detail
+  uv run python scripts/run_live_test.py
+
+  # Fast-tier contract check for the same parsing path (mocked driver, no device)
+  pytest tests/unit/test_smoke_harness_extraction.py
   ```
 
 ---
@@ -164,6 +168,7 @@ Each acceptance criterion is defined with Gherkin semantics and an exact verific
 | `ANOM-005` | 2026-09-21 | App Lifecycle / Recovery | A blind hardware Back press during search recovery can leave the Boss app (e.g. to `com.android.launcher`), where no anchor exists and the loop would spin to its cap. | `JobListPage._ensure_foreground()` re-activates `com.hpbr.bosszhipin` whenever the driver reports a different foreground package before pressing Back. | `RESOLVED` |
 | `ANOM-006` | 2026-09-21 | PocketBase / Schema Provisioning | Adding columns to `job_records` (`applied_at`, `applied_source`) via `./pocketbase.sh provision` wrote the new schema to SQLite, but the already-running PocketBase server kept serving its cached collection definition: API responses omitted the new fields and PATCH payloads for them were silently discarded (HTTP 200, no error). | Restart PocketBase after provisioning (`./pocketbase.sh stop && ./pocketbase.sh start --daemon`, or Ctrl-C and re-run the foreground process) so the collection schema is re-read. Provisioning alone is not sufficient while the server is live. | `KNOWN` |
 | `ANOM-007` | 2026-09-22 | Service Shutdown / POSIX Process State | A terminated but unreaped process (a zombie) still answers `kill(pid, 0)` and is still listed by `ps -p <pid>`, so a naive liveness check treats a dead service as running. Observed while stopping a Web Dashboard whose parent was blocked: `./web.sh stop` waited out the full graceful timeout (5.13s with a 2s timeout, and 20s+ under the E2E gate) before escalating, and the Worker gate misreported a defunct PID. | Both `web.sh` (`process_alive()`) and the teardown gate (`ServiceTeardownGate._is_alive()`) now consult `ps -p <pid> -o stat=` and treat a `Z*` state as terminated, so defunct PIDs neither stall a synchronous stop nor masquerade as a running dashboard. | `RESOLVED` |
+| `ANOM-008` | 2026-09-24 | AVD Runner / ADB Transport | `emulator.sh` and the `run.sh` worker pre-flight gate resolved the running device serial with unbounded `adb devices` / `adb -s <serial> emu avd name` / `adb shell getprop` calls. A device left in `offline` state (stale network sessions on the ADB port, e.g. `127.0.0.1:6555 offline`) makes those queries block indefinitely: `./emulator.sh status` and `./run.sh` never returned, and each invocation leaked a hung `adb` client process holding the wedged transport. | `emulator.sh` now routes every adb query through `bounded_run` (SIGTERM at `ADB_QUERY_TIMEOUT_SEC`, default 2s, SIGKILL 0.5s later, exit 124 on a bound), skips devices not in the `device` state, and probes every remaining candidate so a healthy device behind unresponsive siblings is still found. `run.sh` delegates its AVD gate to `./emulator.sh status` instead of re-running the scan, so it inherits the bound. `status` returns in <1s against a genuinely offline device. Guarded by `tests/unit/test_emulator_timeout_resilience.py` and `tests/unit/test_run_sh_avd_gate.py` (fake `adb`, no `live` marker). | `RESOLVED` |
 
 ---
 
@@ -216,4 +221,4 @@ flowchart LR
 | **AC-1** | Idempotent Environment Provisioner | `VERIFIED` | Test Suite & CLI | `tests/unit/test_bootstrap_provisioner.py`, `scripts/bootstrap.py --check` |
 | **AC-2** | Framework Independence (`droid_agent_core`) | `VERIFIED` | Test Suite & AST | `tests/unit/test_framework_isolation.py`, `tests/unit/test_gestures_and_locators.py` |
 | **AC-3** | App Lifecycle & Safety Takeover | `VERIFIED` | Test Suite | `tests/unit/test_lifecycle_and_takeover.py` |
-| **AC-4** | End-to-End Job Detail Extraction Smoke Test | `VERIFIED` | E2E Harness | `tests/e2e/test_smoke_job_extraction.py` |
+| **AC-4** | End-to-End Job Detail Extraction Smoke Test | `VERIFIED` | Smoke Harness | `scripts/run_live_test.py` (device), `tests/unit/test_smoke_harness_extraction.py` (parsing contract) |
