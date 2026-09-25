@@ -7,7 +7,11 @@
 #
 # Usage:
 #   ./web.sh
+#   ./web.sh start
+#   ./web.sh start --daemon
 #   ./web.sh stop
+#   ./web.sh restart
+#   ./web.sh restart --daemon
 #   ./web.sh status
 #   POCKETBASE_URL=http://192.168.1.100:8090 ./web.sh
 # ==============================================================================
@@ -283,6 +287,13 @@ cmd_start() {
     tail -n 0 -f "${LOG_FILE}"
 }
 
+cmd_restart() {
+    echo "🔄 Restarting SvelteKit Web Dashboard..."
+    cmd_stop || true
+    sleep 0.5
+    cmd_start "$@"
+}
+
 ACTION="${1:-start}"
 case "${ACTION}" in
     start)
@@ -291,6 +302,10 @@ case "${ACTION}" in
         ;;
     stop)
         cmd_stop
+        ;;
+    restart)
+        shift || true
+        cmd_restart "$@"
         ;;
     status)
         cmd_status

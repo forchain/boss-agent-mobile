@@ -1,23 +1,30 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Boss Agent Mobile - Unified Master Runner & Service Router
+# Boss Agent Mobile - Unified Master Runner & Service Orchestrator
 # ==============================================================================
-# Master entrypoint for running the automation worker (default) or dispatching
-# to any subsystem (web, pb, emu, doctor, live).
+# Master orchestration entrypoint for managing infrastructure and application
+# services, or delegating directly to dedicated subsystem runners.
 #
 # Usage:
-#   ./run.sh                              # Start Worker daemon (default, with PB & AVD pre-flight gates)
-#   ./run.sh worker                       # Start Worker daemon or attach to logs
-#   ./run.sh stop                         # Stop background Worker daemon (or: ./run.sh worker stop)
-#   ./run.sh status                       # Check Worker status (or: ./run.sh worker status)
-#   ./run.sh web                          # Start SvelteKit Web dashboard (./web.sh)
-#   ./run.sh pb                           # Manage/Start PocketBase (./pb.sh)
-#   ./run.sh pocketbase                   # Manage/Start PocketBase (./pb.sh)
-#   ./run.sh emu                          # Manage/Start Dedicated Android AVD (./emulator.sh)
-#   ./run.sh emulator                     # Manage/Start Dedicated Android AVD (./emulator.sh)
-#   ./run.sh doctor                       # Run system diagnostic health check (./doctor.sh)
-#   ./run.sh live [args...]               # Run live mobile test harness
-#   ./run.sh --keyword "AI"               # Run live mobile test harness with flags
+#   ./run.sh                              # Start application services (worker + web)
+#   ./run.sh start                        # Start application services (worker + web)
+#   ./run.sh restart                      # Restart application services (worker + web)
+#   ./run.sh stop                         # Stop application services (worker + web)
+#   ./run.sh status                       # Service status dashboard (infra + app)
+#
+# Service Group Orchestration:
+#   ./run.sh app [start|stop|restart|status]   # Manage application layer (worker + web)
+#   ./run.sh infra [start|stop|restart|status] # Manage infrastructure (pb + emu + appium)
+#   ./run.sh all [start|stop|restart|status]   # Manage full stack (infra + app)
+#
+# Single Service Routing:
+#   ./run.sh worker [args...]             # Dedicated Automation Worker (./worker.sh)
+#   ./run.sh web [args...]                # SvelteKit Web Dashboard (./web.sh)
+#   ./run.sh pb [args...]                 # PocketBase State Stream (./pb.sh)
+#   ./run.sh emu [args...]                # Dedicated Android AVD (./emulator.sh)
+#   ./run.sh appium [args...]             # Appium Server (./appium.sh)
+#   ./run.sh doctor [args...]             # Diagnostic Health Check (./doctor.sh)
+#   ./run.sh live [args...]               # Live Mobile Test Harness
 # ==============================================================================
 
 set -euo pipefail
@@ -37,9 +44,161 @@ else
     exit 1
 fi
 
-# Subcommand dispatch (if matched, delegate directly)
+show_help() {
+    cat << 'EOF'
+Boss Agent Mobile - Unified Master Runner & Service Orchestrator
+
+Usage:
+  ./run.sh [command] [action] [options]
+
+Default Actions (operates on Application services: worker + web):
+  ./run.sh                            Start application services
+  ./run.sh start                      Start application services
+  ./run.sh stop                       Stop application services
+  ./run.sh restart                    Restart application services
+  ./run.sh status                     Show overall system status dashboard
+
+Service Group Orchestration:
+  ./run.sh app [action]               Manage application services (worker, web)
+  ./run.sh infra [action]             Manage infrastructure (pb, emulator, appium)
+  ./run.sh all [action]               Manage all services (infra + app)
+
+Single Service Delegation:
+  ./run.sh worker [action]            Manage Automation Worker (./worker.sh)
+  ./run.sh web [action]               Manage Web Dashboard (./web.sh)
+  ./run.sh pb [action]                Manage PocketBase (./pb.sh)
+  ./run.sh emu [action]               Manage Android Emulator (./emulator.sh)
+  ./run.sh appium [action]            Manage Appium Server (./appium.sh)
+  ./run.sh doctor                     Run system diagnostic check (./doctor.sh)
+  ./run.sh live [args...]             Run live mobile test harness
+
+Examples:
+  ./run.sh restart                    Restart worker + web to test current worktree
+  ./run.sh infra start                Start PocketBase, Emulator, and Appium in background
+  ./run.sh app status                 Check status of worker and web
+  ./run.sh live --keyword "AI"        Run live harness with test arguments
+EOF
+}
+
+cmd_app() {
+    local ACTION="${1:-start}"
+    shift || true
+    case "${ACTION}" in
+        start)
+            echo "🚀 Starting Application Services (Worker + Web Dashboard)..."
+            ./worker.sh start --daemon "$@"
+            ./web.sh start --daemon "$@"
+            echo "✅ Application services started in background."
+            echo "   Worker Logs: .boss_agent/worker.log"
+            echo "   Web Logs   : .boss_agent/web.log"
+            ;;
+        stop)
+            echo "🛑 Stopping Application Services..."
+            ./worker.sh stop
+            ./web.sh stop
+            ;;
+        restart)
+            echo "🔄 Restarting Application Services..."
+            ./worker.sh stop || true
+            ./web.sh stop || true
+            sleep 0.5
+            ./worker.sh start --daemon "$@"
+            ./web.sh start --daemon "$@"
+            echo "✅ Application services restarted in background."
+            echo "   Worker Logs: .boss_agent/worker.log"
+            echo "   Web Logs   : .boss_agent/web.log"
+            ;;
+        status)
+            echo "📊 Application Services Status:"
+            ./worker.sh status || true
+            ./web.sh status || true
+            ;;
+        *)
+            echo "❌ Unknown app action: ${ACTION}. Valid actions: start, stop, restart, status" >&2
+            return 1
+            ;;
+    esac
+}
+
+cmd_infra() {
+    local ACTION="${1:-start}"
+    shift || true
+    case "${ACTION}" in
+        start)
+            echo "🚀 Starting Infrastructure Services (PocketBase + Emulator + Appium)..."
+            ./pb.sh start --daemon "$@"
+            ./emulator.sh start
+            ./appium.sh start --daemon "$@"
+            echo "✅ Infrastructure services started."
+            ;;
+        stop)
+            echo "🛑 Stopping Infrastructure Services..."
+            ./appium.sh stop || true
+            ./emulator.sh stop || true
+            ./pb.sh stop || true
+            echo "✅ Infrastructure services stopped."
+            ;;
+        restart)
+            echo "🔄 Restarting Infrastructure Services..."
+            ./appium.sh stop || true
+            ./emulator.sh stop || true
+            ./pb.sh stop || true
+            sleep 0.5
+            ./pb.sh start --daemon "$@"
+            ./emulator.sh start
+            ./appium.sh start --daemon "$@"
+            echo "✅ Infrastructure services restarted."
+            ;;
+        status)
+            echo "📊 Infrastructure Services Status:"
+            ./pb.sh status || true
+            ./emulator.sh status || true
+            ./appium.sh status || true
+            ;;
+        *)
+            echo "❌ Unknown infra action: ${ACTION}. Valid actions: start, stop, restart, status" >&2
+            return 1
+            ;;
+    esac
+}
+
+cmd_all() {
+    local ACTION="${1:-start}"
+    shift || true
+    case "${ACTION}" in
+        start)
+            cmd_infra start "$@"
+            cmd_app start "$@"
+            ;;
+        stop)
+            cmd_app stop
+            cmd_infra stop
+            ;;
+        restart)
+            cmd_app stop
+            cmd_infra restart "$@"
+            cmd_app start "$@"
+            ;;
+        status)
+            cmd_infra status
+            echo ""
+            cmd_app status
+            ;;
+        *)
+            echo "❌ Unknown all action: ${ACTION}. Valid actions: start, stop, restart, status" >&2
+            return 1
+            ;;
+    esac
+}
+
 SUBCOMMAND="${1:-}"
+
 case "${SUBCOMMAND}" in
+    # Single Service Delegation
+    worker|wk)
+        shift
+        exec ./worker.sh "$@"
+        ;;
     web|svelte)
         shift
         exec ./web.sh "$@"
@@ -53,201 +212,73 @@ case "${SUBCOMMAND}" in
         exec ./emulator.sh "$@"
         ;;
     appium|app)
-        shift
-        exec ./appium.sh "$@"
+        # Distinguish between 'appium' runner and 'app' service group
+        if [[ "${SUBCOMMAND}" == "appium" ]]; then
+            shift
+            exec ./appium.sh "$@"
+        else
+            # 'app' can be appium if next arg is missing and no action, or app service group
+            # Canonical: 'appium' for appium server, 'app' for application service group
+            shift
+            cmd_app "$@"
+        fi
         ;;
     doctor|check)
         shift
         exec ./doctor.sh "$@"
         ;;
-esac
+    live)
+        shift
+        exec "${RUNNER[@]}" scripts/run_live_test.py "$@"
+        ;;
 
-# ------------------------------------------------------------------------------
-# Worker Management Helpers
-# ------------------------------------------------------------------------------
-WORKER_PID_FILE=".boss_agent/worker.pid"
-WORKER_LOG_FILE=".boss_agent/worker.log"
+    # Group Orchestration
+    apps)
+        shift
+        cmd_app "$@"
+        ;;
+    infra|base)
+        shift
+        cmd_infra "$@"
+        ;;
+    all)
+        shift
+        cmd_all "$@"
+        ;;
 
-get_running_worker_pid() {
-    if [[ -f "${WORKER_PID_FILE}" ]]; then
-        local PID
-        PID="$(cat "${WORKER_PID_FILE}" 2>/dev/null || true)"
-        if [[ -n "${PID}" ]] && ps -p "${PID}" >/dev/null 2>&1; then
-            echo "${PID}"
-            return 0
-        fi
-    fi
-
-    local FOUND_PID
-    FOUND_PID="$(pgrep -f "scripts/worker.py" 2>/dev/null | head -n 1 || true)"
-    if [[ -n "${FOUND_PID}" ]]; then
-        echo "${FOUND_PID}" > "${WORKER_PID_FILE}"
-        echo "${FOUND_PID}"
-        return 0
-    fi
-    echo ""
-}
-
-attach_worker_logs() {
-    local PID="$1"
-    echo "ℹ️ Automation Worker Daemon is already running (PID: ${PID})."
-    echo "👀 Attaching to live log stream (${WORKER_LOG_FILE})... (Press Ctrl+C to detach)"
-    echo "----------------------------------------------------------------------"
-
-    trap 'echo -e "\n👋 Detached from Worker logs (Worker daemon is still running in background)."; exit 0' INT TERM
-
-    if [[ ! -f "${WORKER_LOG_FILE}" ]]; then
-        touch "${WORKER_LOG_FILE}"
-    fi
-
-    exec tail -n 30 -f "${WORKER_LOG_FILE}"
-}
-
-# Handle worker subcommands: stop / status
-if [[ ("${SUBCOMMAND}" == "worker" && "${2:-}" == "stop") || "${SUBCOMMAND}" == "stop" ]]; then
-    PID="$(get_running_worker_pid)"
-    if [[ -n "${PID}" ]]; then
-        kill "${PID}" 2>/dev/null || true
-        pkill -P "${PID}" 2>/dev/null || true
-        pkill -f "scripts/worker.py" 2>/dev/null || true
-        rm -f "${WORKER_PID_FILE}"
-        echo "✅ Automation Worker daemon stopped (PID: ${PID})."
-    else
-        pkill -f "scripts/worker.py" 2>/dev/null || true
-        rm -f "${WORKER_PID_FILE}"
-        echo "ℹ️ No running Worker daemon found."
-    fi
-    exit 0
-fi
-
-if [[ ("${SUBCOMMAND}" == "worker" && "${2:-}" == "status") || "${SUBCOMMAND}" == "status" ]]; then
-    PID="$(get_running_worker_pid)"
-    if [[ -n "${PID}" ]]; then
-        echo "🟢 Automation Worker daemon is RUNNING (PID: ${PID})."
-        echo "   Log File: ${WORKER_LOG_FILE}"
-        exit 0
-    else
-        echo "🔴 Automation Worker daemon is NOT RUNNING."
-        exit 1
-    fi
-fi
-
-# ------------------------------------------------------------------------------
-# Pre-Flight Verification Gates (Required for Worker and Live Harness)
-# ------------------------------------------------------------------------------
-
-# 1. Resolve and check PocketBase health
-if [[ -z "${POCKETBASE_URL:-}" && -f "config/settings.local.yaml" ]]; then
-    POCKETBASE_URL="$(grep -E "^[[:space:]]*(pocketbase_url|pb_url):" config/settings.local.yaml 2>/dev/null | awk '{print $2}' | tr -d '"' | tr -d "'" || true)"
-fi
-if [[ -z "${POCKETBASE_URL:-}" && -f "config/settings.yaml" ]]; then
-    POCKETBASE_URL="$(grep -E "^[[:space:]]*(pocketbase_url|pb_url):" config/settings.yaml 2>/dev/null | awk '{print $2}' | tr -d '"' | tr -d "'" || true)"
-fi
-POCKETBASE_URL="${POCKETBASE_URL:-http://127.0.0.1:8090}"
-check_pocketbase_health() {
-    local HEALTH_URL="${POCKETBASE_URL%/}/api/health"
-
-    if ! curl -s -f "${HEALTH_URL}" >/dev/null 2>&1; then
-        echo "❌ Error: PocketBase State Stream is not reachable at ${HEALTH_URL}" >&2
-        echo "" >&2
-        echo "💡 PocketBase State Stream broker must be running first:" >&2
-        echo "   - Local PocketBase: run './pb.sh' or './run.sh pb' in another terminal" >&2
-        echo "   - Remote PocketBase: export POCKETBASE_URL=\"http://<remote-ip>:<port>\"" >&2
-        echo "" >&2
-        exit 1
-    fi
-}
-
-# 2. Resolve and check dedicated Android AVD status
-TARGET_AVD="${ANDROID_AVD:-${AVD_NAME:-}}"
-if [[ -z "${TARGET_AVD}" && -f "config/settings.local.yaml" ]]; then
-    TARGET_AVD="$(grep -E "^[[:space:]]*avd_name:" config/settings.local.yaml 2>/dev/null | awk '{print $2}' | tr -d '"' | tr -d "'" || true)"
-fi
-TARGET_AVD="${TARGET_AVD:-boss_avd_arm64}"
-
-check_dedicated_avd_ready() {
-    # `emulator.sh status` is the single source of truth for "online and booted", and every
-    # adb query behind it is bounded (spec #241), so a device stuck `offline` can no longer
-    # freeze the worker pre-flight gate the way an inline adb query used to.
-    local STATUS_OUTPUT=""
-    if STATUS_OUTPUT="$(ANDROID_AVD="${TARGET_AVD}" ./emulator.sh status 2>&1)"; then
-        return 0
-    fi
-
-    echo "${STATUS_OUTPUT}" >&2
-    echo "" >&2
-    echo "❌ Error: Dedicated Android AVD '${TARGET_AVD}' is not ready for the Automation Worker." >&2
-    echo "" >&2
-    echo "💡 The automation worker requires the dedicated '${TARGET_AVD}' emulator:" >&2
-    echo "   - Start dedicated AVD: run './emulator.sh' or './run.sh emu'" >&2
-    echo "   - Check AVD list:      run './emulator.sh list'" >&2
-    echo "   - Stuck 'offline'?     restart it: './emulator.sh stop && ./emulator.sh'" >&2
-    echo "" >&2
-    exit 1
-}
-
-# 3. Resolve and check Appium server status
-if [[ -z "${APPIUM_URL:-}" && -f "config/settings.local.yaml" ]]; then
-    APPIUM_URL="$(grep -E "^[[:space:]]*(server_url|appium_url):" config/settings.local.yaml 2>/dev/null | awk '{print $2}' | tr -d '"' | tr -d "'" || true)"
-fi
-if [[ -z "${APPIUM_URL:-}" && -f "config/settings.yaml" ]]; then
-    APPIUM_URL="$(grep -E "^[[:space:]]*(server_url|appium_url):" config/settings.yaml 2>/dev/null | awk '{print $2}' | tr -d '"' | tr -d "'" || true)"
-fi
-APPIUM_URL="${APPIUM_URL:-http://127.0.0.1:4723}"
-check_appium_health() {
-    local CHECK_URL="${APPIUM_URL%/}"
-    CHECK_URL="${CHECK_URL/0.0.0.0/127.0.0.1}"
-    local STATUS_URL="${CHECK_URL}/status"
-    if ! curl -s -f "${STATUS_URL}" >/dev/null 2>&1; then
-        echo "❌ Error: Appium server is not reachable at ${APPIUM_URL}" >&2
-        echo "" >&2
-        echo "💡 The automation worker requires Appium server to drive the Android device:" >&2
-        echo "   - Start Appium: run './appium.sh' or './run.sh appium' (or './appium.sh start --daemon')" >&2
-        echo "   - Check status: run './appium.sh status'" >&2
-        echo "" >&2
-        exit 1
-    fi
-}
-
-# Run Pre-flight Gates
-check_pocketbase_health
-check_dedicated_avd_ready
-check_appium_health
-
-# Route to Worker or Live Harness
-if [[ $# -eq 0 || "${1:-}" == "worker" || "${1:-}" == "--worker" ]]; then
-    if [[ "${1:-}" == "worker" || "${1:-}" == "--worker" ]]; then
+    # Top-Level Lifecycle Defaults (operates on app)
+    start|"")
         shift || true
-    fi
-
-    # Check if worker is already running locally
-    RUNNING_PID="$(get_running_worker_pid)"
-    if [[ -n "${RUNNING_PID}" ]]; then
-        attach_worker_logs "${RUNNING_PID}"
-    fi
-
-    echo "🤖 Starting Boss Agent Mobile Automation Worker Daemon..."
-    echo "   PocketBase Broker : ${POCKETBASE_URL}"
-    echo "   Dedicated AVD     : ${TARGET_AVD}"
-    echo "   Log File          : ${WORKER_LOG_FILE}"
-    echo "   Press Ctrl+C to stop."
-    echo ""
-
-    # Start worker and pipe output
-    "${RUNNER[@]}" scripts/worker.py "$@" >> "${WORKER_LOG_FILE}" 2>&1 &
-    PID=$!
-    echo "${PID}" > "${WORKER_PID_FILE}"
-
-    trap 'echo -e "\n🛑 Stopping Worker daemon (PID: '"${PID}"')..."; kill '"${PID}"' 2>/dev/null || true; rm -f '"${WORKER_PID_FILE}"'; exit 0' INT TERM
-
-    tail -n 0 -f "${WORKER_LOG_FILE}"
-fi
-
-if [[ "${1:-}" == "live" ]]; then
-    shift || true
-fi
-
-echo "🚀 Launching Boss Agent Mobile Live Harness..."
-echo "   PocketBase Broker : ${POCKETBASE_URL}"
-echo "   Dedicated AVD     : ${TARGET_AVD}"
-exec "${RUNNER[@]}" scripts/run_live_test.py "$@"
+        cmd_app start "$@"
+        ;;
+    restart)
+        shift || true
+        cmd_app restart "$@"
+        ;;
+    stop)
+        shift || true
+        cmd_app stop
+        ;;
+    status)
+        shift || true
+        echo "========================================================================"
+        echo " Boss Agent Mobile - Service Status Dashboard"
+        echo "========================================================================"
+        cmd_infra status
+        echo "------------------------------------------------------------------------"
+        cmd_app status
+        echo "========================================================================"
+        ;;
+    --help|-h|help)
+        show_help
+        ;;
+    *)
+        # If user passed arguments like --keyword "AI" without subcommand, route to live test
+        if [[ "${SUBCOMMAND}" == -* ]]; then
+            exec "${RUNNER[@]}" scripts/run_live_test.py "$@"
+        fi
+        echo "❌ Unknown command: ${SUBCOMMAND}" >&2
+        echo "Run './run.sh --help' for usage." >&2
+        exit 1
+        ;;
+esac

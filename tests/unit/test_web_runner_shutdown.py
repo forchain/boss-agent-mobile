@@ -258,3 +258,31 @@ def test_stop_is_a_cheap_noop_when_nothing_is_running(web_runtime: Path):
     assert "No running Web Dashboard process found" in result.stdout
     assert elapsed < 2.0, f"idle stop took {elapsed:.2f}s; teardown gate needs a fast no-op"
     assert not log_file.exists(), "an idle stop must not fabricate shutdown records"
+
+
+def test_restart_stops_existing_server_and_reclaims_port(web_runtime: Path, dummy_server):
+    """Verify restart terminates any existing process holding the port before attempting start."""
+    process, port = dummy_server()
+    pid_file = web_runtime / ".boss_agent" / "web.pid"
+    pid_file.write_text(str(process.pid), encoding="utf-8")
+
+    env = dict(os.environ)
+    env["WEB_HOST"] = "127.0.0.1"
+    env["WEB_PORT"] = str(port)
+    env["WEB_STOP_TIMEOUT_SEC"] = "2"
+    bash = shutil.which("bash") or "/bin/bash"
+
+    result = subprocess.run(
+        [bash, "web.sh", "restart"],
+        cwd=str(web_runtime),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=STOP_BUDGET_SEC,
+    )
+
+    # Process holding the port must be dead
+    assert process.poll() is not None, "process holding port survived web.sh restart"
+    assert "Stopping SvelteKit Web Dashboard" in result.stdout
+    assert "Restarting SvelteKit Web Dashboard" in result.stdout
+
