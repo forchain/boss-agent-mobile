@@ -2,7 +2,6 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { isChatCleanupStrategy, resolveTargetAction, type SavedSearch } from '$lib/types';
 	import {
-		pb,
 		checkPocketBaseHealth,
 		listSavedSearches,
 		createSavedSearch,

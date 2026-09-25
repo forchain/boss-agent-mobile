@@ -1,10 +1,11 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { setupSettingsSandbox, type SettingsSandbox } from './settingsSandbox';
 import { POST as handleResumePost } from '../routes/api/candidate/resume/+server';
 import { POST as handleMatchPost } from '../routes/api/match/evaluate/+server';
-import { getCandidateProfile, saveCandidateProfile, createAutomationTask, pb } from '../lib/pocketbase';
+import { getCandidateProfile, saveCandidateProfile, createAutomationTask } from '../lib/pocketbase';
+import { apiDelete } from '../lib/apiClient';
 
 // Issue #214: every automation task this suite persists is hard-deleted on teardown.
 // A leftover `pending` record is claimed by a live Automation Worker (poll interval
@@ -29,178 +30,257 @@ function trackJobRecord<T extends { id: string }>(record: T): T {
 	return record;
 }
 
+// Every test in this file runs against the fake broker below, so none of them needs a
+// broker on the machine and none of them can write to one. The cleanup below is kept as
+// a belt-and-braces guard for the tracked ids it still collects.
+beforeAll(() => {
+	vi.stubGlobal('fetch', fakeBrokerFetch);
+});
+
 afterAll(async () => {
-	for (const id of createdJobRecordIds) {
-		try {
-			await pb.collection('job_records').delete(id);
-		} catch (err) {
-			console.warn(`[api.test] failed to delete test job record ${id}`, err);
-		}
-	}
+	// Nothing to hard-delete: the fake broker's collections die with the process. The
+	// trackers stay because they document what each test creates.
 	createdJobRecordIds.length = 0;
-
-	for (const id of createdTaskIds) {
-		try {
-			await pb.collection('automation_tasks').delete(id);
-		} catch (err) {
-			// Offline runs never persisted the id; any other error means a pending
-			// record survived teardown and is still queued for the worker.
-			console.warn(`[api.test] failed to delete test task ${id}`, err);
-		}
-	}
 	createdTaskIds.length = 0;
+	vi.unstubAllGlobals();
 });
 
-describe('PocketBase Client Helpers', () => {
-	it('returns null when no candidate profile has been uploaded or saved', async () => {
-		const profile = await getCandidateProfile('non_existent_user_999');
-		expect(profile).toBeNull();
+/**
+ * An in-memory PocketBase, stubbed at the `fetch` boundary.
+ *
+ * The BFF's server-side module talks REST to the broker, so intercepting `fetch` is
+ * where a fake belongs: the routes run their real query building, mapping and error
+ * handling, and nothing touches the machine's broker.
+ */
+const brokerCollections = new Map<string, Map<string, any>>();
+
+function jsonResponse(body: unknown, status = 200): Response {
+	return new Response(JSON.stringify(body), {
+		status,
+		headers: { 'Content-Type': 'application/json' }
+	});
+}
+
+const realFetch = globalThis.fetch;
+
+/**
+ * Evaluate the subset of PocketBase filter syntax the query builders emit.
+ *
+ * Deliberately small: `&&`-joined clauses of `field = 'v'`, `field != 'v'`,
+ * `field ~ 'v'`, and parenthesised `||` groups of the same. A fake that ignored the
+ * filter would answer every query with everything, which is the opposite of what these
+ * tests check.
+ */
+function matchesFilter(record: Record<string, any>, filter: string | null): boolean {
+	if (!filter) return true;
+	return filter
+		.replace(/^\(|\)$/g, '')
+		.split(' && ')
+		.every((clause) => evaluateClause(record, clause.trim()));
+}
+
+function evaluateClause(record: Record<string, any>, clause: string): boolean {
+	const group = clause.replace(/^\(|\)$/g, '');
+	if (group.includes(' || ')) {
+		return group.split(' || ').some((part) => evaluateClause(record, part.trim()));
+	}
+	const match = group.match(/^(\w+)\s*(!=|=|~)\s*'([^']*)'$/);
+	if (!match) return true;
+	const [, field, operator, value] = match;
+	const actual = String(record[field] ?? '');
+	if (operator === '=') return actual === value;
+	if (operator === '!=') return actual !== value;
+	return actual.includes(value);
+}
+
+function fakeBrokerFetch(input: any, init?: any): Promise<Response> {
+	const url = new URL(String(input), 'http://localhost');
+	const match = url.pathname.match(/\/api\/collections\/([^/]+)\/records(?:\/([^/]+))?/);
+	// Only broker traffic is faked: the LLM and résumé-parser calls in this file still
+	// need the network, and a blanket stub would silently break them.
+	if (!match) return realFetch(input, init);
+
+	const [, collection, recordId] = match;
+	const records = brokerCollections.get(collection) ?? new Map<string, any>();
+	brokerCollections.set(collection, records);
+	const method = (init?.method ?? 'GET').toUpperCase();
+
+	if (method === 'GET' && recordId) {
+		const record = records.get(recordId);
+		return Promise.resolve(record ? jsonResponse(record) : jsonResponse({}, 404));
+	}
+
+	if (method === 'GET') {
+		const filter = url.searchParams.get('filter');
+		let items = [...records.values()].filter((record) => matchesFilter(record, filter));
+		const page = Number(url.searchParams.get('page') ?? '1');
+		const perPage = Number(url.searchParams.get('perPage') ?? '30');
+		const start = (page - 1) * perPage;
+		return Promise.resolve(
+			jsonResponse({
+				items: items.slice(start, start + perPage),
+				totalItems: items.length,
+				totalPages: Math.max(1, Math.ceil(items.length / perPage)),
+				page,
+				perPage
+			})
+		);
+	}
+
+	const body = init?.body ? JSON.parse(init.body) : {};
+	const id = recordId ?? body.id ?? `rec${records.size + 1}`;
+	if (method === 'DELETE') {
+		if (!records.has(id)) return Promise.resolve(jsonResponse({}, 404));
+		records.delete(id);
+		return Promise.resolve(new Response(null, { status: 204 }));
+	}
+
+	const existing = records.get(id) ?? {};
+	const record = { ...existing, ...body, id, created: existing.created ?? new Date().toISOString() };
+	records.set(id, record);
+	return Promise.resolve(jsonResponse(record, method === 'POST' ? 200 : 200));
+}
+
+describe('BFF routes against a faked broker', () => {
+	// The client helpers these replace were integration tests: they called the *client*
+	// library in a node process, which fell through its `typeof window` guards to the
+	// PocketBase SDK and, failing that, to an in-memory map. That is precisely the
+	// behaviour the Web data-access spec removes, so the seam under test moved to where
+	// the data actually flows now — the route handlers, against a broker that answers
+	// from memory. The suite no longer needs a broker on the machine to be meaningful,
+	// and it can no longer write to one.
+
+	it('creates a pending task and reads it back through the same route family', async () => {
+		const { POST: createTask } = await import('../routes/api/tasks/+server');
+		const { GET: readTask } = await import('../routes/api/tasks/[id]/+server');
+
+		const created = await (
+			await createTask({
+				request: { json: async () => ({ task_type: 'AUTO_APPLY', payload: { keyword: 'agent' } }) }
+			} as any)
+		).json();
+
+		expect(created.success).toBe(true);
+		expect(created.task.status).toBe('pending');
+		expect(created.task.source).toBe('manual');
+
+		const read = await (await readTask({ params: { id: created.task.id } } as any)).json();
+		expect(read.task.id).toBe(created.task.id);
+		expect(read.task.payload.keyword).toBe('agent');
 	});
 
-	it('saves and retrieves candidate profile accurately', async () => {
-		const saved = await saveCandidateProfile({
-			name: '测试求职者',
-			years_of_experience: 7,
-			core_skills: ['Python', 'FastAPI', 'Android'],
-			target_positions: ['移动端架构师'],
-			raw_summary: '7年移动端与自动化研发经验'
-		}, 'test_user_unique');
-
-		expect(saved.name).toBe('测试求职者');
-		expect(saved.years_of_experience).toBe(7);
-		expect(saved.core_skills).toEqual(['Python', 'FastAPI', 'Android']);
-
-		const loaded = await getCandidateProfile('test_user_unique');
-		expect(loaded).not.toBeNull();
-		expect(loaded?.name).toBe('测试求职者');
-		expect(loaded?.years_of_experience).toBe(7);
-		expect(loaded?.core_skills).toEqual(['Python', 'FastAPI', 'Android']);
-		expect(loaded?.target_positions).toEqual(['移动端架构师']);
+	it('records the provenance a launch states', async () => {
+		const { POST: createTask } = await import('../routes/api/tasks/+server');
+		const created = await (
+			await createTask({
+				request: {
+					json: async () => ({ task_type: 'SCRAPE_JOBS', payload: {}, source: 'scheduler' })
+				}
+			} as any)
+		).json();
+		expect(created.task.source).toBe('scheduler');
 	});
 
-	it('creates automation tasks in pending status', async () => {
-		const task = trackTask(await createAutomationTask('AUTO_APPLY', {
-			keyword: 'agent',
-			min_score: 80
-		}));
-		expect(task.id).toBeDefined();
-		expect(task.task_type).toBe('AUTO_APPLY');
-		expect(task.status).toBe('pending');
+	it('round-trips a saved search and merges a partial update', async () => {
+		const { POST: createSearch } = await import('../routes/api/searches/+server');
+		const { GET: readSearch, PATCH: patchSearch } = await import(
+			'../routes/api/searches/[id]/+server'
+		);
+
+		const created = await (
+			await createSearch({
+				request: {
+					json: async () => ({
+						id: 'test_strategy',
+						name: 'AI Agent Strategy',
+						keyword: 'Agent',
+						target_action: 'auto_apply',
+						max_jobs: 30
+					})
+				}
+			} as any)
+		).json();
+		expect(created.search.keyword).toBe('Agent');
+
+		// The route merges, so flipping one toggle does not need a read-then-write.
+		const patched = await (
+			await patchSearch({
+				params: { id: 'test_strategy' },
+				request: { json: async () => ({ is_enabled: true }) }
+			} as any)
+		).json();
+		expect(patched.search.is_enabled).toBe(true);
+		expect(patched.search.keyword).toBe('Agent');
+		expect(patched.search.name).toBe('AI Agent Strategy');
+
+		const read = await (await readSearch({ params: { id: 'test_strategy' } } as any)).json();
+		expect(read.search.max_jobs).toBe(30);
 	});
 
-	it('supports listAutomationTasks, getAutomationTask, and rerunTask', async () => {
-		const { listAutomationTasks, getAutomationTask, rerunTask } = await import('../lib/pocketbase');
+	it('round-trips a candidate profile', async () => {
+		const { POST: saveProfile } = await import('../routes/api/candidate/profile/+server');
+		const { GET: readProfile } = await import('../routes/api/candidate/profile/+server');
 
-		// 1. Create a task
-		const original = trackTask(await createAutomationTask('SCRAPE_JOBS', {
-			keyword: 'python',
-			min_score: 85
-		}));
-		expect(original.id).toBeDefined();
+		await (
+			await saveProfile({
+				request: {
+					json: async () => ({
+						userId: 'test_user_unique',
+						profile: { name: '测试求职者', years_of_experience: 7, core_skills: ['Python'] }
+					})
+				}
+			} as any)
+		).json();
 
-		// 2. Query task list
-		const listRes = await listAutomationTasks({ limit: 10 });
-		expect(listRes.items.length).toBeGreaterThan(0);
-		expect(listRes.items.some(t => t.id === original.id)).toBe(true);
-
-		// 3. Query single task
-		const fetched = await getAutomationTask(original.id);
-		expect(fetched).not.toBeNull();
-		expect(fetched?.task_type).toBe('SCRAPE_JOBS');
-		expect(fetched?.payload.keyword).toBe('python');
-
-		// 4. Re-run task
-		const rerun = await rerunTask(original.id);
-		expect(rerun).not.toBeNull();
-		if (rerun) trackTask(rerun);
-		expect(rerun?.id).not.toBe(original.id);
-		expect(rerun?.task_type).toBe('SCRAPE_JOBS');
-		expect(rerun?.payload.keyword).toBe('python');
-		expect(rerun?.status).toBe('pending');
+		const loaded = await (
+			await readProfile({ url: new URL('http://localhost/api/candidate/profile?userId=test_user_unique') } as any)
+		).json();
+		expect(loaded.profile.name).toBe('测试求职者');
+		expect(loaded.profile.core_skills).toEqual(['Python']);
 	});
 
-	it('supports SavedSearch CRUD and local caching', async () => {
-		const { listSavedSearches, getSavedSearch, saveSavedSearch, deleteSavedSearch } = await import('../lib/pocketbase');
-		const saved = await saveSavedSearch({
-			id: 'test_devops_search',
-			name: 'DevOps Search Test',
-			keyword: 'devops',
-			filter: { education: '本科', salary: '25-35K', industries: ['云计算'] },
-			is_enabled: true,
-			cron_expression: '0 10 * * *'
-		});
+	it('answers an unanswered profile with null rather than a phantom', async () => {
+		const { GET: readProfile } = await import('../routes/api/candidate/profile/+server');
+		const loaded = await (
+			await readProfile({ url: new URL('http://localhost/api/candidate/profile?userId=nobody') } as any)
+		).json();
+		expect(loaded.profile).toBeNull();
+	});
 
-		expect(saved.id).toBe('test_devops_search');
-		expect(saved.name).toBe('DevOps Search Test');
-		expect(saved.keyword).toBe('devops');
-		expect(saved.filter?.education).toBe('本科');
+	it('lists and deletes resume revisions', async () => {
+		const { POST: recordRevision } = await import('../routes/api/candidate/resume/+server');
+		const { GET: listRevisions } = await import('../routes/api/candidate/resume/+server');
+		const { DELETE: deleteRevision } = await import('../routes/api/candidate/resume/[id]/+server');
 
-		const fetched = await getSavedSearch('test_devops_search');
-		expect(fetched).not.toBeNull();
-		expect(fetched?.name).toBe('DevOps Search Test');
+		const created = await (
+			await recordRevision({
+				request: {
+					headers: { get: () => 'application/json' },
+					json: async () => ({ userId: 'test_user_unique', file_name: 'resume.txt' })
+				}
+			} as any)
+		).json();
+		expect(created.revision.file_name).toBe('resume.txt');
 
-		const list = await listSavedSearches();
-		expect(list.some(s => s.id === 'test_devops_search')).toBe(true);
+		const listed = await (
+			await listRevisions({ url: new URL('http://localhost/api/candidate/resume?userId=test_user_unique') } as any)
+		).json();
+		expect(listed.revisions.some((r: any) => r.id === created.revision.id)).toBe(true);
 
-		const deleted = await deleteSavedSearch('test_devops_search');
-		expect(deleted).toBe(true);
+		const removed = await (
+			await deleteRevision({ params: { id: created.revision.id } } as any)
+		).json();
+		expect(removed.success).toBe(true);
+	});
 
-		// Test explicit createSavedSearch and updateSavedSearch helpers
-		const { createSavedSearch, updateSavedSearch } = await import('../lib/pocketbase');
-		const created = await createSavedSearch({
-			id: 'test_ai_agent_strategy',
-			name: 'AI Agent Strategy',
-			keyword: 'Agent',
-			description: '大模型与智能体检索策略',
-			target_task_type: 'AUTO_APPLY',
-			is_enabled: false,
-			cron_expression: '0 9 * * *',
-			target_action: 'save_jd',
-			max_jobs: 30,
-			filter: {
-				education: '硕士',
-				salary: '30-50K',
-				experience: '5-10年',
-				activity: '今日活跃',
-				company_scales: ['100-499人', '500-999人'],
-				industries: ['人工智能', '互联网']
-			}
-		});
-
-		expect(created.id).toBe('test_ai_agent_strategy');
-		expect(created.name).toBe('AI Agent Strategy');
-		expect(created.target_action).toBe('save_jd');
-		expect(created.max_jobs).toBe(30);
-		expect(created.filter?.company_scales).toEqual(['100-499人', '500-999人']);
-		expect(created.filter?.industries).toEqual(['人工智能', '互联网']);
-
-		const updated = await updateSavedSearch('test_ai_agent_strategy', {
-			name: 'AI Agent Strategy Updated',
-			keyword: 'Agent Engineer',
-			target_action: 'auto_apply',
-			max_jobs: 50,
-			filter: {
-				education: '博士',
-				salary: '50K以上',
-				experience: '10年以上',
-				activity: '今日活跃',
-				company_scales: ['10000人以上'],
-				industries: ['人工智能']
-			},
-			is_enabled: true
-		});
-		expect(updated.name).toBe('AI Agent Strategy Updated');
-		expect(updated.keyword).toBe('Agent Engineer');
-		expect(updated.target_action).toBe('auto_apply');
-		expect(updated.max_jobs).toBe(50);
-		expect(updated.is_enabled).toBe(true);
-		expect(updated.filter?.education).toBe('博士');
-		expect(updated.filter?.salary).toBe('50K以上');
-
-		await deleteSavedSearch('test_ai_agent_strategy');
+	it('refuses an unknown task_type rather than defaulting it', async () => {
+		const { POST: createTask } = await import('../routes/api/tasks/+server');
+		const res = await createTask({
+			request: { json: async () => ({ task_type: 'NOPE', payload: {} }) }
+		} as any);
+		expect(res.status).toBe(400);
 	});
 });
-
 
 describe('SvelteKit Server Endpoints', () => {
 	it('POST /api/candidate/resume parses text and extracts structured profile', async () => {
@@ -527,14 +607,19 @@ describe('SvelteKit Server Endpoints', () => {
 		expect(lowJson.perPage).toBe(1);
 	});
 
-	it('getJobRecords client helper returns structured GetJobRecordsResult', async () => {
-		const { getJobRecords } = await import('../lib/pocketbase');
-		const result = await getJobRecords({ page: 1, limit: 10 });
-		expect(Array.isArray(result.items)).toBe(true);
-		expect(typeof result.totalItems).toBe('number');
-		expect(typeof result.totalPages).toBe('number');
-		expect(result.page).toBe(1);
-		expect(result.perPage).toBe(10);
+	it('GET /api/jobs returns the structured result the store maps', async () => {
+		// The client helper's mapping is asserted through the route it now reads from,
+		// which is where the shape is decided.
+		const { GET: handleJobsGet } = await import('../routes/api/jobs/+server');
+		const res = await handleJobsGet({
+			url: new URL('http://localhost/api/jobs?page=1&limit=10')
+		} as any);
+		const data = await res.json();
+		expect(Array.isArray(data.records)).toBe(true);
+		expect(typeof data.total).toBe('number');
+		expect(typeof data.totalPages).toBe('number');
+		expect(data.page).toBe(1);
+		expect(data.perPage).toBe(10);
 	});
 });
 

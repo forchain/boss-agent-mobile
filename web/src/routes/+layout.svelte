@@ -2,7 +2,8 @@
 	import '../app.css';
 	import { onMount, onDestroy } from 'svelte';
 	import { page } from '$app/state';
-	import { checkPocketBaseHealth, setPocketBaseUrl, getPocketBaseUrl, pb } from '$lib/pocketbase';
+	import { checkPocketBaseHealth, setPocketBaseUrl, getPocketBaseUrl } from '$lib/pocketbase';
+	import { getJobRecords } from '$lib/stores/jobs';
 	import { dashboardRealtime } from '$lib/dashboardRealtime';
 
 	let { data, children }: { data: any; children: any } = $props();
@@ -30,23 +31,16 @@
 			isPocketBaseOnline = online;
 		}
 		try {
-			const res = await pb.collection('job_records').getList(1, 1, {
-				filter: "status='unmatched'"
-			});
-			if (unmatchedCount !== res.totalItems) {
-				unmatchedCount = res.totalItems;
+			// The same store the jobs page uses, so the badge and the board cannot count
+			// different things — this used to be an SDK call with a BFF fallback, two
+			// answers to one question.
+			const page = await getJobRecords({ status: 'unmatched', page: 1, limit: 1 });
+			if (unmatchedCount !== page.totalItems) {
+				unmatchedCount = page.totalItems;
 			}
-		} catch (e) {
-			try {
-				const fallback = await fetch('/api/jobs?status=unmatched');
-				if (fallback.ok) {
-					const fData = await fallback.json();
-					const cnt = fData.records?.length || 0;
-					if (unmatchedCount !== cnt) {
-						unmatchedCount = cnt;
-					}
-				}
-			} catch (err) {}
+		} catch (err) {
+			// A badge that cannot be counted stays as it was; the health indicator is
+			// what tells the operator the broker is unreachable.
 		}
 	}
 

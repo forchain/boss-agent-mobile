@@ -6,8 +6,14 @@
  * transport and a health probe.
  */
 
-import { checkPocketBaseHealth, pb } from '$lib/pocketbase';
+import PocketBase from 'pocketbase';
+import { checkPocketBaseHealth, getPocketBaseUrl } from '$lib/pocketbase';
 import { RealtimeClient, createPocketBaseTransport } from '$lib/realtime';
+
+// The SDK instance lives here, and only here. `pocketbase.ts` does not import it, so
+// the browser's data path cannot fall back to a cross-origin SDK call: the one
+// direct-to-broker consumer is this live-update stream, which ADR 0006 sanctions.
+const pb = new PocketBase(getPocketBaseUrl());
 
 let shared: RealtimeClient | null = null;
 

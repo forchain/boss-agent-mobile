@@ -6,7 +6,6 @@
  */
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/svelte';
-import { RecordService } from 'pocketbase';
 import JobsPage from '../routes/jobs/+page.svelte';
 
 const APPLIED_DIRECT_JOB = {
@@ -60,13 +59,11 @@ function stubFetch(record: Record<string, any> = APPLIED_DIRECT_JOB) {
 	return calls;
 }
 
-// The page opens a PocketBase realtime SSE subscription from an async onMount. Left live that
-// connection outlives the test: `connect()` only builds its EventSource once the earlier awaited
-// fetches settle, which can be after a per-test hook has already torn the environment down,
-// rejecting the whole run. These tests exercise the clearance controls, which update local state
-// from the API response, so the realtime layer stays stubbed for the life of the file.
-vi.spyOn(RecordService.prototype, 'subscribe').mockResolvedValue(async () => {});
-vi.spyOn(RecordService.prototype, 'unsubscribe').mockResolvedValue(undefined);
+// No `RecordService.prototype` spies here any more. They existed because the page opened its
+// own PocketBase SSE subscription inline from an async onMount, and stubbing the SDK's prototype
+// was the only way to keep that connection from outliving the test — which was itself the proof
+// that the data interface was too wide (Web data-access spec: deleting that spy is the
+// acceptance criterion, and the page now subscribes through the Realtime module instead).
 
 beforeEach(() => {
 	vi.stubGlobal('confirm', () => true);

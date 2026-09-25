@@ -9,7 +9,6 @@
 		JobRecordsCounts
 	} from '$lib/types';
 	import {
-		pb,
 		getJobRecords,
 		updateJobRecord,
 		deleteJobRecord,

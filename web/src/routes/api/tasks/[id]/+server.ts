@@ -1,62 +1,56 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { getAutomationTask, cancelTask, resumeTask, pb } from '$lib/pocketbase';
+import { deleteTask, getTask, patchTask } from '$lib/server/collections';
+import { BrokerError } from '$lib/server/broker';
+
+const CANCELLED = 'cancelled';
+const RESUMING = 'resuming';
+
+function failure(e: any, fallback: string) {
+	return json(
+		{ success: false, message: e?.message || fallback },
+		{ status: e instanceof BrokerError ? e.status : 500 }
+	);
+}
 
 export const GET: RequestHandler = async ({ params }) => {
 	try {
-		const taskId = params.id;
-		if (!taskId) {
-			return json({ success: false, message: 'Missing task ID' }, { status: 400 });
-		}
-		const task = await getAutomationTask(taskId);
-		if (!task) {
-			return json({ success: false, message: 'Task not found' }, { status: 404 });
-		}
+		if (!params.id) return json({ success: false, message: 'Missing task ID' }, { status: 400 });
+		const task = await getTask(params.id);
+		if (!task) return json({ success: false, message: 'Task not found' }, { status: 404 });
 		return json({ success: true, task });
 	} catch (e: any) {
-		return json({ success: false, message: e?.message || 'Failed to fetch task' }, { status: 500 });
+		return failure(e, 'Failed to fetch task');
 	}
 };
 
 export const PATCH: RequestHandler = async ({ params, request }) => {
 	try {
-		const taskId = params.id;
-		if (!taskId) {
-			return json({ success: false, message: 'Missing task ID' }, { status: 400 });
-		}
+		if (!params.id) return json({ success: false, message: 'Missing task ID' }, { status: 400 });
 		const body = await request.json().catch(() => ({}));
 		const { status } = body;
 
-		if (status === 'cancelled') {
-			const ok = await cancelTask(taskId);
-			return json({ success: ok, message: ok ? 'Task cancelled' : 'Failed to cancel task' });
+		// The two lifecycle transitions the dashboard offers are plain status writes; the
+		// worker owns what happens next.
+		if (status === CANCELLED || status === RESUMING) {
+			const task = await patchTask(params.id, { status });
+			return json({ success: true, task });
 		}
-
-		if (status === 'resuming') {
-			const ok = await resumeTask(taskId);
-			return json({ success: ok, message: ok ? 'Task resuming' : 'Failed to resume task' });
-		}
-
 		if (status) {
-			const updated = await pb.collection('automation_tasks').update(taskId, { status });
-			return json({ success: true, task: updated });
+			return json({ success: true, task: await patchTask(params.id, { status }) });
 		}
-
 		return json({ success: false, message: 'No valid update fields provided' }, { status: 400 });
 	} catch (e: any) {
-		return json({ success: false, message: e?.message || 'Failed to update task' }, { status: 500 });
+		return failure(e, 'Failed to update task');
 	}
 };
 
 export const DELETE: RequestHandler = async ({ params }) => {
 	try {
-		const taskId = params.id;
-		if (!taskId) {
-			return json({ success: false, message: 'Missing task ID' }, { status: 400 });
-		}
-		const ok = await cancelTask(taskId);
-		return json({ success: ok });
+		if (!params.id) return json({ success: false, message: 'Missing task ID' }, { status: 400 });
+		await deleteTask(params.id);
+		return json({ success: true });
 	} catch (e: any) {
-		return json({ success: false, message: e?.message || 'Failed to cancel task' }, { status: 500 });
+		return failure(e, 'Failed to delete task');
 	}
 };

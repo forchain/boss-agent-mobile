@@ -2,7 +2,6 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { resolveTargetAction, type AutomationTask, type SavedSearch, type TaskStatus } from '$lib/types';
 	import {
-		pb,
 		createAutomationTask,
 		listAutomationTasks,
 		getAutomationTask,
