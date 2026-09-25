@@ -29,6 +29,14 @@ fi
 
 mkdir -p "${COMMON_ROOT}/.boss_agent"
 
+# Shared process-lifecycle primitives (pidfiles, liveness, LISTEN-only port probe,
+# graceful stop). Sourced so a sixth service inherits them instead of copying them.
+# shellcheck source=runner_lib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/runner_lib.sh"
+
+# Seconds to wait for a cooperative exit before escalating to SIGKILL.
+PB_STOP_TIMEOUT_SEC="${PB_STOP_TIMEOUT_SEC:-10}"
+
 if [[ -z "${PB_DATA_DIR:-}" && -f "config/settings.local.yaml" ]]; then
     PB_DATA_DIR="$(grep -E "^[[:space:]]*(pocketbase_data_dir|pb_data_dir):" config/settings.local.yaml 2>/dev/null | awk '{print $2}' | tr -d '"' | tr -d "'" || true)"
 fi
@@ -77,16 +85,11 @@ get_running_pb_pid() {
         fi
     fi
 
-    # Fallback to lsof on configured port
+    # Fallback to the port's *listener* — never a bare `lsof -ti`. A dashboard holding
+    # an SSE stream to PocketBase is connected to this port, not listening on it, and
+    # adopting it here is what let `pb restart` kill a live dashboard.
     local PORT="${PB_HTTP##*:}"
-    local PORT_PID
-    PORT_PID="$(lsof -ti ":${PORT}" 2>/dev/null | head -n 1 || true)"
-    if [[ -n "${PORT_PID}" ]]; then
-        echo "${PORT_PID}" > "${PID_FILE}"
-        echo "${PORT_PID}"
-        return 0
-    fi
-    echo ""
+    runner_resolve_pid "${PID_FILE}" "${PORT}"
 }
 
 attach_logs() {
@@ -137,28 +140,30 @@ cmd_stop() {
     PID="$(get_running_pb_pid)"
 
     if [[ -n "${PID}" ]]; then
-        kill "${PID}" 2>/dev/null || true
-        local WAITED=0
-        while ps -p "${PID}" >/dev/null 2>&1 && [[ ${WAITED} -lt 50 ]]; do
-            sleep 0.1
-            WAITED=$((WAITED + 1))
-        done
-        if ps -p "${PID}" >/dev/null 2>&1; then
-            echo "⚠️ PocketBase did not shut down gracefully within 5s, sending SIGKILL..."
-            kill -9 "${PID}" 2>/dev/null || true
-            sleep 0.2
-        fi
+        runner_graceful_stop "${PID}" "${PB_STOP_TIMEOUT_SEC}" "PocketBase"
         STOPPED=1
     fi
-    rm -f "${PID_FILE}"
+    runner_pidfile_clear "${PID_FILE}"
+
+    # Anything still listening on the port outlived its parent (a detached serve). The
+    # probe is LISTEN-only, so a connected client is never a candidate.
+    local PORT="${PB_HTTP##*:}"
+    local PORT_PID
+    PORT_PID="$(runner_port_listener_pid "${PORT}")"
+    if [[ -n "${PORT_PID}" ]]; then
+        echo "⚠️ Port ${PORT} still held by PID ${PORT_PID}; reclaiming."
+        runner_graceful_stop "${PORT_PID}" "${PB_STOP_TIMEOUT_SEC}" "PocketBase listener"
+        STOPPED=1
+    fi
 
     # Cleanup any lingering process matching pocketbase serve on PB_HTTP
     local LINGER_PIDS
     LINGER_PIDS="$(pgrep -f "pocketbase serve --http ${PB_HTTP}" 2>/dev/null || true)"
     if [[ -n "${LINGER_PIDS}" ]]; then
-        kill ${LINGER_PIDS} 2>/dev/null || true
-        sleep 0.5
-        kill -9 ${LINGER_PIDS} 2>/dev/null || true
+        local LINGER_PID
+        for LINGER_PID in ${LINGER_PIDS}; do
+            runner_graceful_stop "${LINGER_PID}" "${PB_STOP_TIMEOUT_SEC}" "PocketBase"
+        done
         STOPPED=1
     fi
 

@@ -28,6 +28,7 @@ def worker_runtime(tmp_path: Path) -> Path:
     runtime_root = tmp_path / "repo"
     (runtime_root / ".boss_agent").mkdir(parents=True)
     shutil.copy2(WORKER_SH, runtime_root / "worker.sh")
+    shutil.copy2(WORKER_SH.parent / "runner_lib.sh", runtime_root / "runner_lib.sh")
     (runtime_root / "worker.sh").chmod(0o755)
     return runtime_root
 

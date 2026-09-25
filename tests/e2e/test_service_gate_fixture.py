@@ -65,6 +65,7 @@ def e2e_project(tmp_path: Path) -> Path:
     (project / ".boss_agent").mkdir(parents=True)
     (project / "tests" / "e2e").mkdir(parents=True)
     shutil.copy2(REPO_ROOT / "web.sh", project / "web.sh")
+    shutil.copy2(REPO_ROOT / "runner_lib.sh", project / "runner_lib.sh")
     shutil.copy2(CONFTEST_SOURCE, project / "tests" / "e2e" / "conftest.py")
     (project / "tests" / "e2e" / "test_placeholder.py").write_text(DUMMY_TEST, encoding="utf-8")
     return project

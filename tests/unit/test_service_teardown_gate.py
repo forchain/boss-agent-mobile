@@ -110,6 +110,7 @@ def runtime_root(tmp_path: Path) -> Path:
     root = tmp_path / "repo"
     (root / ".boss_agent").mkdir(parents=True)
     shutil.copy2(REPO_ROOT / "web.sh", root / "web.sh")
+    shutil.copy2(REPO_ROOT / "runner_lib.sh", root / "runner_lib.sh")
     return root
 
 

@@ -27,6 +27,7 @@ def orchestrator_runtime(tmp_path: Path) -> Path:
     runtime_root = tmp_path / "repo"
     (runtime_root / ".boss_agent").mkdir(parents=True)
     shutil.copy2(RUN_SH, runtime_root / "run.sh")
+    shutil.copy2(RUN_SH.parent / "runner_lib.sh", runtime_root / "runner_lib.sh")
     (runtime_root / "run.sh").chmod(0o755)
 
     # Create mock runner scripts that record their invocations
