@@ -8,13 +8,12 @@ default lifecycle targets, and live test harness pass-through.
 
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
+
 from _service_harness import REPO_ROOT
 
 RUN_SH = REPO_ROOT / "run.sh"

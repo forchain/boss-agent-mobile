@@ -12,10 +12,10 @@ import os
 import shutil
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 import pytest
+
 from _service_harness import REPO_ROOT
 
 WORKER_SH = REPO_ROOT / "worker.sh"
