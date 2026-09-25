@@ -28,7 +28,12 @@ def test_smoke_harness_runs_matching_and_types_greeting():
     mock_salary_elem.text = "40-60K"
 
     mock_desc_elem = MagicMock()
-    mock_desc_elem.text = "负责移动端自动化与大模型结合研发。"
+    # A realistic JD: greeting drafting is gated on a substantive description, so a
+    # terse fixture would never reach the matching service at all.
+    mock_desc_elem.text = (
+        "岗位职责：负责移动端自动化框架与大模型能力结合的研发工作，"
+        "要求精通 Python、Appium 与多智能体编排。"
+    )
 
     step_in_chat = False
 
@@ -40,7 +45,7 @@ def test_smoke_harness_runs_matching_and_types_greeting():
             return [mock_company_elem]
         if "tv_job_salary" in value:
             return [mock_salary_elem]
-        if "tv_job_desc" in value:
+        if "tv_description" in value or "tv_job_desc" in value:
             return [mock_desc_elem]
         if "btn_chat" in value or "立即沟通" in value:
             step_in_chat = True

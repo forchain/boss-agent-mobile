@@ -20,28 +20,28 @@ from typing import Any
 import requests
 
 from boss_agent.broker.models import AutomationTask, TaskStatus, TaskType
-from boss_agent.models import (
-    JobRecordStatus,
-    SavedSearch,
-    compute_job_fingerprint,
-    is_communication_expired,
-    is_direct_hire_company,
-    is_invalid_company_name,
-    sanitize_tags,
+from boss_agent.job_store import (
+    InMemoryJobRecordStore,
+    JobRecordStore,
+    JobRecordStoreFacade,
+    PocketBaseJobRecordStore,
 )
+from boss_agent.models import SavedSearch
 from boss_agent.settings import resolve_pocketbase_url
 
 logger = logging.getLogger("boss_agent.broker")
 
-INVALID_JOB_TITLES: frozenset[str] = frozenset(
-    {"", "未注明职位", "未注明岗位", "未知职位", "未知岗位"}
-)
-INVALID_COMPANY_NAMES: frozenset[str] = frozenset({"", "未注明公司", "未知公司"})
-
-# Same trade-off as the web dashboard's MAX_PAGES walk: enough pages for any realistic
-# contact history, bounded so a runaway collection cannot stall the worker.
-APPLIED_POOL_PAGE_SIZE = 200
-APPLIED_POOL_MAX_PAGES = 25
+__all__ = [
+    "BaseTaskBroker",
+    "InMemoryTaskBroker",
+    "PocketBaseBroker",
+    "PocketBaseTaskBroker",
+    "POCKETBASE_DEFAULT_TEXT_MAX_CHARS",
+    "TEXT_MAX_CONSTRAINT_CODE",
+    "LENGTH_RECOVERY_FIELD",
+    "is_length_rejection_for_job_description",
+    "resolve_text_constraint_limit",
+]
 
 #: PocketBase caps a text field at 5000 characters when it carries no explicit `max`
 #: (core/field_text.go). Provisioning raises that cap for `job_description`
@@ -88,8 +88,17 @@ def resolve_text_constraint_limit(response_text: Any) -> int:
     return POCKETBASE_DEFAULT_TEXT_MAX_CHARS
 
 
+
 class BaseTaskBroker(ABC):
-    """Abstract interface for the State Stream Task Broker."""
+    """Abstract interface for the State Stream Task Broker.
+
+    Confined to task-stream lifecycle, lease heartbeats and candidate memory.
+
+    Job records, exclusion pools, cool-down math and quota counting moved to the dedicated
+    ``JobRecordStore`` seam, reachable as ``broker.job_store`` (ADR 0013 §3). The ADR names
+    only the task lifecycle; candidate profiles and resume revisions deliberately stay here
+    for now, since no seam was specified for them.
+    """
 
     @abstractmethod
     async def create_task(
@@ -176,70 +185,10 @@ class BaseTaskBroker(ABC):
         """Record a new resume upload revision."""
         pass
 
-    @abstractmethod
-    async def has_job_fingerprint(self, fingerprint: str) -> bool:
-        """Check if a job record with the given fingerprint already exists."""
-        pass
-
-    @abstractmethod
-    async def get_job_record_by_fingerprint(self, fingerprint: str) -> dict[str, Any] | None:
-        """Get a job record by its canonical fingerprint."""
-        pass
-
-    @abstractmethod
-    async def count_today_applied_jobs(self) -> int:
-        """Count how many jobs have reached 'applied' status today in UTC."""
-        pass
-
-    @abstractmethod
-    async def get_applied_direct_companies(self, cooldown_days: int = 0) -> set[str]:
-        """Distinct direct-hire companies with active communication inside the cool-down window.
-
-        Headhunter channels and masked/confidential company names are never included, since
-        they do not represent a shared in-house HR candidate pool.
-        """
-        pass
-
-    @abstractmethod
-    async def clear_job_communication(self, record_id: str) -> dict[str, Any]:
-        """Transition a communicated job back to `jd_saved`, clearing its dispatch timestamp.
-
-        The extracted JD is preserved so the job can be re-evaluated and re-applied without
-        re-scraping the mobile detail page (cool-down expiry or manual clearance).
-        """
-        pass
-
-    @abstractmethod
-    async def upsert_job_record(self, record_data: dict[str, Any]) -> dict[str, Any]:
-        """Insert a new job record or update last_seen_at/keywords if already present."""
-        pass
-
-    @abstractmethod
-    async def get_job_record(self, record_id: str) -> dict[str, Any] | None:
-        """Get a job record by ID."""
-        pass
-
-    @abstractmethod
-    async def list_job_records(
-        self, status: str | None = None, limit: int = 50
-    ) -> list[dict[str, Any]]:
-        """List job records, optionally filtered by status."""
-        pass
-
-    @abstractmethod
-    async def update_job_record_status(
-        self,
-        record_id: str,
-        status: str,
-        match_data: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        """Update the status and optional match results of a job record."""
-        pass
-
-    @abstractmethod
-    async def delete_job_record(self, record_id: str) -> bool:
-        """Delete a job record by ID. Returns True if deleted, False if not found or failed."""
-        pass
+    # The Job Record Store this broker delegates its job-record surface to (ADR 0013).
+    # Concrete adapters assign it in __init__; callers that want job records without a
+    # broker should depend on JobRecordStore directly.
+    job_store: JobRecordStore
 
     @abstractmethod
     async def list_saved_searches(self) -> list[SavedSearch]:
@@ -262,15 +211,14 @@ class BaseTaskBroker(ABC):
         pass
 
 
-class InMemoryTaskBroker(BaseTaskBroker):
+class InMemoryTaskBroker(JobRecordStoreFacade, BaseTaskBroker):
     """Thread-safe & asyncio-safe in-memory broker for tests and local development."""
 
     def __init__(self) -> None:
         self._tasks: dict[str, AutomationTask] = {}
         self._candidate_profiles: dict[str, dict[str, Any]] = {}
         self._resume_revisions: dict[str, list[dict[str, Any]]] = {}
-        self._job_records: dict[str, dict[str, Any]] = {}
-        self._job_fingerprints: dict[str, str] = {}
+        self.job_store = InMemoryJobRecordStore()
         self._saved_searches: dict[str, SavedSearch] = {}
         self._lock = asyncio.Lock()
         self._subscribers: list[Callable[[str, AutomationTask], Any]] = []
@@ -336,286 +284,6 @@ class InMemoryTaskBroker(BaseTaskBroker):
             rev.setdefault("created", datetime.now(UTC).isoformat())
             self._resume_revisions[user_id].append(rev)
             return rev
-
-    async def has_job_fingerprint(self, fingerprint: str) -> bool:
-        async with self._lock:
-            return fingerprint in self._job_fingerprints
-
-    async def upsert_job_record(self, record_data: dict[str, Any]) -> dict[str, Any]:
-        title = (record_data.get("title") or "").strip()
-        comp_name = (record_data.get("company_name") or "").strip()
-        fingerprint = record_data.get("fingerprint") or (
-            compute_job_fingerprint(
-                company_name=comp_name,
-                title=title,
-                recruiter_name=record_data.get("recruiter_name", ""),
-            )
-            if comp_name
-            else ""
-        )
-
-        async with self._lock:
-            existing_id = self._job_fingerprints.get(fingerprint) if fingerprint else None
-            # Fallback dedup: if no exact fingerprint match and recruiter is generic placeholder, check if company + title already exists
-            if (
-                not existing_id
-                and comp_name
-                and title
-                and record_data.get("recruiter_name") in ("", "招聘者")
-            ):
-                for cand_id, cand_rec in self._job_records.items():
-                    if (
-                        cand_rec.get("company_name", "").strip() == comp_name
-                        and cand_rec.get("title", "").strip() == title
-                    ):
-                        existing_id = cand_id
-                        break
-            if not existing_id and (
-                not title
-                or title in INVALID_JOB_TITLES
-                or not comp_name
-                or comp_name in INVALID_COMPANY_NAMES
-                or is_invalid_company_name(comp_name)
-            ):
-                logger.warning(
-                    "Rejected upsert of incomplete or invalid job record: title='%s', company='%s'",
-                    title,
-                    comp_name,
-                )
-                return {}
-
-            r_name = record_data.get("recruiter_name", "")
-            r_title = record_data.get("recruiter_title", "")
-            loc = record_data.get("location", "")
-            if "tags" in record_data and isinstance(record_data["tags"], list):
-                record_data["tags"] = sanitize_tags(
-                    record_data["tags"],
-                    recruiter_name=r_name,
-                    recruiter_title=r_title,
-                    location=loc,
-                    company_name=comp_name,
-                    title=title,
-                )
-            if "jd_key_requirements" in record_data and isinstance(
-                record_data["jd_key_requirements"], list
-            ):
-                record_data["jd_key_requirements"] = sanitize_tags(
-                    record_data["jd_key_requirements"],
-                    recruiter_name=r_name,
-                    recruiter_title=r_title,
-                    location=loc,
-                    company_name=comp_name,
-                    title=title,
-                )
-
-            now = datetime.now(UTC).isoformat()
-            if existing_id:
-                rec = self._job_records[existing_id]
-                rec["last_seen_at"] = now
-                if title and title not in INVALID_JOB_TITLES and title != rec.get("title"):
-                    rec["title"] = title
-                new_kw = record_data.get("search_keywords", [])
-                merged_kw = list(dict.fromkeys((rec.get("search_keywords") or []) + new_kw))
-                rec["search_keywords"] = merged_kw
-                new_recruiter = record_data.get("recruiter_name")
-                if new_recruiter and new_recruiter not in ("", "招聘者"):
-                    rec["recruiter_name"] = new_recruiter
-                if record_data.get("digest") and not rec.get("digest"):
-                    rec["digest"] = record_data["digest"]
-                if record_data.get("job_description"):
-                    rec["job_description"] = record_data["job_description"]
-                status_val = record_data.get("status")
-                if hasattr(status_val, "value"):
-                    status_val = status_val.value
-                if status_val:
-                    from boss_agent.models import STATE_RANK
-
-                    cur_rank = STATE_RANK.get(rec.get("status", ""), 0)
-                    new_rank = STATE_RANK.get(status_val, 0)
-                    if (
-                        new_rank > cur_rank
-                        or status_val == "ignored"
-                        or (
-                            status_val == "jd_saved"
-                            and rec.get("status") in ("unmatched", "digest_only")
-                        )
-                    ):
-                        rec["status"] = status_val
-                if record_data.get("company_scale") and not rec.get("company_scale"):
-                    rec["company_scale"] = record_data["company_scale"]
-                if record_data.get("industry") and not rec.get("industry"):
-                    rec["industry"] = record_data["industry"]
-                if record_data.get("tags") and not rec.get("tags"):
-                    rec["tags"] = record_data["tags"]
-                if record_data.get("recruiter_title") and not rec.get("recruiter_title"):
-                    rec["recruiter_title"] = record_data["recruiter_title"]
-                if "is_headhunter" in record_data and rec.get("is_headhunter") is None:
-                    rec["is_headhunter"] = record_data["is_headhunter"]
-                if record_data.get("salary_range") and not rec.get("salary_range"):
-                    rec["salary_range"] = record_data["salary_range"]
-                if record_data.get("location") and not rec.get("location"):
-                    rec["location"] = record_data["location"]
-                if record_data.get("greeting_message"):
-                    rec["greeting_message"] = record_data["greeting_message"]
-                if record_data.get("match_score") is not None:
-                    rec["match_score"] = record_data["match_score"]
-                if record_data.get("jd_key_requirements"):
-                    rec["jd_key_requirements"] = record_data["jd_key_requirements"]
-                if "screened_reason" in record_data:
-                    rec["screened_reason"] = record_data["screened_reason"]
-                if "relaxed_by_whitelist" in record_data:
-                    rec["relaxed_by_whitelist"] = bool(record_data["relaxed_by_whitelist"])
-                if record_data.get("screening_audit"):
-                    rec["screening_audit"] = record_data["screening_audit"]
-                if record_data.get("applied_at"):
-                    rec["applied_at"] = record_data["applied_at"]
-                if record_data.get("applied_source"):
-                    rec["applied_source"] = record_data["applied_source"]
-                # Commute distance (spec #209): only overwrite with a known value so a
-                # later probe that fails open never erases a previously measured one.
-                if record_data.get("commute_distance_km") is not None:
-                    rec["commute_distance_km"] = record_data["commute_distance_km"]
-                if record_data.get("commute_distance_text"):
-                    rec["commute_distance_text"] = record_data["commute_distance_text"]
-                rec["updated"] = now
-                return dict(rec)
-
-            rec_id = str(record_data.get("id") or uuid.uuid4().hex[:15])
-            status_val = record_data.get("status", "unmatched")
-            if hasattr(status_val, "value"):
-                status_val = status_val.value
-            new_rec: dict[str, Any] = {
-                "id": rec_id,
-                "fingerprint": fingerprint,
-                "title": record_data.get("title", ""),
-                "company_name": comp_name or record_data.get("company_name", ""),
-                "recruiter_name": record_data.get("recruiter_name", ""),
-                "recruiter_title": record_data.get("recruiter_title", ""),
-                "is_headhunter": record_data.get("is_headhunter", False),
-                "company_scale": record_data.get("company_scale", ""),
-                "industry": record_data.get("industry", ""),
-                "tags": record_data.get("tags", []),
-                "salary_range": record_data.get("salary_range", ""),
-                "location": record_data.get("location", ""),
-                "digest": record_data.get("digest", ""),
-                "job_description": record_data.get("job_description", ""),
-                "status": status_val or "unmatched",
-                "screened_reason": record_data.get("screened_reason", ""),
-                "relaxed_by_whitelist": bool(record_data.get("relaxed_by_whitelist", False)),
-                "screening_audit": record_data.get("screening_audit", ""),
-                "applied_at": record_data.get("applied_at"),
-                "applied_source": record_data.get("applied_source", ""),
-                "commute_distance_km": record_data.get("commute_distance_km"),
-                "commute_distance_text": record_data.get("commute_distance_text", ""),
-                "match_score": record_data.get("match_score"),
-                "jd_key_requirements": record_data.get("jd_key_requirements", []),
-                "greeting_message": record_data.get("greeting_message", ""),
-                "search_keywords": record_data.get("search_keywords", []),
-                "source_task_id": record_data.get("source_task_id"),
-                "first_seen_at": now,
-                "last_seen_at": now,
-                "created": now,
-                "updated": now,
-            }
-            self._job_records[rec_id] = new_rec
-            self._job_fingerprints[fingerprint] = rec_id
-            return dict(new_rec)
-
-    async def get_job_record_by_fingerprint(self, fingerprint: str) -> dict[str, Any] | None:
-        async with self._lock:
-            rec_id = self._job_fingerprints.get(fingerprint)
-            if rec_id and rec_id in self._job_records:
-                return dict(self._job_records[rec_id])
-            return None
-
-    async def count_today_applied_jobs(self) -> int:
-        """Count greetings actually dispatched today (UTC), keyed strictly on `applied_at`.
-
-        Platform historical contacts imported as `applied` carry no `applied_at` and are
-        therefore excluded from the daily quota.
-        """
-        today_prefix = datetime.now(UTC).strftime("%Y-%m-%d")
-        async with self._lock:
-            count = 0
-            for rec in self._job_records.values():
-                applied_at = str(rec.get("applied_at") or "")
-                if applied_at.startswith(today_prefix):
-                    count += 1
-            return count
-
-    async def get_applied_direct_companies(self, cooldown_days: int = 0) -> set[str]:
-        async with self._lock:
-            companies: set[str] = set()
-            for rec in self._job_records.values():
-                if rec.get("status") != "applied":
-                    continue
-                name = (rec.get("company_name") or "").strip()
-                if not is_direct_hire_company(name, rec.get("is_headhunter")):
-                    continue
-                if is_communication_expired(rec, cooldown_days):
-                    continue
-                companies.add(name)
-            return companies
-
-    async def clear_job_communication(self, record_id: str) -> dict[str, Any]:
-        async with self._lock:
-            rec = self._job_records.get(record_id)
-            if not rec:
-                raise KeyError(f"Job record {record_id} not found")
-            rec["status"] = JobRecordStatus.JD_SAVED.value
-            rec["applied_at"] = ""
-            rec["applied_source"] = ""
-            rec["updated"] = datetime.now(UTC).isoformat()
-            return dict(rec)
-
-    async def get_job_record(self, record_id: str) -> dict[str, Any] | None:
-        async with self._lock:
-            rec = self._job_records.get(record_id)
-            return dict(rec) if rec else None
-
-    async def list_job_records(
-        self, status: str | None = None, limit: int = 50
-    ) -> list[dict[str, Any]]:
-        async with self._lock:
-            records = list(self._job_records.values())
-            if status:
-                if status == "unmatched":
-                    records = [
-                        r
-                        for r in records
-                        if r.get("status") in ("unmatched", "digest_only", "jd_saved")
-                    ]
-                else:
-                    records = [r for r in records if r.get("status") == status]
-            records.sort(key=lambda x: str(x.get("created", "")), reverse=True)
-            return [dict(r) for r in records[:limit]]
-
-    async def update_job_record_status(
-        self,
-        record_id: str,
-        status: str,
-        match_data: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        async with self._lock:
-            rec = self._job_records.get(record_id)
-            if not rec:
-                raise KeyError(f"Job record {record_id} not found")
-            rec["status"] = status
-            if match_data:
-                for k, v in match_data.items():
-                    rec[k] = v
-            rec["updated"] = datetime.now(UTC).isoformat()
-            return dict(rec)
-
-    async def delete_job_record(self, record_id: str) -> bool:
-        async with self._lock:
-            if record_id in self._job_records:
-                rec = self._job_records.pop(record_id)
-                fp = rec.get("fingerprint")
-                if fp and fp in self._job_fingerprints:
-                    del self._job_fingerprints[fp]
-                return True
-            return False
 
     async def create_task(
         self, task_type: TaskType | str, payload: dict[str, Any] | None = None
@@ -771,7 +439,7 @@ class InMemoryTaskBroker(BaseTaskBroker):
                 logger.exception("Error in task subscription callback: %s", e)
 
 
-class PocketBaseTaskBroker(BaseTaskBroker):
+class PocketBaseTaskBroker(JobRecordStoreFacade, BaseTaskBroker):
     """Production PocketBase REST and SSE client adapter."""
 
     def __init__(
@@ -785,6 +453,9 @@ class PocketBaseTaskBroker(BaseTaskBroker):
         self.collection_name = collection_name
         self.auth_token = auth_token or os.getenv("POCKETBASE_AUTH_TOKEN")
         self.session = session or requests.Session()
+        self.job_store = PocketBaseJobRecordStore(
+            base_url=self.base_url, session=self.session, headers=self._headers
+        )
         self._subscribers: list[Callable[[str, AutomationTask], Any]] = []
 
         # Ensure obsolete fallback cache files are removed if present
@@ -1372,503 +1043,6 @@ class PocketBaseTaskBroker(BaseTaskBroker):
         except Exception as e:
             logger.warning("PocketBase create_resume_revision failed, fallback to SQLite: %s", e)
         return self._save_sqlite_revision(body, user_id)
-
-    def _jobs_collection_url(self) -> str:
-        return f"{self.base_url}/api/collections/job_records/records"
-
-    async def get_job_record_by_fingerprint(self, fingerprint: str) -> dict[str, Any] | None:
-        url = self._jobs_collection_url()
-        safe_fp = fingerprint.replace("'", "\\'")
-        loop = asyncio.get_running_loop()
-        try:
-            resp = await loop.run_in_executor(
-                None,
-                lambda: self.session.get(
-                    url,
-                    params={"filter": f"fingerprint='{safe_fp}'", "perPage": "1"},
-                    headers=self._headers(),
-                ),
-            )
-            if resp.status_code == 200:
-                items = resp.json().get("items", [])
-                if items:
-                    return items[0]
-        except Exception as e:
-            logger.warning("PocketBase get_job_record_by_fingerprint failed: %s", e)
-        return None
-
-    async def has_job_fingerprint(self, fingerprint: str) -> bool:
-        rec = await self.get_job_record_by_fingerprint(fingerprint)
-        return rec is not None
-
-    async def count_today_applied_jobs(self) -> int:
-        today_midnight = datetime.now(UTC).strftime("%Y-%m-%d 00:00:00.000Z")
-        url = self._jobs_collection_url()
-        params = {
-            "filter": f"applied_at>='{today_midnight}'",
-            "perPage": "1",
-        }
-        loop = asyncio.get_running_loop()
-        try:
-            resp = await loop.run_in_executor(
-                None,
-                lambda: self.session.get(url, params=params, headers=self._headers()),
-            )
-            if resp.status_code == 200:
-                return int(resp.json().get("totalItems", 0))
-        except Exception as e:
-            logger.warning("PocketBase count_today_applied_jobs failed: %s", e)
-        return 0
-
-    async def get_applied_direct_companies(self, cooldown_days: int = 0) -> set[str]:
-        """Collect every direct-hire company with an unexpired communication.
-
-        The pool is walked page by page: a candidate with more than one page of lifetime
-        contacts would otherwise lose the older anchors and be re-contacted at a company
-        they have already approached.
-        """
-        url = self._jobs_collection_url()
-        loop = asyncio.get_running_loop()
-
-        items: list[dict[str, Any]] = []
-        try:
-            for page in range(1, APPLIED_POOL_MAX_PAGES + 1):
-                params = {
-                    "filter": "status='applied' && is_headhunter!=true",
-                    "page": str(page),
-                    "perPage": str(APPLIED_POOL_PAGE_SIZE),
-                    # is_headhunter has to be projected: the guard below reads it per record.
-                    "fields": "company_name,is_headhunter,applied_at,created",
-                }
-                resp = await loop.run_in_executor(
-                    None,
-                    lambda p=params: self.session.get(url, params=p, headers=self._headers()),
-                )
-                if resp.status_code != 200:
-                    logger.warning(
-                        "PocketBase get_applied_direct_companies stopped at page %d (%d)",
-                        page,
-                        resp.status_code,
-                    )
-                    break
-                batch = resp.json().get("items", [])
-                items.extend(batch)
-                if len(batch) < APPLIED_POOL_PAGE_SIZE:
-                    break
-        except Exception as e:
-            logger.warning("PocketBase get_applied_direct_companies failed: %s", e)
-            return set()
-
-        companies: set[str] = set()
-        for item in items:
-            name = (item.get("company_name") or "").strip()
-            if not is_direct_hire_company(name, item.get("is_headhunter")):
-                continue
-            if is_communication_expired(item, cooldown_days):
-                continue
-            companies.add(name)
-        return companies
-
-    async def clear_job_communication(self, record_id: str) -> dict[str, Any]:
-        url = f"{self._jobs_collection_url()}/{record_id}"
-        body = {
-            "status": JobRecordStatus.JD_SAVED.value,
-            # Empty string is PocketBase's canonical way to clear an optional date field.
-            "applied_at": "",
-            "applied_source": "",
-        }
-        loop = asyncio.get_running_loop()
-        try:
-            resp = await loop.run_in_executor(
-                None,
-                lambda: self.session.patch(url, json=body, headers=self._headers()),
-            )
-            if resp.status_code == 200:
-                return resp.json()
-            logger.error(
-                "Failed to release job communication %s in PocketBase (%d): %s",
-                record_id,
-                resp.status_code,
-                resp.text,
-            )
-        except Exception as e:
-            logger.warning("PocketBase clear_job_communication failed: %s", e)
-        return {}
-
-    async def _write_job_record(
-        self, send: Callable[..., Any], url: str, body: dict[str, Any]
-    ) -> Any:
-        """Write a job record, truncating an over-long ``job_description`` and retrying once.
-
-        ``send`` is the bound session method to write with (``session.patch`` or
-        ``session.post``). A collection still carrying PocketBase's implicit text cap rejects
-        the whole write for a full expanded JD, and the caller then reports an empty upsert —
-        the enriched record is lost for exactly the comprehensive postings the JD matters most
-        for. One retry at the server's own reported boundary keeps the record; the truncation
-        is logged as a warning because the tail is genuinely lost.
-        """
-        loop = asyncio.get_running_loop()
-        response = await loop.run_in_executor(
-            None, lambda: send(url, json=body, headers=self._headers())
-        )
-
-        rejection_text = getattr(response, "text", None)
-        if not is_length_rejection_for_job_description(rejection_text):
-            return response
-
-        description = body.get(LENGTH_RECOVERY_FIELD)
-        limit = resolve_text_constraint_limit(rejection_text)
-        if not isinstance(description, str) or len(description) <= limit:
-            # The rejected field is not the one we can shrink: report the original failure.
-            return response
-
-        logger.warning(
-            "PocketBase rejected %s: job_description is %d chars, over the server's %d-char "
-            "text cap. Retrying with a truncated description; the tail is dropped.",
-            url,
-            len(description),
-            limit,
-        )
-        retry_body = {**body, LENGTH_RECOVERY_FIELD: description[:limit]}
-        return await loop.run_in_executor(
-            None, lambda: send(url, json=retry_body, headers=self._headers())
-        )
-
-    async def upsert_job_record(self, record_data: dict[str, Any]) -> dict[str, Any]:
-        title = (record_data.get("title") or "").strip()
-        comp_name = (record_data.get("company_name") or "").strip()
-        fingerprint = record_data.get("fingerprint") or (
-            compute_job_fingerprint(
-                company_name=comp_name,
-                title=title,
-                recruiter_name=record_data.get("recruiter_name", ""),
-            )
-            if comp_name
-            else ""
-        )
-        if (
-            not title
-            or title in INVALID_JOB_TITLES
-            or not comp_name
-            or comp_name in INVALID_COMPANY_NAMES
-            or is_invalid_company_name(comp_name)
-        ):
-            logger.warning(
-                "Rejected upsert of incomplete or invalid job record: title='%s', company='%s'",
-                title,
-                comp_name,
-            )
-            return {}
-
-        r_name = record_data.get("recruiter_name", "")
-        r_title = record_data.get("recruiter_title", "")
-        loc = record_data.get("location", "")
-        if "tags" in record_data and isinstance(record_data["tags"], list):
-            record_data["tags"] = sanitize_tags(
-                record_data["tags"],
-                recruiter_name=r_name,
-                recruiter_title=r_title,
-                location=loc,
-                company_name=comp_name,
-                title=title,
-            )
-        if "jd_key_requirements" in record_data and isinstance(
-            record_data["jd_key_requirements"], list
-        ):
-            record_data["jd_key_requirements"] = sanitize_tags(
-                record_data["jd_key_requirements"],
-                recruiter_name=r_name,
-                recruiter_title=r_title,
-                location=loc,
-                company_name=comp_name,
-                title=title,
-            )
-
-        url = self._jobs_collection_url()
-        now = datetime.now(UTC).isoformat()
-        loop = asyncio.get_running_loop()
-
-        # Check existing by fingerprint in PocketBase
-        try:
-            check_resp = await loop.run_in_executor(
-                None,
-                lambda: self.session.get(
-                    url,
-                    params={"filter": f"fingerprint='{fingerprint}'", "perPage": "1"},
-                    headers=self._headers(),
-                ),
-            )
-            if check_resp.status_code == 200:
-                items = check_resp.json().get("items", [])
-                # Fallback dedup: if no exact fingerprint match and recruiter is generic placeholder, check if company + title already exists
-                if (
-                    not items
-                    and comp_name
-                    and title
-                    and record_data.get("recruiter_name") in ("", "招聘者")
-                ):
-                    fb_filter = f'company_name="{comp_name}" && title="{title}"'
-                    fb_resp = await loop.run_in_executor(
-                        None,
-                        lambda: self.session.get(
-                            url,
-                            params={"filter": fb_filter, "perPage": "1"},
-                            headers=self._headers(),
-                        ),
-                    )
-                    if fb_resp.status_code == 200:
-                        items = fb_resp.json().get("items", [])
-
-                if items:
-                    existing = items[0]
-                    rec_id = existing["id"]
-                    new_kw = record_data.get("search_keywords", [])
-                    merged_kw = list(
-                        dict.fromkeys((existing.get("search_keywords") or []) + new_kw)
-                    )
-                    patch_body = {
-                        "last_seen_at": now,
-                        "search_keywords": merged_kw,
-                    }
-                    if title and title not in INVALID_JOB_TITLES and title != existing.get("title"):
-                        patch_body["title"] = title
-                    new_recruiter = record_data.get("recruiter_name")
-                    if (
-                        new_recruiter
-                        and new_recruiter not in ("", "招聘者")
-                        and new_recruiter != existing.get("recruiter_name")
-                    ):
-                        patch_body["recruiter_name"] = new_recruiter
-                    if record_data.get("digest") and not existing.get("digest"):
-                        patch_body["digest"] = record_data["digest"]
-                    if record_data.get("job_description"):
-                        patch_body["job_description"] = record_data["job_description"]
-                    status_val = record_data.get("status")
-                    if hasattr(status_val, "value"):
-                        status_val = status_val.value
-                    if status_val:
-                        from boss_agent.models import STATE_RANK
-
-                        cur_rank = STATE_RANK.get(existing.get("status", ""), 0)
-                        new_rank = STATE_RANK.get(status_val, 0)
-                        if (
-                            new_rank > cur_rank
-                            or status_val == "ignored"
-                            or (
-                                status_val == "jd_saved"
-                                and existing.get("status") in ("unmatched", "digest_only")
-                            )
-                        ):
-                            patch_body["status"] = status_val
-                    if record_data.get("company_scale") and not existing.get("company_scale"):
-                        patch_body["company_scale"] = record_data["company_scale"]
-                    if record_data.get("industry") and not existing.get("industry"):
-                        patch_body["industry"] = record_data["industry"]
-                    if "tags" in record_data and record_data["tags"] is not None:
-                        patch_body["tags"] = record_data["tags"]
-                    if record_data.get("recruiter_title") and not existing.get("recruiter_title"):
-                        patch_body["recruiter_title"] = record_data["recruiter_title"]
-                    if "is_headhunter" in record_data and (
-                        record_data["is_headhunter"] or existing.get("is_headhunter") is None
-                    ):
-                        patch_body["is_headhunter"] = record_data["is_headhunter"]
-                    if record_data.get("salary_range") and not existing.get("salary_range"):
-                        patch_body["salary_range"] = record_data["salary_range"]
-                    if record_data.get("location") and not existing.get("location"):
-                        patch_body["location"] = record_data["location"]
-                    if record_data.get("greeting_message"):
-                        patch_body["greeting_message"] = record_data["greeting_message"]
-                    if record_data.get("match_score") is not None:
-                        patch_body["match_score"] = record_data["match_score"]
-                    if (
-                        "jd_key_requirements" in record_data
-                        and record_data["jd_key_requirements"] is not None
-                    ):
-                        patch_body["jd_key_requirements"] = record_data["jd_key_requirements"]
-                    if "screened_reason" in record_data:
-                        patch_body["screened_reason"] = record_data["screened_reason"]
-                    if "relaxed_by_whitelist" in record_data:
-                        patch_body["relaxed_by_whitelist"] = bool(
-                            record_data["relaxed_by_whitelist"]
-                        )
-                    if record_data.get("screening_audit"):
-                        patch_body["screening_audit"] = record_data["screening_audit"]
-                    if record_data.get("applied_at"):
-                        patch_body["applied_at"] = record_data["applied_at"]
-                    if record_data.get("applied_source"):
-                        patch_body["applied_source"] = record_data["applied_source"]
-                    # Commute distance (spec #209): only overwrite with a known value so
-                    # a later probe that fails open never erases a measured distance.
-                    if record_data.get("commute_distance_km") is not None:
-                        patch_body["commute_distance_km"] = record_data["commute_distance_km"]
-                    if record_data.get("commute_distance_text"):
-                        patch_body["commute_distance_text"] = record_data["commute_distance_text"]
-
-                    patch_url = f"{url}/{rec_id}"
-                    patch_resp = await self._write_job_record(
-                        self.session.patch, patch_url, patch_body
-                    )
-                    if patch_resp.status_code == 200:
-                        return patch_resp.json()
-                    logger.error(
-                        "Failed to patch job record %s in PocketBase (%d): %s",
-                        rec_id,
-                        patch_resp.status_code,
-                        patch_resp.text,
-                    )
-        except Exception as e:
-            logger.warning("PocketBase check fingerprint exception: %s", e)
-
-        # Insert new record
-        if (
-            not title
-            or title in INVALID_JOB_TITLES
-            or not comp_name
-            or comp_name in INVALID_COMPANY_NAMES
-        ):
-            logger.warning(
-                "Rejected insert of incomplete job record without valid title or company: title='%s', company='%s'",
-                title,
-                comp_name,
-            )
-            return {}
-
-        status_val = record_data.get("status", "unmatched")
-        if hasattr(status_val, "value"):
-            status_val = status_val.value
-        body = {
-            "fingerprint": fingerprint,
-            "title": record_data.get("title", ""),
-            "company_name": comp_name or record_data.get("company_name", ""),
-            "recruiter_name": record_data.get("recruiter_name", ""),
-            "recruiter_title": record_data.get("recruiter_title", ""),
-            "is_headhunter": record_data.get("is_headhunter", False),
-            "company_scale": record_data.get("company_scale", ""),
-            "industry": record_data.get("industry", ""),
-            "tags": record_data.get("tags", []),
-            "salary_range": record_data.get("salary_range", ""),
-            "location": record_data.get("location", ""),
-            "digest": record_data.get("digest", ""),
-            "job_description": record_data.get("job_description", ""),
-            "status": status_val or "unmatched",
-            "screened_reason": record_data.get("screened_reason", ""),
-            "relaxed_by_whitelist": bool(record_data.get("relaxed_by_whitelist", False)),
-            "screening_audit": record_data.get("screening_audit", ""),
-            "applied_at": record_data.get("applied_at"),
-            "applied_source": record_data.get("applied_source", ""),
-            "commute_distance_km": record_data.get("commute_distance_km"),
-            "commute_distance_text": record_data.get("commute_distance_text", ""),
-            "match_score": record_data.get("match_score"),
-            "jd_key_requirements": record_data.get("jd_key_requirements", []),
-            "greeting_message": record_data.get("greeting_message", ""),
-            "search_keywords": record_data.get("search_keywords", []),
-            "source_task_id": record_data.get("source_task_id"),
-            "first_seen_at": now,
-            "last_seen_at": now,
-            "created": now,
-            "updated": now,
-        }
-        if record_data.get("id"):
-            body["id"] = record_data["id"]
-        else:
-            body["id"] = uuid.uuid4().hex[:15]
-
-        try:
-            resp = await self._write_job_record(self.session.post, url, body)
-            if resp.status_code in (200, 201):
-                return resp.json()
-            logger.error(
-                "Failed to insert job record to PocketBase (%d): %s",
-                resp.status_code,
-                resp.text,
-            )
-        except Exception as e:
-            logger.warning("PocketBase insert job record exception: %s", e)
-
-        return {}
-
-    async def get_job_record(self, record_id: str) -> dict[str, Any] | None:
-        url = f"{self._jobs_collection_url()}/{record_id}"
-        loop = asyncio.get_running_loop()
-        try:
-            resp = await loop.run_in_executor(
-                None,
-                lambda: self.session.get(url, headers=self._headers()),
-            )
-            if resp.status_code == 200:
-                return resp.json()
-        except Exception as e:
-            logger.warning("PocketBase get_job_record failed: %s", e)
-        return None
-
-    async def list_job_records(
-        self, status: str | None = None, limit: int = 50
-    ) -> list[dict[str, Any]]:
-        url = self._jobs_collection_url()
-        params: dict[str, Any] = {"sort": "-created", "perPage": str(limit)}
-        if status:
-            if status == "unmatched":
-                params["filter"] = (
-                    '(status="unmatched" || status="digest_only" || status="jd_saved")'
-                )
-            else:
-                params["filter"] = f"status='{status}'"
-        loop = asyncio.get_running_loop()
-        try:
-            resp = await loop.run_in_executor(
-                None,
-                lambda: self.session.get(url, params=params, headers=self._headers()),
-            )
-            if resp.status_code == 200:
-                return resp.json().get("items", [])
-        except Exception as e:
-            logger.warning("PocketBase list_job_records failed: %s", e)
-        return []
-
-    async def update_job_record_status(
-        self,
-        record_id: str,
-        status: str,
-        match_data: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        url = f"{self._jobs_collection_url()}/{record_id}"
-        body: dict[str, Any] = {"status": status}
-        if match_data:
-            for k, v in match_data.items():
-                body[k] = v
-
-        loop = asyncio.get_running_loop()
-        try:
-            resp = await loop.run_in_executor(
-                None,
-                lambda: self.session.patch(url, json=body, headers=self._headers()),
-            )
-            if resp.status_code == 200:
-                return resp.json()
-        except Exception as e:
-            logger.warning("PocketBase update_job_record_status failed: %s", e)
-
-        return {"id": record_id, **body}
-
-    async def delete_job_record(self, record_id: str) -> bool:
-        url = f"{self._jobs_collection_url()}/{record_id}"
-        loop = asyncio.get_running_loop()
-        try:
-            resp = await loop.run_in_executor(
-                None,
-                lambda: self.session.delete(url, headers=self._headers()),
-            )
-            if resp.status_code in (200, 204):
-                return True
-            if resp.status_code == 404:
-                return False
-            logger.warning(
-                "PocketBase delete_job_record returned %s: %s", resp.status_code, resp.text
-            )
-            return False
-        except Exception as e:
-            logger.warning("PocketBase delete_job_record failed: %s", e)
-            return False
 
     def _saved_searches_collection_url(self) -> str:
         return f"{self.base_url}/api/collections/saved_searches/records"

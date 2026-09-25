@@ -1,7 +1,10 @@
 """
 boss_agent.graph
 ================
-LangGraph multi-agent workflow for multi-tier job screening, JD evaluation, and greeting generation.
+LangGraph workflows.
+
+The job screening workflow is a thin traced adapter over the deep ``CandidateScreener``
+module (ADR 0013); the resume lifecycle workflow below it remains self-contained.
 """
 
 import asyncio
@@ -14,6 +17,7 @@ from langsmith import traceable
 
 from .models import ScreeningPolicy
 from .pages import JobCardBrief
+from .screening import CARD_PASS_REASON, CandidateScreener, CardVerdictStage
 
 logger = logging.getLogger(__name__)
 
@@ -28,126 +32,56 @@ class JobApplicationState(TypedDict, total=False):
     jd_text: str
     commute_distance_km: float | None  # Probed detail-page commute distance (spec #209)
 
-    # Intermediate / Output: Keyword Screener
+    # Intermediate / Output: Card Screener (keywords, App-Enforced Filters, relaxation)
+    card_pass: bool
     keyword_pass: bool
     keyword_reason: str
-
-    # Intermediate / Output: App-Enforced Filter & Whitelist Relaxation (added in Ticket #189)
     app_rule_pass: bool
     app_rule_violation: str
     relaxed_by_whitelist: bool
     relaxation_reason: str
 
-    # Intermediate / Output: JD Semantic Screener (added in Ticket 2)
+    # Intermediate / Output: JD evaluation and greeting drafting
     deep_screen_pass: bool
     deep_screen_reason: str
-
-    # Intermediate / Output: Greeting Drafter (added in Ticket 3)
     greeting_message: str
     match_score: int
     match_reasons: list[str]
+    jd_key_requirements: list[str]
 
     # Global status & execution audit
-    status: str  # "pending", "filtered_by_keyword", "keyword_passed", "filtered_by_app_rule", "relaxed_by_whitelist", "filtered_by_deep_screen", "greeting_drafted", "applied", "error"
+    status: str  # "pending", "keyword_passed", "filtered_by_keyword", "filtered_by_app_rule", "relaxed_by_whitelist", "greeting_drafted", "jd_unavailable", "error"
     error_message: str
 
 
-class JDSemanticScreenerAgent:
-    """Token-optimized LLM agent evaluating JD against blacklist constraints without resume.
+def make_card_screener_node(screener: CandidateScreener):
+    """Factory creating the card screening node bound to a screener instance.
 
-    The whitelist has zero veto power at the JD stage: it exists only as App-Enforced
-    Filter relaxation tokens and never appears in the screening prompt.
+    One node owns the whole card-level verdict: keyword matching, App-Enforced Filters
+    and Whitelist Relaxation used to be three nodes plus a router, which is what let
+    callers re-implement the same rules slightly differently (ADR 0013).
     """
 
-    def __init__(self, llm_client: Any | None = None) -> None:
-        self.llm_client = llm_client
+    def card_screener_node(state: JobApplicationState) -> dict[str, Any]:
+        policy = ScreeningPolicy.from_dict(state.get("screening_policy") or {})
+        card = dict(state.get("card") or {})
+        if "commute_distance_km" in state and "commute_distance_km" not in card:
+            card["commute_distance_km"] = state.get("commute_distance_km")
+        verdict = screener.evaluate_card(card, policy)
+        rejected_by_keywords = verdict.stage is CardVerdictStage.FILTERED_BY_KEYWORD
 
-    @traceable(name="JDSemanticScreenerAgent.evaluate", run_type="chain")
-    def evaluate(
-        self,
-        jd_text: str,
-        card_title: str = "",
-        company_name: str = "",
-        policy: ScreeningPolicy | None = None,
-    ) -> tuple[bool, str]:
-        """Evaluate JD text against screening policy without loading candidate resume.
+        return {
+            "card_pass": verdict.passed,
+            "keyword_pass": not rejected_by_keywords,
+            "keyword_reason": verdict.reason if rejected_by_keywords else CARD_PASS_REASON,
+            "app_rule_pass": verdict.app_rule_pass,
+            "app_rule_violation": verdict.app_rule_violation,
+            "relaxed_by_whitelist": verdict.relaxed_by_whitelist,
+            "relaxation_reason": verdict.relaxation_reason,
+            "status": verdict.stage.value,
+        }
 
-        Returns: (passed: bool, reason: str).
-        """
-        if not policy or not policy.enable_screening:
-            return True, "筛选策略未启用"
-
-        if not jd_text or not jd_text.strip():
-            return True, "无详细JD文本，跳过语义精筛"
-
-        blacklist = sorted(set(b.strip() for b in policy.jd_blacklist + policy.title_blacklist if b and b.strip()))
-
-        if not blacklist:
-            return True, "未配置黑名单，JD语义精筛默认放行（白名单对JD正文零否决权）"
-
-        system_prompt = (
-            "你是一名严谨的岗位精筛助手。你的唯一任务是依据【黑名单筛选准则】，深度阅读招聘岗位详情(JD)，"
-            "判断该岗位是否应当被淘汰。\n"
-            "【筛选准则】：\n"
-            f"- 黑名单关键词(语义一票否决): {blacklist}\n\n"
-            "【判决规则】：\n"
-            "1. 黑名单关键词主要用于过滤岗位核心性质与主技术栈（如岗位本质是纯Java开发、微服务业务架构、销售外包或人力驻场等）。"
-            "若黑名单关键词仅在长篇JD中作为协作方、技术背景提及、次要了解项或否定句出现（如“配合Java团队”、“了解微服务者优先”但主体是Agent/Python岗位），"
-            "严禁误伤，应判决 pass: true；只有当黑名单主题构成了该岗位的核心职责或主要技术栈时，才判决 pass: false。\n"
-            "2. 判决仅依据上述黑名单语义评估：JD未触犯黑名单即判决 pass: true，无需JD与任何白名单或兴趣方向词相关联。\n"
-            "3. 严格输出标准 JSON 格式：{\"pass\": true或false, \"reason\": \"50字以内的判定简述\"}。"
-        )
-
-        user_prompt = (
-            f"职位名称: {card_title}\n"
-            f"招聘公司: {company_name}\n"
-            f"岗位描述(JD):\n{jd_text}\n\n"
-            '请严格输出 JSON: {"pass": true/false, "reason": "判定原因"}'
-        )
-
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ]
-
-        if not self.llm_client:
-            from droid_agent_core.llm import OpenAIChatClient
-
-            self.llm_client = OpenAIChatClient()
-
-        try:
-            res = self.llm_client.chat_completion_json(messages)
-            passed = bool(res.get("pass", True))
-            reason = str(res.get("reason", "精筛完成"))
-            return passed, reason
-        except Exception as e:
-            return True, f"LLM精筛调用异常，降级放行: {e}"
-
-
-@traceable(name="keyword_screener_node", run_type="tool")
-def keyword_screener_node(state: JobApplicationState) -> dict[str, Any]:
-    """Purely deterministic keyword screener node evaluating job card against policy."""
-    card_dict = state.get("card") or {}
-    policy_dict = state.get("screening_policy") or {}
-    policy = ScreeningPolicy.from_dict(policy_dict)
-
-    title = card_dict.get("title", "")
-    company = card_dict.get("company_name", "")
-    tags = card_dict.get("tags") or []
-    digest = card_dict.get("digest") or card_dict.get("snippet", "")
-
-    passed, reason = policy.matches_card_keywords(
-        title=title,
-        company_name=company,
-        tags=tags,
-        digest=digest,
-    )
-
-    return {
-        "keyword_pass": passed,
-        "keyword_reason": reason,
-        "status": "keyword_passed" if passed else "filtered_by_keyword",
-    }
+    return card_screener_node
 
 
 def _card_facets(state: JobApplicationState) -> dict[str, Any]:
@@ -190,13 +124,7 @@ def app_enforced_filter_node(state: JobApplicationState) -> dict[str, Any]:
 
 @traceable(name="whitelist_relaxer", run_type="tool")
 def whitelist_relaxer(state: JobApplicationState) -> str:
-    """Conditional edge router applying Whitelist Relaxation after the App-Enforced Filter.
-
-    - Satisfied jobs bypass relaxation and proceed directly to JD evaluation.
-    - Violated jobs whose card facets hit a whitelist token (candidate core passion or
-      deep competence) are rescued via the relaxation branch.
-    - Violated jobs without a whitelist hit are cleanly rejected.
-    """
+    """Conditional edge router applying Whitelist Relaxation after the App-Enforced Filter."""
     if state.get("app_rule_pass", True):
         return "proceed"
 
@@ -242,191 +170,69 @@ def record_rejection_node(state: JobApplicationState) -> dict[str, Any]:
     }
 
 
-def make_jd_semantic_screener_node(agent: JDSemanticScreenerAgent):
-    """Factory creating the JD semantic screening node bound to an agent instance."""
+def make_job_evaluation_node(screener: CandidateScreener):
+    """Factory creating the full-JD evaluation node bound to a screener instance."""
 
-    def jd_semantic_screener_node(state: JobApplicationState) -> dict[str, Any]:
-        card = state.get("card") or {}
-        policy_dict = state.get("screening_policy") or {}
-        policy = ScreeningPolicy.from_dict(policy_dict)
-        jd_text = state.get("jd_text") or ""
-        title = card.get("title", "")
-        company = card.get("company_name", "")
-
-        passed, reason = agent.evaluate(
-            jd_text=jd_text,
-            card_title=title,
-            company_name=company,
+    def job_evaluation_node(state: JobApplicationState) -> dict[str, Any]:
+        policy = ScreeningPolicy.from_dict(state.get("screening_policy") or {})
+        result = screener.evaluate_job(
+            card=state.get("card") or {},
+            jd_text=state.get("jd_text") or "",
+            profile=state.get("candidate_profile") or None,
             policy=policy,
         )
-
         return {
-            "deep_screen_pass": passed,
-            "deep_screen_reason": reason,
-            "status": "deep_screen_passed" if passed else "filtered_by_deep_screener",
+            "deep_screen_pass": result.passed,
+            "deep_screen_reason": result.reason,
+            "greeting_message": result.greeting_message,
+            "match_score": result.match_score,
+            "match_reasons": result.match_reasons,
+            "jd_key_requirements": result.jd_key_requirements,
+            "status": "greeting_drafted" if result.passed else result.stage.value,
+            "error_message": result.error_message,
         }
 
-    return jd_semantic_screener_node
+    return job_evaluation_node
 
 
-def should_continue_after_keyword(state: JobApplicationState) -> str:
-    """Conditional edge router after keyword screener."""
-    if state.get("keyword_pass", False):
+def should_continue_after_card_screening(state: JobApplicationState) -> str:
+    """Conditional edge router after the card screening node."""
+    if state.get("card_pass", False):
         return "continue"
     return "end"
-
-
-def should_continue_after_deep_screen(state: JobApplicationState) -> str:
-    """Conditional edge router after JD semantic screener."""
-    if state.get("deep_screen_pass", False):
-        return "continue"
-    return "end"
-
-
-class GreetingDrafterAgent:
-    """Agent generating personalized, anti-template greeting messages fusing full JD and candidate profile."""
-
-    def __init__(
-        self, llm_client: Any | None = None, matching_service: Any | None = None
-    ) -> None:
-        if matching_service is not None:
-            self.matching_service = matching_service
-        else:
-            from .matching import JobMatchGreetingService
-
-            self.matching_service = JobMatchGreetingService(llm_client=llm_client)
-
-    @traceable(name="GreetingDrafterAgent.draft", run_type="chain")
-    def draft(
-        self,
-        card: dict[str, Any],
-        jd_text: str,
-        candidate_profile: Any | None = None,
-        policy: ScreeningPolicy | None = None,
-    ) -> Any:
-        from .memory import StructuredCandidateProfile
-        from .models import JobPosting
-
-        posting = JobPosting(
-            title=card.get("title", ""),
-            company_name=card.get("company_name", ""),
-            salary_range=card.get("salary_range", ""),
-            job_description=jd_text,
-            location=card.get("location"),
-            tags=card.get("tags") or [],
-            recruiter_name=card.get("recruiter_name"),
-        )
-
-        profile_obj: StructuredCandidateProfile | None = None
-        if isinstance(candidate_profile, StructuredCandidateProfile):
-            profile_obj = candidate_profile
-        elif isinstance(candidate_profile, dict) and candidate_profile:
-            profile_obj = StructuredCandidateProfile.from_dict(candidate_profile)
-
-        return self.matching_service.evaluate_and_draft_greeting(
-            job=posting, profile=profile_obj, screening_policy=policy
-        )
-
-
-def make_greeting_drafter_node(agent: GreetingDrafterAgent):
-    """Factory creating the greeting drafter node bound to an agent instance."""
-
-    def greeting_drafter_node(state: JobApplicationState) -> dict[str, Any]:
-        card = state.get("card") or {}
-        jd_text = state.get("jd_text") or ""
-        profile_dict = state.get("candidate_profile") or {}
-        policy = ScreeningPolicy.from_dict(state.get("screening_policy") or {})
-
-        try:
-            match_res = agent.draft(
-                card=card,
-                jd_text=jd_text,
-                candidate_profile=profile_dict,
-                policy=policy,
-            )
-            return {
-                "greeting_message": match_res.greeting_message,
-                "match_score": match_res.match_score,
-                "match_reasons": match_res.match_reasons,
-                "status": "greeting_drafted",
-            }
-        except ValueError as e:
-            logger.warning("Greeting drafting skipped due to invalid JD: %s", e)
-            return {
-                "greeting_message": "",
-                "match_score": 0,
-                "match_reasons": [str(e)],
-                "status": "greeting_draft_failed",
-                "error_message": str(e),
-            }
-
-    return greeting_drafter_node
 
 
 def build_job_application_graph(
     llm_client: Any | None = None,
     matching_service: Any | None = None,
+    screener: CandidateScreener | None = None,
 ) -> Any:
-    """Construct and compile the stateful job screening and application graph."""
-    screener_agent = JDSemanticScreenerAgent(llm_client=llm_client)
-    drafter_agent = GreetingDrafterAgent(llm_client=llm_client, matching_service=matching_service)
+    """Construct and compile the stateful job screening workflow.
+
+    The graph is a thin traced adapter over ``CandidateScreener`` (ADR 0013): it keeps
+    the screening stages observable as a LangGraph run with LangSmith tags while every
+    screening rule itself lives in the screener module.
+    """
+    resolved_screener = screener or CandidateScreener(
+        llm_client=llm_client, matching_service=matching_service
+    )
 
     builder = StateGraph(JobApplicationState)
+    builder.add_node("card_screener", make_card_screener_node(resolved_screener))
+    builder.add_node("job_evaluation", make_job_evaluation_node(resolved_screener))
 
-    # 1. Register nodes
-    builder.add_node("keyword_screener", keyword_screener_node)
-    builder.add_node("app_enforced_filter", app_enforced_filter_node)
-    builder.add_node("apply_relaxation", apply_relaxation_node)
-    builder.add_node("record_rejection", record_rejection_node)
-    builder.add_node(
-        "jd_semantic_screener",
-        make_jd_semantic_screener_node(screener_agent),
-    )
-    builder.add_node(
-        "greeting_drafter",
-        make_greeting_drafter_node(drafter_agent),
-    )
-
-    # 2. Edges
-    builder.add_edge(START, "keyword_screener")
-
-    # If keyword screener passes, advance to app-enforced filtering; otherwise terminate at END
+    builder.add_edge(START, "card_screener")
+    # Only a card that survived card screening with a usable verdict earns a JD evaluation;
+    # a rejected card terminates the workflow without spending a single token.
     builder.add_conditional_edges(
-        "keyword_screener",
-        should_continue_after_keyword,
+        "card_screener",
+        should_continue_after_card_screening,
         {
-            "continue": "app_enforced_filter",
+            "continue": "job_evaluation",
             "end": END,
         },
     )
-
-    # App-Enforced Filter verdict routes through the whitelist relaxer:
-    # satisfied -> JD evaluation; violated but whitelist-hit -> relaxation rescue -> JD
-    # evaluation; violated and unrescued -> recorded rejection.
-    builder.add_conditional_edges(
-        "app_enforced_filter",
-        whitelist_relaxer,
-        {
-            "proceed": "jd_semantic_screener",
-            "relax": "apply_relaxation",
-            "reject": "record_rejection",
-        },
-    )
-    builder.add_edge("apply_relaxation", "jd_semantic_screener")
-    builder.add_edge("record_rejection", END)
-
-    # If semantic screener passes, advance to greeting_drafter; otherwise terminate at END
-    builder.add_conditional_edges(
-        "jd_semantic_screener",
-        should_continue_after_deep_screen,
-        {
-            "continue": "greeting_drafter",
-            "end": END,
-        },
-    )
-
-    # From greeting_drafter to END (ready for future Human Gate Checkpoint)
-    builder.add_edge("greeting_drafter", END)
+    builder.add_edge("job_evaluation", END)
 
     return builder.compile()
 

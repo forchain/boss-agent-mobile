@@ -294,6 +294,11 @@ class SmokeHarness:
                     console.print(
                         f"[yellow]🛑  Job rejected by App-Enforced Filter: {graph_state.get('app_rule_violation')}[/yellow]"
                     )
+                elif graph_state.get("status") == "jd_unavailable":
+                    console.print(
+                        f"[yellow]⚠️  No evaluable JD on this posting: "
+                        f"{graph_state.get('error_message')}[/yellow]"
+                    )
                 elif not graph_state.get("deep_screen_pass", True):
                     console.print(
                         f"[yellow]⏭️  Job rejected by JDSemanticScreener: {graph_state.get('deep_screen_reason')}[/yellow]"

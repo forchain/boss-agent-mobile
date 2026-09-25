@@ -278,7 +278,7 @@ async def test_scrape_jobs_handler_save_jd_enriches_full_jd():
         config=config,
         broker=broker,
         context=context,
-        handlers=[ScrapeJobsHandler()],
+        handlers=[ScrapeJobsHandler(llm_client=MagicMock())],
     )
 
     task = await broker.create_task(
@@ -347,7 +347,7 @@ async def test_scrape_jobs_handler_detail_missing_company_falls_back_to_card_com
         config=config,
         broker=broker,
         context=context,
-        handlers=[ScrapeJobsHandler()],
+        handlers=[ScrapeJobsHandler(llm_client=MagicMock())],
     )
 
     task = await broker.create_task(
@@ -401,7 +401,7 @@ async def test_scrape_jobs_handler_terminates_on_feed_bottom_boundary():
         config=config,
         broker=broker,
         context=context,
-        handlers=[ScrapeJobsHandler()],
+        handlers=[ScrapeJobsHandler(llm_client=MagicMock())],
     )
 
     task = await broker.create_task(
@@ -488,7 +488,7 @@ async def test_scrape_jobs_handler_filters_recommended_cards_below_boundary():
         config=config,
         broker=broker,
         context=context,
-        handlers=[ScrapeJobsHandler()],
+        handlers=[ScrapeJobsHandler(llm_client=MagicMock())],
     )
 
     task = await broker.create_task(
@@ -563,11 +563,19 @@ async def test_auto_apply_handler_quota_exhausted_degrades_to_matched():
 
     config = WorkerConfig(worker_id="test-quota-worker", poll_interval_sec=0.01)
     context = WorkerContext(config=config, driver=mock_driver)
+    # A stubbed draft: the degraded record must carry a real greeting for manual sending.
+    mock_llm = MagicMock()
+    mock_llm.chat_completion_json.return_value = {
+        "match_score": 90,
+        "jd_key_requirements": ["多智能体编排"],
+        "match_reasons": ["具备系统化落地经验"],
+        "greeting_message": "您好！看到贵司在招多智能体系统工程化岗位，我具备完整落地经验。",
+    }
     worker = AutomationWorker(
         config=config,
         broker=broker,
         context=context,
-        handlers=[AutoApplyHandler(llm_client=_stub_llm_client())],
+        handlers=[AutoApplyHandler(llm_client=mock_llm)],
     )
 
     task = await broker.create_task(

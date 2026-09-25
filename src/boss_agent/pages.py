@@ -34,6 +34,7 @@ from .models import (
     compute_job_fingerprint,
     is_invalid_company_name,
     is_likely_location,
+    resolve_headhunter_channel,
     sanitize_tags,
 )
 from .rejection import DISINTEREST_REASON
@@ -170,10 +171,9 @@ class JobCardBrief:
         elif self.digest and not self.snippet:
             self.snippet = self.digest
 
-        if not self.is_headhunter and (
-            "猎头" in (self.recruiter_title or "") or "猎头" in (self.recruiter_name or "")
-        ):
-            self.is_headhunter = True
+        self.is_headhunter = resolve_headhunter_channel(
+            self.is_headhunter, self.recruiter_name, self.recruiter_title
+        )
         self.tags = sanitize_tags(
             self.tags,
             recruiter_name=self.recruiter_name,

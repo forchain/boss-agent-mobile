@@ -48,7 +48,7 @@ def _patch_search_layer(search_ok: bool = True, entry_ok: bool = True):
 
 @pytest.mark.asyncio
 async def test_scrape_jobs_delegates_search_to_fast_entry_without_pre_navigation(broker, context):
-    handler = ScrapeJobsHandler()
+    handler = ScrapeJobsHandler(llm_client=MagicMock())
     task = await broker.create_task(
         task_type=TaskType.SCRAPE_JOBS, payload={"keyword": "agent", "max_jobs": 1}
     )
@@ -66,7 +66,7 @@ async def test_scrape_jobs_delegates_search_to_fast_entry_without_pre_navigation
 
 @pytest.mark.asyncio
 async def test_scrape_jobs_retry_logging_marks_exhaustion_and_never_lies(broker, context):
-    handler = ScrapeJobsHandler()
+    handler = ScrapeJobsHandler(llm_client=MagicMock())
     task = await broker.create_task(
         task_type=TaskType.SCRAPE_JOBS, payload={"keyword": "agent", "max_jobs": 1}
     )

@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 import pytest
+
 from _service_harness import REPO_ROOT
 
 # Acceptance criteria: `status` completes within 5s even with an offline device present,
@@ -38,7 +39,7 @@ HANG_SECONDS = 600
 TARGET_AVD = "boss_avd_arm64"
 BASH = shutil.which("bash") or "/bin/bash"
 
-RUNNER_SCRIPTS = ("emulator.sh", "run.sh")
+RUNNER_SCRIPTS = ("emulator.sh", "run.sh", "worker.sh", "web.sh")
 
 _FAKE_ADB = """#!/usr/bin/env bash
 # Scripted `adb` stand-in: reads its answers (and its hang behaviour) from

@@ -62,11 +62,11 @@ async def test_auto_apply_rescued_headhunter_job_persists_relaxation_audit():
     )
 
     with (
-        patch("boss_agent.worker.handlers.auto_apply.StartupDialogPage") as startup_cls,
-        patch("boss_agent.worker.handlers.auto_apply.JobListPage"),
-        patch("boss_agent.worker.handlers.auto_apply.SearchPage") as search_cls,
-        patch("boss_agent.worker.handlers.auto_apply.JobDetailPage") as detail_cls,
-        patch("boss_agent.worker.handlers.auto_apply.ChatPage"),
+        patch("boss_agent.feed_pipeline.StartupDialogPage") as startup_cls,
+        patch("boss_agent.feed_pipeline.JobListPage"),
+        patch("boss_agent.feed_pipeline.SearchPage") as search_cls,
+        patch("boss_agent.feed_pipeline.JobDetailPage") as detail_cls,
+        patch("boss_agent.feed_pipeline.ChatPage"),
     ):
         startup_cls.return_value.is_dialog_present.return_value = False
         search_cls.return_value.is_search_page.return_value = True
@@ -118,11 +118,11 @@ async def test_auto_apply_app_rule_rejection_persists_ignored_record():
     )
 
     with (
-        patch("boss_agent.worker.handlers.auto_apply.StartupDialogPage") as startup_cls,
-        patch("boss_agent.worker.handlers.auto_apply.JobListPage"),
-        patch("boss_agent.worker.handlers.auto_apply.SearchPage") as search_cls,
-        patch("boss_agent.worker.handlers.auto_apply.JobDetailPage") as detail_cls,
-        patch("boss_agent.worker.handlers.auto_apply.ChatPage"),
+        patch("boss_agent.feed_pipeline.StartupDialogPage") as startup_cls,
+        patch("boss_agent.feed_pipeline.JobListPage"),
+        patch("boss_agent.feed_pipeline.SearchPage") as search_cls,
+        patch("boss_agent.feed_pipeline.JobDetailPage") as detail_cls,
+        patch("boss_agent.feed_pipeline.ChatPage"),
     ):
         startup_cls.return_value.is_dialog_present.return_value = False
         search_cls.return_value.is_search_page.return_value = True
@@ -199,7 +199,7 @@ async def test_scrape_jobs_relaxed_headhunter_card_persists_audit_fields():
     rescued, navigated, and persisted with relaxed_by_whitelist + screening_audit."""
     broker = InMemoryTaskBroker()
     context = WorkerContext(config=WorkerConfig(worker_id="w-relax-scrape"), driver=_mock_driver())
-    handler = ScrapeJobsHandler()
+    handler = ScrapeJobsHandler(llm_client=MagicMock())
 
     card_elem = MagicMock()
     card = JobCardBrief(
@@ -224,10 +224,10 @@ async def test_scrape_jobs_relaxed_headhunter_card_persists_audit_fields():
     )
 
     with (
-        patch("boss_agent.worker.handlers.scrape_jobs.StartupDialogPage") as startup_cls,
-        patch("boss_agent.worker.handlers.scrape_jobs.JobListPage") as list_cls,
-        patch("boss_agent.worker.handlers.scrape_jobs.SearchPage") as search_cls,
-        patch("boss_agent.worker.handlers.scrape_jobs.JobDetailPage") as detail_cls,
+        patch("boss_agent.feed_pipeline.StartupDialogPage") as startup_cls,
+        patch("boss_agent.feed_pipeline.JobListPage") as list_cls,
+        patch("boss_agent.feed_pipeline.SearchPage") as search_cls,
+        patch("boss_agent.feed_pipeline.JobDetailPage") as detail_cls,
     ):
         startup_cls.return_value.is_dialog_present.return_value = False
         list_cls.return_value.extract_visible_job_cards.return_value = [card]
@@ -262,7 +262,7 @@ async def test_scrape_jobs_app_rule_violation_without_rescue_is_ignored():
     short-circuited to an ignored record without opening the detail page."""
     broker = InMemoryTaskBroker()
     context = WorkerContext(config=WorkerConfig(worker_id="w-reject-scrape"), driver=_mock_driver())
-    handler = ScrapeJobsHandler()
+    handler = ScrapeJobsHandler(llm_client=MagicMock())
 
     card_elem = MagicMock()
     card = JobCardBrief(
@@ -287,10 +287,10 @@ async def test_scrape_jobs_app_rule_violation_without_rescue_is_ignored():
     )
 
     with (
-        patch("boss_agent.worker.handlers.scrape_jobs.StartupDialogPage") as startup_cls,
-        patch("boss_agent.worker.handlers.scrape_jobs.JobListPage") as list_cls,
-        patch("boss_agent.worker.handlers.scrape_jobs.SearchPage") as search_cls,
-        patch("boss_agent.worker.handlers.scrape_jobs.JobDetailPage") as detail_cls,
+        patch("boss_agent.feed_pipeline.StartupDialogPage") as startup_cls,
+        patch("boss_agent.feed_pipeline.JobListPage") as list_cls,
+        patch("boss_agent.feed_pipeline.SearchPage") as search_cls,
+        patch("boss_agent.feed_pipeline.JobDetailPage") as detail_cls,
     ):
         startup_cls.return_value.is_dialog_present.return_value = False
         list_cls.return_value.extract_visible_job_cards.return_value = [card]
@@ -343,11 +343,11 @@ async def test_auto_apply_distant_job_is_ignored_before_chat_entry():
     )
 
     with (
-        patch("boss_agent.worker.handlers.auto_apply.StartupDialogPage") as startup_cls,
-        patch("boss_agent.worker.handlers.auto_apply.JobListPage"),
-        patch("boss_agent.worker.handlers.auto_apply.SearchPage") as search_cls,
-        patch("boss_agent.worker.handlers.auto_apply.JobDetailPage") as detail_cls,
-        patch("boss_agent.worker.handlers.auto_apply.ChatPage") as chat_cls,
+        patch("boss_agent.feed_pipeline.StartupDialogPage") as startup_cls,
+        patch("boss_agent.feed_pipeline.JobListPage"),
+        patch("boss_agent.feed_pipeline.SearchPage") as search_cls,
+        patch("boss_agent.feed_pipeline.JobDetailPage") as detail_cls,
+        patch("boss_agent.feed_pipeline.ChatPage") as chat_cls,
     ):
         startup_cls.return_value.is_dialog_present.return_value = False
         search_cls.return_value.is_search_page.return_value = True
@@ -392,11 +392,11 @@ async def test_auto_apply_distant_job_rescued_by_whitelist_still_drafts():
     )
 
     with (
-        patch("boss_agent.worker.handlers.auto_apply.StartupDialogPage") as startup_cls,
-        patch("boss_agent.worker.handlers.auto_apply.JobListPage"),
-        patch("boss_agent.worker.handlers.auto_apply.SearchPage") as search_cls,
-        patch("boss_agent.worker.handlers.auto_apply.JobDetailPage") as detail_cls,
-        patch("boss_agent.worker.handlers.auto_apply.ChatPage"),
+        patch("boss_agent.feed_pipeline.StartupDialogPage") as startup_cls,
+        patch("boss_agent.feed_pipeline.JobListPage"),
+        patch("boss_agent.feed_pipeline.SearchPage") as search_cls,
+        patch("boss_agent.feed_pipeline.JobDetailPage") as detail_cls,
+        patch("boss_agent.feed_pipeline.ChatPage"),
     ):
         startup_cls.return_value.is_dialog_present.return_value = False
         search_cls.return_value.is_search_page.return_value = True
@@ -436,11 +436,11 @@ async def test_auto_apply_nearby_job_proceeds_and_probes_distance():
     )
 
     with (
-        patch("boss_agent.worker.handlers.auto_apply.StartupDialogPage") as startup_cls,
-        patch("boss_agent.worker.handlers.auto_apply.JobListPage"),
-        patch("boss_agent.worker.handlers.auto_apply.SearchPage") as search_cls,
-        patch("boss_agent.worker.handlers.auto_apply.JobDetailPage") as detail_cls,
-        patch("boss_agent.worker.handlers.auto_apply.ChatPage"),
+        patch("boss_agent.feed_pipeline.StartupDialogPage") as startup_cls,
+        patch("boss_agent.feed_pipeline.JobListPage"),
+        patch("boss_agent.feed_pipeline.SearchPage") as search_cls,
+        patch("boss_agent.feed_pipeline.JobDetailPage") as detail_cls,
+        patch("boss_agent.feed_pipeline.ChatPage"),
     ):
         startup_cls.return_value.is_dialog_present.return_value = False
         search_cls.return_value.is_search_page.return_value = True
@@ -480,11 +480,11 @@ async def test_auto_apply_skips_distance_probe_when_filter_disabled():
     )
 
     with (
-        patch("boss_agent.worker.handlers.auto_apply.StartupDialogPage") as startup_cls,
-        patch("boss_agent.worker.handlers.auto_apply.JobListPage"),
-        patch("boss_agent.worker.handlers.auto_apply.SearchPage") as search_cls,
-        patch("boss_agent.worker.handlers.auto_apply.JobDetailPage") as detail_cls,
-        patch("boss_agent.worker.handlers.auto_apply.ChatPage"),
+        patch("boss_agent.feed_pipeline.StartupDialogPage") as startup_cls,
+        patch("boss_agent.feed_pipeline.JobListPage"),
+        patch("boss_agent.feed_pipeline.SearchPage") as search_cls,
+        patch("boss_agent.feed_pipeline.JobDetailPage") as detail_cls,
+        patch("boss_agent.feed_pipeline.ChatPage"),
     ):
         startup_cls.return_value.is_dialog_present.return_value = False
         search_cls.return_value.is_search_page.return_value = True
@@ -521,11 +521,11 @@ async def test_auto_apply_headhunter_target_skips_distance_probe_and_proceeds():
     )
 
     with (
-        patch("boss_agent.worker.handlers.auto_apply.StartupDialogPage") as startup_cls,
-        patch("boss_agent.worker.handlers.auto_apply.JobListPage"),
-        patch("boss_agent.worker.handlers.auto_apply.SearchPage") as search_cls,
-        patch("boss_agent.worker.handlers.auto_apply.JobDetailPage") as detail_cls,
-        patch("boss_agent.worker.handlers.auto_apply.ChatPage"),
+        patch("boss_agent.feed_pipeline.StartupDialogPage") as startup_cls,
+        patch("boss_agent.feed_pipeline.JobListPage"),
+        patch("boss_agent.feed_pipeline.SearchPage") as search_cls,
+        patch("boss_agent.feed_pipeline.JobDetailPage") as detail_cls,
+        patch("boss_agent.feed_pipeline.ChatPage"),
     ):
         startup_cls.return_value.is_dialog_present.return_value = False
         search_cls.return_value.is_search_page.return_value = True
@@ -558,7 +558,7 @@ async def test_scrape_jobs_headhunter_card_skips_distance_probe_and_fails_open()
     context = WorkerContext(
         config=WorkerConfig(worker_id="w-distance-scrape-hh"), driver=_mock_driver()
     )
-    handler = ScrapeJobsHandler()
+    handler = ScrapeJobsHandler(llm_client=MagicMock())
     card, _card_elem = _scrape_card(recruiter_name="钟先生 · 猎头顾问")
     assert card.is_headhunter is True
 
@@ -572,10 +572,10 @@ async def test_scrape_jobs_headhunter_card_skips_distance_probe_and_fails_open()
     )
 
     with (
-        patch("boss_agent.worker.handlers.scrape_jobs.StartupDialogPage") as startup_cls,
-        patch("boss_agent.worker.handlers.scrape_jobs.JobListPage") as list_cls,
-        patch("boss_agent.worker.handlers.scrape_jobs.SearchPage") as search_cls,
-        patch("boss_agent.worker.handlers.scrape_jobs.JobDetailPage") as detail_cls,
+        patch("boss_agent.feed_pipeline.StartupDialogPage") as startup_cls,
+        patch("boss_agent.feed_pipeline.JobListPage") as list_cls,
+        patch("boss_agent.feed_pipeline.SearchPage") as search_cls,
+        patch("boss_agent.feed_pipeline.JobDetailPage") as detail_cls,
     ):
         startup_cls.return_value.is_dialog_present.return_value = False
         list_cls.return_value.extract_visible_job_cards.return_value = [card]
@@ -606,7 +606,7 @@ async def test_scrape_jobs_distant_job_is_ingested_as_ignored():
     """A distant job is persisted as ignored instead of jd_saved/unmatched."""
     broker = InMemoryTaskBroker()
     context = WorkerContext(config=WorkerConfig(worker_id="w-distance-scrape"), driver=_mock_driver())
-    handler = ScrapeJobsHandler()
+    handler = ScrapeJobsHandler(llm_client=MagicMock())
     card, _card_elem = _scrape_card()
 
     task = await broker.create_task(
@@ -619,10 +619,10 @@ async def test_scrape_jobs_distant_job_is_ingested_as_ignored():
     )
 
     with (
-        patch("boss_agent.worker.handlers.scrape_jobs.StartupDialogPage") as startup_cls,
-        patch("boss_agent.worker.handlers.scrape_jobs.JobListPage") as list_cls,
-        patch("boss_agent.worker.handlers.scrape_jobs.SearchPage") as search_cls,
-        patch("boss_agent.worker.handlers.scrape_jobs.JobDetailPage") as detail_cls,
+        patch("boss_agent.feed_pipeline.StartupDialogPage") as startup_cls,
+        patch("boss_agent.feed_pipeline.JobListPage") as list_cls,
+        patch("boss_agent.feed_pipeline.SearchPage") as search_cls,
+        patch("boss_agent.feed_pipeline.JobDetailPage") as detail_cls,
     ):
         startup_cls.return_value.is_dialog_present.return_value = False
         list_cls.return_value.extract_visible_job_cards.return_value = [card]
@@ -653,7 +653,7 @@ async def test_scrape_jobs_distant_job_rescued_by_whitelist_is_saved():
     context = WorkerContext(
         config=WorkerConfig(worker_id="w-distance-scrape-relax"), driver=_mock_driver()
     )
-    handler = ScrapeJobsHandler()
+    handler = ScrapeJobsHandler(llm_client=MagicMock())
     card, _card_elem = _scrape_card()
 
     task = await broker.create_task(
@@ -666,10 +666,10 @@ async def test_scrape_jobs_distant_job_rescued_by_whitelist_is_saved():
     )
 
     with (
-        patch("boss_agent.worker.handlers.scrape_jobs.StartupDialogPage") as startup_cls,
-        patch("boss_agent.worker.handlers.scrape_jobs.JobListPage") as list_cls,
-        patch("boss_agent.worker.handlers.scrape_jobs.SearchPage") as search_cls,
-        patch("boss_agent.worker.handlers.scrape_jobs.JobDetailPage") as detail_cls,
+        patch("boss_agent.feed_pipeline.StartupDialogPage") as startup_cls,
+        patch("boss_agent.feed_pipeline.JobListPage") as list_cls,
+        patch("boss_agent.feed_pipeline.SearchPage") as search_cls,
+        patch("boss_agent.feed_pipeline.JobDetailPage") as detail_cls,
     ):
         startup_cls.return_value.is_dialog_present.return_value = False
         list_cls.return_value.extract_visible_job_cards.return_value = [card]
@@ -707,7 +707,7 @@ async def test_scrape_jobs_distance_relaxation_judges_the_enriched_title():
     context = WorkerContext(
         config=WorkerConfig(worker_id="w-distance-scrape-enriched"), driver=_mock_driver()
     )
-    handler = ScrapeJobsHandler()
+    handler = ScrapeJobsHandler(llm_client=MagicMock())
     card, _card_elem = _scrape_card(title="技术专家")
 
     task = await broker.create_task(
@@ -720,10 +720,10 @@ async def test_scrape_jobs_distance_relaxation_judges_the_enriched_title():
     )
 
     with (
-        patch("boss_agent.worker.handlers.scrape_jobs.StartupDialogPage") as startup_cls,
-        patch("boss_agent.worker.handlers.scrape_jobs.JobListPage") as list_cls,
-        patch("boss_agent.worker.handlers.scrape_jobs.SearchPage") as search_cls,
-        patch("boss_agent.worker.handlers.scrape_jobs.JobDetailPage") as detail_cls,
+        patch("boss_agent.feed_pipeline.StartupDialogPage") as startup_cls,
+        patch("boss_agent.feed_pipeline.JobListPage") as list_cls,
+        patch("boss_agent.feed_pipeline.SearchPage") as search_cls,
+        patch("boss_agent.feed_pipeline.JobDetailPage") as detail_cls,
     ):
         startup_cls.return_value.is_dialog_present.return_value = False
         list_cls.return_value.extract_visible_job_cards.return_value = [card]
@@ -750,7 +750,7 @@ async def test_scrape_jobs_skips_distance_probe_when_filter_disabled():
     context = WorkerContext(
         config=WorkerConfig(worker_id="w-distance-scrape-off"), driver=_mock_driver()
     )
-    handler = ScrapeJobsHandler()
+    handler = ScrapeJobsHandler(llm_client=MagicMock())
     card, _card_elem = _scrape_card()
 
     task = await broker.create_task(
@@ -763,10 +763,10 @@ async def test_scrape_jobs_skips_distance_probe_when_filter_disabled():
     )
 
     with (
-        patch("boss_agent.worker.handlers.scrape_jobs.StartupDialogPage") as startup_cls,
-        patch("boss_agent.worker.handlers.scrape_jobs.JobListPage") as list_cls,
-        patch("boss_agent.worker.handlers.scrape_jobs.SearchPage") as search_cls,
-        patch("boss_agent.worker.handlers.scrape_jobs.JobDetailPage") as detail_cls,
+        patch("boss_agent.feed_pipeline.StartupDialogPage") as startup_cls,
+        patch("boss_agent.feed_pipeline.JobListPage") as list_cls,
+        patch("boss_agent.feed_pipeline.SearchPage") as search_cls,
+        patch("boss_agent.feed_pipeline.JobDetailPage") as detail_cls,
     ):
         startup_cls.return_value.is_dialog_present.return_value = False
         list_cls.return_value.extract_visible_job_cards.return_value = [card]
@@ -797,7 +797,7 @@ async def test_scrape_jobs_channel_relaxation_implies_distance_relaxation():
     context = WorkerContext(
         config=WorkerConfig(worker_id="w-distance-invariant"), driver=_mock_driver()
     )
-    handler = ScrapeJobsHandler()
+    handler = ScrapeJobsHandler(llm_client=MagicMock())
     card, _card_elem = _scrape_card(recruiter_name="钟先生 · 猎头顾问")
     assert card.is_headhunter is True
 
@@ -815,10 +815,10 @@ async def test_scrape_jobs_channel_relaxation_implies_distance_relaxation():
     )
 
     with (
-        patch("boss_agent.worker.handlers.scrape_jobs.StartupDialogPage") as startup_cls,
-        patch("boss_agent.worker.handlers.scrape_jobs.JobListPage") as list_cls,
-        patch("boss_agent.worker.handlers.scrape_jobs.SearchPage") as search_cls,
-        patch("boss_agent.worker.handlers.scrape_jobs.JobDetailPage") as detail_cls,
+        patch("boss_agent.feed_pipeline.StartupDialogPage") as startup_cls,
+        patch("boss_agent.feed_pipeline.JobListPage") as list_cls,
+        patch("boss_agent.feed_pipeline.SearchPage") as search_cls,
+        patch("boss_agent.feed_pipeline.JobDetailPage") as detail_cls,
     ):
         startup_cls.return_value.is_dialog_present.return_value = False
         list_cls.return_value.extract_visible_job_cards.return_value = [card]

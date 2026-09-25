@@ -479,6 +479,22 @@ HEADHUNTER_COMMUTE_PROBE_SKIP_REASON = "猎头岗位（企业信息保密），�
 DEFAULT_COMMUNICATION_COOLDOWN_DAYS = 30
 
 
+def resolve_headhunter_channel(
+    is_headhunter: bool | None,
+    recruiter_name: str | None = "",
+    recruiter_title: str | None = "",
+) -> bool:
+    """Resolve the recruitment channel, inferring it from the recruiter when unset.
+
+    A posting whose channel is unknown but whose recruiter says 猎头 is a headhunter
+    posting: leaving it as a direct hire would let it slip past a direct-only channel
+    preference. One rule, so cards, postings and screening facets cannot drift apart.
+    """
+    if is_headhunter:
+        return True
+    return "猎头" in (recruiter_title or "") or "猎头" in (recruiter_name or "")
+
+
 def is_direct_hire_company(company_name: str | None, is_headhunter: bool | None) -> bool:
     """Whether a posting belongs to a genuine direct-hire enterprise for同企避嫌 purposes.
 
@@ -656,10 +672,9 @@ class JobPosting:
         elif self.recruiter_name:
             self.recruiter_name = self.recruiter_name.rstrip("·•・").strip()
 
-        if not self.is_headhunter and (
-            "猎头" in (self.recruiter_title or "") or "猎头" in (self.recruiter_name or "")
-        ):
-            self.is_headhunter = True
+        self.is_headhunter = resolve_headhunter_channel(
+            self.is_headhunter, self.recruiter_name, self.recruiter_title
+        )
         if not self.digest and self.job_description:
             self.digest = extract_digest_from_jd(self.job_description)
         self.tags = sanitize_tags(
@@ -757,6 +772,19 @@ class FilterConfig:
         if not self.enable_filter:
             return False
         return bool(self.industries)
+
+
+# A JD shorter than this carries no evaluable signal: screening or greeting from it would
+# produce a meaningless score and a fabricated greeting. The card screener and the greeting
+# service gate on the same precondition, so it is stated once here.
+MIN_JD_CHARS = 30
+UNUSABLE_JD_MARKERS = ("无详细岗位描述", "暂无详细描述", "未注明职位")
+
+
+def is_substantive_jd(jd: str | None) -> bool:
+    """Whether an extracted JD carries enough signal to screen or greet from."""
+    text = jd or ""
+    return len(text) >= MIN_JD_CHARS and text not in UNUSABLE_JD_MARKERS
 
 
 #: Unambiguous staffing/agency markers. Deliberately excludes broad industry

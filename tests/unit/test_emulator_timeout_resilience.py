@@ -28,6 +28,7 @@ from _runner_harness import (
     Result,
     RunnerScriptHarness,
 )
+
 from _service_harness import REPO_ROOT, wait_until_dead_pid
 
 EMULATOR_SH = REPO_ROOT / "emulator.sh"

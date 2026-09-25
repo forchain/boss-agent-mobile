@@ -1,8 +1,9 @@
 from unittest.mock import MagicMock
 
-from boss_agent.graph import JDSemanticScreenerAgent, run_job_application_graph
+from boss_agent.graph import run_job_application_graph
 from boss_agent.models import SavedSearch, ScreeningPolicy
 from boss_agent.pages import JobCardBrief
+from boss_agent.screening import CandidateScreener, JobVerdictStage
 
 
 def test_screening_policy_serialization():
@@ -249,11 +250,13 @@ def test_jd_semantic_screener_empty_jd_fallback():
     )
 
     assert state["keyword_pass"] is True
-    assert state["deep_screen_pass"] is True
-    assert "跳过语义精筛" in state["deep_screen_reason"]
-    # With empty jd_text, greeting drafter correctly halts without generating outreach
-    assert state["status"] == "greeting_draft_failed"
+    # No JD means no evaluable verdict: reported honestly rather than passed silently.
+    assert state["deep_screen_pass"] is False
+    assert state["status"] == JobVerdictStage.JD_UNAVAILABLE.value
+    assert "missing or too short" in state["error_message"]
     assert state["greeting_message"] == ""
+    # The drafting stage was never reached, so no tokens were spent on a greeting.
+    mock_llm.chat_completion_json.assert_not_called()
 
 
 def test_jd_semantic_screener_llm_exception_graceful_fallback():
@@ -265,15 +268,17 @@ def test_jd_semantic_screener_llm_exception_graceful_fallback():
     mock_llm = MagicMock()
     mock_llm.chat_completion_json.side_effect = RuntimeError("Rate limit exceeded")
 
-    agent = JDSemanticScreenerAgent(llm_client=mock_llm)
-    passed, reason = agent.evaluate(
-        jd_text="要求熟悉大模型研发与微调",
-        card_title="Agent 工程师",
+    screener = CandidateScreener(llm_client=mock_llm)
+    result = screener.evaluate_job(
+        card=JobCardBrief(title="Agent 工程师", company_name="某公司", recruiter_name="HR"),
+        # Substantive enough to be worth screening: a thin JD never reaches the LLM.
+        jd_text="岗位职责：负责大模型算法研发与微调，要求熟悉 Python 与分布式训练框架。",
         policy=policy,
+        draft_greeting=False,
     )
 
-    assert passed is True
-    assert "降级放行" in reason
+    assert result.passed is True
+    assert "降级放行" in result.reason
 
 
 def test_full_lifecycle_job_application_graph_with_profile():
@@ -549,13 +554,16 @@ def test_semantic_screener_prompt_has_zero_whitelist_veto():
     mock_llm = MagicMock()
     mock_llm.chat_completion_json.return_value = {"pass": True, "reason": "未触犯黑名单"}
 
-    agent = JDSemanticScreenerAgent(llm_client=mock_llm)
-    passed, _reason = agent.evaluate(
+    screener = CandidateScreener(llm_client=mock_llm)
+    result = screener.evaluate_job(
+        card=JobCardBrief(
+            title="AI Agent 平台工程师", company_name="智元创新", recruiter_name="周先生"
+        ),
         jd_text="岗位职责：负责Agent编排平台建设，配合Java数据团队提供接口支持。",
-        card_title="AI Agent 平台工程师",
         policy=policy,
+        draft_greeting=False,
     )
-    assert passed is True
+    assert result.passed is True
     mock_llm.chat_completion_json.assert_called_once()
 
     system_prompt = _extract_system_prompt(mock_llm, 0)
@@ -576,13 +584,16 @@ def test_semantic_screener_whitelist_only_policy_passes_without_llm():
     policy = ScreeningPolicy(title_whitelist=["Agent"])
     mock_llm = MagicMock()
 
-    agent = JDSemanticScreenerAgent(llm_client=mock_llm)
-    passed, reason = agent.evaluate(
+    screener = CandidateScreener(llm_client=mock_llm)
+    result = screener.evaluate_job(
+        card=JobCardBrief(
+            title="云原生平台工程师", company_name="某公司", recruiter_name="招聘者"
+        ),
         jd_text="岗位职责：负责云原生容器平台建设，要求精通Go与Kubernetes。",
-        card_title="云原生平台工程师",
         policy=policy,
+        draft_greeting=False,
     )
-    assert passed is True
+    assert result.passed is True
     mock_llm.chat_completion_json.assert_not_called()
 
 
