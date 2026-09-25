@@ -9,22 +9,27 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from boss_agent.broker.models import (
-    POCKETBASE_AUTOMATION_TASKS_SCHEMA,
-    AutomationTask,
-    TaskStatus,
-    TaskType,
+from boss_agent.broker.collection_schema import (
+    AUTOMATION_TASKS,
+    pocketbase_collection_payload,
 )
+from boss_agent.broker.models import AutomationTask, TaskStatus, TaskType
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker, PocketBaseTaskBroker
 
 
 def test_pocketbase_schema_definition_validity():
-    """Verify automation_tasks collection schema conforms to PocketBase requirements."""
-    schema = POCKETBASE_AUTOMATION_TASKS_SCHEMA
-    assert schema["name"] == "automation_tasks"
-    assert schema["type"] == "base"
+    """Verify the shipped automation_tasks schema conforms to PocketBase requirements.
 
-    field_names = [f["name"] for f in schema["fields"]]
+    This used to pin ``POCKETBASE_AUTOMATION_TASKS_SCHEMA`` — a dict inside the broker
+    models that nothing in production imported, so the suite asserted against fiction
+    while the provisioner shipped something else. It now pins the schema the
+    provisioner actually renders.
+    """
+    payload = pocketbase_collection_payload(AUTOMATION_TASKS)
+    assert payload["name"] == "automation_tasks"
+    assert payload["type"] == "base"
+
+    field_names = [f["name"] for f in payload["fields"]]
     assert "task_type" in field_names
     assert "status" in field_names
     assert "payload" in field_names
@@ -283,10 +288,10 @@ async def test_saved_search_broker_crud():
         cron_expression="0 9 * * *",
         is_enabled=True,
     )
-    saved = await broker.save_saved_search(search)
+    saved = await broker.saved_searches.save_saved_search(search)
     assert saved.id == "search-1"
 
-    fetched = await broker.get_saved_search("search-1")
+    fetched = await broker.saved_searches.get_saved_search("search-1")
     assert fetched is not None
     assert fetched.name == "Python Engineer"
     assert fetched.search.keyword == "python"
@@ -294,13 +299,13 @@ async def test_saved_search_broker_crud():
     assert fetched.cron_expression == "0 9 * * *"
     assert fetched.is_enabled is True
 
-    searches = await broker.list_saved_searches()
+    searches = await broker.saved_searches.list_saved_searches()
     assert len(searches) == 1
     assert searches[0].id == "search-1"
 
-    deleted = await broker.delete_saved_search("search-1")
+    deleted = await broker.saved_searches.delete_saved_search("search-1")
     assert deleted is True
-    assert await broker.get_saved_search("search-1") is None
+    assert await broker.saved_searches.get_saved_search("search-1") is None
 
 
 @pytest.mark.asyncio

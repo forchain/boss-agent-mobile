@@ -166,14 +166,25 @@ export type TaskStatus =
 
 export type TaskType = 'AUTO_APPLY' | 'SCRAPE_JOBS' | 'CHECK_LOGIN' | 'CHECK_CHAT';
 
+/** The task types the worker's handler strategy accepts, in one place. */
+export const TASK_TYPES: readonly TaskType[] = [
+	'AUTO_APPLY',
+	'SCRAPE_JOBS',
+	'CHECK_LOGIN',
+	'CHECK_CHAT'
+];
+
 export interface AutomationTask {
 	id: string;
 	task_type: TaskType;
 	status: TaskStatus;
 	payload: Record<string, any>;
+	/** Task Provenance (CONTEXT.md): manual | test | scheduler. */
+	source?: 'manual' | 'test' | 'scheduler' | string;
 	logs: string[];
 	error_message?: string;
-	assigned_worker?: string;
+	/** The Automation Worker holding this task's lease — the column the worker writes. */
+	worker_id?: string | null;
 	created?: string;
 	updated?: string;
 }

@@ -21,6 +21,11 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${ROOT_DIR}"
 
+# Shared process-lifecycle primitives. This script's semantics were the model for the
+# library — its LISTEN-only port probe is the rule the other runners now inherit.
+# shellcheck source=runner_lib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/runner_lib.sh"
+
 mkdir -p ".boss_agent"
 
 PID_FILE=".boss_agent/web.pid"
@@ -34,14 +39,7 @@ WEB_URL="http://${WEB_HOST}:${WEB_PORT}"
 WEB_STOP_TIMEOUT_SEC="${WEB_STOP_TIMEOUT_SEC:-10}"
 
 process_alive() {
-    local PID="$1"
-    ps -p "${PID}" >/dev/null 2>&1 || return 1
-    # A defunct (zombie) process has already terminated and only awaits reaping: it is
-    # neither a running dashboard nor a reason to burn the shutdown timeout.
-    local STATE
-    STATE="$(ps -p "${PID}" -o stat= 2>/dev/null | tr -d '[:space:]' || true)"
-    [[ "${STATE}" == Z* ]] && return 1
-    return 0
+    runner_process_alive "${1:-}"
 }
 
 get_running_web_pid() {
@@ -68,7 +66,7 @@ get_running_web_pid() {
 listening_pid() {
     # LISTEN-only: a browser, curl, or a test client merely *connected* to the port must
     # never be mistaken for the dashboard and must never be signalled.
-    lsof -ti "tcp:${WEB_PORT}" -sTCP:LISTEN 2>/dev/null | head -n 1 || true
+    runner_port_listener_pid "${WEB_PORT}"
 }
 
 attach_logs() {
@@ -108,7 +106,7 @@ cmd_status() {
 }
 
 log_web_event() {
-    printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" >> "${LOG_FILE}"
+    runner_log_event "${LOG_FILE}" "$1"
 }
 
 port_in_use() {
@@ -118,24 +116,11 @@ port_in_use() {
 # Wait until the given predicate (a command receiving `PREDICATE_ARGS`) reports success,
 # re-checking once at the deadline so a state change during the final interval still counts.
 wait_until() {
-    local TIMEOUT_SEC="$1"
-    shift
-    local attempts=$((TIMEOUT_SEC * 10))
-    local i
-    for ((i = 0; i < attempts; i++)); do
-        if "$@"; then
-            return 0
-        fi
-        sleep 0.1
-    done
-    if "$@"; then
-        return 0
-    fi
-    return 1
+    runner_wait_until "$@"
 }
 
 process_gone() {
-    ! process_alive "$1"
+    runner_process_gone "${1:-}"
 }
 
 port_released() {
@@ -149,16 +134,15 @@ cmd_stop() {
     PID="$(get_running_web_pid)"
 
     if [[ -n "${PID}" ]]; then
-        log_web_event "🛑 [Web] Received stop command, shutting down Web Dashboard... (PID: ${PID}, port: ${WEB_PORT})"
+        log_web_event "🛑 [Web] ${RUNNER_WEB_SHUTDOWN_ACK}, shutting down Web Dashboard... (PID: ${PID}, port: ${WEB_PORT})"
         echo "   Shutdown feedback appended to ${LOG_FILE}"
-        kill "${PID}" 2>/dev/null || true
         pkill -P "${PID}" 2>/dev/null || true
 
-        if ! wait_until "${WEB_STOP_TIMEOUT_SEC}" process_gone "${PID}"; then
-            echo "⚠️ Graceful shutdown timed out after ${WEB_STOP_TIMEOUT_SEC}s; forcing termination."
+        # SIGTERM first, the full budget to exit cooperatively (in-flight tasks release
+        # their leases), then SIGKILL. The escalation itself is the library's, so every
+        # service escalates identically.
+        if ! runner_graceful_stop "${PID}" "${WEB_STOP_TIMEOUT_SEC}" "Web Dashboard"; then
             log_web_event "⚠️ [Web] Graceful shutdown timed out after ${WEB_STOP_TIMEOUT_SEC}s; sending SIGKILL to PID ${PID}."
-            kill -9 "${PID}" 2>/dev/null || true
-            wait_until 2 process_gone "${PID}" || true
         fi
         STOPPED=1
     fi
@@ -170,11 +154,7 @@ cmd_stop() {
         PORT_PID="$(listening_pid)"
         if [[ -n "${PORT_PID}" ]]; then
             echo "⚠️ Port ${WEB_PORT} still held by PID ${PORT_PID}; reclaiming."
-            kill "${PORT_PID}" 2>/dev/null || true
-            if ! wait_until "${WEB_STOP_TIMEOUT_SEC}" process_gone "${PORT_PID}"; then
-                kill -9 "${PORT_PID}" 2>/dev/null || true
-                wait_until 2 process_gone "${PORT_PID}" || true
-            fi
+            runner_graceful_stop "${PORT_PID}" "${WEB_STOP_TIMEOUT_SEC}" "port ${WEB_PORT} listener"
         fi
     fi
 
@@ -236,13 +216,9 @@ cmd_start() {
     fi
 
     # Check dependency: PocketBase health
-    if [[ -z "${POCKETBASE_URL:-}" && -f "config/settings.local.yaml" ]]; then
-        POCKETBASE_URL="$(grep -E "^[[:space:]]*(pocketbase_url|pb_url):" config/settings.local.yaml 2>/dev/null | awk '{print $2}' | tr -d '"' | tr -d "'" || true)"
-    fi
-    if [[ -z "${POCKETBASE_URL:-}" && -f "config/settings.yaml" ]]; then
-        POCKETBASE_URL="$(grep -E "^[[:space:]]*(pocketbase_url|pb_url):" config/settings.yaml 2>/dev/null | awk '{print $2}' | tr -d '"' | tr -d "'" || true)"
-    fi
-    export POCKETBASE_URL="${POCKETBASE_URL:-http://127.0.0.1:8090}"
+    # One config read, through the library: the CLI resolves the precedence chain and
+    # the environment; its single grep fallback covers a copied script root.
+    export POCKETBASE_URL="${POCKETBASE_URL:-$(runner_config_value pocketbase_url http://127.0.0.1:8090 pb_url)}"
     export VITE_POCKETBASE_URL="${POCKETBASE_URL}"
     export PUBLIC_POCKETBASE_URL="${POCKETBASE_URL}"
     HEALTH_URL="${POCKETBASE_URL%/}/api/health"

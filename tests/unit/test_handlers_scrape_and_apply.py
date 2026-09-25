@@ -7,10 +7,11 @@ Unit tests for SCRAPE_JOBS and AUTO_APPLY polymorphic task handlers (Issue #30).
 from unittest.mock import MagicMock, patch
 
 import pytest
+from _card_fixtures import located
 
 from boss_agent.broker.models import TaskStatus, TaskType
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
-from boss_agent.pages import JobCardBrief
+from boss_agent.models import JobCardBrief
 from boss_agent.worker.config import WorkerConfig
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.daemon import AutomationWorker
@@ -127,7 +128,7 @@ async def test_scrape_enrichment_falls_back_to_jd_digest_when_card_has_no_snippe
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_list = mock_list_cls.return_value
         mock_list.get_feed_bottom_boundary.return_value = None
-        mock_list.extract_visible_job_cards.return_value = [card]
+        mock_list.extract_visible_job_cards.return_value = [located(card)]
         mock_search_cls.return_value.is_search_page.return_value = True
         mock_detail = mock_detail_cls.return_value
         mock_detail.get_chat_button_state.return_value = ChatButtonState.UNKNOWN
@@ -135,7 +136,7 @@ async def test_scrape_enrichment_falls_back_to_jd_digest_when_card_has_no_snippe
 
         assert await worker.run_once() is True
 
-    records = await broker.list_job_records(status="jd_saved")
+    records = await broker.job_store.list_job_records(status="jd_saved")
     assert len(records) == 1
     assert records[0]["digest"].startswith("We are seeking")
     assert "Role Summary" not in records[0]["digest"]
@@ -488,7 +489,7 @@ async def test_scrape_jobs_handler_eliminates_blacklisted_cards_and_persists_rea
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_list = mock_list_cls.return_value
         mock_list.get_feed_bottom_boundary.return_value = None
-        mock_list.extract_visible_job_cards.return_value = [card]
+        mock_list.extract_visible_job_cards.return_value = [located(card)]
         mock_search_cls.return_value.is_search_page.return_value = True
 
         executed = await worker.run_once()
@@ -503,7 +504,7 @@ async def test_scrape_jobs_handler_eliminates_blacklisted_cards_and_persists_rea
     assert any("初筛淘汰" in log and "黑名单外包科技" in log for log in finished_task.logs)
 
     # Verify job was recorded in database as ignored with screened_reason
-    records = await broker.list_job_records()
+    records = await broker.job_store.list_job_records()
     assert len(records) == 1
     assert records[0].get("status") == "ignored"
     assert "黑名单外包科技" in records[0].get("screened_reason", "")
@@ -522,7 +523,7 @@ async def test_scrape_jobs_handler_eliminates_blacklisted_cards_and_persists_rea
 @pytest.mark.asyncio
 async def test_auto_apply_handler_preflight_blocks_already_ignored_job(broker, mock_driver):
     """Verify AutoApplyHandler aborts immediately without driver action when target job is already ignored."""
-    existing = await broker.upsert_job_record(
+    existing = await broker.job_store.upsert_job_record(
         {
             "fingerprint": "fp-already-ignored",
             "title": "运维工程师",
@@ -572,7 +573,7 @@ async def test_auto_apply_handler_preflight_blocks_already_ignored_job(broker, m
 @pytest.mark.asyncio
 async def test_auto_apply_handler_preflight_blocks_blacklisted_company(broker, mock_driver):
     """Verify AutoApplyHandler preflight blocks direct application to a blacklisted company and updates DB."""
-    rec = await broker.upsert_job_record(
+    rec = await broker.job_store.upsert_job_record(
         {
             "fingerprint": "fp-to-be-blocked",
             "title": "前端开发",
@@ -615,7 +616,7 @@ async def test_auto_apply_handler_preflight_blocks_blacklisted_company(broker, m
     assert any("定向投递防御" in log and "不良劳务派遣公司" in log for log in finished_task.logs)
 
     # Verify record was marked as ignored
-    updated_rec = await broker.get_job_record(rec["id"])
+    updated_rec = await broker.job_store.get_job_record(rec["id"])
     assert updated_rec is not None
     assert updated_rec.get("status") == "ignored"
     assert "不良劳务派遣公司" in updated_rec.get("screened_reason", "")

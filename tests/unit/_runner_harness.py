@@ -40,6 +40,8 @@ TARGET_AVD = "boss_avd_arm64"
 BASH = shutil.which("bash") or "/bin/bash"
 
 RUNNER_SCRIPTS = ("emulator.sh", "run.sh", "worker.sh", "web.sh")
+#: Sourced by every runner, so a copied script must find it beside itself.
+RUNNER_LIBRARY = "runner_lib.sh"
 
 _FAKE_ADB = """#!/usr/bin/env bash
 # Scripted `adb` stand-in: reads its answers (and its hang behaviour) from
@@ -122,7 +124,7 @@ class RunnerScriptHarness:
         # worktree, and `config/` is absent so the target AVD comes from the environment.
         self.runtime_root = tmp_path / "repo"
         (self.runtime_root / ".boss_agent").mkdir(parents=True)
-        for script in RUNNER_SCRIPTS:
+        for script in (*RUNNER_SCRIPTS, RUNNER_LIBRARY):
             shutil.copy2(REPO_ROOT / script, self.runtime_root / script)
 
         self.scenario = tmp_path / "scenario"

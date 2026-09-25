@@ -8,13 +8,12 @@ default lifecycle targets, and live test harness pass-through.
 
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
+
 from _service_harness import REPO_ROOT
 
 RUN_SH = REPO_ROOT / "run.sh"
@@ -27,6 +26,7 @@ def orchestrator_runtime(tmp_path: Path) -> Path:
     runtime_root = tmp_path / "repo"
     (runtime_root / ".boss_agent").mkdir(parents=True)
     shutil.copy2(RUN_SH, runtime_root / "run.sh")
+    shutil.copy2(RUN_SH.parent / "runner_lib.sh", runtime_root / "runner_lib.sh")
     (runtime_root / "run.sh").chmod(0o755)
 
     # Create mock runner scripts that record their invocations

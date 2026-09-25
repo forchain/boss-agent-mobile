@@ -23,6 +23,10 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${ROOT_DIR}"
 
+# Shared process-lifecycle primitives and the one config read.
+# shellcheck source=runner_lib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/runner_lib.sh"
+
 mkdir -p ".boss_agent"
 
 # Pre-flight environment check
@@ -39,34 +43,19 @@ WORKER_PID_FILE=".boss_agent/worker.pid"
 WORKER_LOG_FILE=".boss_agent/worker.log"
 WORKER_STOP_TIMEOUT_SEC="${WORKER_STOP_TIMEOUT_SEC:-10}"
 
+# The library's primitives, under this script's historical names. They were identical
+# copies of web.sh's — including the zombie guard — which is exactly the drift the
+# library exists to end.
 process_alive() {
-    local PID="$1"
-    ps -p "${PID}" >/dev/null 2>&1 || return 1
-    local STATE
-    STATE="$(ps -p "${PID}" -o stat= 2>/dev/null | tr -d '[:space:]' || true)"
-    [[ "${STATE}" == Z* ]] && return 1
-    return 0
+    runner_process_alive "${1:-}"
 }
 
 wait_until() {
-    local TIMEOUT_SEC="$1"
-    shift
-    local attempts=$((TIMEOUT_SEC * 10))
-    local i
-    for ((i = 0; i < attempts; i++)); do
-        if "$@"; then
-            return 0
-        fi
-        sleep 0.1
-    done
-    if "$@"; then
-        return 0
-    fi
-    return 1
+    runner_wait_until "$@"
 }
 
 process_gone() {
-    ! process_alive "$1"
+    runner_process_gone "${1:-}"
 }
 
 get_running_worker_pid() {
@@ -176,13 +165,9 @@ cmd_stop() {
 # Pre-Flight Verification Gates
 # ------------------------------------------------------------------------------
 check_pocketbase_health() {
-    if [[ -z "${POCKETBASE_URL:-}" && -f "config/settings.local.yaml" ]]; then
-        POCKETBASE_URL="$(grep -E "^[[:space:]]*(pocketbase_url|pb_url):" config/settings.local.yaml 2>/dev/null | awk '{print $2}' | tr -d '"' | tr -d "'" || true)"
-    fi
-    if [[ -z "${POCKETBASE_URL:-}" && -f "config/settings.yaml" ]]; then
-        POCKETBASE_URL="$(grep -E "^[[:space:]]*(pocketbase_url|pb_url):" config/settings.yaml 2>/dev/null | awk '{print $2}' | tr -d '"' | tr -d "'" || true)"
-    fi
-    POCKETBASE_URL="${POCKETBASE_URL:-http://127.0.0.1:8090}"
+    # One config read, through the library: the CLI resolves the precedence chain
+    # and the environment, and the single grep fallback covers a copied script root.
+    POCKETBASE_URL="${POCKETBASE_URL:-$(runner_config_value pocketbase_url http://127.0.0.1:8090 pb_url)}"
     local HEALTH_URL="${POCKETBASE_URL%/}/api/health"
 
     if ! curl -s -f "${HEALTH_URL}" >/dev/null 2>&1; then
@@ -197,11 +182,7 @@ check_pocketbase_health() {
 }
 
 check_dedicated_avd_ready() {
-    TARGET_AVD="${ANDROID_AVD:-${AVD_NAME:-}}"
-    if [[ -z "${TARGET_AVD}" && -f "config/settings.local.yaml" ]]; then
-        TARGET_AVD="$(grep -E "^[[:space:]]*avd_name:" config/settings.local.yaml 2>/dev/null | awk '{print $2}' | tr -d '"' | tr -d "'" || true)"
-    fi
-    TARGET_AVD="${TARGET_AVD:-boss_avd_arm64}"
+    TARGET_AVD="${ANDROID_AVD:-${AVD_NAME:-$(runner_config_value avd_name boss_avd_arm64)}}"
 
     local STATUS_OUTPUT=""
     if STATUS_OUTPUT="$(ANDROID_AVD="${TARGET_AVD}" ./emulator.sh status 2>&1)"; then
@@ -221,13 +202,7 @@ check_dedicated_avd_ready() {
 }
 
 check_appium_health() {
-    if [[ -z "${APPIUM_URL:-}" && -f "config/settings.local.yaml" ]]; then
-        APPIUM_URL="$(grep -E "^[[:space:]]*(server_url|appium_url):" config/settings.local.yaml 2>/dev/null | awk '{print $2}' | tr -d '"' | tr -d "'" || true)"
-    fi
-    if [[ -z "${APPIUM_URL:-}" && -f "config/settings.yaml" ]]; then
-        APPIUM_URL="$(grep -E "^[[:space:]]*(server_url|appium_url):" config/settings.yaml 2>/dev/null | awk '{print $2}' | tr -d '"' | tr -d "'" || true)"
-    fi
-    APPIUM_URL="${APPIUM_URL:-http://127.0.0.1:4723}"
+    APPIUM_URL="${APPIUM_URL:-$(runner_config_value server_url http://127.0.0.1:4723 appium_url)}"
     local CHECK_URL="${APPIUM_URL%/}"
     CHECK_URL="${CHECK_URL/0.0.0.0/127.0.0.1}"
     local STATUS_URL="${CHECK_URL}/status"

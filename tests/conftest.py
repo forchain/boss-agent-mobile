@@ -26,12 +26,12 @@ def _sandbox_screening_config_writes(tmp_path_factory, monkeypatch):
     ``test_settings.py`` and ``test_pb_runner_lifecycle.py`` still assert against the
     genuine resolver.
     """
-    from boss_agent import models
+    from boss_agent import screening_config
 
-    real_resolver = models.resolve_writable_screening_config_path
+    real_resolver = screening_config.resolve_writable_screening_config_path
     sandbox = tmp_path_factory.mktemp("screening-config") / "settings.local.yaml"
 
     def guarded(root=None):
         return real_resolver(root) if root is not None else sandbox
 
-    monkeypatch.setattr(models, "resolve_writable_screening_config_path", guarded)
+    monkeypatch.setattr(screening_config, "resolve_writable_screening_config_path", guarded)

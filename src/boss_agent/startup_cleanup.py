@@ -22,7 +22,7 @@ from typing import Any
 
 from boss_agent.broker.models import AutomationTask, TaskStatus, TaskType
 from boss_agent.broker.pocketbase_adapter import BaseTaskBroker
-from boss_agent.settings import resolve_chat_acknowledgment_settings
+from boss_agent.task_launch import LaunchSource, build_chat_cleanup_launch
 
 logger = logging.getLogger("boss_agent.startup_cleanup")
 
@@ -40,20 +40,17 @@ QUEUE_SCAN_LIMIT: int = 50
 
 
 def _startup_cleanup_payload() -> dict[str, Any]:
-    """Payload for the startup cleanup: the marker plus the resolved triage settings.
+    """Payload for the startup cleanup, built by the one launch builder.
 
-    The settings travel with the task so a startup run honours the configured drill
-    mode and reply text instead of falling back to the code defaults. `trigger` is
-    provenance for whoever later inspects the queue record.
+    The triage settings travel with the task so a startup run honours the configured
+    drill mode and reply text instead of falling back to the code defaults, and the
+    payload carries real Task Provenance (`source`) rather than a `trigger` marker.
+    `STARTUP_CLEANUP_MARKER` is still set: the Startup Rejection Cleanup Barrier reads
+    it to recognise its own task in the queue, which is a *derived* use of the payload
+    and no longer the contract.
     """
-    ack = resolve_chat_acknowledgment_settings()
-    return {
-        STARTUP_CLEANUP_MARKER: True,
-        "trigger": "startup",
-        "dry_run": ack.dry_run,
-        "rejection_reply_text": ack.rejection_reply_text,
-        "max_scan_depth": ack.max_scan_depth,
-    }
+    launch = build_chat_cleanup_launch(source=LaunchSource.SCHEDULER)
+    return {STARTUP_CLEANUP_MARKER: True, **launch.payload}
 
 
 class StartupCleanupGate:
@@ -104,7 +101,9 @@ class StartupCleanupGate:
                     logger.info("Startup 拒信清扫 already queued; not queueing a second one")
                     return None
                 task = await self.broker.create_task(
-                    task_type=TaskType.CHECK_CHAT, payload=_startup_cleanup_payload()
+                    task_type=TaskType.CHECK_CHAT,
+                    payload=_startup_cleanup_payload(),
+                    source=LaunchSource.SCHEDULER.value,
                 )
 
             return await self._settle_race(task)

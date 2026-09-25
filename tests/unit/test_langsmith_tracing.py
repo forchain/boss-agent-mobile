@@ -16,8 +16,7 @@ from langsmith.run_helpers import get_current_run_tree
 from boss_agent.graph import run_job_application_graph
 from boss_agent.matching import JobMatchGreetingService
 from boss_agent.memory import ResumeMemoryManager
-from boss_agent.models import JobPosting, ScreeningPolicy
-from boss_agent.pages import JobCardBrief
+from boss_agent.models import JobCardBrief, JobPosting, ScreeningPolicy
 from boss_agent.screening import CandidateScreener
 from droid_agent_core.llm import LLMConfig, OpenAIChatClient, configure_langsmith
 

@@ -1,0 +1,428 @@
+{
+  "_comment": "The AutomationTask launch contract, shared by the pytest tier (tests/unit/test_task_launch_cases.py) and the vitest tier (web/src/tests/taskLaunchCases.test.ts). `source` is compared as a task attribute rather than a payload key. Only the keys listed in `contract` are compared: they are the ones the builder owns, so a difference in how each language normalizes a nested SavedSearch filter cannot masquerade as contract drift.",
+  "defaults": {
+    "min_score": 70,
+    "max_jobs": 30,
+    "preview_timeout_sec": 3.0
+  },
+  "cases": [
+    {
+      "case": "search-save-jd-draft",
+      "kind": "search",
+      "source": "manual",
+      "mode": "draft",
+      "search": {
+        "id": "s_save",
+        "name": "深度存JD",
+        "keyword": "agent",
+        "enable_search": true,
+        "enable_filter": true,
+        "target_action": "save_jd",
+        "max_jobs": 5
+      },
+      "min_score": null,
+      "chat": null,
+      "contract": [
+        "saved_search_id",
+        "search_id",
+        "search_name",
+        "keyword",
+        "enable_search",
+        "enable_filter",
+        "target_action",
+        "max_jobs",
+        "min_score",
+        "preview_only",
+        "auto_send",
+        "preview_timeout_sec"
+      ],
+      "expected": {
+        "task_type": "SCRAPE_JOBS",
+        "payload": {
+          "saved_search_id": "s_save",
+          "search_id": "s_save",
+          "search_name": "深度存JD",
+          "keyword": "agent",
+          "enable_search": true,
+          "enable_filter": true,
+          "target_action": "save_jd",
+          "max_jobs": 5,
+          "min_score": 70,
+          "preview_only": true,
+          "auto_send": false,
+          "preview_timeout_sec": 3.0
+        },
+        "source": "manual"
+      }
+    },
+    {
+      "case": "search-auto-apply-draft",
+      "kind": "search",
+      "source": "manual",
+      "mode": "draft",
+      "search": {
+        "id": "s_auto",
+        "name": "自动沟通",
+        "keyword": "agent",
+        "enable_search": true,
+        "enable_filter": true,
+        "target_action": "auto_apply",
+        "max_jobs": 30
+      },
+      "min_score": null,
+      "chat": null,
+      "contract": [
+        "saved_search_id",
+        "search_id",
+        "search_name",
+        "keyword",
+        "enable_search",
+        "enable_filter",
+        "target_action",
+        "max_jobs",
+        "min_score",
+        "preview_only",
+        "auto_send",
+        "preview_timeout_sec"
+      ],
+      "expected": {
+        "task_type": "AUTO_APPLY",
+        "payload": {
+          "saved_search_id": "s_auto",
+          "search_id": "s_auto",
+          "search_name": "自动沟通",
+          "keyword": "agent",
+          "enable_search": true,
+          "enable_filter": true,
+          "target_action": "auto_apply",
+          "max_jobs": 30,
+          "min_score": 70,
+          "preview_only": true,
+          "auto_send": false,
+          "preview_timeout_sec": 3.0
+        },
+        "source": "manual"
+      }
+    },
+    {
+      "case": "search-auto-apply-live",
+      "kind": "search",
+      "source": "manual",
+      "mode": "live",
+      "search": {
+        "id": "s_auto",
+        "name": "自动沟通",
+        "keyword": "agent",
+        "enable_search": true,
+        "enable_filter": true,
+        "target_action": "auto_apply",
+        "max_jobs": 30
+      },
+      "min_score": null,
+      "chat": null,
+      "contract": [
+        "saved_search_id",
+        "search_id",
+        "search_name",
+        "keyword",
+        "enable_search",
+        "enable_filter",
+        "target_action",
+        "max_jobs",
+        "min_score",
+        "preview_only",
+        "auto_send",
+        "preview_timeout_sec"
+      ],
+      "expected": {
+        "task_type": "AUTO_APPLY",
+        "payload": {
+          "saved_search_id": "s_auto",
+          "search_id": "s_auto",
+          "search_name": "自动沟通",
+          "keyword": "agent",
+          "enable_search": true,
+          "enable_filter": true,
+          "target_action": "auto_apply",
+          "max_jobs": 30,
+          "min_score": 70,
+          "preview_only": false,
+          "auto_send": true,
+          "preview_timeout_sec": 3.0
+        },
+        "source": "manual"
+      }
+    },
+    {
+      "case": "search-default-max-jobs",
+      "kind": "search",
+      "source": "manual",
+      "mode": "draft",
+      "search": {
+        "id": "s_def",
+        "name": "默认上限",
+        "keyword": "agent",
+        "enable_search": true,
+        "enable_filter": true,
+        "target_action": "auto_apply",
+        "max_jobs": 30
+      },
+      "min_score": null,
+      "chat": null,
+      "contract": [
+        "saved_search_id",
+        "search_id",
+        "search_name",
+        "keyword",
+        "enable_search",
+        "enable_filter",
+        "target_action",
+        "max_jobs",
+        "min_score",
+        "preview_only",
+        "auto_send",
+        "preview_timeout_sec"
+      ],
+      "expected": {
+        "task_type": "AUTO_APPLY",
+        "payload": {
+          "saved_search_id": "s_def",
+          "search_id": "s_def",
+          "search_name": "默认上限",
+          "keyword": "agent",
+          "enable_search": true,
+          "enable_filter": true,
+          "target_action": "auto_apply",
+          "max_jobs": 30,
+          "min_score": 70,
+          "preview_only": true,
+          "auto_send": false,
+          "preview_timeout_sec": 3.0
+        },
+        "source": "manual"
+      }
+    },
+    {
+      "case": "search-stricter-threshold",
+      "kind": "search",
+      "source": "manual",
+      "mode": "draft",
+      "search": {
+        "id": "s_strict",
+        "name": "严格阈值",
+        "keyword": "agent",
+        "enable_search": true,
+        "enable_filter": true,
+        "target_action": "auto_apply",
+        "max_jobs": 30
+      },
+      "min_score": 85,
+      "chat": null,
+      "contract": [
+        "saved_search_id",
+        "search_id",
+        "search_name",
+        "keyword",
+        "enable_search",
+        "enable_filter",
+        "target_action",
+        "max_jobs",
+        "min_score",
+        "preview_only",
+        "auto_send",
+        "preview_timeout_sec"
+      ],
+      "expected": {
+        "task_type": "AUTO_APPLY",
+        "payload": {
+          "saved_search_id": "s_strict",
+          "search_id": "s_strict",
+          "search_name": "严格阈值",
+          "keyword": "agent",
+          "enable_search": true,
+          "enable_filter": true,
+          "target_action": "auto_apply",
+          "max_jobs": 30,
+          "min_score": 85,
+          "preview_only": true,
+          "auto_send": false,
+          "preview_timeout_sec": 3.0
+        },
+        "source": "manual"
+      }
+    },
+    {
+      "case": "search-scheduled-provenance",
+      "kind": "search",
+      "source": "scheduler",
+      "mode": "draft",
+      "search": {
+        "id": "s_cron",
+        "name": "定时策略",
+        "keyword": "agent",
+        "enable_search": true,
+        "enable_filter": true,
+        "target_action": "auto_apply",
+        "max_jobs": 30
+      },
+      "min_score": null,
+      "chat": null,
+      "contract": [
+        "saved_search_id",
+        "search_id",
+        "search_name",
+        "keyword",
+        "enable_search",
+        "enable_filter",
+        "target_action",
+        "max_jobs",
+        "min_score",
+        "preview_only",
+        "auto_send",
+        "preview_timeout_sec"
+      ],
+      "expected": {
+        "task_type": "AUTO_APPLY",
+        "payload": {
+          "saved_search_id": "s_cron",
+          "search_id": "s_cron",
+          "search_name": "定时策略",
+          "keyword": "agent",
+          "enable_search": true,
+          "enable_filter": true,
+          "target_action": "auto_apply",
+          "max_jobs": 30,
+          "min_score": 70,
+          "preview_only": true,
+          "auto_send": false,
+          "preview_timeout_sec": 3.0
+        },
+        "source": "scheduler"
+      }
+    },
+    {
+      "case": "chat-configured-drill-wins",
+      "kind": "chat_cleanup",
+      "source": "manual",
+      "mode": null,
+      "search": null,
+      "min_score": null,
+      "chat": {
+        "rejection_reply_text": "收到 谢谢",
+        "max_scan_depth": 30,
+        "dry_run": false
+      },
+      "contract": [
+        "dry_run",
+        "rejection_reply_text",
+        "max_scan_depth"
+      ],
+      "expected": {
+        "task_type": "CHECK_CHAT",
+        "payload": {
+          "dry_run": false,
+          "rejection_reply_text": "收到 谢谢",
+          "max_scan_depth": 30
+        },
+        "source": "manual"
+      }
+    },
+    {
+      "case": "chat-cleanup-draft",
+      "kind": "chat_cleanup",
+      "source": "manual",
+      "mode": "draft",
+      "search": {
+        "id": "s_chat",
+        "name": "仅沟通清扫",
+        "keyword": "agent",
+        "enable_search": true,
+        "enable_filter": true,
+        "target_action": "auto_apply",
+        "max_jobs": 30
+      },
+      "min_score": null,
+      "chat": {
+        "rejection_reply_text": "收到 谢谢",
+        "max_scan_depth": 30,
+        "dry_run": false
+      },
+      "contract": [
+        "dry_run",
+        "rejection_reply_text",
+        "max_scan_depth",
+        "saved_search_id",
+        "search_id",
+        "search_name"
+      ],
+      "expected": {
+        "task_type": "CHECK_CHAT",
+        "payload": {
+          "dry_run": true,
+          "rejection_reply_text": "收到 谢谢",
+          "max_scan_depth": 30,
+          "saved_search_id": "s_chat",
+          "search_id": "s_chat",
+          "search_name": "仅沟通清扫"
+        },
+        "source": "manual"
+      }
+    },
+    {
+      "case": "chat-cleanup-live",
+      "kind": "chat_cleanup",
+      "source": "scheduler",
+      "mode": "live",
+      "search": {
+        "id": "s_chat",
+        "name": "仅沟通清扫",
+        "keyword": "agent",
+        "enable_search": true,
+        "enable_filter": true,
+        "target_action": "auto_apply",
+        "max_jobs": 30
+      },
+      "min_score": null,
+      "chat": {
+        "rejection_reply_text": "收到 谢谢",
+        "max_scan_depth": 30,
+        "dry_run": false
+      },
+      "contract": [
+        "dry_run",
+        "rejection_reply_text",
+        "max_scan_depth",
+        "saved_search_id",
+        "search_id",
+        "search_name"
+      ],
+      "expected": {
+        "task_type": "CHECK_CHAT",
+        "payload": {
+          "dry_run": false,
+          "rejection_reply_text": "收到 谢谢",
+          "max_scan_depth": 30,
+          "saved_search_id": "s_chat",
+          "search_id": "s_chat",
+          "search_name": "仅沟通清扫"
+        },
+        "source": "scheduler"
+      }
+    },
+    {
+      "case": "login-diagnostic-test-source",
+      "kind": "login_diagnostic",
+      "source": "test",
+      "mode": null,
+      "search": null,
+      "min_score": null,
+      "chat": null,
+      "contract": [],
+      "expected": {
+        "task_type": "CHECK_LOGIN",
+        "payload": {},
+        "source": "test"
+      }
+    }
+  ]
+}

@@ -25,12 +25,12 @@ from langsmith import traceable
 from .matching import JobMatchGreetingService
 from .memory import StructuredCandidateProfile
 from .models import (
+    JobCardBrief,
     JobPosting,
     ScreeningPolicy,
     is_substantive_jd,
     resolve_headhunter_channel,
 )
-from .pages import JobCardBrief
 
 logger = logging.getLogger(__name__)
 

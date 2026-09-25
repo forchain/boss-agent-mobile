@@ -2,7 +2,6 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { isChatCleanupStrategy, resolveTargetAction, type SavedSearch } from '$lib/types';
 	import {
-		pb,
 		checkPocketBaseHealth,
 		listSavedSearches,
 		createSavedSearch,
@@ -10,6 +9,8 @@
 		deleteSavedSearch,
 		createAutomationTask
 	} from '$lib/pocketbase';
+	import { dashboardRealtime } from '$lib/dashboardRealtime';
+	import { buildSearchLaunch } from '$lib/taskLaunch';
 
 	let { data }: { data: any } = $props();
 	let searches = $state<SavedSearch[]>([]);
@@ -427,25 +428,16 @@
 			return;
 		}
 
-		const taskType = action === 'auto_apply' ? 'AUTO_APPLY' : 'SCRAPE_JOBS';
 		const label = action === 'auto_apply' ? '自动沟通' : '深度存JD';
 		triggerStatus[search.id] = `正在下发 [${label}] 任务...`;
-		const payload = {
-			saved_search_id: search.id,
-			search_id: search.id,
-			search_name: search.name,
-			keyword: search.keyword || '',
-			enable_search: search.enable_search !== false,
-			enable_filter: search.enable_filter !== false,
-			filter: search.filter || {},
-			target_action: action,
-			max_jobs: search.max_jobs || 30,
-			min_score: 70,
-			preview_only: true,
-			auto_send: false
-		};
+		// The same builder the modal uses, so `min_score` and the preview flags are the
+		// contract's rather than this page's fourth copy of them.
+		const launch = buildSearchLaunch(
+			{ ...search, target_action: action },
+			{ source: 'manual', mode: 'draft' }
+		);
 		try {
-			const task = await createAutomationTask(taskType, payload);
+			const task = await createAutomationTask(launch.task_type, launch.payload);
 			triggerStatus[search.id] = `✅ 已派发 [${label}]: ${task.id}`;
 			triggerTaskIds[search.id] = task.id;
 			setTimeout(() => {
@@ -457,25 +449,21 @@
 		}
 	}
 
+	//: Removes this page's realtime handler on teardown.
+	let offSavedSearches: (() => void) | null = null;
+
 	onMount(() => {
 		loadSearches();
 
-		// Subscribe to real-time updates from PocketBase saved_searches collection
-		try {
-			pb.collection('saved_searches').subscribe('*', (e) => {
-				if (e.action === 'create' || e.action === 'update' || e.action === 'delete') {
-					loadSearches();
-				}
-			});
-		} catch (e) {
-			console.warn('Realtime subscription not active on saved_searches:', e);
-		}
+		offSavedSearches = dashboardRealtime().subscribeToCollection('saved_searches', (e) => {
+			if (e.action === 'create' || e.action === 'update' || e.action === 'delete') {
+				loadSearches();
+			}
+		});
 	});
 
 	onDestroy(() => {
-		try {
-			pb.collection('saved_searches').unsubscribe('*');
-		} catch (e) {}
+		offSavedSearches?.();
 	});
 </script>
 

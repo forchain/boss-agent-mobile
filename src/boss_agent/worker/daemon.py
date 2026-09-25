@@ -28,6 +28,12 @@ SHUTDOWN_ACK_MARKER = "[Worker] Received shutdown signal"
 # Reason recorded in the State Stream Broker when a termination signal aborts an in-flight task.
 SHUTDOWN_CANCEL_REASON = "Worker shutdown signal received"
 
+#: Why a test-sourced task was cancelled. Says what happened, not who to blame.
+TEST_RECLAIM_REASON = "Test-sourced task reclaimed at worker startup"
+
+#: How many queued tasks the startup reclamation scan reads.
+RECLAIM_SCAN_LIMIT = 100
+
 # Upper bound for closing the Virtual Device Session. A wedged Appium server must not be
 # able to hold worker shutdown (and therefore the E2E pre-test gate) hostage.
 DEVICE_RELEASE_TIMEOUT_SEC = 3.0
@@ -415,6 +421,46 @@ class AutomationWorker:
 
         logger.info("👋 [Worker] Shutdown complete.")
 
+    async def _reclaim_test_sourced_tasks(self) -> list[str]:
+        """Cancel queued tasks whose provenance is ``test``.
+
+        CONTEXT.md defines Task Provenance precisely so an automated suite never
+        contends with the live worker for the device: a test that queued work before
+        the worker came up finds it already cancelled rather than racing the real run.
+        Only *pending* work is reclaimed — a task already running is somebody's
+        in-flight operation, and its own cancellation path owns it.
+        """
+        from boss_agent.task_launch import LaunchSource, coerce_source
+
+        reclaimed: list[str] = []
+        try:
+            pending = await self.broker.list_pending_tasks(limit=RECLAIM_SCAN_LIMIT)
+        except Exception as e:
+            logger.warning("Could not scan for test-sourced tasks: %s", e)
+            return reclaimed
+
+        for task in pending:
+            if coerce_source(getattr(task, "source", None)) is not LaunchSource.TEST:
+                continue
+            try:
+                await self.broker.append_log(task.id, TEST_RECLAIM_REASON)
+                await self.broker.update_task_status(
+                    task.id,
+                    status=TaskStatus.CANCELLED,
+                    error_message=TEST_RECLAIM_REASON,
+                )
+                reclaimed.append(task.id)
+            except Exception as e:
+                logger.warning("Could not reclaim test-sourced task %s: %s", task.id, e)
+
+        if reclaimed:
+            logger.info(
+                "🧹 Reclaimed %d test-sourced task(s) at startup: %s",
+                len(reclaimed),
+                ", ".join(reclaimed),
+            )
+        return reclaimed
+
     async def start(self, max_runs: int | None = None) -> None:
         """Start the worker execution polling loop."""
         self._running = True
@@ -424,6 +470,9 @@ class AutomationWorker:
             self.config.device_id,
             self.config.poll_interval_sec,
         )
+        # Reclaim before arming, so a cancelled test task is not the "first" thing the
+        # cleanup barrier has to wait behind.
+        await self._reclaim_test_sourced_tasks()
         # Queued before the loop so the first claim of this startup is the cleanup
         # rather than a search task that could re-apply to a rejecting employer.
         try:

@@ -13,11 +13,12 @@ The Boss 直聘 job detail page exposes its engagement state through the call-to
 from unittest.mock import MagicMock, patch
 
 import pytest
+from _card_fixtures import located
 
 from boss_agent.broker.models import TaskStatus, TaskType
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
-from boss_agent.models import ChatButtonState, classify_chat_button
-from boss_agent.pages import JobCardBrief, JobDetailPage
+from boss_agent.models import ChatButtonState, JobCardBrief, classify_chat_button
+from boss_agent.pages import JobDetailPage
 from boss_agent.worker.config import WorkerConfig
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.daemon import AutomationWorker
@@ -138,7 +139,7 @@ async def test_scrape_records_platform_historical_contact_and_backs_out(broker):
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_list = mock_list_cls.return_value
         mock_list.get_feed_bottom_boundary.return_value = None
-        mock_list.extract_visible_job_cards.return_value = [card]
+        mock_list.extract_visible_job_cards.return_value = [located(card)]
         mock_search_cls.return_value.is_search_page.return_value = True
 
         mock_detail = mock_detail_cls.return_value
@@ -155,12 +156,12 @@ async def test_scrape_records_platform_historical_contact_and_backs_out(broker):
     assert finished.status == TaskStatus.SUCCESS
     assert any("既有沟通" in log for log in finished.logs)
 
-    records = await broker.list_job_records(status="applied")
+    records = await broker.job_store.list_job_records(status="applied")
     assert len(records) == 1
     assert records[0]["company_name"] == "深至科技"
     assert not records[0].get("applied_at")
     assert records[0].get("applied_source") == "platform_historical"
-    assert await broker.count_today_applied_jobs() == 0
+    assert await broker.job_store.count_today_applied_jobs() == 0
 
 
 @pytest.mark.asyncio
@@ -200,7 +201,7 @@ async def test_scrape_marks_expired_posting_as_ignored_and_backs_out(broker):
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_list = mock_list_cls.return_value
         mock_list.get_feed_bottom_boundary.return_value = None
-        mock_list.extract_visible_job_cards.return_value = [card]
+        mock_list.extract_visible_job_cards.return_value = [located(card)]
         mock_search_cls.return_value.is_search_page.return_value = True
 
         mock_detail = mock_detail_cls.return_value
@@ -215,7 +216,7 @@ async def test_scrape_marks_expired_posting_as_ignored_and_backs_out(broker):
     assert finished.status == TaskStatus.SUCCESS
     assert any("岗位失效" in log for log in finished.logs)
 
-    records = await broker.list_job_records(status="ignored")
+    records = await broker.job_store.list_job_records(status="ignored")
     assert len(records) == 1
     assert "停止招聘" in records[0].get("screened_reason", "")
 
@@ -239,7 +240,7 @@ async def test_auto_apply_aborts_without_llm_waste_on_communicated_job(broker):
         handlers=[apply_handler],
     )
 
-    dispatched = await broker.upsert_job_record(
+    dispatched = await broker.job_store.upsert_job_record(
         {
             "fingerprint": "fp-dispatched-communicated",
             "title": "大模型算法工程师",
@@ -283,7 +284,7 @@ async def test_auto_apply_aborts_without_llm_waste_on_communicated_job(broker):
     assert finished is not None
     assert any("既有沟通" in log for log in finished.logs)
 
-    records = await broker.list_job_records(status="applied")
+    records = await broker.job_store.list_job_records(status="applied")
     assert len(records) == 1
     assert records[0].get("applied_source") == "platform_historical"
-    assert await broker.count_today_applied_jobs() == 0
+    assert await broker.job_store.count_today_applied_jobs() == 0

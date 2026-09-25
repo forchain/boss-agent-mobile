@@ -1,12 +1,46 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { runPythonScript, getProjectRoot } from '$lib/server/pythonRunner';
+import { createRevision, listRevisions } from '$lib/server/collections';
+import { BrokerError } from '$lib/server/broker';
 import { sanitizeLlmSettingsForRunner } from '$lib/server/settings';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
 
+export const GET: RequestHandler = async ({ url }) => {
+	try {
+		const userId = url.searchParams.get('userId') || 'default';
+		return json({ success: true, revisions: await listRevisions(userId) });
+	} catch (e: any) {
+		return json(
+			{ success: false, message: e?.message || 'Failed to list resume revisions', revisions: [] },
+			{ status: e instanceof BrokerError ? e.status : 500 }
+		);
+	}
+};
+
 export const POST: RequestHandler = async ({ request }) => {
+	// Two shapes, one endpoint: multipart parses an uploaded résumé (below), and a JSON
+	// body records a revision the caller already has the text for. A separate
+	// `/revision` path would collide with the `[id]` segment.
+	// JSON is opted into explicitly; anything else is treated as an upload. Probing for
+	// "not multipart" instead would misread a request whose headers are absent — which is
+	// exactly the shape a route-level test's stub request has.
+	const contentType = request.headers?.get?.('content-type') || '';
+	if (contentType.includes('application/json')) {
+		try {
+			const body = await request.json().catch(() => ({}));
+			const userId = body.userId || body.user_id || 'default';
+			return json({ success: true, revision: await createRevision(body, userId) });
+		} catch (e: any) {
+			return json(
+				{ success: false, message: e?.message || 'Failed to record resume revision' },
+				{ status: e instanceof BrokerError ? e.status : 500 }
+			);
+		}
+	}
+
 	let tempFilePath: string | null = null;
 	try {
 		const formData = await request.formData();

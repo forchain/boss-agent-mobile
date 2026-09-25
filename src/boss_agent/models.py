@@ -4,7 +4,6 @@ boss_agent.models
 Domain dataclasses for Boss 直聘 entities.
 """
 
-import json
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -34,18 +33,46 @@ def clean_job_title(raw_title: str) -> str:
     return t
 
 
+#: Characters Boss uses between a recruiter's name and the title it appends.
+RECRUITER_SEPARATORS: tuple[str, ...] = ("·", "•", "・")
+_RECRUITER_SEPARATOR_RE = re.compile(r"[·•・]")
+
+#: Platform chrome that appears as its own text node or tag on a job card. Declared once
+#: so the card parser, the locator read and the tag sanitizer cannot disagree about
+#: which strings are badges rather than content.
+PLATFORM_BADGE_MARKERS: frozenset[str] = frozenset({"猎", "新", "急", "热", "置顶"})
+
+
+def split_recruiter_name(raw: str) -> tuple[str, str]:
+    """``(name, title)`` for a recruiter string, split on the first name/title separator.
+
+    Boss renders the recruiter as "钟先生 · 猎头顾问" on some card layouts and
+    "钟先生·猎头顾问" on others, and the name is always the part before the first
+    separator. This is the one place that rule is expressed: the Job Fingerprint, the
+    card brief, ``JobRecord``, ``JobPosting`` and the legacy-record backfill all
+    normalize through it, so they cannot disagree about who the recruiter was.
+    """
+    text = (raw or "").strip()
+    if not text:
+        return "", ""
+    parts = _RECRUITER_SEPARATOR_RE.split(text, maxsplit=1)
+    name = parts[0].rstrip("·•・").strip()
+    title = parts[1].strip() if len(parts) > 1 else ""
+    return name, title
+
+
+def normalize_recruiter_name(raw: str) -> str:
+    """The recruiter's name alone, with any title Boss appended after a separator removed."""
+    return split_recruiter_name(raw)[0]
+
+
 def compute_job_fingerprint(company_name: str, title: str, recruiter_name: str) -> str:
     """Compute normalized SHA-256 fingerprint for a job card using the canonical 3 fields."""
     import hashlib
 
     norm_comp = (company_name or "").strip()
     norm_title = clean_job_title(title)
-    norm_recruiter = (recruiter_name or "").strip()
-    if any(sep in norm_recruiter for sep in ("·", "•", "・")):
-        parts = [p.strip() for p in re.split(r"[·•・]", norm_recruiter, maxsplit=1)]
-        norm_recruiter = parts[0].rstrip("·•・").strip()
-    else:
-        norm_recruiter = norm_recruiter.rstrip("·•・").strip()
+    norm_recruiter = normalize_recruiter_name(recruiter_name)
     raw = f"{norm_comp}::{norm_title}::{norm_recruiter}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
@@ -240,10 +267,10 @@ def sanitize_tags(
         if not raw:
             continue
         t = str(raw).strip()
-        if not t or t in ("猎", "新", "急", "热", "置顶") or len(t) > 25:
+        if not t or t in PLATFORM_BADGE_MARKERS or len(t) > 25:
             continue
         # Recruiter filtering
-        if any(sep in t for sep in ("·", "•", "・")):
+        if any(sep in t for sep in RECRUITER_SEPARATORS):
             continue
         if any(kw in t for kw in ("猎头", "顾问", "HR", "人事", "招聘专员", "招聘者", "Recruiter")):
             continue
@@ -479,6 +506,71 @@ HEADHUNTER_COMMUTE_PROBE_SKIP_REASON = "猎头岗位（企业信息保密），�
 DEFAULT_COMMUNICATION_COOLDOWN_DAYS = 30
 
 
+# --------------------------------------------------------------------------- #
+# Job card observation
+# --------------------------------------------------------------------------- #
+#
+# Read off a search/list card before any detail page is opened. It is pure domain
+# data: it used to carry an opaque Appium element handle, which forced the Candidate
+# Screener and the feed-record builders to import the page-object module just to read
+# text. The handle now lives on `pages.LocatedJobCard`, which the feed pipeline alone
+# consumes for viewport geometry and the detail tap.
+
+
+@dataclass
+class JobCardBrief:
+    """Lightweight extraction from a job card in search/list view for deduplication."""
+
+    title: str
+    company_name: str
+    recruiter_name: str
+    fingerprint: str = ""
+    salary_range: str = ""
+    location: str = ""
+    tags: list[str] = field(default_factory=list)
+    digest: str = ""
+    snippet: str = ""
+    company_scale: str = ""
+    industry: str = ""
+    recruiter_title: str = ""
+    is_headhunter: bool = False
+    # App-Enforced commute distance carried over from the detail page probe
+    # (spec #209). None = unknown; screening fails open on it.
+    commute_distance_km: float | None = None
+    commute_distance_text: str = ""
+
+    def __post_init__(self) -> None:
+        if self.title:
+            self.title = clean_job_title(self.title)
+        if self.recruiter_name:
+            self.recruiter_name, derived_recruiter_title = split_recruiter_name(self.recruiter_name)
+            if not self.recruiter_title and derived_recruiter_title:
+                self.recruiter_title = derived_recruiter_title
+
+        if not self.digest and self.snippet:
+            self.digest = self.snippet
+        elif self.digest and not self.snippet:
+            self.snippet = self.digest
+
+        self.is_headhunter = resolve_headhunter_channel(
+            self.is_headhunter, self.recruiter_name, self.recruiter_title
+        )
+        self.tags = sanitize_tags(
+            self.tags,
+            recruiter_name=self.recruiter_name,
+            recruiter_title=self.recruiter_title,
+            location=self.location,
+            company_name=self.company_name,
+            title=self.title,
+        )
+        if not self.fingerprint:
+            self.fingerprint = compute_job_fingerprint(
+                company_name=self.company_name,
+                title=self.title,
+                recruiter_name=self.recruiter_name,
+            )
+
+
 def resolve_headhunter_channel(
     is_headhunter: bool | None,
     recruiter_name: str | None = "",
@@ -601,13 +693,10 @@ class JobRecord:
     def __post_init__(self) -> None:
         if self.title:
             self.title = clean_job_title(self.title)
-        if self.recruiter_name and any(sep in self.recruiter_name for sep in ("·", "•", "・")):
-            parts = [p.strip() for p in re.split(r"[·•・]", self.recruiter_name, maxsplit=1)]
-            self.recruiter_name = parts[0].rstrip("·•・").strip()
-            if not self.recruiter_title and len(parts) > 1 and parts[1]:
-                self.recruiter_title = parts[1].strip()
-        elif self.recruiter_name:
-            self.recruiter_name = self.recruiter_name.rstrip("·•・").strip()
+        if self.recruiter_name:
+            self.recruiter_name, derived_recruiter_title = split_recruiter_name(self.recruiter_name)
+            if not self.recruiter_title and derived_recruiter_title:
+                self.recruiter_title = derived_recruiter_title
 
         if not self.is_headhunter and (
             "猎头" in (self.recruiter_title or "") or "猎头" in (self.recruiter_name or "")
@@ -664,13 +753,10 @@ class JobPosting:
     def __post_init__(self) -> None:
         if self.title:
             self.title = clean_job_title(self.title)
-        if self.recruiter_name and any(sep in self.recruiter_name for sep in ("·", "•", "・")):
-            parts = [p.strip() for p in re.split(r"[·•・]", self.recruiter_name, maxsplit=1)]
-            self.recruiter_name = parts[0].rstrip("·•・").strip()
-            if not self.recruiter_title and len(parts) > 1 and parts[1]:
-                self.recruiter_title = parts[1].strip()
-        elif self.recruiter_name:
-            self.recruiter_name = self.recruiter_name.rstrip("·•・").strip()
+        if self.recruiter_name:
+            self.recruiter_name, derived_recruiter_title = split_recruiter_name(self.recruiter_name)
+            if not self.recruiter_title and derived_recruiter_title:
+                self.recruiter_title = derived_recruiter_title
 
         self.is_headhunter = resolve_headhunter_channel(
             self.is_headhunter, self.recruiter_name, self.recruiter_title
@@ -1279,255 +1365,32 @@ class ScreeningPolicy:
         local store sits *above* it, so a YAML written instead would be shadowed —
         that case reports failure instead of writing something inert.
         """
-        if not self.source_path:
-            target = resolve_writable_screening_config_path()
-        else:
-            target = Path(self.source_path)
-            if ".example." in target.name:
-                target = resolve_writable_screening_config_path()
-            elif not is_writable_screening_path(target):
-                return None
+        from . import screening_config
 
-        written = append_company_blacklist_entry(company_name, path=target, policy=self)
-        return target if written else None
+        return screening_config.persist_company_blacklist(self, company_name)
 
     def save_default(self, config_path: str | Path | None = None) -> Path:
-        """Save ScreeningPolicy to declarative local YAML configuration file."""
-        if config_path:
-            target_path = Path(config_path)
-        else:
-            try:
-                from .settings import resolve_git_common_root
+        """Persist this policy to the declarative local YAML configuration file.
 
-                root = resolve_git_common_root()
-            except Exception:
-                root = Path.cwd()
-            target_path = root / "config" / "settings.local.yaml"
+        The line surgery and path guards live in :mod:`boss_agent.screening_config`;
+        the policy is rules data and no longer knows how to edit a file.
+        """
+        from . import screening_config
 
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-
-        existing_data: dict[str, Any] = {}
-        if target_path.is_file():
-            try:
-                import yaml
-
-                loaded = yaml.safe_load(target_path.read_text(encoding="utf-8"))
-                if isinstance(loaded, dict):
-                    existing_data = loaded
-            except Exception:
-                pass
-
-        merged_data = {**existing_data, **self.to_dict()}
-
-        try:
-            import yaml
-
-            content = yaml.dump(
-                merged_data,
-                allow_unicode=True,
-                sort_keys=False,
-                default_flow_style=False,
-            )
-        except Exception:
-            import json
-
-            lines = [
-                f"enable_screening: {'true' if self.enable_screening else 'false'}",
-                f'channel_preference: "{self.channel_preference}"',
-                "max_commute_distance_km: "
-                + (
-                    "null"
-                    if self.max_commute_distance_km is None
-                    else repr(float(self.max_commute_distance_km))
-                ),
-                "title_whitelist:",
-                *[f"  - {json.dumps(w, ensure_ascii=False)}" for w in self.title_whitelist],
-                "title_blacklist:",
-                *[f"  - {json.dumps(b, ensure_ascii=False)}" for b in self.title_blacklist],
-                "company_blacklist:",
-                *[f"  - {json.dumps(c, ensure_ascii=False)}" for c in self.company_blacklist],
-                "jd_blacklist:",
-                *[f"  - {json.dumps(j, ensure_ascii=False)}" for j in self.jd_blacklist],
-            ]
-            content = "\n".join(lines) + "\n"
-
-        target_path.write_text(content, encoding="utf-8")
-        return target_path
+        return screening_config.save_policy(self, config_path=config_path)
 
 
-SCREENING_CONFIG_HEADER = """\
-# ==============================================================================
-# Boss Agent Mobile - Preliminary Job Screening Policy
-# Auto-generated & updated by Boss Agent Mobile; manual edits are preserved
-# ==============================================================================
-"""
+def _saved_search_max_jobs_default() -> int:
+    """The declared ``saved_searches.max_jobs`` default, resolved lazily.
 
-
-def is_writable_screening_path(path: str | Path) -> bool:
-    """Whether `path` may be written to.
-
-    `*.example.*` files are checked-in read-only inputs — `load_default` will
-    happily resolve one on a fresh checkout, and line surgery there would edit a
-    tracked file. JSON stores are excluded for the same reason the appenders are
-    YAML line surgery rather than a re-serialize.
+    ``boss_agent.models`` is imported *by* the broker adapter, so importing the
+    Collection Schema at module scope here would close an import cycle. The default
+    itself lives in the schema module so the domain model, the provisioner and the
+    Web UI cannot drift apart the way 20-vs-30 once did.
     """
-    candidate = Path(path)
-    return candidate.suffix in (".yaml", ".yml") and ".example." not in candidate.name
+    from boss_agent.broker.collection_schema import SAVED_SEARCH_MAX_JOBS
 
-
-def resolve_writable_screening_config_path(root: str | Path | None = None) -> Path:
-    """Resolve the writable screening configuration store.
-
-    Always the unified local settings file, because it is the only candidate that
-    actually takes effect. ``ScreeningPolicy.load_default`` resolves the *first*
-    file carrying screening keys, and ``config/screening.local.yaml`` is the last
-    entry on that list — behind the shipped ``config/settings.example.yaml`` — so
-    writing the blacklist there would be silently shadowed and change nothing.
-
-    Mirrors the web settings seam (``web/src/lib/server/screeningConfig.ts``).
-    Checked-in ``*.example.*`` files are never returned: they are read-only inputs.
-    A JSON local settings store is not a supported write target either, for the
-    same reason the appenders below are line-oriented YAML surgery.
-    """
-    if root is None:
-        try:
-            from .settings import resolve_git_common_root
-
-            base = resolve_git_common_root()
-        except Exception:
-            base = Path.cwd()
-    else:
-        base = Path(root)
-
-    for name in ("settings.local.yaml", "settings.local.yml"):
-        candidate = base / "config" / name
-        if candidate.is_file():
-            return candidate
-    return base / "config" / "settings.local.yaml"
-
-
-def append_company_blacklist_entry(
-    company_name: str,
-    path: str | Path | None = None,
-    policy: "ScreeningPolicy | None" = None,
-) -> bool:
-    """Append one company to ``company_blacklist``, preserving the file's comments.
-
-    Line-oriented surgery rather than a re-serialize: a full ``yaml.dump`` of the
-    merged mapping would silently discard every comment and reorder the file, and
-    this config is hand-maintained. Returns True when the file changed, False when
-    the company was blank, already present, or the list could not be parsed safely.
-    """
-    cleaned = (company_name or "").strip()
-    if not cleaned:
-        return False
-
-    target = Path(path) if path else resolve_writable_screening_config_path()
-    if target.suffix == ".json":
-        # The appenders below are line-oriented YAML surgery; a JSON store has no
-        # `company_blacklist:` line to extend and would be corrupted by one.
-        return False
-
-    if not target.is_file():
-        target.parent.mkdir(parents=True, exist_ok=True)
-        snapshot = (policy or ScreeningPolicy.load_default()).to_dict()
-        if cleaned not in snapshot["company_blacklist"]:
-            snapshot["company_blacklist"] = [*snapshot["company_blacklist"], cleaned]
-        import yaml
-
-        body = yaml.dump(snapshot, allow_unicode=True, sort_keys=False, default_flow_style=False)
-        target.write_text(SCREENING_CONFIG_HEADER + body, encoding="utf-8")
-        return True
-
-    lines = target.read_text(encoding="utf-8").splitlines()
-    key_index = next(
-        (i for i, line in enumerate(lines) if line.lstrip().startswith("company_blacklist:")),
-        None,
-    )
-
-    if key_index is None:
-        # No key to extend: add one, leaving every existing line untouched.
-        suffix = [""] if lines and lines[-1].strip() else []
-        entry = json.dumps(cleaned, ensure_ascii=False)
-        target.write_text(
-            "\n".join([*lines, *suffix, "company_blacklist:", f"  - {entry}", ""]),
-            encoding="utf-8",
-        )
-        return True
-
-    key_line = lines[key_index]
-    indent = key_line[: len(key_line) - len(key_line.lstrip())]
-    raw_value = key_line.split(":", 1)[1]
-    inline_comment = ""
-    if "#" in raw_value:
-        raw_value, inline_comment = raw_value.split("#", 1)
-        inline_comment = "  #" + inline_comment
-
-    import yaml
-
-    end_index = _yaml_block_end(lines, key_index)
-    existing = _parse_blacklist_block(lines[key_index:end_index], indent)
-    if existing is None:
-        return False
-
-    items = [str(item) for item in existing]
-    if cleaned in items:
-        return False
-
-    block = [
-        f"{indent}company_blacklist:{inline_comment}",
-        *[f"{indent}  - {json.dumps(item, ensure_ascii=False)}" for item in [*items, cleaned]],
-    ]
-    rewritten = "\n".join([*lines[:key_index], *block, *lines[end_index:]])
-    target.write_text(rewritten + "\n", encoding="utf-8")
-    return True
-
-
-def _parse_blacklist_block(block_lines: list[str], indent: str) -> list[str] | None:
-    """Parse the existing `company_blacklist` value, inline or block form.
-
-    Parses the whole `key: value` block rather than just the key line, because the
-    block form carries its items on the following lines. Returns None when the
-    value is not safely readable as a list — the caller then leaves the file alone
-    rather than overwriting a hand-written structure it does not understand.
-    """
-    import yaml
-
-    text = "\n".join(block_lines)
-    if indent:
-        text = "\n".join(
-            line[len(indent) :] if line.startswith(indent) else line for line in text.splitlines()
-        )
-    try:
-        parsed = yaml.safe_load(text)
-    except Exception:
-        return None
-    if not isinstance(parsed, dict):
-        return None
-    existing = parsed.get("company_blacklist")
-    return existing if isinstance(existing, list) else None
-
-
-def _yaml_block_end(lines: list[str], key_index: int) -> int:
-    """Exclusive end of the block value starting at `key_index`.
-
-    Consumes indented continuation lines (the list items) and the blank lines
-    between them, but stops at the first column-0 line so a following key or
-    comment is never swallowed.
-    """
-    cursor = key_index + 1
-    end = key_index + 1
-    while cursor < len(lines):
-        stripped = lines[cursor].strip()
-        if not stripped:
-            cursor += 1
-            continue
-        if lines[cursor][:1] in (" ", "\t"):
-            end = cursor + 1
-            cursor += 1
-            continue
-        break
-    return end
+    return SAVED_SEARCH_MAX_JOBS
 
 
 @dataclass
@@ -1545,7 +1408,7 @@ class SavedSearch:
     last_run_at: str | None = None
     target_task_type: str = "AUTO_APPLY"
     target_action: str = ""
-    max_jobs: int = 20
+    max_jobs: int = field(default_factory=_saved_search_max_jobs_default)
     enable_search: bool = True
     enable_filter: bool = True
 
@@ -1711,6 +1574,11 @@ class SavedSearch:
                     else TargetAction.SAVE_JD
                 )
 
+        raw_max_jobs = data.get("max_jobs")
+        max_jobs = (
+            int(raw_max_jobs) if raw_max_jobs is not None else _saved_search_max_jobs_default()
+        )
+
         return cls(
             id=sid,
             name=data.get("name", sid),
@@ -1723,7 +1591,7 @@ class SavedSearch:
             last_run_at=data.get("last_run_at"),
             target_task_type=target_task_type,
             target_action=target_action,
-            max_jobs=int(data.get("max_jobs", 20)),
+            max_jobs=max_jobs,
             enable_search=enable_search,
             enable_filter=enable_filter,
         )

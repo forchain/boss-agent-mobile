@@ -19,18 +19,18 @@ from boss_agent.feed_pipeline import (
     JobAction,
     JobFeedPipeline,
     is_task_cancelled,
-    resolve_job_store,
 )
 from boss_agent.job_store import InMemoryJobRecordStore
 from boss_agent.memory import StructuredCandidateProfile
 from boss_agent.models import (
     ChatButtonState,
+    JobCardBrief,
     JobPosting,
     JobRecordStatus,
     ScreeningPolicy,
     TargetAction,
 )
-from boss_agent.pages import JobCardBrief
+from boss_agent.pages import LocatedJobCard
 from boss_agent.screening import CandidateScreener, JobVerdictStage
 
 GOOD_JD = (
@@ -40,16 +40,19 @@ GOOD_JD = (
 TODAY = datetime.now(UTC).isoformat()
 
 
-def _card(title: str, company: str, y: int | None = None, digest: str = "") -> JobCardBrief:
+def _card(title: str, company: str, y: int | None = None, digest: str = "") -> LocatedJobCard:
+    """One scripted card: the parsed brief plus the element it would have been read from."""
     element = MagicMock()
     if y is not None:
         element.location = {"x": 0, "y": y}
-    return JobCardBrief(
-        title=title,
-        company_name=company,
-        recruiter_name="王女士",
-        salary_range="40-60K",
-        digest=digest,
+    return LocatedJobCard(
+        card=JobCardBrief(
+            title=title,
+            company_name=company,
+            recruiter_name="王女士",
+            salary_range="40-60K",
+            digest=digest,
+        ),
         element=element,
     )
 
@@ -67,7 +70,7 @@ def _posting(title: str = "AI Agent 平台工程师", company: str = "智元创�
 class ScriptedFeed:
     """Viewport-by-viewport stand-in for a Boss search result feed."""
 
-    def __init__(self, viewports: list[list[JobCardBrief]], boundary_after: int | None = None):
+    def __init__(self, viewports: list[list[LocatedJobCard]], boundary_after: int | None = None):
         self._viewports = viewports
         self._boundary_after = boundary_after
         self.scrolls = 0
@@ -87,7 +90,7 @@ class ScriptedFeed:
     def is_feed_bottom_reached(self) -> bool:
         return self.get_feed_bottom_boundary() is not None
 
-    def extract_visible_job_cards(self, max_cards: int = 10) -> list[JobCardBrief]:
+    def extract_visible_job_cards(self, max_cards: int = 10) -> list[LocatedJobCard]:
         return list(self._viewports[self._index])
 
     def scroll_job_list(self) -> None:
@@ -815,14 +818,18 @@ async def test_incomplete_jd_is_flagged_and_kept_for_retry():
 # ---------------------------------------------------------------------------
 
 
-def test_resolve_job_store_prefers_the_dedicated_seam():
+def test_for_task_wires_the_brokers_job_ledger():
+    """The pipeline takes the broker's job ledger at composition time.
+
+    This replaced a duck-typing helper that fell back to the broker itself when the
+    handle had no ledger, letting any broker-shaped object silently satisfy
+    store-typed code — so the type story no longer said which object was passed.
+    """
     from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
 
     broker = InMemoryTaskBroker()
-    assert resolve_job_store(broker) is broker.job_store
-
-    store = InMemoryJobRecordStore()
-    assert resolve_job_store(store) is store
+    pipeline = JobFeedPipeline.for_task(broker, "task-1", driver=None)
+    assert pipeline.store is broker.job_store
 
 
 @pytest.mark.asyncio

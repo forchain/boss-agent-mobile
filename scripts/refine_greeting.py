@@ -16,6 +16,7 @@ root_dir = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(root_dir))
 sys.path.insert(0, str(root_dir / "src"))
 
+from boss_agent.llm_config import load_llm_config  # noqa: E402
 from boss_agent.matching import JobMatchGreetingService  # noqa: E402
 from boss_agent.memory import StructuredCandidateProfile  # noqa: E402
 from boss_agent.models import JobPosting  # noqa: E402
@@ -74,7 +75,7 @@ def build_llm_client(llm_config_arg: str | None) -> OpenAIChatClient:
                 model = config_data.get("model") or "MiniMax-M3"
                 temp = float(config_data.get("temperature") or 0.2)
 
-                default_cfg = LLMConfig.from_env_or_file()
+                default_cfg = load_llm_config()
                 if not api_key:
                     api_key = default_cfg.api_key
                 if (
@@ -94,7 +95,7 @@ def build_llm_client(llm_config_arg: str | None) -> OpenAIChatClient:
         except Exception as e:
             sys.stderr.write(f"Warning: Failed to parse custom LLM config ({e}), falling back.\n")
 
-    return OpenAIChatClient(LLMConfig.from_env_or_file())
+    return OpenAIChatClient(load_llm_config())
 
 
 def main() -> None:

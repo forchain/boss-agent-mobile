@@ -9,13 +9,20 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
-from typing import Any
 
-from boss_agent.broker.models import AutomationTask, TaskType
+from boss_agent.broker.models import AutomationTask
 from boss_agent.broker.pocketbase_adapter import BaseTaskBroker
-from boss_agent.models import SavedSearch, TargetAction, TargetTaskType
-from boss_agent.settings import resolve_chat_acknowledgment_settings, resolve_run_cleanup_on_startup
+from boss_agent.models import SavedSearch
+from boss_agent.settings import resolve_run_cleanup_on_startup
 from boss_agent.startup_cleanup import StartupCleanupGate
+from boss_agent.task_launch import (
+    LaunchMode,
+    LaunchSource,
+    TaskKind,
+    TaskLaunch,
+    build_chat_cleanup_launch,
+    build_launch,
+)
 
 logger = logging.getLogger("boss_agent.scheduler")
 
@@ -156,7 +163,7 @@ class AutomationScheduler:
         if now is None:
             now = datetime.now(UTC)
 
-        saved_searches = await self.broker.list_saved_searches()
+        saved_searches = await self.broker.saved_searches.list_saved_searches()
         dispatched_tasks: list[AutomationTask] = []
 
         for search in saved_searches:
@@ -194,20 +201,30 @@ class AutomationScheduler:
                     pass
 
             # Resolve what this strategy dispatches
-            task_type, payload = self._build_dispatch(search)
+            launch = self._build_dispatch(search)
 
             task = await self.broker.create_task(
-                task_type=task_type,
-                payload=payload,
+                task_type=launch.task_type,
+                payload=launch.payload,
+                source=launch.source.value,
             )
             dispatched_tasks.append(task)
 
-            # Update last_run_at timestamp on saved search
+            # Update last_run_at timestamp on saved search. A failed write does not undo
+            # the dispatch that already happened, so it is not fatal — but it does defeat
+            # the same-minute guard above, because the next tick re-reads the stale
+            # timestamp. Say so rather than let the search re-dispatch silently.
             search.last_run_at = now.isoformat()
-            await self.broker.save_saved_search(search)
+            if await self.broker.saved_searches.save_saved_search(search) is None:
+                logger.warning(
+                    "Could not persist last_run_at for search %s (%s); it may dispatch "
+                    "again within this minute",
+                    search.id,
+                    search.name,
+                )
             logger.info(
                 "Scheduled %s task %s dispatched for search %s (%s)",
-                task_type.value,
+                task.task_type.value,
                 task.id,
                 search.id,
                 search.name,
@@ -215,57 +232,34 @@ class AutomationScheduler:
 
         return dispatched_tasks
 
-    def _build_dispatch(self, search: SavedSearch) -> tuple[TaskType, dict[str, Any]]:
+    def _build_dispatch(self, search: SavedSearch) -> TaskLaunch:
         """Resolve the worker task a strategy dispatches, and its payload.
 
-        Rejection cleanup is keyword-independent: it carries the resolved
-        triage settings instead of a search strategy.
+        Both shapes come from the shared launch builder, so a scheduled run of a
+        SavedSearch is the *same task* a manual launch of it produces. This method used
+        to be its own builder: it sent `preview_only=False, auto_send=False` where every
+        web builder sent `preview_only=True`, inverting execution depth for the same
+        SavedSearch depending on who dispatched it, and it hardcoded `min_score: 70`
+        against the modal's 75.
         """
         if search.is_chat_cleanup:
-            ack = resolve_chat_acknowledgment_settings()
-            return TaskType.CHECK_CHAT, {
-                "saved_search_id": search.id,
-                "search_id": search.id,
-                "search_name": search.name,
-                # Carried explicitly so a scheduled run honours the configured
-                # drill mode rather than silently going live.
-                "dry_run": ack.dry_run,
-                "rejection_reply_text": ack.rejection_reply_text,
-                "max_scan_depth": ack.max_scan_depth,
-                "scheduled": True,
-            }
-
-        action = search.target_action or (
-            TargetAction.AUTO_APPLY
-            if search.target_task_type == TargetTaskType.AUTO_APPLY
-            else TargetAction.SAVE_JD
-        )
-        if action not in (TargetAction.AUTO_APPLY, TargetAction.SAVE_JD):
-            action = TargetAction.SAVE_JD
-        task_type = (
-            TaskType.AUTO_APPLY if action == TargetAction.AUTO_APPLY else TaskType.SCRAPE_JOBS
-        )
-
-        search_dict = search.to_dict()
-        payload: dict[str, Any] = {
-            "saved_search_id": search.id,
-            "search_id": search.id,
-            "search_name": search.name,
-            "keyword": search_dict.get("keyword") or "",
-            "enable_search": search.enable_search,
-            "enable_filter": search.enable_filter,
-            "filter": search_dict.get("filter") or {},
-            "target_action": action,
-            "max_jobs": search.max_jobs or 30,
-            "min_score": 70,
-            "preview_only": False,
-            "auto_send": False,
-            "preview_timeout_sec": 3.0,
-            "scheduled": True,
-        }
-        if search_dict.get("screening_policy"):
-            payload["screening_policy"] = search_dict.get("screening_policy")
-        return task_type, payload
+            # `mode=None` lets the configured `chat.dry_run` win. The scheduler used to
+            # state a dry_run of its own, which was one of three conventions for a single
+            # tri-state intent: a scheduled drill that nobody configured.
+            launch = build_chat_cleanup_launch(source=LaunchSource.SCHEDULER, search=search)
+        else:
+            # Scheduled search depth honours the strategy's Target Action, not a
+            # scheduler opinion: a save-only search is preview by definition, and an
+            # auto-apply search drafts unless the operator asked for live dispatch. This
+            # used to send `preview_only=False`, inverting execution depth against every
+            # web builder for the same SavedSearch.
+            launch = build_launch(
+                TaskKind.SEARCH,
+                source=LaunchSource.SCHEDULER,
+                search=search,
+                mode=LaunchMode.DRAFT,
+            )
+        return launch
 
     async def run_forever(self) -> None:
         """Background continuous scheduler loop."""

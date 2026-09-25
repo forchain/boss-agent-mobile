@@ -17,9 +17,9 @@ from boss_agent.graph import (
 @pytest.fixture
 def mock_broker():
     broker = MagicMock()
-    broker.get_candidate_profile = AsyncMock(return_value=None)
-    broker.save_candidate_profile = AsyncMock(side_effect=lambda data, user_id="default": dict(data))
-    broker.create_resume_revision = AsyncMock(
+    broker.candidate_memory.get_candidate_profile = AsyncMock(return_value=None)
+    broker.candidate_memory.save_candidate_profile = AsyncMock(side_effect=lambda data, user_id="default": dict(data))
+    broker.candidate_memory.create_resume_revision = AsyncMock(
         return_value={"id": "rev-001", "file_name": "test_resume.txt", "diff_summary": "测试记录"}
     )
     return broker
@@ -81,8 +81,8 @@ def test_run_resume_lifecycle_initial(mock_broker, mock_llm_client):
     assert final_prof["work_experiences"] == []
     assert final_prof["projects"] == []
 
-    mock_broker.save_candidate_profile.assert_called_once()
-    mock_broker.create_resume_revision.assert_called_once()
+    mock_broker.candidate_memory.save_candidate_profile.assert_called_once()
+    mock_broker.candidate_memory.create_resume_revision.assert_called_once()
 
 
 def test_run_resume_lifecycle_incremental_merge(mock_broker, mock_llm_client):
@@ -95,7 +95,7 @@ def test_run_resume_lifecycle_incremental_merge(mock_broker, mock_llm_client):
         "profile_document": "旧版全景画像",
         "raw_summary": "旧版全景画像",
     }
-    mock_broker.get_candidate_profile = AsyncMock(return_value=existing_profile)
+    mock_broker.candidate_memory.get_candidate_profile = AsyncMock(return_value=existing_profile)
 
     raw_text = "李四，8年研发经验，精通Python、LangChain、FastAPI。期望岗位：AI Agent 架构师。"
     result = run_resume_lifecycle_graph(
@@ -139,8 +139,8 @@ def test_run_resume_lifecycle_await_review(mock_broker, mock_llm_client):
     assert result["status"] == "diff_ready"
     assert "diff_summary" in result
     assert result.get("final_profile") is None
-    mock_broker.save_candidate_profile.assert_not_called()
-    mock_broker.create_resume_revision.assert_not_called()
+    mock_broker.candidate_memory.save_candidate_profile.assert_not_called()
+    mock_broker.candidate_memory.create_resume_revision.assert_not_called()
 
 
 def test_resume_lifecycle_llm_failure_resilience(mock_broker):

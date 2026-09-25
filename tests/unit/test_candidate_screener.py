@@ -11,8 +11,7 @@ from unittest.mock import MagicMock
 
 from boss_agent.matching import MatchGreetingResult
 from boss_agent.memory import StructuredCandidateProfile
-from boss_agent.models import JobPosting, ScreeningPolicy
-from boss_agent.pages import JobCardBrief
+from boss_agent.models import JobCardBrief, JobPosting, ScreeningPolicy
 from boss_agent.screening import (
     CandidateScreener,
     CardVerdictStage,

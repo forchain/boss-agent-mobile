@@ -157,6 +157,18 @@ export function getSettingsLocalPath(): string {
 	return path.join(getProjectRoot(), 'config', 'settings.local.yaml');
 }
 
+export function getLegacyLlmPath(): string {
+	// Sibling of the seam above, and for the same reason: this layer sits *above* the
+	// shipped template, so a developer's pre-realm `config/llm.local.yaml` silently
+	// overrides the baseline. Without an isolation seam, a "baseline" test measures
+	// whichever machine it runs on.
+	const override = process.env.BOSS_LEGACY_LLM_PATH;
+	if (override && override.trim()) {
+		return path.resolve(override.trim());
+	}
+	return path.join(getProjectRoot(), 'config', 'llm.local.yaml');
+}
+
 export function maskSecret(val?: string): string {
 	if (!val) return '';
 	const s = val.trim();
@@ -260,7 +272,7 @@ export function loadMergedSettings(): SystemSettings {
 	}
 
 	// 2. Read legacy config/llm.local.yaml if present for fallback
-	const legacyLlmFile = path.join(projectRoot, 'config', 'llm.local.yaml');
+	const legacyLlmFile = getLegacyLlmPath();
 	if (fs.existsSync(legacyLlmFile)) {
 		try {
 			const parsed = parseSimpleYaml(fs.readFileSync(legacyLlmFile, 'utf-8'));

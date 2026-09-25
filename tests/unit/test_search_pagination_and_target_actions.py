@@ -157,7 +157,7 @@ async def test_broker_get_job_record_by_fingerprint_and_count_today():
     broker = InMemoryTaskBroker()
 
     # Record 1: digest_only
-    rec1 = await broker.upsert_job_record(
+    rec1 = await broker.job_store.upsert_job_record(
         {
             "fingerprint": "fp_001",
             "title": "Python Engineer",
@@ -168,36 +168,36 @@ async def test_broker_get_job_record_by_fingerprint_and_count_today():
     )
     assert rec1["id"] is not None
 
-    found = await broker.get_job_record_by_fingerprint("fp_001")
+    found = await broker.job_store.get_job_record_by_fingerprint("fp_001")
     assert found is not None
     assert found["title"] == "Python Engineer"
     assert found["status"] == "digest_only"
 
-    not_found = await broker.get_job_record_by_fingerprint("fp_nonexistent")
+    not_found = await broker.job_store.get_job_record_by_fingerprint("fp_nonexistent")
     assert not_found is None
 
     # Count today applied: initially 0
-    assert await broker.count_today_applied_jobs() == 0
+    assert await broker.job_store.count_today_applied_jobs() == 0
 
     # Upgrading to `applied` without dispatching a message must not consume quota (Issue #199:
     # historical imports and status edits must stay decoupled from the daily greeting limit).
-    await broker.upsert_job_record(
+    await broker.job_store.upsert_job_record(
         {
             "fingerprint": "fp_001",
             "status": "applied",
         }
     )
-    assert await broker.count_today_applied_jobs() == 0
+    assert await broker.job_store.count_today_applied_jobs() == 0
 
     # Only a real greeting dispatch stamps applied_at and consumes a slot
-    await broker.upsert_job_record(
+    await broker.job_store.upsert_job_record(
         {
             "fingerprint": "fp_001",
             "status": "applied",
             "applied_at": datetime.now(UTC).isoformat(),
         }
     )
-    assert await broker.count_today_applied_jobs() == 1
+    assert await broker.job_store.count_today_applied_jobs() == 1
 
 
 @pytest.mark.asyncio
@@ -206,7 +206,7 @@ async def test_broker_upsert_monotonic_status_upgrade():
     broker = InMemoryTaskBroker()
 
     # Initial: applied
-    await broker.upsert_job_record(
+    await broker.job_store.upsert_job_record(
         {
             "fingerprint": "fp_senior",
             "title": "Staff Architect",
@@ -218,7 +218,7 @@ async def test_broker_upsert_monotonic_status_upgrade():
     )
 
     # Attempt to upsert with digest_only
-    updated = await broker.upsert_job_record(
+    updated = await broker.job_store.upsert_job_record(
         {
             "fingerprint": "fp_senior",
             "status": "digest_only",
@@ -360,7 +360,7 @@ async def test_scrape_jobs_handler_detail_missing_company_falls_back_to_card_com
     finished = await broker.get_task(task.id)
     assert finished.status == TaskStatus.SUCCESS
 
-    jobs = await broker.list_job_records()
+    jobs = await broker.job_store.list_job_records()
     assert len(jobs) == 1
     assert jobs[0]["company_name"] == "Innovative AI"
     assert jobs[0]["status"] == "jd_saved"
@@ -502,7 +502,7 @@ async def test_scrape_jobs_handler_filters_recommended_cards_below_boundary():
     assert finished.status == TaskStatus.SUCCESS
 
     # Verify only card 1 (above boundary) was saved into broker
-    records = await broker.list_job_records()
+    records = await broker.job_store.list_job_records()
     assert len(records) == 1
     assert records[0]["title"] == "Senior Agent Researcher"
     assert records[0]["company_name"] == "AI Lab"
@@ -524,7 +524,7 @@ async def test_auto_apply_handler_quota_exhausted_degrades_to_matched():
     # Pre-populate broker with 20 greetings dispatched today (applied_at is what the quota counts)
     today_iso = datetime.now(UTC).isoformat()
     for i in range(20):
-        await broker.upsert_job_record(
+        await broker.job_store.upsert_job_record(
             {
                 "fingerprint": f"fp_applied_{i}",
                 "title": f"Job {i}",
@@ -535,7 +535,7 @@ async def test_auto_apply_handler_quota_exhausted_degrades_to_matched():
             }
         )
 
-    assert await broker.count_today_applied_jobs() == 20
+    assert await broker.job_store.count_today_applied_jobs() == 20
 
     # Job elements for driver
     mock_title = MagicMock(text="AI Specialist")
@@ -594,7 +594,7 @@ async def test_auto_apply_handler_quota_exhausted_degrades_to_matched():
     start_chat_btn.click.assert_not_called()
 
     # The new job record should be in status 'matched' with generated draft greeting
-    all_jobs = await broker.list_job_records()
+    all_jobs = await broker.job_store.list_job_records()
     target_rec = next((j for j in all_jobs if j["company_name"] == "Tech AI"), None)
     assert target_rec is not None
     assert target_rec["status"] == "matched"

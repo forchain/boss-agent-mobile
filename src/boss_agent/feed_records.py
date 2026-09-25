@@ -12,8 +12,12 @@ facets and the enriched record — can be read and tested without a driver or a 
 from typing import Any
 
 from .job_store import INVALID_JOB_TITLES
-from .models import INVALID_COMPANY_NAMES, JobRecordStatus, is_invalid_company_name
-from .pages import JobCardBrief
+from .models import (
+    INVALID_COMPANY_NAMES,
+    JobCardBrief,
+    JobRecordStatus,
+    is_invalid_company_name,
+)
 from .screening import CardScreeningVerdict
 
 

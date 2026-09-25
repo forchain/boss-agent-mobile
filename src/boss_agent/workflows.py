@@ -13,12 +13,19 @@ from rich.console import Console
 from .graph import run_job_application_graph
 from .matching import JobMatchGreetingService, MatchGreetingResult
 from .memory import ResumeMemoryManager, StructuredCandidateProfile
-from .models import AuthStatus, FilterConfig, JobPosting, SavedSearch, ScreeningPolicy, SearchConfig
+from .models import (
+    AuthStatus,
+    FilterConfig,
+    JobCardBrief,
+    JobPosting,
+    SavedSearch,
+    ScreeningPolicy,
+    SearchConfig,
+)
 from .pages import (
     ChatPage,
     FilterDialogPage,
     IndustryFilterDialogPage,
-    JobCardBrief,
     JobDetailPage,
     JobListPage,
     LoginPage,

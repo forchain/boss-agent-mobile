@@ -5,7 +5,6 @@ PocketBase State Stream Broker Adapter and In-Memory Broker implementations.
 """
 
 import asyncio
-import contextlib
 import json
 import logging
 import os
@@ -14,19 +13,26 @@ import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 import requests
 
 from boss_agent.broker.models import AutomationTask, TaskStatus, TaskType
+from boss_agent.candidate_memory_store import (
+    CandidateMemoryStore,
+    InMemoryCandidateMemoryStore,
+    PocketBaseCandidateMemoryStore,
+)
 from boss_agent.job_store import (
     InMemoryJobRecordStore,
     JobRecordStore,
-    JobRecordStoreFacade,
     PocketBaseJobRecordStore,
 )
-from boss_agent.models import SavedSearch
+from boss_agent.saved_search_store import (
+    InMemorySavedSearchStore,
+    PocketBaseSavedSearchStore,
+    SavedSearchStore,
+)
 from boss_agent.settings import resolve_pocketbase_url
 
 logger = logging.getLogger("boss_agent.broker")
@@ -102,9 +108,17 @@ class BaseTaskBroker(ABC):
 
     @abstractmethod
     async def create_task(
-        self, task_type: TaskType | str, payload: dict[str, Any] | None = None
+        self,
+        task_type: TaskType | str,
+        payload: dict[str, Any] | None = None,
+        source: str = "manual",
     ) -> AutomationTask:
-        """Create and persist a new task with PENDING status."""
+        """Create and persist a new task with PENDING status.
+
+        ``source`` is Task Provenance: where the task came from. The worker's startup
+        sweep cancels ``test``-sourced tasks so an automated suite never contends with
+        the live worker for the device.
+        """
         pass
 
     @abstractmethod
@@ -161,132 +175,31 @@ class BaseTaskBroker(ABC):
         """Register a callback for task lifecycle events (create, update)."""
         pass
 
-    @abstractmethod
-    async def get_candidate_profile(self, user_id: str = "default") -> dict[str, Any] | None:
-        """Fetch candidate structured memory profile for a user."""
-        pass
-
-    @abstractmethod
-    async def save_candidate_profile(
-        self, profile_data: dict[str, Any], user_id: str = "default"
-    ) -> dict[str, Any]:
-        """Save or update candidate structured memory profile for a user."""
-        pass
-
-    @abstractmethod
-    async def list_resume_revisions(self, user_id: str = "default") -> list[dict[str, Any]]:
-        """List resume revisions in reverse chronological order."""
-        pass
-
-    @abstractmethod
-    async def create_resume_revision(
-        self, revision_data: dict[str, Any], user_id: str = "default"
-    ) -> dict[str, Any]:
-        """Record a new resume upload revision."""
-        pass
-
-    # The Job Record Store this broker delegates its job-record surface to (ADR 0013).
-    # Concrete adapters assign it in __init__; callers that want job records without a
-    # broker should depend on JobRecordStore directly.
+    # The three repository seams this broker *composes* rather than inherits from
+    # (ADR 0013). Concrete adapters assign them in __init__; callers that want job
+    # records, candidate memory or saved searches should depend on the store directly,
+    # which is why none of their verbs appear above.
     job_store: JobRecordStore
-
-    @abstractmethod
-    async def list_saved_searches(self) -> list[SavedSearch]:
-        """List all saved search presets from PocketBase."""
-        pass
-
-    @abstractmethod
-    async def get_saved_search(self, search_id: str) -> SavedSearch | None:
-        """Fetch a saved search preset by ID."""
-        pass
-
-    @abstractmethod
-    async def save_saved_search(self, saved_search: SavedSearch) -> SavedSearch:
-        """Create or update a saved search preset."""
-        pass
-
-    @abstractmethod
-    async def delete_saved_search(self, search_id: str) -> bool:
-        """Delete a saved search preset by ID."""
-        pass
+    candidate_memory: CandidateMemoryStore
+    saved_searches: SavedSearchStore
 
 
-class InMemoryTaskBroker(JobRecordStoreFacade, BaseTaskBroker):
+class InMemoryTaskBroker(BaseTaskBroker):
     """Thread-safe & asyncio-safe in-memory broker for tests and local development."""
 
     def __init__(self) -> None:
         self._tasks: dict[str, AutomationTask] = {}
-        self._candidate_profiles: dict[str, dict[str, Any]] = {}
-        self._resume_revisions: dict[str, list[dict[str, Any]]] = {}
         self.job_store = InMemoryJobRecordStore()
-        self._saved_searches: dict[str, SavedSearch] = {}
+        self.candidate_memory = InMemoryCandidateMemoryStore()
+        self.saved_searches = InMemorySavedSearchStore()
         self._lock = asyncio.Lock()
         self._subscribers: list[Callable[[str, AutomationTask], Any]] = []
-        self._load_local_profile()
-
-    def _load_local_profile(self) -> None:
-        from pathlib import Path
-
-        config_path = Path("config/candidate_memory.json")
-        if config_path.exists():
-            try:
-                data = json.loads(config_path.read_text(encoding="utf-8"))
-                self._candidate_profiles["default"] = data
-            except Exception:
-                pass
-
-    async def list_saved_searches(self) -> list[SavedSearch]:
-        async with self._lock:
-            return list(self._saved_searches.values())
-
-    async def get_saved_search(self, search_id: str) -> SavedSearch | None:
-        async with self._lock:
-            return self._saved_searches.get(search_id)
-
-    async def save_saved_search(self, saved_search: SavedSearch) -> SavedSearch:
-        async with self._lock:
-            self._saved_searches[saved_search.id] = saved_search
-            return saved_search
-
-    async def delete_saved_search(self, search_id: str) -> bool:
-        async with self._lock:
-            if search_id in self._saved_searches:
-                del self._saved_searches[search_id]
-                return True
-            return False
-
-    async def get_candidate_profile(self, user_id: str = "default") -> dict[str, Any] | None:
-        async with self._lock:
-            prof = self._candidate_profiles.get(user_id)
-            return dict(prof) if prof else None
-
-    async def save_candidate_profile(
-        self, profile_data: dict[str, Any], user_id: str = "default"
-    ) -> dict[str, Any]:
-        async with self._lock:
-            self._candidate_profiles[user_id] = dict(profile_data)
-            return dict(profile_data)
-
-    async def list_resume_revisions(self, user_id: str = "default") -> list[dict[str, Any]]:
-        async with self._lock:
-            revs = self._resume_revisions.get(user_id, [])
-            return [dict(r) for r in sorted(revs, key=lambda x: x.get("created", ""), reverse=True)]
-
-    async def create_resume_revision(
-        self, revision_data: dict[str, Any], user_id: str = "default"
-    ) -> dict[str, Any]:
-        async with self._lock:
-            if user_id not in self._resume_revisions:
-                self._resume_revisions[user_id] = []
-            rev = dict(revision_data)
-            rev.setdefault("id", str(uuid.uuid4())[:15])
-            rev.setdefault("user_id", user_id)
-            rev.setdefault("created", datetime.now(UTC).isoformat())
-            self._resume_revisions[user_id].append(rev)
-            return rev
 
     async def create_task(
-        self, task_type: TaskType | str, payload: dict[str, Any] | None = None
+        self,
+        task_type: TaskType | str,
+        payload: dict[str, Any] | None = None,
+        source: str = "manual",
     ) -> AutomationTask:
         resolved_type = task_type if isinstance(task_type, TaskType) else TaskType(task_type)
         now = datetime.now(UTC)
@@ -294,6 +207,7 @@ class InMemoryTaskBroker(JobRecordStoreFacade, BaseTaskBroker):
             task_type=resolved_type,
             status=TaskStatus.PENDING,
             payload=payload or {},
+            source=source,
             worker_id=None,
             locked_at=None,
             last_heartbeat_at=None,
@@ -439,7 +353,7 @@ class InMemoryTaskBroker(JobRecordStoreFacade, BaseTaskBroker):
                 logger.exception("Error in task subscription callback: %s", e)
 
 
-class PocketBaseTaskBroker(JobRecordStoreFacade, BaseTaskBroker):
+class PocketBaseTaskBroker(BaseTaskBroker):
     """Production PocketBase REST and SSE client adapter."""
 
     def __init__(
@@ -454,6 +368,12 @@ class PocketBaseTaskBroker(JobRecordStoreFacade, BaseTaskBroker):
         self.auth_token = auth_token or os.getenv("POCKETBASE_AUTH_TOKEN")
         self.session = session or requests.Session()
         self.job_store = PocketBaseJobRecordStore(
+            base_url=self.base_url, session=self.session, headers=self._headers
+        )
+        self.candidate_memory = PocketBaseCandidateMemoryStore(
+            base_url=self.base_url, session=self.session, headers=self._headers
+        )
+        self.saved_searches = PocketBaseSavedSearchStore(
             base_url=self.base_url, session=self.session, headers=self._headers
         )
         self._subscribers: list[Callable[[str, AutomationTask], Any]] = []
@@ -482,7 +402,10 @@ class PocketBaseTaskBroker(JobRecordStoreFacade, BaseTaskBroker):
         return f"{self.base_url}/api/collections/{self.collection_name}/records"
 
     async def create_task(
-        self, task_type: TaskType | str, payload: dict[str, Any] | None = None
+        self,
+        task_type: TaskType | str,
+        payload: dict[str, Any] | None = None,
+        source: str = "manual",
     ) -> AutomationTask:
         resolved_type = task_type if isinstance(task_type, TaskType) else TaskType(task_type)
         url = self._collection_url()
@@ -491,6 +414,7 @@ class PocketBaseTaskBroker(JobRecordStoreFacade, BaseTaskBroker):
             "task_type": resolved_type.value,
             "status": TaskStatus.PENDING.value,
             "payload": payload or {},
+            "source": source,
             "worker_id": None,
             "locked_at": None,
             "last_heartbeat_at": None,
@@ -704,6 +628,9 @@ class PocketBaseTaskBroker(JobRecordStoreFacade, BaseTaskBroker):
             task_type=TaskType(record["task_type"]),
             status=TaskStatus(record["status"]),
             payload=payload,
+            # A task created before provenance existed carries no column; it reads as
+            # manual, so the startup sweep never reclaims what it cannot attribute.
+            source=record.get("source") or "manual",
             worker_id=record.get("worker_id"),
             locked_at=self._parse_dt(record.get("locked_at")),
             last_heartbeat_at=self._parse_dt(record.get("last_heartbeat_at")),
@@ -722,438 +649,6 @@ class PocketBaseTaskBroker(JobRecordStoreFacade, BaseTaskBroker):
             return datetime.fromisoformat(str(val).replace("Z", "+00:00"))
         except Exception:
             return None
-
-    def _candidate_collection_url(self) -> str:
-        return f"{self.base_url}/api/collections/candidate_profiles/records"
-
-    def _revisions_collection_url(self) -> str:
-        return f"{self.base_url}/api/collections/resume_revisions/records"
-
-    def _get_sqlite_db_path(self) -> Path | None:
-        candidate_paths = [
-            os.environ.get("PB_DB_PATH"),
-            Path(".boss_agent/pb_data/data.db"),
-            Path("pb_data/data.db"),
-        ]
-        for p in candidate_paths:
-            if p and Path(p).is_file():
-                return Path(p)
-        return None
-
-    def _query_sqlite_profile(self, user_id: str) -> dict[str, Any] | None:
-        db_path = self._get_sqlite_db_path()
-        if not db_path:
-            return None
-        try:
-            import sqlite3
-
-            with sqlite3.connect(str(db_path)) as conn:
-                conn.row_factory = sqlite3.Row
-                cursor = conn.cursor()
-                cursor.execute(
-                    "SELECT * FROM candidate_profiles WHERE user_id = ? ORDER BY updated DESC LIMIT 1",
-                    (user_id,),
-                )
-                row = cursor.fetchone()
-                if not row:
-                    return None
-                data = dict(row)
-                for json_col in [
-                    "education",
-                    "core_skills",
-                    "project_highlights",
-                    "work_experiences",
-                    "projects",
-                    "target_positions",
-                ]:
-                    if data.get(json_col) and isinstance(data[json_col], str):
-                        with contextlib.suppress(Exception):
-                            data[json_col] = json.loads(data[json_col])
-                return data
-        except Exception as e:
-            logger.warning("Failed to read candidate profile from SQLite fallback: %s", e)
-            return None
-
-    def _save_sqlite_profile(self, profile_data: dict[str, Any], user_id: str) -> dict[str, Any]:
-        db_path = self._get_sqlite_db_path()
-        if not db_path:
-            return profile_data
-        try:
-            import sqlite3
-
-            with sqlite3.connect(str(db_path)) as conn:
-                cursor = conn.cursor()
-                now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] + "Z"
-                cursor.execute(
-                    "SELECT * FROM candidate_profiles WHERE user_id = ? ORDER BY updated DESC LIMIT 1",
-                    (user_id,),
-                )
-                existing_row = cursor.fetchone()
-                existing_dict = {}
-                if existing_row:
-                    col_names = [d[0] for d in cursor.description]
-                    existing_dict = dict(zip(col_names, existing_row, strict=False))
-                    p_id = (
-                        existing_dict.get("id") or profile_data.get("id") or str(uuid.uuid4())[:15]
-                    )
-                else:
-                    p_id = profile_data.get("id") or str(uuid.uuid4())[:15]
-
-                # Merge fields to avoid wiping out existing rich profile with empty values
-                def resolve_field(key: str, default_val: Any) -> Any:
-                    val = profile_data.get(key)
-                    if val is not None and val != "" and val != [] and val != {}:
-                        return val
-                    ex_val = existing_dict.get(key)
-                    if ex_val:
-                        if isinstance(default_val, (list, dict)) and isinstance(ex_val, str):
-                            with contextlib.suppress(Exception):
-                                return json.loads(ex_val)
-                        return ex_val
-                    return default_val
-
-                final_name = resolve_field("name", "")
-                final_exp = resolve_field("years_of_experience", 0)
-                final_edu = resolve_field("education", [])
-                final_skills = resolve_field("core_skills", [])
-                final_highlights = resolve_field("project_highlights", [])
-                final_work = resolve_field("work_experiences", [])
-                final_projects = resolve_field("projects", [])
-                final_targets = resolve_field("target_positions", [])
-                final_doc = (
-                    profile_data.get("profile_document")
-                    or profile_data.get("raw_summary")
-                    or existing_dict.get("raw_summary", "")
-                )
-                final_resume_text = profile_data.get("raw_resume_text") or existing_dict.get(
-                    "raw_resume_text", ""
-                )
-
-                cursor.execute(
-                    """
-                    INSERT INTO candidate_profiles (
-                        id, user_id, name, years_of_experience, education, core_skills,
-                        project_highlights, work_experiences, projects, target_positions,
-                        raw_summary, raw_resume_text, updated
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(id) DO UPDATE SET
-                        user_id=excluded.user_id,
-                        name=excluded.name,
-                        years_of_experience=excluded.years_of_experience,
-                        education=excluded.education,
-                        core_skills=excluded.core_skills,
-                        project_highlights=excluded.project_highlights,
-                        work_experiences=excluded.work_experiences,
-                        projects=excluded.projects,
-                        target_positions=excluded.target_positions,
-                        raw_summary=excluded.raw_summary,
-                        raw_resume_text=excluded.raw_resume_text,
-                        updated=excluded.updated
-                    """,
-                    (
-                        p_id,
-                        user_id,
-                        final_name,
-                        final_exp,
-                        json.dumps(final_edu, ensure_ascii=False),
-                        json.dumps(final_skills, ensure_ascii=False),
-                        json.dumps(final_highlights, ensure_ascii=False),
-                        json.dumps(final_work, ensure_ascii=False),
-                        json.dumps(final_projects, ensure_ascii=False),
-                        json.dumps(final_targets, ensure_ascii=False),
-                        final_doc,
-                        final_resume_text,
-                        now,
-                    ),
-                )
-                conn.commit()
-        except Exception as e:
-            logger.warning("Failed to save candidate profile to SQLite fallback: %s", e)
-        return profile_data
-
-    async def get_candidate_profile(self, user_id: str = "default") -> dict[str, Any] | None:
-        url = self._candidate_collection_url()
-        loop = asyncio.get_running_loop()
-        try:
-            resp = await loop.run_in_executor(
-                None,
-                lambda: self.session.get(
-                    url,
-                    params={"filter": f"user_id='{user_id}'", "perPage": "1", "sort": "-updated"},
-                    headers=self._headers(),
-                ),
-            )
-            if resp.status_code == 404:
-                return self._query_sqlite_profile(user_id)
-            resp.raise_for_status()
-            items = resp.json().get("items", [])
-            if items:
-                return items[0]
-            return self._query_sqlite_profile(user_id)
-        except Exception as e:
-            logger.warning("PocketBase get_candidate_profile failed, fallback to SQLite: %s", e)
-            return self._query_sqlite_profile(user_id)
-
-    async def save_candidate_profile(
-        self, profile_data: dict[str, Any], user_id: str = "default"
-    ) -> dict[str, Any]:
-        url = self._candidate_collection_url()
-        loop = asyncio.get_running_loop()
-
-        # Attempt to save to PocketBase REST API
-        try:
-            existing = await self.get_candidate_profile(user_id=user_id)
-            if existing and existing.get("id"):
-                rec_id = existing["id"]
-                merged_body = dict(existing)
-                for k, v in profile_data.items():
-                    if v is not None and v != "" and v != [] and v != {}:
-                        merged_body[k] = v
-                incoming_doc = profile_data.get("profile_document") or profile_data.get(
-                    "raw_summary"
-                )
-                if incoming_doc:
-                    merged_body["raw_summary"] = incoming_doc
-                elif existing.get("raw_summary"):
-                    merged_body["raw_summary"] = existing["raw_summary"]
-                merged_body["user_id"] = user_id
-                body = merged_body
-                resp = await loop.run_in_executor(
-                    None,
-                    lambda: self.session.patch(
-                        f"{url}/{rec_id}",
-                        json=body,
-                        headers=self._headers(),
-                    ),
-                )
-            else:
-                body = {**profile_data, "user_id": user_id}
-                resp = await loop.run_in_executor(
-                    None,
-                    lambda: self.session.post(
-                        url,
-                        json=body,
-                        headers=self._headers(),
-                    ),
-                )
-            if resp.ok:
-                return resp.json()
-        except Exception as e:
-            logger.warning("PocketBase save_candidate_profile failed, fallback to SQLite: %s", e)
-
-        return self._save_sqlite_profile(profile_data, user_id)
-
-    def _query_sqlite_revisions(self, user_id: str) -> list[dict[str, Any]]:
-        db_path = self._get_sqlite_db_path()
-        if not db_path:
-            return []
-        try:
-            import sqlite3
-
-            with sqlite3.connect(str(db_path)) as conn:
-                conn.row_factory = sqlite3.Row
-                cursor = conn.cursor()
-                cursor.execute(
-                    "SELECT * FROM resume_revisions WHERE user_id = ? ORDER BY created DESC",
-                    (user_id,),
-                )
-                return [dict(r) for r in cursor.fetchall()]
-        except Exception as e:
-            logger.warning("Failed to query resume revisions from SQLite: %s", e)
-            return []
-
-    def _save_sqlite_revision(self, revision_data: dict[str, Any], user_id: str) -> dict[str, Any]:
-        db_path = self._get_sqlite_db_path()
-        if not db_path:
-            return revision_data
-        try:
-            import sqlite3
-
-            with sqlite3.connect(str(db_path)) as conn:
-                cursor = conn.cursor()
-                now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] + "Z"
-                r_id = revision_data.get("id") or str(uuid.uuid4())[:15]
-                cursor.execute(
-                    """
-                    INSERT INTO resume_revisions (
-                        id, user_id, file_name, file_type, file_size, extracted_text, diff_summary, created, updated
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        r_id,
-                        user_id,
-                        revision_data.get("file_name", "resume.txt"),
-                        revision_data.get("file_type", "txt"),
-                        revision_data.get("file_size", 0),
-                        revision_data.get("extracted_text", ""),
-                        revision_data.get("diff_summary", ""),
-                        now,
-                        now,
-                    ),
-                )
-                conn.commit()
-                return {
-                    **revision_data,
-                    "id": r_id,
-                    "user_id": user_id,
-                    "created": now,
-                    "updated": now,
-                }
-        except Exception as e:
-            logger.warning("Failed to save resume revision to SQLite: %s", e)
-            return revision_data
-
-    async def list_resume_revisions(self, user_id: str = "default") -> list[dict[str, Any]]:
-        url = self._revisions_collection_url()
-        loop = asyncio.get_running_loop()
-        try:
-            resp = await loop.run_in_executor(
-                None,
-                lambda: self.session.get(
-                    url,
-                    params={"filter": f"user_id='{user_id}'", "sort": "-created", "perPage": "100"},
-                    headers=self._headers(),
-                ),
-            )
-            if resp.status_code == 404:
-                return self._query_sqlite_revisions(user_id)
-            resp.raise_for_status()
-            return resp.json().get("items", [])
-        except Exception as e:
-            logger.warning("PocketBase list_resume_revisions failed, fallback to SQLite: %s", e)
-            return self._query_sqlite_revisions(user_id)
-
-    async def create_resume_revision(
-        self, revision_data: dict[str, Any], user_id: str = "default"
-    ) -> dict[str, Any]:
-        url = self._revisions_collection_url()
-        loop = asyncio.get_running_loop()
-        body = {**revision_data, "user_id": user_id}
-        try:
-            resp = await loop.run_in_executor(
-                None,
-                lambda: self.session.post(
-                    url,
-                    json=body,
-                    headers=self._headers(),
-                ),
-            )
-            if resp.ok:
-                return resp.json()
-        except Exception as e:
-            logger.warning("PocketBase create_resume_revision failed, fallback to SQLite: %s", e)
-        return self._save_sqlite_revision(body, user_id)
-
-    def _saved_searches_collection_url(self) -> str:
-        return f"{self.base_url}/api/collections/saved_searches/records"
-
-    async def list_saved_searches(self) -> list[SavedSearch]:
-        url = self._saved_searches_collection_url()
-        loop = asyncio.get_running_loop()
-        try:
-            resp = await loop.run_in_executor(
-                None,
-                lambda: self.session.get(
-                    url,
-                    params={"perPage": "200", "sort": "-created"},
-                    headers=self._headers(),
-                ),
-            )
-            resp.raise_for_status()
-            items = resp.json().get("items", [])
-            return [SavedSearch.from_dict(item["id"], item) for item in items]
-        except Exception as e:
-            logger.warning("PocketBase list_saved_searches failed: %s", e)
-            return []
-
-    async def get_saved_search(self, search_id: str) -> SavedSearch | None:
-        url = f"{self._saved_searches_collection_url()}/{search_id}"
-        loop = asyncio.get_running_loop()
-        try:
-            resp = await loop.run_in_executor(
-                None,
-                lambda: self.session.get(
-                    url,
-                    headers=self._headers(),
-                ),
-            )
-            if resp.status_code == 404:
-                return None
-            resp.raise_for_status()
-            data = resp.json()
-            return SavedSearch.from_dict(data["id"], data)
-        except Exception as e:
-            logger.warning("PocketBase get_saved_search for %s failed: %s", search_id, e)
-            return None
-
-    async def save_saved_search(self, saved_search: SavedSearch) -> SavedSearch:
-        url = self._saved_searches_collection_url()
-        loop = asyncio.get_running_loop()
-        body = {
-            "id": saved_search.id,
-            "name": saved_search.name,
-            "description": saved_search.description,
-            "keyword": saved_search.search.keyword,
-            "enable_search": saved_search.enable_search,
-            "enable_filter": saved_search.enable_filter,
-            "filter": {
-                "education": saved_search.filter.education,
-                "salary": saved_search.filter.salary,
-                "experience": saved_search.filter.experience,
-                "activity": saved_search.filter.activity,
-                "company_scales": saved_search.filter.company_scales,
-                "industries": saved_search.filter.industries,
-                "enable_filter": saved_search.enable_filter,
-            },
-            "cron_expression": saved_search.cron_expression,
-            "is_enabled": saved_search.is_enabled,
-            "last_run_at": saved_search.last_run_at,
-            "target_task_type": saved_search.target_task_type,
-            "target_action": saved_search.target_action,
-            "max_jobs": saved_search.max_jobs,
-        }
-        try:
-            existing = await self.get_saved_search(saved_search.id)
-            if existing:
-                resp = await loop.run_in_executor(
-                    None,
-                    lambda: self.session.patch(
-                        f"{url}/{saved_search.id}",
-                        json=body,
-                        headers=self._headers(),
-                    ),
-                )
-            else:
-                resp = await loop.run_in_executor(
-                    None,
-                    lambda: self.session.post(
-                        url,
-                        json=body,
-                        headers=self._headers(),
-                    ),
-                )
-            if resp.ok:
-                data = resp.json()
-                return SavedSearch.from_dict(data["id"], data)
-        except Exception as e:
-            logger.warning("PocketBase save_saved_search failed: %s", e)
-        return saved_search
-
-    async def delete_saved_search(self, search_id: str) -> bool:
-        url = f"{self._saved_searches_collection_url()}/{search_id}"
-        loop = asyncio.get_running_loop()
-        try:
-            resp = await loop.run_in_executor(
-                None,
-                lambda: self.session.delete(
-                    url,
-                    headers=self._headers(),
-                ),
-            )
-            return resp.status_code in (200, 204)
-        except Exception as e:
-            logger.warning("PocketBase delete_saved_search failed: %s", e)
-            return False
 
 
 PocketBaseBroker = PocketBaseTaskBroker

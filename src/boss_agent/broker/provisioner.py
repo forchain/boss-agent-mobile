@@ -1,10 +1,14 @@
 """
 src/boss_agent/broker/provisioner.py
 ====================================
-PocketBase SQLite database and collection provisioner.
-Ensures required collections (automation_tasks, candidate_profiles, saved_searches) exist
-with public access rules and proper field definitions, and seeds default initial searches.
-Supports both local SQLite direct provisioning and remote PocketBase REST API provisioning.
+PocketBase collection provisioner — local SQLite and remote REST.
+
+Both dialects are *views* of :mod:`boss_agent.broker.collection_schema`: the
+``CREATE TABLE`` statements and the ``_collections.fields`` JSON are rendered from
+the same declarations, so a field cannot exist in one dialect and not the other.
+Upgrades render ``ALTER TABLE`` additions and the schema's ordered backfills from
+those declarations too, which is why the REST path can now migrate an existing
+collection instead of only ever creating new ones.
 """
 
 import argparse
@@ -13,6 +17,7 @@ import logging
 import re
 import sqlite3
 import sys
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -21,63 +26,33 @@ _src_root = str(Path(__file__).resolve().parent.parent.parent)
 if _src_root not in sys.path:
     sys.path.insert(0, _src_root)
 
+from boss_agent.broker.collection_schema import (  # noqa: E402
+    COLLECTIONS,
+    JOB_RECORDS_NAME,
+    LONG_TEXT_MAX_CHARS,
+    SAVED_SEARCHES,
+    Collection,
+    backfills,
+    column_migrations,
+    pocketbase_collection_payload,
+    pocketbase_fields,
+    sqlite_ddl,
+    sqlite_index_ddl,
+    sqlite_metadata_fields,
+    wire_payload,
+)
 from boss_agent.settings import resolve_pocketbase_db_path  # noqa: E402
 
 # requests and urllib3 are lazily imported in provision_remote_pocketbase
 
 logger = logging.getLogger("boss_agent.broker.provisioner")
 
+#: Retained for callers that pinned the old constant name; the value lives in the
+#: schema module because the ``job_description`` cap is a property of the column.
+LONG_TEXT_FIELD_MAX_CHARS = LONG_TEXT_MAX_CHARS
 
-AUTOMATION_TASKS_FIELDS = [
-    {"name": "id", "type": "text", "primaryKey": True, "required": False},
-    {"name": "task_type", "type": "text", "required": True},
-    {"name": "status", "type": "text", "required": True},
-    {"name": "payload", "type": "json", "required": False},
-    {"name": "worker_id", "type": "text", "required": False},
-    {"name": "locked_at", "type": "date", "required": False},
-    {"name": "last_heartbeat_at", "type": "date", "required": False},
-    {"name": "retry_count", "type": "number", "required": False},
-    {"name": "logs", "type": "json", "required": False},
-    {"name": "error_message", "type": "text", "required": False},
-    {"name": "assigned_worker", "type": "text", "required": False},
-    {"name": "created", "type": "autodate", "onCreate": True},
-    {"name": "updated", "type": "autodate", "onCreate": True, "onUpdate": True},
-]
-
-CANDIDATE_PROFILES_FIELDS = [
-    {"name": "id", "type": "text", "primaryKey": True, "required": False},
-    {"name": "user_id", "type": "text", "required": True},
-    {"name": "name", "type": "text", "required": False},
-    {"name": "years_of_experience", "type": "number", "required": False},
-    {"name": "education", "type": "json", "required": False},
-    {"name": "core_skills", "type": "json", "required": False},
-    {"name": "project_highlights", "type": "json", "required": False},
-    {"name": "work_experiences", "type": "json", "required": False},
-    {"name": "projects", "type": "json", "required": False},
-    {"name": "target_positions", "type": "json", "required": False},
-    {"name": "raw_summary", "type": "text", "required": False},
-    {"name": "raw_resume_text", "type": "text", "required": False},
-    {"name": "created", "type": "autodate", "onCreate": True},
-    {"name": "updated", "type": "autodate", "onCreate": True, "onUpdate": True},
-]
-
-RESUME_REVISIONS_FIELDS = [
-    {"name": "id", "type": "text", "primaryKey": True, "required": False},
-    {"name": "user_id", "type": "text", "required": True},
-    {"name": "file_name", "type": "text", "required": True},
-    {"name": "file_type", "type": "text", "required": False},
-    {"name": "file_size", "type": "number", "required": False},
-    {"name": "extracted_text", "type": "text", "required": False},
-    {"name": "diff_summary", "type": "text", "required": False},
-    {"name": "created", "type": "autodate", "onCreate": True},
-    {"name": "updated", "type": "autodate", "onCreate": True, "onUpdate": True},
-]
-
-#: PocketBase treats a text field with no explicit max as capped at 5000 chars
-#: (core/field_text.go), which silently rejected full expanded JDs (e.g. a 9031-char
-#: bilingual posting) with validation_max_text_constraint and left the record stuck
-#: at digest-only. An explicit 0 also falls back to 5000, so a large cap is required.
-LONG_TEXT_FIELD_MAX_CHARS = 100_000
+#: The fields PocketBase manages itself; the REST dialect must not declare them.
+SERVER_MANAGED_FIELDS = frozenset({"id", "created", "updated"})
 
 #: The same bound in the two shapes PocketBase has used for field options: current releases
 #: keep `min`/`max`/`pattern` directly on the field, while older ones nest them under
@@ -101,57 +76,6 @@ JOB_DESCRIPTION_FIELD: dict[str, Any] = {
     "options": dict(LONG_TEXT_FIELD_OPTIONS),
 }
 
-JOB_RECORDS_FIELDS = [
-    {"name": "id", "type": "text", "primaryKey": True, "required": False},
-    {"name": "fingerprint", "type": "text", "required": True},
-    {"name": "title", "type": "text", "required": True},
-    {"name": "company_name", "type": "text", "required": True},
-    {"name": "recruiter_name", "type": "text", "required": True},
-    {"name": "salary_range", "type": "text", "required": False},
-    {"name": "location", "type": "text", "required": False},
-    {"name": "digest", "type": "text", "required": False},
-    dict(JOB_DESCRIPTION_FIELD),
-    {"name": "company_scale", "type": "text", "required": False},
-    {"name": "industry", "type": "text", "required": False},
-    {"name": "tags", "type": "json", "required": False},
-    {"name": "recruiter_title", "type": "text", "required": False},
-    {"name": "is_headhunter", "type": "bool", "required": False},
-    {"name": "status", "type": "text", "required": True},
-    {"name": "match_score", "type": "number", "required": False},
-    {"name": "jd_key_requirements", "type": "json", "required": False},
-    {"name": "greeting_message", "type": "text", "required": False},
-    {"name": "search_keywords", "type": "json", "required": False},
-    {"name": "screened_reason", "type": "text", "required": False},
-    {"name": "relaxed_by_whitelist", "type": "bool", "required": False},
-    {"name": "screening_audit", "type": "text", "required": False},
-    {"name": "applied_at", "type": "date", "required": False},
-    {"name": "applied_source", "type": "text", "required": False},
-    # App-Enforced commute distance (spec #209), probed from the detail page bottom.
-    {"name": "commute_distance_km", "type": "number", "required": False},
-    {"name": "commute_distance_text", "type": "text", "required": False},
-    {"name": "first_seen_at", "type": "date", "required": False},
-    {"name": "last_seen_at", "type": "date", "required": False},
-    {"name": "source_task_id", "type": "text", "required": False},
-    {"name": "created", "type": "autodate", "onCreate": True},
-    {"name": "updated", "type": "autodate", "onCreate": True, "onUpdate": True},
-]
-SAVED_SEARCHES_FIELDS = [
-    {"name": "id", "type": "text", "primaryKey": True, "required": False},
-    {"name": "name", "type": "text", "required": True},
-    {"name": "description", "type": "text", "required": False},
-    {"name": "keyword", "type": "text", "required": False},
-    {"name": "enable_search", "type": "bool", "required": False},
-    {"name": "enable_filter", "type": "bool", "required": False},
-    {"name": "filter", "type": "json", "required": False},
-    {"name": "target_action", "type": "text", "required": False},
-    {"name": "max_jobs", "type": "number", "required": False},
-    {"name": "cron_expression", "type": "text", "required": False},
-    {"name": "is_enabled", "type": "bool", "required": False},
-    {"name": "last_run_at", "type": "date", "required": False},
-    {"name": "target_task_type", "type": "text", "required": False},
-    {"name": "created", "type": "autodate", "onCreate": True},
-    {"name": "updated", "type": "autodate", "onCreate": True, "onUpdate": True},
-]
 
 DEFAULT_INITIAL_SEARCHES: dict[str, dict[str, Any]] = {
     "default_agent_search": {
@@ -210,6 +134,99 @@ DEFAULT_INITIAL_SEARCHES: dict[str, dict[str, Any]] = {
 }
 
 
+# --------------------------------------------------------------------------- #
+# SQLite dialect
+# --------------------------------------------------------------------------- #
+
+
+def _collection_fields_json(collection: Collection) -> str:
+    """The ``_collections.fields`` payload, rendered from the schema.
+
+    Distinct from the REST payload on purpose: this JSON *is* PocketBase's view of
+    the collection, so it carries the server-managed columns too.
+    """
+    return json.dumps(sqlite_metadata_fields(collection), ensure_ascii=False)
+
+
+def _provision_sqlite_collection(
+    cursor: sqlite3.Cursor, collection: Collection, *, exists: bool
+) -> None:
+    """Create or upgrade one collection, both paths rendered from the schema."""
+    fields_json = _collection_fields_json(collection)
+
+    if not exists:
+        cursor.execute(
+            """
+            INSERT INTO _collections
+                (id, system, type, name, fields, listRule, viewRule, createRule, updateRule, deleteRule)
+            VALUES (?, 0, 'base', ?, ?, '', '', '', '', '')
+            """,
+            (collection.collection_id, collection.name, fields_json),
+        )
+        cursor.execute(sqlite_ddl(collection))
+    else:
+        cursor.execute(
+            """
+            UPDATE _collections
+            SET fields = ?, listRule = '', viewRule = '', createRule = '', updateRule = '', deleteRule = ''
+            WHERE name = ?
+            """,
+            (fields_json, collection.name),
+        )
+        cursor.execute(f"PRAGMA table_info({collection.name})")  # noqa: S608 - name is schema-owned
+        present = {row[1] for row in cursor.fetchall()}
+        for _column, fragment in column_migrations(collection, present):
+            cursor.execute(
+                f"ALTER TABLE {collection.name} ADD COLUMN {fragment}"  # noqa: S608
+            )
+        for backfill in backfills(collection, present):
+            logger.info("Applying backfill %s on %s", backfill.label, collection.name)
+            cursor.execute(backfill.sql)
+        repair = _COLLECTION_REPAIRS.get(collection.name)
+        if repair is not None:
+            repair(cursor)
+
+    for statement in sqlite_index_ddl(collection):
+        # An index can fail on legacy data (e.g. a unique index over duplicates that
+        # predate it). That must never abort provisioning of the rest of the schema.
+        try:
+            cursor.execute(statement)
+        except sqlite3.Error as ex:
+            logger.warning("Could not create index on %s: %s", collection.name, ex)
+
+
+def _seed_saved_searches(
+    cursor: sqlite3.Cursor, initial_searches: dict[str, dict[str, Any]] | None
+) -> None:
+    """Seed the default searches, with every column taken from the schema."""
+    cursor.execute("SELECT COUNT(*) FROM saved_searches")
+    if cursor.fetchone()[0]:
+        return
+
+    seeds = initial_searches if initial_searches is not None else DEFAULT_INITIAL_SEARCHES
+    columns = [
+        spec.name for spec in SAVED_SEARCHES.fields if spec.name not in ("created", "updated")
+    ]
+    placeholders = ", ".join("?" for _ in columns)
+    statement = (
+        f"INSERT OR IGNORE INTO saved_searches ({', '.join(columns)}) "  # noqa: S608
+        f"VALUES ({placeholders})"
+    )
+    for search_id, item_data in seeds.items():
+        payload = wire_payload(SAVED_SEARCHES, item_data)
+        payload["id"] = search_id
+        values: list[Any] = []
+        for name in columns:
+            value = payload.get(name)
+            if isinstance(value, bool):
+                value = 1 if value else 0
+            elif isinstance(value, (dict, list)):
+                value = json.dumps(value, ensure_ascii=False)
+            values.append(value)
+        cursor.execute(statement, values)
+    logger.info("Successfully seeded %d saved_searches into SQLite", len(seeds))
+
+
 def provision_sqlite_database(
     db_path: str | Path | None = None,
     initial_searches: dict[str, dict[str, Any]] | None = None,
@@ -237,315 +254,62 @@ def provision_sqlite_database(
         cursor.execute("SELECT name FROM _collections")
         existing = {row[0] for row in cursor.fetchall()}
 
-        auto_tasks_json = json.dumps(AUTOMATION_TASKS_FIELDS)
-        cand_prof_json = json.dumps(CANDIDATE_PROFILES_FIELDS)
-        res_rev_json = json.dumps(RESUME_REVISIONS_FIELDS)
-        job_records_json = json.dumps(JOB_RECORDS_FIELDS)
-        saved_searches_json = json.dumps(SAVED_SEARCHES_FIELDS)
+        for collection in COLLECTIONS:
+            _provision_sqlite_collection(cursor, collection, exists=collection.name in existing)
 
-        if "automation_tasks" not in existing:
-            cursor.execute(
-                """
-                INSERT INTO _collections (id, system, type, name, fields, listRule, viewRule, createRule, updateRule, deleteRule)
-                VALUES ('pbc_auto_tasks', 0, 'base', 'automation_tasks', ?, '', '', '', '', '')
-                """,
-                (auto_tasks_json,),
-            )
-            cursor.execute(
-                """
-                CREATE TABLE IF NOT EXISTS automation_tasks (
-                    id TEXT PRIMARY KEY,
-                    task_type TEXT,
-                    status TEXT,
-                    payload JSON,
-                    worker_id TEXT,
-                    locked_at TEXT,
-                    last_heartbeat_at TEXT,
-                    retry_count INTEGER DEFAULT 0,
-                    logs JSON,
-                    error_message TEXT,
-                    assigned_worker TEXT,
-                    created TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%fZ')),
-                    updated TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%fZ'))
-                )
-                """
-            )
-        else:
-            cursor.execute(
-                """
-                UPDATE _collections
-                SET fields = ?, listRule = '', viewRule = '', createRule = '', updateRule = '', deleteRule = ''
-                WHERE name = 'automation_tasks'
-                """,
-                (auto_tasks_json,),
-            )
-
-        if "candidate_profiles" not in existing:
-            cursor.execute(
-                """
-                INSERT INTO _collections (id, system, type, name, fields, listRule, viewRule, createRule, updateRule, deleteRule)
-                VALUES ('pbc_cand_prof', 0, 'base', 'candidate_profiles', ?, '', '', '', '', '')
-                """,
-                (cand_prof_json,),
-            )
-            cursor.execute(
-                """
-                CREATE TABLE IF NOT EXISTS candidate_profiles (
-                    id TEXT PRIMARY KEY,
-                    user_id TEXT,
-                    name TEXT,
-                    years_of_experience INTEGER,
-                    education JSON,
-                    core_skills JSON,
-                    project_highlights JSON,
-                    work_experiences JSON,
-                    projects JSON,
-                    target_positions JSON,
-                    raw_summary TEXT,
-                    raw_resume_text TEXT,
-                    created TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%fZ')),
-                    updated TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%fZ'))
-                )
-                """
-            )
-        else:
-            cursor.execute(
-                """
-                UPDATE _collections
-                SET fields = ?, listRule = '', viewRule = '', createRule = '', updateRule = '', deleteRule = ''
-                WHERE name = 'candidate_profiles'
-                """,
-                (cand_prof_json,),
-            )
-            # Ensure new columns exist on existing candidate_profiles table
-            try:
-                cursor.execute("PRAGMA table_info(candidate_profiles)")
-                cand_cols = {row[1] for row in cursor.fetchall()}
-                for col_name, col_type in [
-                    ("work_experiences", "JSON"),
-                    ("projects", "JSON"),
-                    ("raw_resume_text", "TEXT"),
-                ]:
-                    if col_name not in cand_cols:
-                        cursor.execute(
-                            f"ALTER TABLE candidate_profiles ADD COLUMN {col_name} {col_type}"
-                        )
-            except Exception as e:
-                logger.warning("Failed to migrate candidate_profiles table columns: %s", e)
-
-        if "resume_revisions" not in existing:
-            cursor.execute(
-                """
-                INSERT INTO _collections (id, system, type, name, fields, listRule, viewRule, createRule, updateRule, deleteRule)
-                VALUES ('pbc_res_rev', 0, 'base', 'resume_revisions', ?, '', '', '', '', '')
-                """,
-                (res_rev_json,),
-            )
-            cursor.execute(
-                """
-                CREATE TABLE IF NOT EXISTS resume_revisions (
-                    id TEXT PRIMARY KEY,
-                    user_id TEXT,
-                    file_name TEXT,
-                    file_type TEXT,
-                    file_size INTEGER,
-                    extracted_text TEXT,
-                    diff_summary TEXT,
-                    created TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%fZ')),
-                    updated TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%fZ'))
-                )
-                """
-            )
-        else:
-            cursor.execute(
-                """
-                UPDATE _collections
-                SET fields = ?, listRule = '', viewRule = '', createRule = '', updateRule = '', deleteRule = ''
-                WHERE name = 'resume_revisions'
-                """,
-                (res_rev_json,),
-            )
-
-        if "job_records" not in existing:
-            cursor.execute(
-                """
-                INSERT INTO _collections (id, system, type, name, fields, listRule, viewRule, createRule, updateRule, deleteRule)
-                VALUES ('pbc_job_records', 0, 'base', 'job_records', ?, '', '', '', '', '')
-                """,
-                (job_records_json,),
-            )
-            cursor.execute(
-                """
-                CREATE TABLE IF NOT EXISTS job_records (
-                    id TEXT PRIMARY KEY,
-                    fingerprint TEXT UNIQUE,
-                    title TEXT,
-                    company_name TEXT,
-                    recruiter_name TEXT,
-                    salary_range TEXT,
-                    location TEXT,
-                    digest TEXT,
-                    job_description TEXT,
-                    company_scale TEXT,
-                    industry TEXT,
-                    tags JSON,
-                    recruiter_title TEXT,
-                    is_headhunter BOOLEAN DEFAULT FALSE,
-                    status TEXT DEFAULT 'unmatched',
-                    match_score INTEGER,
-                    jd_key_requirements JSON,
-                    greeting_message TEXT,
-                    search_keywords JSON,
-                    screened_reason TEXT,
-                    relaxed_by_whitelist BOOLEAN DEFAULT FALSE,
-                    screening_audit TEXT,
-                    applied_at TEXT,
-                    applied_source TEXT,
-                    commute_distance_km REAL,
-                    commute_distance_text TEXT,
-                    first_seen_at TEXT,
-                    last_seen_at TEXT,
-                    source_task_id TEXT,
-                    created TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%fZ')),
-                    updated TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%fZ'))
-                )
-                """
-            )
-        else:
-            cursor.execute(
-                """
-                UPDATE _collections
-                SET fields = ?, listRule = '', viewRule = '', createRule = '', updateRule = '', deleteRule = ''
-                WHERE name = 'job_records'
-                """,
-                (job_records_json,),
-            )
-            # Ensure new columns exist in existing SQLite table
-            cursor.execute("PRAGMA table_info(job_records)")
-            job_cols = {row[1] for row in cursor.fetchall()}
-            new_job_cols = [
-                ("digest", "TEXT"),
-                ("company_scale", "TEXT"),
-                ("industry", "TEXT"),
-                ("tags", "JSON"),
-                ("recruiter_title", "TEXT"),
-                ("is_headhunter", "BOOLEAN DEFAULT FALSE"),
-                ("screened_reason", "TEXT"),
-                ("relaxed_by_whitelist", "BOOLEAN DEFAULT FALSE"),
-                ("screening_audit", "TEXT"),
-                ("applied_at", "TEXT"),
-                ("applied_source", "TEXT"),
-                ("commute_distance_km", "REAL"),
-                ("commute_distance_text", "TEXT"),
-            ]
-            for col_name, col_type in new_job_cols:
-                if col_name not in job_cols:
-                    cursor.execute(f"ALTER TABLE job_records ADD COLUMN {col_name} {col_type}")
-
-            # Backfill and repair legacy job records
-            _backfill_legacy_job_records(cursor)
-
-        if "saved_searches" not in existing:
-            cursor.execute(
-                """
-                INSERT INTO _collections (id, system, type, name, fields, listRule, viewRule, createRule, updateRule, deleteRule)
-                VALUES ('pbc_saved_searches', 0, 'base', 'saved_searches', ?, '', '', '', '', '')
-                """,
-                (saved_searches_json,),
-            )
-            cursor.execute(
-                """
-                CREATE TABLE IF NOT EXISTS saved_searches (
-                    id TEXT PRIMARY KEY,
-                    name TEXT,
-                    description TEXT,
-                    keyword TEXT,
-                    enable_search BOOLEAN DEFAULT 1,
-                    enable_filter BOOLEAN DEFAULT 1,
-                    filter JSON,
-                    target_action TEXT DEFAULT 'save_jd',
-                    max_jobs INTEGER DEFAULT 30,
-                    cron_expression TEXT,
-                    is_enabled BOOLEAN DEFAULT 0,
-                    last_run_at TEXT,
-                    target_task_type TEXT DEFAULT 'AUTO_APPLY',
-                    created TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%fZ')),
-                    updated TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%fZ'))
-                )
-                """
-            )
-        else:
-            cursor.execute(
-                """
-                UPDATE _collections
-                SET fields = ?, listRule = '', viewRule = '', createRule = '', updateRule = '', deleteRule = ''
-                WHERE name = 'saved_searches'
-                """,
-                (saved_searches_json,),
-            )
-
-        # Migrate existing saved_searches table if columns missing
-        cursor.execute("PRAGMA table_info(saved_searches)")
-        existing_cols = {row[1] for row in cursor.fetchall()}
-        migration_columns = [
-            ("enable_search", "BOOLEAN DEFAULT 1"),
-            ("enable_filter", "BOOLEAN DEFAULT 1"),
-            ("target_action", "TEXT DEFAULT 'save_jd'"),
-            ("max_jobs", "INTEGER DEFAULT 30"),
-            ("cron_expression", "TEXT"),
-            ("is_enabled", "BOOLEAN DEFAULT 0"),
-            ("last_run_at", "TEXT"),
-            ("target_task_type", "TEXT DEFAULT 'AUTO_APPLY'"),
-        ]
-        for col_name, col_type in migration_columns:
-            if col_name not in existing_cols:
-                cursor.execute(f"ALTER TABLE saved_searches ADD COLUMN {col_name} {col_type}")
-
-        # Seed initial saved searches if table is empty
-        cursor.execute("SELECT COUNT(*) FROM saved_searches")
-        count = cursor.fetchone()[0]
-        if count == 0:
-            seeds = initial_searches or DEFAULT_INITIAL_SEARCHES
-            for search_id, item_data in seeds.items():
-                s_name = item_data.get("name", search_id)
-                s_desc = item_data.get("description", "")
-                s_kw = item_data.get("keyword", "")
-                s_en_search = 1 if item_data.get("enable_search", True) else 0
-                s_en_filter = 1 if item_data.get("enable_filter", True) else 0
-                s_filter = item_data.get("filter", {})
-                s_action = item_data.get("target_action", "save_jd")
-                s_max = item_data.get("max_jobs", 30)
-                s_cron = item_data.get("cron_expression", "")
-                s_enabled = 1 if item_data.get("is_enabled", False) else 0
-                s_type = item_data.get("target_task_type", "AUTO_APPLY")
-                cursor.execute(
-                    """
-                    INSERT OR IGNORE INTO saved_searches (
-                        id, name, description, keyword, enable_search, enable_filter,
-                        filter, target_action, max_jobs, cron_expression, is_enabled, target_task_type
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        search_id,
-                        s_name,
-                        s_desc,
-                        s_kw,
-                        s_en_search,
-                        s_en_filter,
-                        json.dumps(s_filter),
-                        s_action,
-                        s_max,
-                        s_cron,
-                        s_enabled,
-                        s_type,
-                    ),
-                )
-            logger.info("Successfully seeded %d saved_searches into SQLite", len(seeds))
+        _seed_saved_searches(cursor, initial_searches)
 
         conn.commit()
         return True
     finally:
         conn.close()
+
+
+# --------------------------------------------------------------------------- #
+# Remote REST dialect
+# --------------------------------------------------------------------------- #
+
+
+def _merge_remote_fields(
+    collection: Collection, live_fields: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Fold the schema's declared fields into a live collection's field list.
+
+    Declared fields replace live ones of the same name (so a type or option change
+    propagates) and are appended when absent. Fields the schema does not know about
+    are *kept*: an upgrade must not silently drop a column and its data, and the
+    legacy ``assigned_worker`` column is harmless once the lease column is the one
+    everything reads.
+    """
+    declared = {spec["name"]: spec for spec in pocketbase_fields(collection)}
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for live in live_fields:
+        name = live.get("name")
+        if isinstance(name, str) and name in declared:
+            merged_field = dict(declared[name])
+            if "id" in live:
+                merged_field["id"] = live["id"]
+            if isinstance(live.get("options"), dict) and "options" in declared[name]:
+                merged_field["options"] = {**live["options"], **declared[name]["options"]}
+            merged.append(merged_field)
+            seen.add(name)
+        else:
+            merged.append(dict(live))
+            if isinstance(name, str):
+                seen.add(name)
+    for name, spec in declared.items():
+        if name not in seen:
+            merged.append(dict(spec))
+    return merged
+
+
+def _live_field_names(live: dict[str, Any]) -> set[str]:
+    return {
+        name
+        for f in (live.get("fields") or [])
+        if isinstance(f, dict) and isinstance(name := f.get("name"), str)
+    }
 
 
 def _stored_text_max(field: dict[str, Any]) -> int | None:
@@ -706,143 +470,54 @@ def provision_remote_pocketbase(
             print(f"❌ Failed to list collections: {resp.text}")
             return False
         collections_data = resp.json().get("items", [])
-        existing_names = {c.get("name") for c in collections_data}
     except Exception as ex:
         logger.error("Error fetching collections from %s: %s", pb_url, ex)
         print(f"❌ Network error while querying collections: {ex}")
         return False
 
-    # 3. Define collections to create
-    collections_to_create = [
-        {
-            "id": "pbc_auto_tasks",
-            "name": "automation_tasks",
-            "type": "base",
-            "listRule": "",
-            "viewRule": "",
-            "createRule": "",
-            "updateRule": "",
-            "deleteRule": "",
-            "fields": [
-                {"name": "task_type", "type": "text", "required": True},
-                {"name": "status", "type": "text", "required": True},
-                {"name": "payload", "type": "json", "required": False},
-                {"name": "worker_id", "type": "text", "required": False},
-                {"name": "locked_at", "type": "date", "required": False},
-                {"name": "last_heartbeat_at", "type": "date", "required": False},
-                {"name": "retry_count", "type": "number", "required": False},
-                {"name": "logs", "type": "json", "required": False},
-                {"name": "error_message", "type": "text", "required": False},
-                {"name": "assigned_worker", "type": "text", "required": False},
-            ],
-        },
-        {
-            "id": "pbc_cand_prof",
-            "name": "candidate_profiles",
-            "type": "base",
-            "listRule": "",
-            "viewRule": "",
-            "createRule": "",
-            "updateRule": "",
-            "deleteRule": "",
-            "fields": [
-                {"name": "user_id", "type": "text", "required": True},
-                {"name": "name", "type": "text", "required": False},
-                {"name": "years_of_experience", "type": "number", "required": False},
-                {"name": "education", "type": "json", "required": False},
-                {"name": "core_skills", "type": "json", "required": False},
-                {"name": "project_highlights", "type": "json", "required": False},
-                {"name": "work_experiences", "type": "json", "required": False},
-                {"name": "projects", "type": "json", "required": False},
-                {"name": "target_positions", "type": "json", "required": False},
-                {"name": "raw_summary", "type": "text", "required": False},
-                {"name": "raw_resume_text", "type": "text", "required": False},
-            ],
-        },
-        {
-            "id": "pbc_res_rev",
-            "name": "resume_revisions",
-            "type": "base",
-            "listRule": "",
-            "viewRule": "",
-            "createRule": "",
-            "updateRule": "",
-            "deleteRule": "",
-            "fields": [
-                {"name": "user_id", "type": "text", "required": True},
-                {"name": "file_name", "type": "text", "required": True},
-                {"name": "file_type", "type": "text", "required": False},
-                {"name": "file_size", "type": "number", "required": False},
-                {"name": "extracted_text", "type": "text", "required": False},
-                {"name": "diff_summary", "type": "text", "required": False},
-            ],
-        },
-        {
-            "id": "pbc_saved_searches",
-            "name": "saved_searches",
-            "type": "base",
-            "listRule": "",
-            "viewRule": "",
-            "createRule": "",
-            "updateRule": "",
-            "deleteRule": "",
-            "fields": [
-                {"name": "name", "type": "text", "required": True},
-                {"name": "description", "type": "text", "required": False},
-                {"name": "keyword", "type": "text", "required": False},
-                {"name": "enable_search", "type": "bool", "required": False},
-                {"name": "enable_filter", "type": "bool", "required": False},
-                {"name": "filter", "type": "json", "required": False},
-                {"name": "cron_expression", "type": "text", "required": False},
-                {"name": "is_enabled", "type": "bool", "required": False},
-                {"name": "last_run_at", "type": "date", "required": False},
-                {"name": "target_task_type", "type": "text", "required": False},
-            ],
-        },
-        {
-            "id": "pbc_job_records",
-            "name": "job_records",
-            "type": "base",
-            "listRule": "",
-            "viewRule": "",
-            "createRule": "",
-            "updateRule": "",
-            "deleteRule": "",
-            "fields": [
-                {"name": "fingerprint", "type": "text", "required": True},
-                {"name": "title", "type": "text", "required": True},
-                {"name": "company_name", "type": "text", "required": True},
-                {"name": "recruiter_name", "type": "text", "required": True},
-                {"name": "salary_range", "type": "text", "required": False},
-                {"name": "location", "type": "text", "required": False},
-                {"name": "digest", "type": "text", "required": False},
-                dict(JOB_DESCRIPTION_FIELD),
-                {"name": "status", "type": "text", "required": True},
-                {"name": "match_score", "type": "number", "required": False},
-                {"name": "jd_key_requirements", "type": "json", "required": False},
-                {"name": "greeting_message", "type": "text", "required": False},
-                {"name": "search_keywords", "type": "json", "required": False},
-                {"name": "first_seen_at", "type": "date", "required": False},
-                {"name": "last_seen_at", "type": "date", "required": False},
-                {"name": "source_task_id", "type": "text", "required": False},
-            ],
-        },
-    ]
-
-    for col in collections_to_create:
-        c_name = col["name"]
-        if c_name not in existing_names:
+    # 3. Create or migrate every collection, from the schema's own description.
+    existing_names = {c.get("name") for c in collections_data if isinstance(c, dict)}
+    live_by_name = {c.get("name"): c for c in collections_data if isinstance(c, dict)}
+    for collection in COLLECTIONS:
+        payload = pocketbase_collection_payload(collection)
+        live = live_by_name.get(collection.name)
+        if live is None:
             create_resp = session.post(
-                f"{base_url}/api/collections", json=col, timeout=timeout, verify=False
+                f"{base_url}/api/collections", json=payload, timeout=timeout, verify=False
             )
             if create_resp.ok:
-                logger.info("Created collection '%s' via REST API", c_name)
-                print(f"✨ Created collection '{c_name}' successfully")
+                logger.info("Created collection '%s' via REST API", collection.name)
+                print(f"✨ Created collection '{collection.name}' successfully")
             else:
-                logger.error("Failed to create collection '%s': %s", c_name, create_resp.text)
-                print(f"❌ Failed to create collection '{c_name}': {create_resp.text}")
+                logger.error(
+                    "Failed to create collection '%s': %s", collection.name, create_resp.text
+                )
+                print(f"❌ Failed to create collection '{collection.name}': {create_resp.text}")
+            continue
+
+        if "fields" in live:
+            merged = _merge_remote_fields(collection, list(live.get("fields") or []))
+            if _live_field_names(live) == {f["name"] for f in merged}:
+                print(f"ℹ️ Collection '{collection.name}' already exists")
+                continue
+            target = live.get("id") or collection.name
+            patch_resp = session.patch(
+                f"{base_url}/api/collections/{target}",
+                json={**live, "fields": merged},
+                timeout=timeout,
+                verify=False,
+            )
+            if patch_resp.ok:
+                added = sorted({f["name"] for f in merged} - _live_field_names(live))
+                logger.info("Migrated collection '%s' (+%s)", collection.name, ", ".join(added) or "none")
+                print(f"🔄 Migrated collection '{collection.name}' (+{', '.join(added) or 'none'})")
+            else:
+                logger.error(
+                    "Failed to migrate collection '%s': %s", collection.name, patch_resp.text
+                )
+                print(f"❌ Failed to migrate collection '{collection.name}': {patch_resp.text}")
         else:
-            print(f"ℹ️ Collection '{c_name}' already exists")
+            print(f"ℹ️ Collection '{collection.name}' already exists")
 
     # 3b. Upgrade the schema of a pre-existing job_records collection. The create loop skips
     # collections that already exist, so an instance provisioned before the wide text cap
@@ -868,20 +543,10 @@ def provision_remote_pocketbase(
         if check_records.ok:
             total_items = check_records.json().get("totalItems", 0)
             if total_items == 0:
-                seeds = initial_searches or DEFAULT_INITIAL_SEARCHES
+                seeds = initial_searches if initial_searches is not None else DEFAULT_INITIAL_SEARCHES
                 for s_id, s_data in seeds.items():
-                    record_payload = {
-                        "id": s_id,
-                        "name": s_data.get("name", s_id),
-                        "description": s_data.get("description", ""),
-                        "keyword": s_data.get("keyword", ""),
-                        "enable_search": s_data.get("enable_search", True),
-                        "enable_filter": s_data.get("enable_filter", True),
-                        "filter": s_data.get("filter", {}),
-                        "cron_expression": s_data.get("cron_expression", ""),
-                        "is_enabled": s_data.get("is_enabled", False),
-                        "target_task_type": s_data.get("target_task_type", "AUTO_APPLY"),
-                    }
+                    record_payload = wire_payload(SAVED_SEARCHES, s_data)
+                    record_payload["id"] = s_id
                     seed_resp = session.post(
                         f"{base_url}/api/collections/saved_searches/records",
                         json=record_payload,
@@ -902,16 +567,18 @@ def provision_remote_pocketbase(
 
 
 def _backfill_legacy_job_records(cursor: sqlite3.Cursor) -> None:
-    """Migrate and repair existing legacy job records in SQLite database.
+    """Repair existing legacy job records in SQLite database.
 
     - Strips trailing &@, tags, and punctuation from title
     - Fixes recruiter_name (stripping trailing ·) and moves recruiter titles mistakenly stored in location
     - Re-evaluates is_headhunter based on '猎头' in recruiter_title or recruiter_name
     - Backfills company_scale, industry, tags, and location from jd_key_requirements if missing
     - Backfills digest from job_description if missing
+
+    This is row-level *data* repair rather than schema migration, so it stays a
+    Python function even though the schema owns the column set it reads and writes.
     """
     try:
-        # Purge incomplete or partially visible cards where company is missing or 未知公司
         cursor.execute("""
             DELETE FROM job_records
             WHERE company_name IS NULL
@@ -920,9 +587,9 @@ def _backfill_legacy_job_records(cursor: sqlite3.Cursor) -> None:
         """)
 
         cursor.execute("""
-            SELECT id, title, company_name, recruiter_name, recruiter_title, is_headhunter, 
-                   location, digest, job_description, company_scale, industry, tags, 
-                   jd_key_requirements 
+            SELECT id, title, company_name, recruiter_name, recruiter_title, is_headhunter,
+                   location, digest, job_description, company_scale, industry, tags,
+                   jd_key_requirements
             FROM job_records
         """)
         rows = cursor.fetchall()
@@ -1025,6 +692,13 @@ def _backfill_legacy_job_records(cursor: sqlite3.Cursor) -> None:
             ))
     except Exception as ex:
         logger.warning("Error during _backfill_legacy_job_records: %s", ex)
+
+
+#: Row-level repairs that run after a collection's columns are in place, keyed by
+#: collection name. Schema backfills are SQL; these need per-row interpretation.
+_COLLECTION_REPAIRS: Mapping[str, Callable[[sqlite3.Cursor], None]] = {
+    JOB_RECORDS_NAME: _backfill_legacy_job_records,
+}
 
 
 provision_pocketbase_sqlite = provision_sqlite_database

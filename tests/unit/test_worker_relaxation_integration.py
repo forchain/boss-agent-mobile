@@ -10,11 +10,11 @@ SCRAPE_JOBS handlers and persisted in job_records audit fields.
 from unittest.mock import MagicMock, patch
 
 import pytest
+from _card_fixtures import located
 
 from boss_agent.broker.models import TaskType
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
-from boss_agent.models import JobPosting
-from boss_agent.pages import JobCardBrief
+from boss_agent.models import JobCardBrief, JobPosting
 from boss_agent.worker.config import WorkerConfig
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.handlers.auto_apply import AutoApplyHandler
@@ -78,7 +78,7 @@ async def test_auto_apply_rescued_headhunter_job_persists_relaxation_audit():
     assert result.success is True
     assert result.output.get("applied") is False  # preview/offline draft mode
 
-    records = await broker.list_job_records()
+    records = await broker.job_store.list_job_records()
     rec = next(r for r in records if r.get("title") == "大模型 Agent 平台架构师")
     assert rec["status"] == "matched"
     assert rec.get("relaxed_by_whitelist") is True
@@ -135,7 +135,7 @@ async def test_auto_apply_app_rule_rejection_persists_ignored_record():
     assert result.output.get("status") == "filtered_by_app_rule"
     assert result.output.get("applied") is False
 
-    ignored = await broker.list_job_records(status="ignored")
+    ignored = await broker.job_store.list_job_records(status="ignored")
     assert len(ignored) == 1
     assert "direct_only" in (ignored[0].get("screened_reason") or "")
     assert ignored[0].get("relaxed_by_whitelist") in (False, None)
@@ -188,7 +188,6 @@ def _scrape_card(
         recruiter_name=recruiter_name,
         tags=["K8s"],
         digest="负责容器平台与云原生基础设施建设",
-        element=card_elem,
     )
     return card, card_elem
 
@@ -208,7 +207,6 @@ async def test_scrape_jobs_relaxed_headhunter_card_persists_audit_fields():
         recruiter_name="钟先生 · 猎头顾问",
         tags=["LLM"],
         digest="负责大模型应用平台与Agent工作流架构",
-        element=card_elem,
     )
 
     task = await broker.create_task(
@@ -230,7 +228,7 @@ async def test_scrape_jobs_relaxed_headhunter_card_persists_audit_fields():
         patch("boss_agent.feed_pipeline.JobDetailPage") as detail_cls,
     ):
         startup_cls.return_value.is_dialog_present.return_value = False
-        list_cls.return_value.extract_visible_job_cards.return_value = [card]
+        list_cls.return_value.extract_visible_job_cards.return_value = [located(card, card_elem)]
         search_cls.return_value.is_search_page.return_value = True
         detail_cls.return_value.extract_job_posting.return_value = JobPosting(
             title="大模型技术负责人",
@@ -249,7 +247,7 @@ async def test_scrape_jobs_relaxed_headhunter_card_persists_audit_fields():
     assert result.output["scraped_count"] == 1
     card_elem.click.assert_called_once()
 
-    records = await broker.list_job_records()
+    records = await broker.job_store.list_job_records()
     rec = next(r for r in records if r.get("title") == "大模型技术负责人")
     assert rec.get("relaxed_by_whitelist") is True
     audit = rec.get("screening_audit") or ""
@@ -271,7 +269,6 @@ async def test_scrape_jobs_app_rule_violation_without_rescue_is_ignored():
         recruiter_name="钟先生 · 猎头顾问",
         tags=["K8s"],
         digest="负责容器平台与云原生基础设施建设",
-        element=card_elem,
     )
 
     task = await broker.create_task(
@@ -293,7 +290,7 @@ async def test_scrape_jobs_app_rule_violation_without_rescue_is_ignored():
         patch("boss_agent.feed_pipeline.JobDetailPage") as detail_cls,
     ):
         startup_cls.return_value.is_dialog_present.return_value = False
-        list_cls.return_value.extract_visible_job_cards.return_value = [card]
+        list_cls.return_value.extract_visible_job_cards.return_value = [located(card, card_elem)]
         search_cls.return_value.is_search_page.return_value = True
         detail_cls.return_value.extract_job_posting.return_value = JobPosting(
             title="云原生平台工程师",
@@ -313,7 +310,7 @@ async def test_scrape_jobs_app_rule_violation_without_rescue_is_ignored():
     card_elem.click.assert_not_called()
     detail_cls.return_value.extract_job_posting.assert_not_called()
 
-    ignored = await broker.list_job_records(status="ignored")
+    ignored = await broker.job_store.list_job_records(status="ignored")
     assert len(ignored) == 1
     assert "direct_only" in (ignored[0].get("screened_reason") or "")
     assert "direct_only" in (ignored[0].get("screening_audit") or "")
@@ -368,7 +365,7 @@ async def test_auto_apply_distant_job_is_ignored_before_chat_entry():
     chat_cls.return_value.type_greeting_message.assert_not_called()
     llm.chat_completion_json.assert_not_called()
 
-    ignored = await broker.list_job_records(status="ignored")
+    ignored = await broker.job_store.list_job_records(status="ignored")
     assert len(ignored) == 1
     assert ignored[0]["commute_distance_km"] == pytest.approx(52.0)
     assert ignored[0]["commute_distance_text"] == "距离家庭住址52千米"
@@ -410,7 +407,7 @@ async def test_auto_apply_distant_job_rescued_by_whitelist_still_drafts():
     assert result.success is True
     assert result.output["applied"] is False  # preview-only draft
 
-    records = await broker.list_job_records()
+    records = await broker.job_store.list_job_records()
     rec = next(r for r in records if r.get("title") == "大模型 Agent 平台架构师")
     assert rec["status"] == "matched"
     assert rec["relaxed_by_whitelist"] is True
@@ -457,7 +454,7 @@ async def test_auto_apply_nearby_job_proceeds_and_probes_distance():
         detail_cls.return_value.extract_job_posting.call_args.kwargs["probe_commute_distance"] is True
     )
 
-    records = await broker.list_job_records()
+    records = await broker.job_store.list_job_records()
     rec = next(r for r in records if r.get("title") == "大模型 Agent 平台架构师")
     assert rec["status"] == "matched"
     assert rec["commute_distance_km"] == pytest.approx(18.5)
@@ -541,7 +538,7 @@ async def test_auto_apply_headhunter_target_skips_distance_probe_and_proceeds():
     assert probe_kwargs["probe_commute_distance"] is False
     assert probe_kwargs["is_headhunter"] is True
 
-    records = await broker.list_job_records()
+    records = await broker.job_store.list_job_records()
     rec = next(r for r in records if r.get("title") == "大模型 Agent 平台架构师")
     assert rec["status"] == "matched"
     assert rec["commute_distance_km"] is None
@@ -578,7 +575,7 @@ async def test_scrape_jobs_headhunter_card_skips_distance_probe_and_fails_open()
         patch("boss_agent.feed_pipeline.JobDetailPage") as detail_cls,
     ):
         startup_cls.return_value.is_dialog_present.return_value = False
-        list_cls.return_value.extract_visible_job_cards.return_value = [card]
+        list_cls.return_value.extract_visible_job_cards.return_value = [located(card, _card_elem)]
         search_cls.return_value.is_search_page.return_value = True
         detail_cls.return_value.extract_job_posting.return_value = _commute_posting(
             None, recruiter_name="钟先生 · 猎头顾问", is_headhunter=True
@@ -591,7 +588,7 @@ async def test_scrape_jobs_headhunter_card_skips_distance_probe_and_fails_open()
     assert probe_kwargs["probe_commute_distance"] is False
     assert probe_kwargs["is_headhunter"] is True
 
-    records = await broker.list_job_records()
+    records = await broker.job_store.list_job_records()
     rec = next(r for r in records if r.get("title") == "大模型 Agent 平台架构师")
     assert rec["status"] == "jd_saved"
     assert rec["commute_distance_km"] is None
@@ -625,7 +622,7 @@ async def test_scrape_jobs_distant_job_is_ingested_as_ignored():
         patch("boss_agent.feed_pipeline.JobDetailPage") as detail_cls,
     ):
         startup_cls.return_value.is_dialog_present.return_value = False
-        list_cls.return_value.extract_visible_job_cards.return_value = [card]
+        list_cls.return_value.extract_visible_job_cards.return_value = [located(card, _card_elem)]
         search_cls.return_value.is_search_page.return_value = True
         detail_cls.return_value.extract_job_posting.return_value = _commute_posting(
             52.0, "距离家庭住址52千米"
@@ -640,7 +637,7 @@ async def test_scrape_jobs_distant_job_is_ingested_as_ignored():
         detail_cls.return_value.extract_job_posting.call_args.kwargs["probe_commute_distance"] is True
     )
 
-    ignored = await broker.list_job_records(status="ignored")
+    ignored = await broker.job_store.list_job_records(status="ignored")
     assert len(ignored) == 1
     assert "超过通勤上限" in (ignored[0].get("screened_reason") or "")
     assert ignored[0]["commute_distance_km"] == pytest.approx(52.0)
@@ -672,7 +669,7 @@ async def test_scrape_jobs_distant_job_rescued_by_whitelist_is_saved():
         patch("boss_agent.feed_pipeline.JobDetailPage") as detail_cls,
     ):
         startup_cls.return_value.is_dialog_present.return_value = False
-        list_cls.return_value.extract_visible_job_cards.return_value = [card]
+        list_cls.return_value.extract_visible_job_cards.return_value = [located(card, _card_elem)]
         search_cls.return_value.is_search_page.return_value = True
         detail_cls.return_value.extract_job_posting.return_value = _commute_posting(
             52.0, "距离家庭住址52千米", title="云原生平台工程师"
@@ -684,7 +681,7 @@ async def test_scrape_jobs_distant_job_rescued_by_whitelist_is_saved():
     assert result.output["scraped_count"] == 1
     assert result.output["skipped_count"] == 0
 
-    records = await broker.list_job_records()
+    records = await broker.job_store.list_job_records()
     rec = next(r for r in records if r.get("title") == "云原生平台工程师")
     assert rec["relaxed_by_whitelist"] is True
     audit = rec.get("screening_audit") or ""
@@ -726,7 +723,7 @@ async def test_scrape_jobs_distance_relaxation_judges_the_enriched_title():
         patch("boss_agent.feed_pipeline.JobDetailPage") as detail_cls,
     ):
         startup_cls.return_value.is_dialog_present.return_value = False
-        list_cls.return_value.extract_visible_job_cards.return_value = [card]
+        list_cls.return_value.extract_visible_job_cards.return_value = [located(card, _card_elem)]
         search_cls.return_value.is_search_page.return_value = True
         detail_cls.return_value.extract_job_posting.return_value = _commute_posting(
             52.0, "距离家庭住址52千米", title="大模型技术专家"
@@ -738,7 +735,7 @@ async def test_scrape_jobs_distance_relaxation_judges_the_enriched_title():
     assert result.output["scraped_count"] == 1
     assert result.output["skipped_count"] == 0
 
-    records = await broker.list_job_records()
+    records = await broker.job_store.list_job_records()
     rec = next(r for r in records if r.get("title") == "大模型技术专家")
     assert rec["relaxed_by_whitelist"] is True
     assert "白名单放宽" in (rec.get("screening_audit") or "")
@@ -769,7 +766,7 @@ async def test_scrape_jobs_skips_distance_probe_when_filter_disabled():
         patch("boss_agent.feed_pipeline.JobDetailPage") as detail_cls,
     ):
         startup_cls.return_value.is_dialog_present.return_value = False
-        list_cls.return_value.extract_visible_job_cards.return_value = [card]
+        list_cls.return_value.extract_visible_job_cards.return_value = [located(card, _card_elem)]
         search_cls.return_value.is_search_page.return_value = True
         detail_cls.return_value.extract_job_posting.return_value = JobPosting(
             title="云原生平台工程师",
@@ -821,7 +818,7 @@ async def test_scrape_jobs_channel_relaxation_implies_distance_relaxation():
         patch("boss_agent.feed_pipeline.JobDetailPage") as detail_cls,
     ):
         startup_cls.return_value.is_dialog_present.return_value = False
-        list_cls.return_value.extract_visible_job_cards.return_value = [card]
+        list_cls.return_value.extract_visible_job_cards.return_value = [located(card, _card_elem)]
         search_cls.return_value.is_search_page.return_value = True
         detail_cls.return_value.extract_job_posting.return_value = JobPosting(
             title="云原生平台工程师",
@@ -840,7 +837,7 @@ async def test_scrape_jobs_channel_relaxation_implies_distance_relaxation():
     assert result.success is True
     assert result.output["scraped_count"] == 1
 
-    records = await broker.list_job_records()
+    records = await broker.job_store.list_job_records()
     rec = next(r for r in records if r.get("title") == "云原生平台工程师")
     assert rec["status"] == "jd_saved"
     audit = rec.get("screening_audit") or ""

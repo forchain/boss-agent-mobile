@@ -2,8 +2,6 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { resolveTargetAction, type AutomationTask, type SavedSearch, type TaskStatus } from '$lib/types';
 	import {
-		pb,
-		checkPocketBaseHealth,
 		createAutomationTask,
 		listAutomationTasks,
 		getAutomationTask,
@@ -14,6 +12,7 @@
 		updateSavedSearch,
 		formatCronHuman
 	} from '$lib/pocketbase';
+	import { dashboardRealtime } from '$lib/dashboardRealtime';
 	import TaskLaunchModal from '$lib/components/TaskLaunchModal.svelte';
 	import TaskLogModal from '$lib/components/TaskLogModal.svelte';
 
@@ -314,15 +313,17 @@
 		}
 	}
 
+	//: Removes this page's realtime handler on teardown.
+	let offTasks: (() => void) | null = null;
+
 	onMount(async () => {
 		await refreshAllData();
 		await checkUrlParamsAndHash();
 		window.addEventListener('hashchange', checkUrlParamsAndHash);
 
-		// Subscribe to Realtime SSE updates
-		if (await checkPocketBaseHealth()) {
-			try {
-				pb.collection('automation_tasks').subscribe('*', (e) => {
+		// Health-gated, retried and unsubscribed by handle in one place. This page was
+		// the only one with a gate; the gate and the teardown now live in the module.
+		offTasks = dashboardRealtime().subscribeToCollection('automation_tasks', (e) => {
 					if (e.action === 'create' || e.action === 'update' || e.action === 'delete') {
 						const t = e.record as unknown as AutomationTask;
 						if (activeTaskId && t.id === activeTaskId) {
@@ -345,20 +346,14 @@
 						// Refresh history in background
 						loadTaskHistory();
 					}
-				});
-			} catch (err) {
-				console.warn('Realtime subscription error:', err);
-			}
-		}
+		});
 	});
 
 	onDestroy(() => {
 		if (typeof window !== 'undefined') {
 			window.removeEventListener('hashchange', checkUrlParamsAndHash);
 		}
-		try {
-			pb.collection('automation_tasks').unsubscribe('*');
-		} catch (e) {}
+		offTasks?.();
 	});
 </script>
 
@@ -524,9 +519,9 @@
 						</span>
 					{/if}
 					<span>创建: {activeTask.created?.slice(11, 19) || '刚刚'}</span>
-					{#if activeTask.assigned_worker}
+					{#if activeTask.worker_id}
 						<span class="px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-slate-300">
-							Worker: {activeTask.assigned_worker}
+							Worker: {activeTask.worker_id}
 						</span>
 					{/if}
 				</div>

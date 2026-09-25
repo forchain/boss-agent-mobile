@@ -1,0 +1,83 @@
+{
+  "_comment": "Canonical Job Fingerprint vectors, shared by the pytest tier (tests/unit/test_job_fingerprint_vectors.py) and the vitest tier (web/src/tests/jobFingerprintVectors.test.ts). Both implementations must agree with every entry or the owning suite fails.",
+  "policy": "fingerprint = sha256(company.strip() + '::' + clean_title + '::' + recruiter_head), where the recruiter head is the name before the first ·/•/・ separator with any trailing separator removed.",
+  "vectors": [
+    {
+      "case": "plain-name",
+      "company_name": "字节跳动",
+      "title": "大模型算法工程师",
+      "recruiter_name": "张三",
+      "fingerprint": "245a537299cf57498837b1ea8c913e5a33a840194e6b43e9baf8502ff7b5b879"
+    },
+    {
+      "case": "recruiter-middot-title",
+      "company_name": "字节跳动",
+      "title": "大模型算法工程师",
+      "recruiter_name": "张三·猎头顾问",
+      "fingerprint": "245a537299cf57498837b1ea8c913e5a33a840194e6b43e9baf8502ff7b5b879"
+    },
+    {
+      "case": "recruiter-bullet-title",
+      "company_name": "阿里巴巴",
+      "title": "资深后端开发",
+      "recruiter_name": "李四•HRBP",
+      "fingerprint": "9f230eaa155b2495ac959582c51a62fdef970af1844f15ff136bfc9c95f6592e"
+    },
+    {
+      "case": "recruiter-katakana",
+      "company_name": "腾讯科技",
+      "title": "游戏客户端开发",
+      "recruiter_name": "王五・招聘经理",
+      "fingerprint": "fcb7472e21cf66a0f1bd54a0e7a5c9c3a1bac129b5aedab86b296e6503b00f90"
+    },
+    {
+      "case": "recruiter-trailing-sep",
+      "company_name": "美团",
+      "title": "数据分析师",
+      "recruiter_name": "赵六·",
+      "fingerprint": "40c239acdcc4fb0c17ff8870cd1dd5357fcb75525c787ac9207ce29fa3fd215a"
+    },
+    {
+      "case": "recruiter-two-seps",
+      "company_name": "京东",
+      "title": "供应链算法",
+      "recruiter_name": "钱七·顾问·北京",
+      "fingerprint": "47b80a4fa7a8c4dae05763719e6841ba481c52f5cee4d6a18a71deaf03a8018a"
+    },
+    {
+      "case": "title-badge-and-at",
+      "company_name": "百度",
+      "title": "资深架构师 &@",
+      "recruiter_name": "孙八·猎头",
+      "fingerprint": "23b9406f0a283b96e59890373500cb57f27dfdfc8a7804492ec259dfbcacf663"
+    },
+    {
+      "case": "title-percent",
+      "company_name": "网易",
+      "title": "前端开发 %",
+      "recruiter_name": "周九",
+      "fingerprint": "5bdf098349608d45ba01d63863f8135e16572f8c80f47a18e513f8710c0b137c"
+    },
+    {
+      "case": "empty-recruiter",
+      "company_name": "小米",
+      "title": "影像算法工程师",
+      "recruiter_name": "",
+      "fingerprint": "b4a5eaba26a1941aa8ab7dd9dab2d6bc7cbdb9bfbd6562bf56da1cdae733f6b3"
+    },
+    {
+      "case": "whitespace-padded",
+      "company_name": " 华为 ",
+      "title": " 芯片验证工程师 ",
+      "recruiter_name": " 吴十 ",
+      "fingerprint": "d0327aa1487cb4281d8f41c0b6041df5fcc9859ef21657ef54fd02b684b823a9"
+    },
+    {
+      "case": "direct-hire-same-name",
+      "company_name": "商汤科技",
+      "title": "算法研究员",
+      "recruiter_name": "商汤科技",
+      "fingerprint": "db82464ebed0e8ae3b99c99115be828519f3ded86533f9dd2e69aa98ff060984"
+    }
+  ]
+}

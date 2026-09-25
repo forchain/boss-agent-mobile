@@ -19,37 +19,26 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${ROOT_DIR}"
 
+# Shared process-lifecycle primitives. Sourced rather than copied: this script's stop
+# path used to resolve "who owns the port" with a bare `lsof -ti` and then SIGKILL it
+# 0.5s after SIGTERM — a connected client could be killed, and a cooperative Appium
+# never got its budget.
+# shellcheck source=runner_lib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/runner_lib.sh"
+
+# Seconds to wait for a cooperative exit before escalating to SIGKILL.
+APPIUM_STOP_TIMEOUT_SEC="${APPIUM_STOP_TIMEOUT_SEC:-10}"
+
 mkdir -p ".boss_agent"
 
 PID_FILE=".boss_agent/appium.pid"
 LOG_FILE=".boss_agent/appium.log"
 
 resolve_config_url() {
-    # 1. Try python3 if available to query centralized loader
-    if command -v python3 >/dev/null 2>&1; then
-        local PY_URL
-        PY_URL="$(python3 -c "import sys; sys.path.insert(0, 'src'); from boss_agent.settings import resolve_server_url; print(resolve_server_url())" 2>/dev/null || true)"
-        if [[ -n "${PY_URL}" ]]; then
-            echo "${PY_URL}"
-            return 0
-        fi
-    fi
-
-    # 2. Fallback: simple grep across config files in precedence order
-    for conf in "config/settings.local.yaml" "config/settings.local.json" "config/settings.yaml" "config/settings.example.yaml"; do
-        if [[ -f "${conf}" ]]; then
-            local LINE VAL
-            LINE="$(grep -E "^[[:space:]]*(server_url|appium_url):" "${conf}" 2>/dev/null | head -n 1 || true)"
-            if [[ -n "${LINE}" ]]; then
-                VAL="$(echo "${LINE}" | awk '{print $2}' | tr -d '"' | tr -d "'" || true)"
-                if [[ -n "${VAL}" ]]; then
-                    echo "${VAL}"
-                    return 0
-                fi
-            fi
-        fi
-    done
-    echo ""
+    # One read, through the library. This used to be a Python probe with its own
+    # `sys.path` juggling followed by a `grep|awk|tr` loop over four files — the same
+    # value, resolved three ways, in one function.
+    runner_config_value server_url "" appium_url
 }
 
 parse_host_port() {
@@ -120,15 +109,9 @@ get_running_appium_pid() {
         fi
     fi
 
-    # Fallback to lsof on Appium port
-    local PORT_PID
-    PORT_PID="$(lsof -ti ":${APPIUM_PORT}" 2>/dev/null | head -n 1 || true)"
-    if [[ -n "${PORT_PID}" ]]; then
-        echo "${PORT_PID}" > "${PID_FILE}"
-        echo "${PORT_PID}"
-        return 0
-    fi
-    echo ""
+    # Fallback to the port's *listener* — never a bare `lsof -ti`, which would adopt a
+    # client merely connected to the port and later signal it.
+    runner_resolve_pid "${PID_FILE}" "${APPIUM_PORT}"
 }
 
 attach_logs() {
@@ -178,15 +161,30 @@ cmd_stop() {
     PID="$(get_running_appium_pid)"
 
     if [[ -n "${PID}" ]]; then
-        kill "${PID}" 2>/dev/null || true
-        sleep 0.5
-        kill -9 "${PID}" 2>/dev/null || true
+        runner_graceful_stop "${PID}" "${APPIUM_STOP_TIMEOUT_SEC}" "Appium"
         STOPPED=1
     fi
-    rm -f "${PID_FILE}"
+    runner_pidfile_clear "${PID_FILE}"
+
+    # Anything still listening outlived its parent. LISTEN-only, so a connected client
+    # is never a candidate.
+    local PORT_PID
+    PORT_PID="$(runner_port_listener_pid "${APPIUM_PORT}")"
+    if [[ -n "${PORT_PID}" ]]; then
+        echo "⚠️ Port ${APPIUM_PORT} still held by PID ${PORT_PID}; reclaiming."
+        runner_graceful_stop "${PORT_PID}" "${APPIUM_STOP_TIMEOUT_SEC}" "Appium listener"
+        STOPPED=1
+    fi
 
     # Cleanup any lingering process
-    pkill -f "appium.*${APPIUM_PORT}" 2>/dev/null || true
+    local LINGER_PIDS
+    LINGER_PIDS="$(pgrep -f "appium.*${APPIUM_PORT}" 2>/dev/null || true)"
+    if [[ -n "${LINGER_PIDS}" ]]; then
+        local LINGER_PID
+        for LINGER_PID in ${LINGER_PIDS}; do
+            runner_graceful_stop "${LINGER_PID}" "${APPIUM_STOP_TIMEOUT_SEC}" "Appium"
+        done
+    fi
 
     if [[ ${STOPPED} -eq 1 ]]; then
         echo "✅ Appium server stopped successfully."
