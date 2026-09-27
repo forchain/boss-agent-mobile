@@ -47,8 +47,12 @@ get_running_web_pid() {
         local PID
         PID="$(cat "${PID_FILE}" 2>/dev/null || true)"
         if [[ -n "${PID}" ]] && process_alive "${PID}"; then
-            echo "${PID}"
-            return 0
+            if ! runner_process_cwd_alive "${PID}"; then
+                rm -f "${PID_FILE}"
+            else
+                echo "${PID}"
+                return 0
+            fi
         fi
     fi
 
@@ -56,9 +60,11 @@ get_running_web_pid() {
     local PORT_PID
     PORT_PID="$(listening_pid)"
     if [[ -n "${PORT_PID}" ]]; then
-        echo "${PORT_PID}" > "${PID_FILE}"
-        echo "${PORT_PID}"
-        return 0
+        if runner_process_cwd_alive "${PORT_PID}"; then
+            echo "${PORT_PID}" > "${PID_FILE}"
+            echo "${PORT_PID}"
+            return 0
+        fi
     fi
     echo ""
 }
@@ -88,6 +94,17 @@ cmd_status() {
     echo "🔍 Checking SvelteKit Web Dashboard status..."
     local PID
     PID="$(get_running_web_pid)"
+    local PORT_PID
+    PORT_PID="$(listening_pid)"
+
+    if [[ -n "${PORT_PID}" ]] && ! runner_process_cwd_alive "${PORT_PID}"; then
+        local STALE_CWD
+        STALE_CWD="$(runner_process_cwd "${PORT_PID}")"
+        echo "🔴 SvelteKit Web Dashboard port ${WEB_PORT} is held by a STALE process (PID: ${PORT_PID})"
+        echo "   Deleted CWD: ${STALE_CWD:-unknown}"
+        echo "   Run './web.sh restart' to reclaim port and start a fresh server."
+        return 1
+    fi
 
     if curl -s -f "http://127.0.0.1:${WEB_PORT}" >/dev/null 2>&1 || curl -s -f "${WEB_URL}" >/dev/null 2>&1; then
         echo "🟢 SvelteKit Web Dashboard is RUNNING at ${WEB_URL}"
@@ -184,6 +201,15 @@ cmd_start() {
             VITE_ARGS+=("${arg}")
         fi
     done
+
+    # Reclaim the port if held by a stale process whose working directory was deleted
+    local PORT_PID
+    PORT_PID="$(listening_pid)"
+    if [[ -n "${PORT_PID}" ]] && ! runner_process_cwd_alive "${PORT_PID}"; then
+        echo "⚠️ Port ${WEB_PORT} is held by stale process PID ${PORT_PID} whose working directory was deleted; reclaiming."
+        runner_graceful_stop "${PORT_PID}" "${WEB_STOP_TIMEOUT_SEC}" "stale web listener"
+        rm -f "${PID_FILE}"
+    fi
 
     # Check if already running locally
     local RUNNING_PID

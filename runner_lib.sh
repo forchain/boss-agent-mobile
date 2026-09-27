@@ -38,6 +38,34 @@ runner_process_gone() {
     ! runner_process_alive "${1:-}"
 }
 
+# The working directory of a process, or empty.
+runner_process_cwd() {
+    local PID="${1:-}"
+    [[ -n "${PID}" ]] || return 0
+    if [[ -d "/proc/${PID}/cwd" || -L "/proc/${PID}/cwd" ]]; then
+        readlink "/proc/${PID}/cwd" 2>/dev/null || true
+        return 0
+    fi
+    if command -v lsof >/dev/null 2>&1; then
+        lsof -a -p "${PID}" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1 || true
+    fi
+}
+
+# Whether a process's working directory is still present on the filesystem.
+#
+# When a git worktree or temporary directory is deleted while a dev server is running,
+# the process stays alive in memory holding the port, but cannot resolve source files
+# on disk (e.g. Vite dynamic SSR module imports fail with ERR_LOAD_URL).
+runner_process_cwd_alive() {
+    local PID="${1:-}"
+    local CWD
+    CWD="$(runner_process_cwd "${PID}")"
+    if [[ -n "${CWD}" && ! -d "${CWD}" ]]; then
+        return 1
+    fi
+    return 0
+}
+
 # --------------------------------------------------------------------------- #
 # Deadline-aware waiting
 # --------------------------------------------------------------------------- #

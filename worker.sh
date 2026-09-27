@@ -62,7 +62,7 @@ get_running_worker_pid() {
     if [[ -f "${WORKER_PID_FILE}" ]]; then
         local PID
         PID="$(cat "${WORKER_PID_FILE}" 2>/dev/null || true)"
-        if [[ -n "${PID}" ]] && process_alive "${PID}"; then
+        if [[ -n "${PID}" ]] && process_alive "${PID}" && runner_process_cwd_alive "${PID}"; then
             echo "${PID}"
             return 0
         fi
@@ -70,12 +70,14 @@ get_running_worker_pid() {
 
     # Fallback to process search across worktrees
     local FOUND_PID
-    FOUND_PID="$(pgrep -f "scripts/worker.py" 2>/dev/null | head -n 1 || true)"
-    if [[ -n "${FOUND_PID}" ]]; then
-        echo "${FOUND_PID}" > "${WORKER_PID_FILE}"
-        echo "${FOUND_PID}"
-        return 0
-    fi
+    while IFS= read -r FOUND_PID; do
+        [[ -z "${FOUND_PID}" ]] && continue
+        if process_alive "${FOUND_PID}" && runner_process_cwd_alive "${FOUND_PID}"; then
+            echo "${FOUND_PID}" > "${WORKER_PID_FILE}"
+            echo "${FOUND_PID}"
+            return 0
+        fi
+    done < <(pgrep -f "scripts/worker.py" 2>/dev/null || true)
     echo ""
 }
 
