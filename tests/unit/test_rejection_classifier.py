@@ -103,3 +103,20 @@ def test_classify_blank_message_short_circuits_without_llm_call():
 
     assert verdict.is_rejection is False
     assert llm_client.chat_completion_json.call_count == 0
+
+
+def test_rejection_classifier_resolves_realm_llm_client(monkeypatch):
+    """When no client is injected, classifier resolves client via create_llm_client with realm configuration."""
+    from boss_agent import config_realm
+
+    for _key, names in config_realm.ENV_OVERRIDES:
+        for name in names:
+            monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("LLM_MODEL", "custom-rejection-model")
+    config_realm.invalidate_cache()
+
+    classifier = RejectionClassifier()
+    client = classifier._resolve_client()
+
+    assert client is not None
+    assert client.config.model == "custom-rejection-model"

@@ -251,6 +251,7 @@ def test_sqlite_single_source_roundtrip(tmp_path, monkeypatch):
     monkeypatch.setenv("PB_DB_PATH", str(db_file))
 
     import sqlite3
+
     conn = sqlite3.connect(str(db_file))
     cursor = conn.cursor()
     cursor.execute("""
@@ -311,7 +312,9 @@ def test_sqlite_single_source_roundtrip(tmp_path, monkeypatch):
     }
 
     # Save candidate profile into SQLite fallback
-    saved = asyncio.run(broker.candidate_memory.save_candidate_profile(profile_data, user_id="test_candidate"))
+    saved = asyncio.run(
+        broker.candidate_memory.save_candidate_profile(profile_data, user_id="test_candidate")
+    )
     assert saved["name"] == "李四"
 
     # Query candidate profile back from SQLite fallback
@@ -396,3 +399,17 @@ def test_profile_normalizer_self_heals_empty_fields_and_extracts_target():
     assert "[候选人结构化全景画像 (Lossless Profile Document)]" in prompt_out
     assert "Agent应用工程师" in prompt_out
 
+
+def test_resume_memory_manager_default_client_uses_realm(monkeypatch):
+    """When no client is passed, ResumeMemoryManager uses create_llm_client with realm configuration."""
+    from boss_agent import config_realm
+
+    for _key, names in config_realm.ENV_OVERRIDES:
+        for name in names:
+            monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("LLM_MODEL", "memory-realm-model")
+    config_realm.invalidate_cache()
+
+    manager = ResumeMemoryManager()
+    assert manager.llm_client is not None
+    assert manager.llm_client.config.model == "memory-realm-model"
