@@ -1706,6 +1706,68 @@ class CommunicationListPage(BaseBossPage):
             is not None
         )
 
+    def has_message_tab_unread_dot(self, timeout_sec: float = 1.0) -> bool:
+        """Check whether the bottom navigation 消息 tab currently shows an unread red dot.
+
+        When the bottom navigation bar is present (entry_tab found), the absence of
+        `communication_list.message_tab_unread_dot` confirms that there are zero
+        unread messages in any category (Tier 1 preflight). If the bottom navigation
+        bar is not visible on the current screen (e.g. within an inner chat or subpage),
+        returns True so caller proceeds with standard list recovery.
+        """
+        entry_tab = self.find_by_key("communication_list.entry_tab", timeout_sec=timeout_sec)
+        if not entry_tab:
+            return True
+        return self.find_now("communication_list.message_tab_unread_dot") is not None
+
+    def get_unread_badge_count(self, timeout_sec: float = 1.0) -> int | None:
+        """Read the unread count badge on the 仅沟通 category sub-tab.
+
+        Returns the parsed integer count (e.g. 1, 5, 99) when the badge is present,
+        or None when the badge is absent (meaning 0 unread messages in 仅沟通).
+        """
+        elem = self.find_by_key("communication_list.unread_badge", timeout_sec=timeout_sec)
+        if elem is None:
+            return None
+        raw = getattr(elem, "text", "")
+        if not isinstance(raw, str):
+            return None
+        raw_text = raw.strip()
+        if not raw_text:
+            return None
+        import re
+
+        digits = re.sub(r"[^\d]", "", raw_text)
+        if digits:
+            return int(digits)
+        return 1
+
+    def scroll_message_list(self) -> bool:
+        """Perform a humanized scroll downwards on the conversation RecyclerView.
+
+        Prefers the bounds of the RecyclerView container when found, falling back
+        to window dimensions. Returns True if the gesture was performed, False otherwise.
+        """
+        if not self.driver:
+            return False
+        recycler = self.find_now("communication_list.recycler_view")
+        rect = getattr(recycler, "rect", None) if recycler else None
+        if rect and isinstance(rect, dict) and rect.get("width") and rect.get("height"):
+            w = rect["width"]
+            h = rect["height"]
+            x = rect.get("x", 0)
+            y = rect.get("y", 0)
+            start = Point(x + w * 0.5, y + h * 0.75)
+            end = Point(x + w * 0.5, y + h * 0.25)
+        else:
+            size = self._get_window_size()
+            w, h = size["width"], size["height"]
+            start = Point(w * 0.5, h * 0.75)
+            end = Point(w * 0.5, h * 0.25)
+        self.gestures.human_swipe(start, end, duration_ms=500)
+        self.gestures.random_sleep(0.3, 0.6)
+        return True
+
     def wait_for_list_return(self, timeout_sec: float = 5.0) -> bool:
         """Wait for the platform to drop the conversation and land back on the list."""
         return self.is_on_list(timeout_sec=timeout_sec)

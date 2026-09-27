@@ -59,7 +59,7 @@ VIEWPORT_SIZE = 10
 #: screen that keeps yielding fresh outbound cards as acknowledged ones leave it.
 #: This is a safety bound, not a tuning knob: it exists so the scan loop always
 #: terminates.
-MAX_INSPECTED_CARDS = 300
+MAX_INSPECTED_CARDS = 50
 
 #: Characters of message text echoed into task logs.
 PREVIEW_CHARS = 40
@@ -74,17 +74,19 @@ LIST_PROBE_TIMEOUT_SEC = 1.0
 class StopReason(StrEnum):
     """Why a triage run stopped.
 
-    The first six are the scan's own exits. ``LIST_UNREACHABLE`` is the entry
+    The first seven are the scan's own exits. ``LIST_UNREACHABLE`` is the entry
     failure that precedes them: the list could not be opened, so no card was read.
     """
 
-    FIRST_SCREEN_EXHAUSTED = "first_screen_exhausted"
+    UNREAD_CLEARED = "unread_cleared"
     EMPTY_LIST = "empty_list"
     CANCELLED = "cancelled"
     MAX_SCAN_DEPTH = "max_scan_depth"
     SCAN_CEILING = "scan_ceiling"
+    SCROLL_CEILING = "scroll_ceiling"
     LOST_LIST = "lost_list"
     LIST_UNREACHABLE = "list_unreachable"
+    FIRST_SCREEN_EXHAUSTED = "first_screen_exhausted"
 
 
 class TriageKind(StrEnum):
@@ -130,6 +132,7 @@ class TriageReport:
     guardrail_blocked: int = 0
     blacklisted_companies: tuple[str, ...] = ()
     visited_keys: frozenset[str] = frozenset()
+    scroll_swipes: int = 0
 
     @property
     def blacklisted_count(self) -> int:
@@ -141,6 +144,7 @@ class TriageReport:
         note = f" [{', '.join(self.blacklisted_companies)}]" if self.blacklisted_companies else ""
         return (
             f"Finished CHECK_CHAT: scanned {self.scanned} card(s), "
+            f"scrolled {self.scroll_swipes} swipe(s), "
             f"evaluated {self.evaluated} message(s), "
             f"{self.skipped_outbound} skipped as outbound, "
             f"{self.rejections} rejection(s) detected, "
@@ -179,6 +183,15 @@ class ChatListReader(Protocol):
 
     def confirm_back_on_list(self) -> bool:
         """Confirm the platform landed back on the list after an acknowledgment."""
+
+    def has_message_tab_unread_dot(self) -> bool:
+        """Check whether the bottom navigation 消息 tab shows an unread red dot."""
+
+    def get_unread_badge_count(self) -> int | None:
+        """The unread count badge on the 仅沟通 sub-tab; None when absent."""
+
+    def scroll_list_down(self) -> bool:
+        """Perform a single humanized scroll down on the conversation list."""
 
 
 @runtime_checkable
@@ -241,6 +254,15 @@ class CommunicationListAdapter:
 
     def confirm_back_on_list(self) -> bool:
         return self._page.wait_for_list_return(timeout_sec=self._timeout_sec)
+
+    def has_message_tab_unread_dot(self) -> bool:
+        return self._page.has_message_tab_unread_dot(timeout_sec=LIST_PROBE_TIMEOUT_SEC)
+
+    def get_unread_badge_count(self) -> int | None:
+        return self._page.get_unread_badge_count(timeout_sec=LIST_PROBE_TIMEOUT_SEC)
+
+    def scroll_list_down(self) -> bool:
+        return self._page.scroll_message_list()
 
 
 class ChatActorAdapter:
@@ -324,20 +346,44 @@ class ChatTriage:
     # Public entry point
     # ------------------------------------------------------------------
     async def scan(self) -> TriageReport:
-        """Run one First-Screen Scan and report what it found and did."""
+        """Run an Unread-Badge Bounded Scan and report what it found and did."""
+        # Tier 1 Preflight: inspect bottom tab red dot if bottom nav is visible
+        if not self.list_reader.has_message_tab_unread_dot():
+            await self._log(
+                "🔔 [Preflight Tier 1] 底栏「消息」无未读红点，零点击零卡片瞬时放行"
+                "（stop_reason=unread_cleared）"
+            )
+            return TriageReport(
+                stop_reason=StopReason.UNREAD_CLEARED, dry_run=self.settings.dry_run
+            )
+
         if not await self._enter_list():
             return TriageReport(
                 stop_reason=StopReason.LIST_UNREACHABLE, dry_run=self.settings.dry_run
             )
 
+        # Tier 2 Preflight: check 仅沟通 category sub-tab unread badge count
+        badge_count = self.list_reader.get_unread_badge_count()
+        if badge_count is None or badge_count <= 0:
+            await self._log(
+                "🔔 [Preflight Tier 2] 「仅沟通」无未读角标（红点由其他分类引起），无需处理卡片，"
+                "瞬时放行（stop_reason=unread_cleared）"
+            )
+            return TriageReport(
+                stop_reason=StopReason.UNREAD_CLEARED, dry_run=self.settings.dry_run
+            )
+
         await self._log(
-            f"📥 [List] 已进入「仅沟通」列表，本次只扫描首屏最多 {VIEWPORT_SIZE} 张卡片，不翻页"
+            f"📥 [List] 已进入「仅沟通」列表，当前未读角标: {badge_count}，"
+            f"启动未读角标驱动扫描（max_swipes={self.settings.max_scroll_swipes}）"
         )
 
         counters: Counter[TriageKind] = Counter()
         visited_keys: set[str] = set()
         blacklisted: list[str] = []
         evaluated = scanned = rejections = guardrail_blocked = 0
+        scroll_swipes = 0
+        consecutive_empty_scrolls = 0
         stop_reason: StopReason | None = None
 
         while True:
@@ -353,15 +399,55 @@ class ChatTriage:
 
             pending = [card for card in visible if card.key not in visited_keys]
             if not pending:
-                # Nothing on screen is new. Marking a conversation 不感兴趣 removes it
-                # from the list, so whatever is still here is what this run cannot
-                # advance -- and the scan is finished by construction.
-                stop_reason = StopReason.FIRST_SCREEN_EXHAUSTED
+                # All visible cards in current viewport have been visited.
+                current_badge = self.list_reader.get_unread_badge_count()
+                if current_badge is None or current_badge <= 0:
+                    stop_reason = StopReason.UNREAD_CLEARED
+                    await self._log(
+                        "🎉 [Unread Cleared] 「仅沟通」未读角标已清零，未读消息处理完毕，扫描结束"
+                        f"（stop_reason={stop_reason.value}）"
+                    )
+                    break
+
+                if scroll_swipes >= self.settings.max_scroll_swipes:
+                    stop_reason = StopReason.SCROLL_CEILING
+                    await self._log(
+                        f"🛑 [Scroll Ceiling] 滑动翻页已达上限 {self.settings.max_scroll_swipes} 次，"
+                        f"仍有未读角标 ({current_badge})，终止扫描"
+                    )
+                    break
+
+                if scanned >= self.max_inspected_cards:
+                    stop_reason = (
+                        StopReason.SCROLL_CEILING if scroll_swipes > 0 else StopReason.SCAN_CEILING
+                    )
+                    await self._log(
+                        f"🛑 [Scroll Ceiling] 单次扫描已达 {self.max_inspected_cards} 张卡片上限，"
+                        "终止扫描"
+                    )
+                    break
+
+                scroll_swipes += 1
                 await self._log(
-                    f"✅ [首屏] 首屏 {len(visible)} 张卡片均已处理，本次不翻页，扫描结束"
-                    f"（stop_reason={stop_reason.value}）"
+                    f"📜 [Scroll] 当前屏幕卡片已遍历完毕，未读角标仍存在 ({current_badge})，"
+                    f"向下滑动翻页第 {scroll_swipes}/{self.settings.max_scroll_swipes} 次"
                 )
-                break
+                self.list_reader.scroll_list_down()
+
+                new_visible = self.list_reader.visible_cards(VIEWPORT_SIZE)
+                new_keys = {c.key for c in new_visible} - visited_keys
+                if not new_keys:
+                    consecutive_empty_scrolls += 1
+                    if consecutive_empty_scrolls >= 2:
+                        stop_reason = StopReason.SCROLL_CEILING
+                        await self._log(
+                            "🛑 [Scroll Ceiling] 连续 2 次滑动未发现新卡片（列表已触底），"
+                            "终止扫描"
+                        )
+                        break
+                else:
+                    consecutive_empty_scrolls = 0
+                continue
 
             lost_list = False
             for card in pending:
@@ -381,8 +467,19 @@ class ChatTriage:
                     # The platform shifted the remaining cards up: abandon this
                     # screen snapshot and re-read before continuing.
                     lost_list = outcome.lost_list
+                    if not lost_list:
+                        badge_after = self.list_reader.get_unread_badge_count()
+                        if badge_after is None or badge_after <= 0:
+                            stop_reason = StopReason.UNREAD_CLEARED
+                            await self._log(
+                                "🎉 [Unread Cleared] 会话处理后「仅沟通」未读角标已清零，"
+                                f"未读消息处理完毕，扫描结束（stop_reason={stop_reason.value}）"
+                            )
+                            break
                     break
 
+            if stop_reason is not None:
+                break
             if lost_list:
                 # We are no longer looking at the list; reading cards here could
                 # interact with an unrelated screen, so stop instead.
@@ -392,10 +489,12 @@ class ChatTriage:
                 stop_reason = StopReason.MAX_SCAN_DEPTH
                 break
             if scanned >= self.max_inspected_cards:
-                stop_reason = StopReason.SCAN_CEILING
+                stop_reason = (
+                    StopReason.SCROLL_CEILING if scroll_swipes > 0 else StopReason.SCAN_CEILING
+                )
                 await self._log(
                     f"🛑 [Scan Ceiling] 单次扫描已达 {self.max_inspected_cards} 张卡片上限，"
-                    f"终止列表扫描"
+                    "终止列表扫描"
                 )
                 break
             # Loop back for another read of the same screen: an acknowledged card leaves
@@ -416,6 +515,7 @@ class ChatTriage:
             guardrail_blocked=guardrail_blocked,
             blacklisted_companies=tuple(blacklisted),
             visited_keys=frozenset(visited_keys),
+            scroll_swipes=scroll_swipes,
         )
 
     # ------------------------------------------------------------------

@@ -42,6 +42,7 @@ TELEMETRY_KEYS = frozenset(
         "reply_text",
         "max_scan_depth",
         "scanned",
+        "scroll_swipes",
         "evaluated",
         "skipped_outbound",
         "rejections",
@@ -102,6 +103,7 @@ async def test_a_full_pass_pins_every_output_key_and_value(context, config_path)
             ),
         ],
         viewport_size=4,
+        unread_badge_count=2,
     )
     broker = InMemoryTaskBroker()
     task = await broker.create_task(task_type=TaskType.CHECK_CHAT, payload={})
@@ -116,6 +118,7 @@ async def test_a_full_pass_pins_every_output_key_and_value(context, config_path)
         "reply_text": "收到 谢谢",
         "max_scan_depth": 30,
         "scanned": 4,
+        "scroll_swipes": 0,
         "evaluated": 3,
         "skipped_outbound": 1,
         "rejections": 2,
@@ -125,7 +128,7 @@ async def test_a_full_pass_pins_every_output_key_and_value(context, config_path)
         "acknowledged": 2,
         "preserved": 1,
         "failed": 0,
-        "stop_reason": "first_screen_exhausted",
+        "stop_reason": "unread_cleared",
     }
     assert len(result.output["visited_keys"]) == 4
 
@@ -146,6 +149,7 @@ async def test_a_full_pass_pins_the_summary_line(context, config_path):
             ),
         ],
         viewport_size=4,
+        unread_badge_count=2,
     )
     broker = InMemoryTaskBroker()
     finished = await broker.create_task(task_type=TaskType.CHECK_CHAT, payload={})
@@ -153,11 +157,11 @@ async def test_a_full_pass_pins_the_summary_line(context, config_path):
     await make_handler(harness, policy).handle(finished, broker, context)
 
     assert summary_line(await broker.get_task(finished.id)) == (
-        "Finished CHECK_CHAT: scanned 4 card(s), evaluated 3 message(s), "
+        "Finished CHECK_CHAT: scanned 4 card(s), scrolled 0 swipe(s), evaluated 3 message(s), "
         "1 skipped as outbound, 2 rejection(s) detected, "
         "1 company(ies) blacklisted [传音控股], 1 blocked by guardrails, "
         "2 acknowledged, 1 preserved, 0 failed "
-        "(stop_reason=first_screen_exhausted, dry_run=False)"
+        "(stop_reason=unread_cleared, dry_run=False)"
     )
 
 
@@ -178,6 +182,7 @@ async def test_a_dry_run_reports_a_rehearsal_and_never_a_write(context, config_p
         "reply_text": "收到 谢谢",
         "max_scan_depth": 30,
         "scanned": 1,
+        "scroll_swipes": 2,
         "evaluated": 1,
         "skipped_outbound": 0,
         "rejections": 1,
@@ -187,15 +192,15 @@ async def test_a_dry_run_reports_a_rehearsal_and_never_a_write(context, config_p
         "acknowledged": 0,
         "preserved": 0,
         "failed": 0,
-        "stop_reason": "first_screen_exhausted",
+        "stop_reason": "scroll_ceiling",
     }
     assert config_path.read_text(encoding="utf-8") == before
     assert summary_line(await broker.get_task(task.id)) == (
-        "Finished CHECK_CHAT: scanned 1 card(s), evaluated 1 message(s), "
+        "Finished CHECK_CHAT: scanned 1 card(s), scrolled 2 swipe(s), evaluated 1 message(s), "
         "0 skipped as outbound, 1 rejection(s) detected, "
         "0 company(ies) blacklisted, 0 blocked by guardrails, "
         "0 acknowledged, 0 preserved, 0 failed "
-        "(stop_reason=first_screen_exhausted, dry_run=True)"
+        "(stop_reason=scroll_ceiling, dry_run=True)"
     )
 
 

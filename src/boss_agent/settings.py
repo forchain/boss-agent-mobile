@@ -12,6 +12,7 @@ from typing import Any
 from . import config_realm
 from .rejection import (
     DEFAULT_MAX_SCAN_DEPTH,
+    DEFAULT_MAX_SCROLL_SWIPES,
     DEFAULT_REJECTION_REPLY_TEXT,
     ChatAcknowledgmentSettings,
     coerce_bool,
@@ -73,6 +74,7 @@ def resolve_chat_acknowledgment_settings(
 
     reply_text = chat.get("rejection_reply_text")
     scan_depth = chat.get("max_scan_depth")
+    scroll_swipes = chat.get("max_scroll_swipes")
     dry_run = chat.get("dry_run")
 
     env_reply = os.getenv("CHAT_REJECTION_REPLY_TEXT")
@@ -81,6 +83,9 @@ def resolve_chat_acknowledgment_settings(
     env_depth = os.getenv("CHAT_MAX_SCAN_DEPTH")
     if env_depth and env_depth.strip():
         scan_depth = env_depth.strip()
+    env_swipes = os.getenv("CHAT_MAX_SCROLL_SWIPES")
+    if env_swipes and env_swipes.strip():
+        scroll_swipes = env_swipes.strip()
     env_dry_run = os.getenv("CHAT_DRY_RUN")
     if env_dry_run and env_dry_run.strip():
         dry_run = env_dry_run.strip()
@@ -89,6 +94,7 @@ def resolve_chat_acknowledgment_settings(
     return ChatAcknowledgmentSettings(
         rejection_reply_text=reply_str or DEFAULT_REJECTION_REPLY_TEXT,
         max_scan_depth=coerce_positive_int(scan_depth, DEFAULT_MAX_SCAN_DEPTH),
+        max_scroll_swipes=coerce_positive_int(scroll_swipes, DEFAULT_MAX_SCROLL_SWIPES),
         dry_run=coerce_bool(dry_run, default=False),
     )
 

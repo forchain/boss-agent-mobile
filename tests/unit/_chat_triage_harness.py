@@ -76,8 +76,7 @@ def card(
 class Harness:
     """In-memory 仅沟通 screen + chat simulator recording every write action.
 
-    ``viewport_size`` is the whole list one screen can show: a run never scrolls, so
-    it is exactly how many cards a pass can reach.
+    ``viewport_size`` is the cards visible on screen in one snapshot.
     """
 
     def __init__(
@@ -90,8 +89,11 @@ class Harness:
         mark_disinterest_ok: bool = True,
         return_to_list_ok: bool = True,
         open_message_ok: bool = True,
+        has_unread_dot: bool = True,
+        unread_badge_count: int | None = 1,
+        auto_decrement_badge: bool = True,
     ) -> None:
-        self.cards = cards
+        self.cards = list(cards)
         self.viewport_size = viewport_size
         self.removed: set[str] = set()
         self.on_list = on_list
@@ -99,6 +101,10 @@ class Harness:
         self.mark_disinterest_ok = mark_disinterest_ok
         self.return_to_list_ok = return_to_list_ok
         self.open_message_ok = open_message_ok
+        self.has_unread_dot = has_unread_dot
+        self.unread_badge_count = unread_badge_count
+        self.auto_decrement_badge = auto_decrement_badge
+        self.scroll_offset = 0
         self.events: list[str] = []
 
     # --- CommunicationListPage contract -----------------------------------------
@@ -109,9 +115,24 @@ class Harness:
         self.on_list = self.open_list_ok
         return self.open_list_ok
 
+    def has_message_tab_unread_dot(self, timeout_sec: float = 1.0) -> bool:
+        return self.has_unread_dot
+
+    def get_unread_badge_count(self, timeout_sec: float = 1.0) -> int | None:
+        return self.unread_badge_count
+
+    def scroll_message_list(self) -> bool:
+        self.events.append("scroll_down")
+        self.scroll_offset += self.viewport_size
+        return True
+
     def extract_visible_messages(self, max_items: int = 10) -> list[CommunicationCard]:
-        visible = [m for m in self.cards if m.key not in self.removed]
-        return visible[: self.viewport_size][:max_items]
+        active = [m for m in self.cards if m.key not in self.removed]
+        if not active:
+            return []
+        start = min(self.scroll_offset, max(0, len(active) - self.viewport_size))
+        end = start + min(self.viewport_size, max_items)
+        return active[start:end]
 
     def open_message(self, message: CommunicationCard) -> bool:
         if not self.open_message_ok:
@@ -128,6 +149,12 @@ class Harness:
         for message in self.cards:
             if message.message_text in self.currently_opened:
                 self.removed.add(message.key)
+                if (
+                    self.auto_decrement_badge
+                    and self.unread_badge_count is not None
+                    and self.unread_badge_count > 0
+                ):
+                    self.unread_badge_count -= 1
         return True
 
     def wait_for_list_return(self, timeout_sec: float = 5.0) -> bool:

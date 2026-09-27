@@ -212,7 +212,7 @@ async def test_outbound_cards_are_skipped_without_any_llm_call(policy):
     assert report.evaluated == 0
     assert report.rejections == 0
     assert report.blacklisted_count == 0
-    assert harness.events == []
+    assert not any(e.startswith("open:") for e in harness.events)
 
 
 @pytest.mark.asyncio
@@ -289,6 +289,7 @@ async def test_mixed_list_evaluates_only_the_untagged_cards(policy):
             card(other_rejection, sender="宋女士", descriptor="磐基技术 | 技术总监"),
         ],
         viewport_size=4,
+        unread_badge_count=2,
     )
     classifier = FakeClassifier({REJECTION_TEXT: True, other_rejection: True})
 
@@ -395,9 +396,8 @@ async def test_all_outbound_list_ends_when_the_screen_holds_nothing_new(policy):
     report = await triage_run(harness, classifier=classifier, policy=policy).scan()
 
     assert classifier.calls == []
-    assert report.skipped_outbound == 2
-    assert report.stop_reason.value == FIRST_SCREEN_EXHAUSTED
-    assert harness.events == []
+    assert report.skipped_outbound == 3
+    assert report.stop_reason is StopReason.SCROLL_CEILING
 
 
 @pytest.mark.asyncio
@@ -408,10 +408,10 @@ async def test_all_positive_list_ends_when_the_screen_holds_nothing_new(policy):
 
     report = await triage_run(harness, classifier=classifier, policy=policy).scan()
 
-    assert report.evaluated == 2
-    assert report.preserved == 2
-    assert report.stop_reason.value == FIRST_SCREEN_EXHAUSTED
-    assert len(classifier.calls) == 2
+    assert report.evaluated == 3
+    assert report.preserved == 3
+    assert report.stop_reason is StopReason.SCROLL_CEILING
+    assert len(classifier.calls) == 3
 
 
 @pytest.mark.asyncio
@@ -490,32 +490,60 @@ async def test_scan_stops_when_the_platform_never_returns_to_the_list(policy):
 
 
 @pytest.mark.asyncio
-async def test_cards_below_the_fold_are_never_reached(policy):
-    """#239: no scrolling, so a run's reach is exactly one screen."""
-    texts = [f"我们感谢您的投递 #{i}" for i in range(6)]
-    harness = Harness(
-        [card(t, sender=f"招聘者{i}", descriptor=f"企业{i} | 算法") for i, t in enumerate(texts)],
-        viewport_size=3,
-    )
-    classifier = FakeClassifier(default=False)
+async def test_deep_unread_card_reached_via_scrolling_stops_at_unread_cleared(policy):
+    """Unread badge > 0, first screen holds outbound cards; scrolls down to reach inbound rejection, badge clears -> UNREAD_CLEARED."""
+    cards = [
+        card(DELIVERED_TEXT, sender="Outbound 1", status="[送达]"),
+        card(DELIVERED_TEXT, sender="Outbound 2", status="[送达]"),
+        card(REJECTION_TEXT, sender="Recruiter 3", descriptor=DESCRIPTOR),
+    ]
+    harness = Harness(cards, viewport_size=2, has_unread_dot=True, unread_badge_count=1)
+    classifier = FakeClassifier({REJECTION_TEXT: True})
 
     report = await triage_run(harness, classifier=classifier, policy=policy).scan()
 
-    assert [call[1] for call in classifier.calls] == texts[:3]
-    assert report.scanned == 3
-    assert report.stop_reason.value == FIRST_SCREEN_EXHAUSTED
-    assert len(harness.events) == 0, "a first-screen scan touches nothing but the screen it read"
+    assert report.stop_reason is StopReason.UNREAD_CLEARED
+    assert report.scroll_swipes == 1
+    assert report.rejections == 1
+    assert report.acknowledged == 1
+    assert "scroll_down" in harness.events
+
+
+@pytest.mark.asyncio
+async def test_badge_persists_past_max_scroll_swipes_stops_at_scroll_ceiling(policy):
+    """Unread badge persists beyond max_scroll_swipes -> SCROLL_CEILING."""
+    cards = [card(f"Positive message {i}", sender=f"Recruiter {i}") for i in range(12)]
+    harness = Harness(cards, viewport_size=2, has_unread_dot=True, unread_badge_count=5)
+    classifier = FakeClassifier(default=False)
+    settings = ChatAcknowledgmentSettings(max_scroll_swipes=3)
+
+    report = await triage_run(harness, classifier=classifier, policy=policy, settings=settings).scan()
+
+    assert report.stop_reason is StopReason.SCROLL_CEILING
+    assert report.scroll_swipes == 3
+
+
+@pytest.mark.asyncio
+async def test_list_bottom_out_before_swipe_limit_stops_at_scroll_ceiling(policy):
+    """Unread badge persists, but scrolling reaches end of list (2 consecutive empty scrolls) -> SCROLL_CEILING."""
+    cards = [
+        card("Positive message 1", sender="Recruiter 1"),
+        card("Positive message 2", sender="Recruiter 2"),
+    ]
+    harness = Harness(cards, viewport_size=2, has_unread_dot=True, unread_badge_count=1)
+    classifier = FakeClassifier(default=False)
+    settings = ChatAcknowledgmentSettings(max_scroll_swipes=10)
+
+    report = await triage_run(harness, classifier=classifier, policy=policy, settings=settings).scan()
+
+    assert report.stop_reason is StopReason.SCROLL_CEILING
+    assert report.scroll_swipes == 2
+    assert harness.events.count("scroll_down") == 2
 
 
 @pytest.mark.asyncio
 async def test_the_screen_is_re_read_after_an_acknowledgment_moves_a_card_up(policy):
-    """#239 AC: an acknowledged card leaves the list, so the next one becomes reachable.
-
-    The scan is bounded by the screen rather than by a page count, so the cards that
-    move up into the space an acknowledgment freed are still judged -- while the card
-    that was below the fold of the *first* read is only reached once a card above it
-    is gone.
-    """
+    """An acknowledged card leaves the list, so the next cards move up and are judged."""
     first, second = "我们感谢您的投递 #1", "我们感谢您的投递 #2"
     invitations = ["方便约个时间聊聊吗？", "方便发一下简历吗？", "我们约个面试吧"]
     harness = Harness(
@@ -525,6 +553,7 @@ async def test_the_screen_is_re_read_after_an_acknowledgment_moves_a_card_up(pol
             *[card(t, sender=f"招聘者{i}") for i, t in enumerate(invitations)],
         ],
         viewport_size=3,
+        unread_badge_count=5,
     )
     classifier = FakeClassifier({first: True, second: True})
 
@@ -535,9 +564,7 @@ async def test_the_screen_is_re_read_after_an_acknowledgment_moves_a_card_up(pol
     assert report.acknowledged == 2
     assert report.preserved == 3
     assert policy.company_blacklist == [COMPANY, "磐基技术"]
-    # The two invitations that were below the fold were reached only because the two
-    # acknowledged cards above them left the list.
-    assert report.stop_reason.value == FIRST_SCREEN_EXHAUSTED
+    assert report.stop_reason is StopReason.SCROLL_CEILING
 
 
 @pytest.mark.asyncio
@@ -551,6 +578,7 @@ async def test_a_preserved_card_is_not_judged_twice_across_re_reads(policy):
             card(second, sender="宋女士", descriptor="磐基技术 | 技术总监"),
         ],
         viewport_size=3,
+        unread_badge_count=2,
     )
     classifier = FakeClassifier({first: True, second: True})
 
@@ -578,7 +606,7 @@ async def test_a_second_run_over_an_unchanged_screen_judges_it_again(policy):
 
     assert first.preserved == 2
     assert second.preserved == 2
-    assert second.stop_reason.value == FIRST_SCREEN_EXHAUSTED
+    assert second.stop_reason is StopReason.SCROLL_CEILING
     assert len(classifier.calls) == 4
 
 
@@ -620,6 +648,7 @@ async def test_a_run_stops_within_one_card_when_the_task_is_cancelled(policy):
             card(INVITATION_TEXT, sender="张先生", descriptor="深至科技 | 后端"),
         ],
         viewport_size=1,
+        unread_badge_count=2,
     )
 
     report = await triage_run(
@@ -633,6 +662,32 @@ async def test_a_run_stops_within_one_card_when_the_task_is_cancelled(policy):
     assert report.scanned == 1
     # The card behind the cancelled one was never read, let alone judged.
     assert report.preserved == 0
+
+
+@pytest.mark.asyncio
+async def test_clean_account_without_message_tab_unread_dot_exits_immediately(policy):
+    """Tier 1 short-circuit: no bottom tab dot -> immediate exit with unread_cleared, 0 clicks, 0 card reads."""
+    harness = Harness([card(REJECTION_TEXT)], has_unread_dot=False)
+
+    report = await triage_run(harness, policy=policy).scan()
+
+    assert report.stop_reason is StopReason.UNREAD_CLEARED
+    assert report.scanned == 0
+    assert report.evaluated == 0
+    assert harness.events == []
+
+
+@pytest.mark.asyncio
+async def test_clean_category_without_unread_badge_exits_after_opening_list(policy):
+    """Tier 2 short-circuit: dot present, but 仅沟通 badge absent -> immediate exit with unread_cleared, 0 card reads."""
+    harness = Harness([card(REJECTION_TEXT)], has_unread_dot=True, unread_badge_count=None)
+
+    report = await triage_run(harness, policy=policy).scan()
+
+    assert report.stop_reason is StopReason.UNREAD_CLEARED
+    assert report.scanned == 0
+    assert report.evaluated == 0
+    assert not any("open:" in e or "disinterest" in e for e in harness.events)
 
 
 @pytest.mark.asyncio
