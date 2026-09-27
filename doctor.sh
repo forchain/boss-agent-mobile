@@ -115,7 +115,12 @@ fi
 
 if curl -s -f "http://127.0.0.1:5173" >/dev/null 2>&1; then
     WEB_PID="$(cat .boss_agent/web.pid 2>/dev/null || lsof -ti :5173 2>/dev/null | head -n 1 || echo '')"
-    log_pass "SvelteKit Web 服务正在运行 (http://127.0.0.1:5173${WEB_PID:+, PID: ${WEB_PID}}, 日志: .boss_agent/web.log)"
+    if [[ -n "${WEB_PID}" ]] && ! runner_process_cwd_alive "${WEB_PID}"; then
+        WEB_CWD="$(runner_process_cwd "${WEB_PID}")"
+        log_fail "SvelteKit Web 服务运行于已删除的旧目录 (${WEB_CWD:-未知})，无法加载页面模块！" "运行: ./web.sh restart"
+    else
+        log_pass "SvelteKit Web 服务正在运行 (http://127.0.0.1:5173${WEB_PID:+, PID: ${WEB_PID}}, 日志: .boss_agent/web.log)"
+    fi
 else
     log_warn "SvelteKit Web 服务尚未启动" "运行: ./web.sh"
 fi

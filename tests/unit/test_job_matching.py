@@ -252,3 +252,16 @@ def test_greeting_drafter_in_graph_catches_precondition_failure():
     mock_llm.chat_completion_json.assert_not_called()
 
 
+def test_job_match_greeting_service_default_client_uses_realm(monkeypatch):
+    """When no client is passed, JobMatchGreetingService uses create_llm_client with realm configuration."""
+    from boss_agent import config_realm
+
+    for _key, names in config_realm.ENV_OVERRIDES:
+        for name in names:
+            monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("LLM_MODEL", "matching-realm-model")
+    config_realm.invalidate_cache()
+
+    service = JobMatchGreetingService()
+    assert service.llm_client is not None
+    assert service.llm_client.config.model == "matching-realm-model"

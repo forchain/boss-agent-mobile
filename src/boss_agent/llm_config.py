@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from droid_agent_core.llm import LLMConfig
+from droid_agent_core.llm import LLMConfig, OpenAIChatClient
 
 from . import config_realm
 
@@ -48,4 +48,17 @@ def load_llm_config(config_path: str | Path | None = None) -> LLMConfig:
     return LLMConfig.from_env_or_file(settings=config_realm.load_chain(llm_config_chain()))
 
 
-__all__ = ["LLM_ONLY_FILES", "llm_config_chain", "load_llm_config"]
+def create_llm_client(
+    config_path: str | Path | None = None,
+    config: LLMConfig | None = None,
+) -> OpenAIChatClient:
+    """Instantiate the framework's OpenAIChatClient using the resolved LLM configuration.
+
+    If `config` is provided, it is used directly; otherwise configuration is loaded
+    from the application's configuration realm.
+    """
+    cfg = config if config is not None else load_llm_config(config_path=config_path)
+    return OpenAIChatClient(cfg)
+
+
+__all__ = ["LLM_ONLY_FILES", "create_llm_client", "llm_config_chain", "load_llm_config"]

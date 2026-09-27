@@ -419,7 +419,7 @@ class CandidateScreener:
             "若黑名单关键词仅在长篇JD中作为协作方、技术背景提及、次要了解项或否定句出现（如“配合Java团队”、“了解微服务者优先”但主体是Agent/Python岗位），"
             "严禁误伤，应判决 pass: true；只有当黑名单主题构成了该岗位的核心职责或主要技术栈时，才判决 pass: false。\n"
             "2. 判决仅依据上述黑名单语义评估：JD未触犯黑名单即判决 pass: true，无需JD与任何白名单或兴趣方向词相关联。\n"
-            "3. 严格输出标准 JSON 格式：{\"pass\": true或false, \"reason\": \"50字以内的判定简述\"}。"
+            '3. 严格输出标准 JSON 格式：{"pass": true或false, "reason": "50字以内的判定简述"}。'
         )
 
         user_prompt = (
@@ -436,9 +436,9 @@ class CandidateScreener:
 
         client = self.llm_client
         if not client:
-            from droid_agent_core.llm import OpenAIChatClient
+            from .llm_config import create_llm_client
 
-            client = self.llm_client = OpenAIChatClient()
+            client = self.llm_client = create_llm_client()
 
         try:
             res = client.chat_completion_json(messages)

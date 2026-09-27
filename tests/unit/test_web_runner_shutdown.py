@@ -308,3 +308,50 @@ def test_start_daemon_when_already_running_does_not_attach(web_runtime: Path, du
     assert "Attaching to live log stream" not in result.stdout
 
 
+@pytest.mark.skipif(shutil.which("lsof") is None, reason="lsof is required to verify port release")
+def test_start_reclaims_port_when_held_by_process_with_deleted_cwd(
+    web_runtime: Path, tmp_path: Path
+):
+    """When a server from a deleted worktree holds the port, web.sh must reclaim it on start."""
+    stale_root = tmp_path / "stale_worktree"
+    stale_root.mkdir()
+    port = free_port()
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "http.server", str(port), "--bind", "127.0.0.1"],
+        cwd=str(stale_root),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    wait_for_port_bound(port)
+    try:
+        shutil.rmtree(stale_root)
+        env = dict(os.environ)
+        env["WEB_HOST"] = "127.0.0.1"
+        env["WEB_PORT"] = str(port)
+        env["WEB_STOP_TIMEOUT_SEC"] = "2"
+        bash = shutil.which("bash") or "/bin/bash"
+
+        status_res = subprocess.run(
+            [bash, "web.sh", "status"],
+            cwd=str(web_runtime),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=STOP_BUDGET_SEC,
+        )
+        assert "STALE" in status_res.stdout
+
+        start_res = subprocess.run(
+            [bash, "web.sh", "start", "--daemon"],
+            cwd=str(web_runtime),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=STOP_BUDGET_SEC,
+        )
+        assert "whose working directory was deleted; reclaiming" in start_res.stdout
+        assert proc.poll() is not None, "stale process holding port was not stopped"
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=STOP_BUDGET_SEC)

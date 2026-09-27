@@ -33,8 +33,7 @@ def _fixture() -> dict:
 def test_realm_baseline_matches_the_shared_fixture(key: str) -> None:
     expected = _fixture()["shared_defaults"][key]
     assert config_realm.DEFAULTS.get(key) == expected, (
-        f"{key!r} drifted from config/defaults.fixture.json — change both, or change "
-        "neither."
+        f"{key!r} drifted from config/defaults.fixture.json — change both, or change neither."
     )
 
 
@@ -62,6 +61,22 @@ def test_the_llm_loader_reads_the_realm_baseline(monkeypatch) -> None:
     assert config.timeout_sec == expected["timeout_sec"]
     assert config.model == expected["model"]
     assert config.base_url == expected["base_url"]
+
+
+def test_create_llm_client_instantiates_with_realm_baseline(monkeypatch) -> None:
+    """create_llm_client must yield a configured client reflecting realm defaults and overrides."""
+    from boss_agent.llm_config import create_llm_client
+
+    for _key, names in config_realm.ENV_OVERRIDES:
+        for name in names:
+            monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("LLM_MODEL", "realm-override-model")
+    config_realm.invalidate_cache()
+
+    client = create_llm_client()
+    assert client.config.model == "realm-override-model"
+    expected = _fixture()["shared_defaults"]
+    assert client.config.base_url == expected["base_url"]
 
 
 def test_the_framework_fallback_defaults_agree_with_the_realm() -> None:

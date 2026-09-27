@@ -73,17 +73,17 @@ def fake_toolchain(tmp_path: Path) -> Path:
     (bin_dir / "ps").write_text(
         "#!/usr/bin/env bash\n"
         "# `ps -p PID` succeeds iff the pid is listed in FAKE_PS_ALIVE.\n"
-        "pid=\"\"\n"
-        "stat_format=\"\"\n"
+        'pid=""\n'
+        'stat_format=""\n'
         "while [[ $# -gt 0 ]]; do\n"
-        "  case \"$1\" in\n"
-        "    -p) pid=\"$2\"; shift 2 ;;\n"
-        "    -o) stat_format=\"$2\"; shift 2 ;;\n"
+        '  case "$1" in\n'
+        '    -p) pid="$2"; shift 2 ;;\n'
+        '    -o) stat_format="$2"; shift 2 ;;\n'
         "    *) shift ;;\n"
         "  esac\n"
         "done\n"
-        "if grep -qw \"${pid}\" <<< \"${FAKE_PS_ALIVE:-}\"; then\n"
-        "  if [[ -n \"${stat_format}\" ]]; then echo \"${FAKE_PS_STATE:-S}\"; fi\n"
+        'if grep -qw "${pid}" <<< "${FAKE_PS_ALIVE:-}"; then\n'
+        '  if [[ -n "${stat_format}" ]]; then echo "${FAKE_PS_STATE:-S}"; fi\n'
         "  exit 0\n"
         "fi\n"
         "exit 1\n",
@@ -94,13 +94,23 @@ def fake_toolchain(tmp_path: Path) -> Path:
         "# Only a LISTEN query returns FAKE_LSOF_LISTEN; a bare query returns both, which\n"
         "# is exactly what used to make a connected client a kill candidate.\n"
         "listen_only=0\n"
-        "for arg in \"$@\"; do\n"
-        "  [[ \"${arg}\" == \"-sTCP:LISTEN\" ]] && listen_only=1\n"
+        "is_cwd=0\n"
+        'for arg in "$@"; do\n'
+        '  [[ "${arg}" == "-sTCP:LISTEN" ]] && listen_only=1\n'
+        '  [[ "${arg}" == "cwd" ]] && is_cwd=1\n'
         "done\n"
+        "if [[ ${is_cwd} -eq 1 ]]; then\n"
+        '  if [[ -n "${FAKE_LSOF_CWD:-}" ]]; then\n'
+        '    echo "p1234"\n'
+        '    echo "fcwd"\n'
+        '    echo "n${FAKE_LSOF_CWD}"\n'
+        "  fi\n"
+        "  exit 0\n"
+        "fi\n"
         "if [[ ${listen_only} -eq 1 ]]; then\n"
-        "  echo \"${FAKE_LSOF_LISTEN:-}\"\n"
+        '  echo "${FAKE_LSOF_LISTEN:-}"\n'
         "else\n"
-        "  echo \"${FAKE_LSOF_CONNECTED:-} ${FAKE_LSOF_LISTEN:-}\"\n"
+        '  echo "${FAKE_LSOF_CONNECTED:-} ${FAKE_LSOF_LISTEN:-}"\n'
         "fi\n",
         encoding="utf-8",
     )
@@ -118,6 +128,7 @@ def _run_library(
         "FAKE_PS_ALIVE": "",
         "FAKE_LSOF_LISTEN": "",
         "FAKE_LSOF_CONNECTED": "",
+        "FAKE_LSOF_CWD": "",
         **env,
     }
     return subprocess.run(
@@ -134,7 +145,7 @@ def test_the_port_probe_only_ever_returns_the_listener(fake_toolchain: Path) -> 
     """A client connected to the port is never the port's owner."""
     result = _run_library(
         fake_toolchain,
-        'runner_port_listener_pid 5173',
+        "runner_port_listener_pid 5173",
         FAKE_LSOF_LISTEN="4242",
         FAKE_LSOF_CONNECTED="9999",
     )
@@ -147,7 +158,7 @@ def test_the_port_probe_returns_nothing_for_a_connected_client_alone(
     """The hazard case: something is connected, but nothing is listening."""
     result = _run_library(
         fake_toolchain,
-        'runner_port_listener_pid 5173',
+        "runner_port_listener_pid 5173",
         FAKE_LSOF_CONNECTED="9999",
     )
     assert result.stdout.strip() == ""
@@ -155,12 +166,12 @@ def test_the_port_probe_returns_nothing_for_a_connected_client_alone(
 
 def test_a_zombie_is_not_alive(fake_toolchain: Path) -> None:
     """A defunct process has terminated; it is neither running nor worth a timeout."""
-    alive = _run_library(fake_toolchain, 'runner_process_alive 7 && echo yes', FAKE_PS_ALIVE="7")
+    alive = _run_library(fake_toolchain, "runner_process_alive 7 && echo yes", FAKE_PS_ALIVE="7")
     assert alive.stdout.strip() == "yes"
 
     zombie = _run_library(
         fake_toolchain,
-        'runner_process_alive 7 && echo yes',
+        "runner_process_alive 7 && echo yes",
         FAKE_PS_ALIVE="7",
         FAKE_PS_STATE="Z+",
     )
@@ -171,6 +182,29 @@ def test_a_just_dead_process_is_still_reported_as_gone(fake_toolchain: Path) -> 
     """The wait predicate re-checks at the deadline, so a late exit still counts."""
     result = _run_library(fake_toolchain, "runner_wait_until 1 runner_process_gone 7 && echo gone")
     assert result.stdout.strip() == "gone"
+
+
+def test_process_cwd_alive_reports_live_directory(fake_toolchain: Path, tmp_path: Path) -> None:
+    """A process with an existing working directory is reported as having alive cwd."""
+    live_dir = tmp_path / "live_repo"
+    live_dir.mkdir()
+    result = _run_library(
+        fake_toolchain,
+        "runner_process_cwd_alive 1234 && echo alive",
+        FAKE_LSOF_CWD=str(live_dir),
+    )
+    assert result.stdout.strip() == "alive"
+
+
+def test_process_cwd_alive_detects_deleted_directory(fake_toolchain: Path, tmp_path: Path) -> None:
+    """A process whose working directory no longer exists on disk is detected as dead."""
+    deleted_dir = tmp_path / "deleted_repo"
+    result = _run_library(
+        fake_toolchain,
+        "runner_process_cwd_alive 1234 || echo stale",
+        FAKE_LSOF_CWD=str(deleted_dir),
+    )
+    assert result.stdout.strip() == "stale"
 
 
 def test_resolving_a_pid_prefers_the_pidfile_over_a_stray_listener(
