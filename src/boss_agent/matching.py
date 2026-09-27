@@ -11,9 +11,10 @@ from langsmith import traceable
 from rich.console import Console
 from rich.panel import Panel
 
-from droid_agent_core.llm import LLMDecisionClient, OpenAIChatClient
+from droid_agent_core.llm import LLMDecisionClient
 
 from .greeting_prompt import load_greeting_prompt
+from .llm_config import create_llm_client
 from .memory import StructuredCandidateProfile
 from .models import JobPosting, ScreeningPolicy, is_substantive_jd
 
@@ -50,7 +51,7 @@ class JobMatchGreetingService:
         llm_client: LLMDecisionClient | None = None,
         candidate_profile: StructuredCandidateProfile | None = None,
     ):
-        self.llm_client = llm_client or OpenAIChatClient()
+        self.llm_client = llm_client or create_llm_client()
         self.candidate_profile = candidate_profile
 
     def set_candidate_profile(self, profile: StructuredCandidateProfile) -> None:

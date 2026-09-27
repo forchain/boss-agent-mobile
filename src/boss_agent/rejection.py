@@ -149,9 +149,9 @@ class RejectionClassifier:
 
     def _resolve_client(self) -> Any:
         if self.llm_client is None:
-            from droid_agent_core.llm import OpenAIChatClient
+            from .llm_config import create_llm_client
 
-            self.llm_client = OpenAIChatClient()
+            self.llm_client = create_llm_client()
         return self.llm_client
 
     def classify(self, message_text: str, sender_name: str = "") -> RejectionVerdict:

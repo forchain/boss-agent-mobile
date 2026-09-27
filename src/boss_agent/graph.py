@@ -147,8 +147,7 @@ def apply_relaxation_node(state: JobApplicationState) -> dict[str, Any]:
     is_relaxed, matched_token = policy.evaluate_whitelist_relaxation(**_card_facets(state))
     violation = state.get("app_rule_violation", "")
     reason = (
-        f"【白名单放宽】命中兴趣/专长关键词 '{matched_token}'，"
-        f"豁免 App 端强制过滤违例: {violation}"
+        f"【白名单放宽】命中兴趣/专长关键词 '{matched_token}'，豁免 App 端强制过滤违例: {violation}"
         if is_relaxed
         else ""
     )
@@ -368,9 +367,9 @@ def make_resume_document_generator_node(llm_client: Any | None = None):
 
         client = llm_client
         if not client:
-            from droid_agent_core.llm import OpenAIChatClient
+            from .llm_config import create_llm_client
 
-            client = OpenAIChatClient()
+            client = create_llm_client()
 
         prompt = (
             "请全面、深度、无损地解析以下求职者原始简历文本，并以标准严格的 JSON 格式输出：\n\n"
@@ -471,7 +470,9 @@ def make_resume_diff_analyzer_node(broker: Any | None = None):
                 ).result(timeout=3.0)
         except Exception:
             try:
-                existing = asyncio.run(broker.candidate_memory.get_candidate_profile(user_id=user_id))
+                existing = asyncio.run(
+                    broker.candidate_memory.get_candidate_profile(user_id=user_id)
+                )
             except Exception:
                 existing = None
 
@@ -578,28 +579,18 @@ def make_resume_persister_node(broker: Any | None = None):
                 "raw_resume_text", ""
             )
             final["work_experiences"] = (
-                incoming.get("work_experiences")
-                or existing.get("work_experiences")
-                or []
+                incoming.get("work_experiences") or existing.get("work_experiences") or []
             )
-            final["projects"] = (
-                incoming.get("projects")
-                or existing.get("projects")
-                or []
-            )
+            final["projects"] = incoming.get("projects") or existing.get("projects") or []
             final["project_highlights"] = (
-                incoming.get("project_highlights")
-                or existing.get("project_highlights")
-                or []
+                incoming.get("project_highlights") or existing.get("project_highlights") or []
             )
-            final["education"] = (
-                incoming.get("education")
-                or existing.get("education")
-                or []
-            )
+            final["education"] = incoming.get("education") or existing.get("education") or []
 
         async def _save():
-            saved_prof = await broker.candidate_memory.save_candidate_profile(final, user_id=user_id)
+            saved_prof = await broker.candidate_memory.save_candidate_profile(
+                final, user_id=user_id
+            )
             f_name = state.get("file_name") or "resume.txt"
             f_type = Path(f_name).suffix.lstrip(".") or "txt"
             raw_text = state.get("raw_resume_text", "")
@@ -611,7 +602,9 @@ def make_resume_persister_node(broker: Any | None = None):
                 "extracted_text": raw_text,
                 "diff_summary": state.get("diff_summary", "画像更新"),
             }
-            rev_rec = await broker.candidate_memory.create_resume_revision(rev_data, user_id=user_id)
+            rev_rec = await broker.candidate_memory.create_resume_revision(
+                rev_data, user_id=user_id
+            )
             return saved_prof, rev_rec
 
         try:
@@ -706,4 +699,3 @@ def run_resume_lifecycle_graph(
 
     result = graph.invoke(initial_state)
     return result
-

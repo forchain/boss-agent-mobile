@@ -12,7 +12,9 @@ from typing import Any
 from langsmith import traceable
 from rich.console import Console
 
-from droid_agent_core.llm import LLMDecisionClient, OpenAIChatClient
+from droid_agent_core.llm import LLMDecisionClient
+
+from .llm_config import create_llm_client
 
 console = Console()
 
@@ -171,7 +173,9 @@ class StructuredCandidateProfile:
         )
 
         parts = []
-        if self.profile_document and ("#" in self.profile_document or len(self.profile_document) > 200):
+        if self.profile_document and (
+            "#" in self.profile_document or len(self.profile_document) > 200
+        ):
             parts.append(
                 f"[候选人结构化全景画像 (Lossless Profile Document)]\n{self.profile_document.strip()}"
             )
@@ -189,7 +193,10 @@ class StructuredCandidateProfile:
             parts.append(f"工作经历 (无损完整履历):\n{work_str}")
         if projects_str:
             parts.append(f"项目经历 (完整架构与指标):\n{projects_str}")
-        if not ("#" in self.profile_document or len(self.profile_document) > 200) and self.raw_summary:
+        if (
+            not ("#" in self.profile_document or len(self.profile_document) > 200)
+            and self.raw_summary
+        ):
             parts.append(f"个人总结与背景优势: {self.raw_summary}")
 
         return "\n\n".join(parts) + ground_truth
@@ -437,14 +444,14 @@ class ResumeMemoryManager:
         memory_file_path: str | Path | None = None,
         candidate_config_path: str | Path | None = None,
     ):
-        self.llm_client = llm_client or OpenAIChatClient()
+        self.llm_client = llm_client or create_llm_client()
         self.extractor = ResumeTextExtractor()
 
         # Load candidate config if available
         self.candidate_config = self._load_candidate_config(candidate_config_path)
 
-        self.explicit_memory_file = (
-            memory_file_path is not None or bool(self.candidate_config.get("memory_path"))
+        self.explicit_memory_file = memory_file_path is not None or bool(
+            self.candidate_config.get("memory_path")
         )
         configured_memory = (
             memory_file_path or self.candidate_config.get("memory_path") or self.DEFAULT_MEMORY_PATH
@@ -504,9 +511,9 @@ class ResumeMemoryManager:
                 import concurrent.futures
 
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                    data = pool.submit(asyncio.run, broker.candidate_memory.get_candidate_profile()).result(
-                        timeout=3.0
-                    )
+                    data = pool.submit(
+                        asyncio.run, broker.candidate_memory.get_candidate_profile()
+                    ).result(timeout=3.0)
             except RuntimeError:
                 data = asyncio.run(broker.candidate_memory.get_candidate_profile())
 
@@ -634,7 +641,8 @@ class ResumeMemoryManager:
 
                     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
                         pool.submit(
-                            asyncio.run, broker.candidate_memory.save_candidate_profile(profile.to_dict())
+                            asyncio.run,
+                            broker.candidate_memory.save_candidate_profile(profile.to_dict()),
                         ).result(timeout=5.0)
                 except RuntimeError:
                     asyncio.run(broker.candidate_memory.save_candidate_profile(profile.to_dict()))
