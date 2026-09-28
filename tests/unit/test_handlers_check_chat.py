@@ -216,6 +216,8 @@ async def test_handler_processes_single_card_through_the_real_page_object(
             return [badge_elem] if badge_elem.text else []
         if "仅沟通" in value or "不感兴趣" in value or "重复推荐" in value:
             return [MagicMock(text="仅沟通")]
+        if "tv_tab_3" in value or "tab_3" in value or "消息" in value:
+            return [MagicMock(text="消息")]
         return []
 
     driver.find_elements.side_effect = mock_find

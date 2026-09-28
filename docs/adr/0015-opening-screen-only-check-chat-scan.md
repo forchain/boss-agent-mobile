@@ -1,5 +1,7 @@
 # 0015. CHECK_CHAT Reads the Opening Screen and Never Pages
 
+> **SUPERSEDED by [ADR 0017](0017-unread-badge-bounded-check-chat-paging.md) (2026-09-28).** Reading only the opening screen blinded the scan to unread recruiter replies pushed below a stack of outbound-waiting threads, which are never removed from the list. `CHECK_CHAT` therefore pages again — bounded this time by the platform's own 仅沟通 unread badge rather than by a depth, ceiling or timestamp, and behind a two-tier preflight that can clear a zero-unread account before it reads a card. The `first_screen_exhausted` stop reason is retired with it; this record is kept as the history of the approach and its accepted limitation.
+
 We decided that the rejection cleanup (`CHECK_CHAT`) stops paging the 仅沟通 list altogether: a run reads the cards on the opening screen, re-reads that same screen after each acknowledgment, and ends once nothing on it is new. **This supersedes ADR 0014**, which bounded a paging scan by the previous run's completion time, and it removes the paging machinery ADR 0014 built — the execution cursor, the card-stamp parser, and the broker query that fed them.
 
 ## Context

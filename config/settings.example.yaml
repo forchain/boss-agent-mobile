@@ -115,6 +115,10 @@ chat:
   # 带「送达/已读」状态标签的出站等待消息不消耗该额度（env: CHAT_MAX_SCAN_DEPTH）
   max_scan_depth: 30
 
+  # 未读角标仍存在时，单次 CHECK_CHAT 任务最多向下滑动翻页的次数，防止列表无限滚动。
+  # 连续两次滑动未发现新卡片（列表触底）时会提前终止（env: CHAT_MAX_SCROLL_SWIPES）
+  max_scroll_swipes: 5
+
   # 演练模式：只识别拒信并记录拟拉黑的企业，不改写筛选配置、不发送任何消息
   # （env: CHAT_DRY_RUN）
   dry_run: false

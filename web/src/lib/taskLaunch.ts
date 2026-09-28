@@ -12,6 +12,8 @@
  * drift from the worker's expectation.
  */
 
+import { DEFAULT_CHAT_ACKNOWLEDGMENT } from './chatAcknowledgment';
+
 /** The baseline relevance threshold, declared once. */
 export const MIN_SCORE = 70;
 
@@ -70,6 +72,7 @@ export interface SearchLaunchInput {
 export interface ChatAcknowledgment {
 	rejection_reply_text?: string;
 	max_scan_depth?: number;
+	max_scroll_swipes?: number;
 	dry_run?: boolean;
 }
 
@@ -150,7 +153,8 @@ export function buildChatCleanupLaunch(options: {
 		// which surface produced it.
 		dry_run: options.mode === undefined ? chat.dry_run === true : options.mode === 'draft',
 		rejection_reply_text: chat.rejection_reply_text ?? '',
-		max_scan_depth: chat.max_scan_depth ?? 0
+		max_scan_depth: chat.max_scan_depth ?? 0,
+		max_scroll_swipes: chat.max_scroll_swipes ?? DEFAULT_CHAT_ACKNOWLEDGMENT.max_scroll_swipes
 	};
 	if (options.search) {
 		payload.saved_search_id = options.search.id;
@@ -237,6 +241,7 @@ export function rebuildRerunPayload(
 			chat: {
 				rejection_reply_text: prior.rejection_reply_text,
 				max_scan_depth: prior.max_scan_depth,
+				max_scroll_swipes: prior.max_scroll_swipes,
 				dry_run: prior.dry_run
 			}
 		});

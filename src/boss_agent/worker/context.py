@@ -46,6 +46,41 @@ class WorkerContext:
         """
         return self._driver is not None
 
+    def ensure_device_session(self) -> bool:
+        """Verify the established session is still alive, dropping it when it is not.
+
+        Appium terminates a session after ``new_command_timeout`` of silence, so a
+        worker that idles between tasks wakes up to a driver whose session is gone.
+        Handlers read the driver through this context, and a dropped reference lets
+        the lazy factory reopen one; a dead session left in place instead turns every
+        element probe into a swallowed failure and the task into a phantom UI bug.
+
+        Returns True when a live session (or no session at all) was found, False when
+        a dead one was released. A driver that exposes no probe surface is kept: an
+        unknown is not a death sentence.
+        """
+        driver = self._driver
+        if driver is None:
+            return True
+
+        missing = object()
+        try:
+            # `getattr` with a default swallows only AttributeError — a property that
+            # raises anything else (the WebDriver errors of a dead session) propagates.
+            probed = getattr(driver, "current_package", missing)
+        except Exception as e:
+            logger.warning("♻️ Device session probe failed (%s); reopening.", e)
+            self.release_device_session()
+            return False
+
+        if probed is not missing:
+            return True
+
+        logger.warning(
+            "ℹ️ Device session exposes no liveness probe; keeping it as-is."
+        )
+        return True
+
     def release_device_session(self) -> bool:
         """Close the active Virtual Device Session and drop the reference.
 

@@ -46,11 +46,6 @@ from boss_agent.rejection import (
     RejectionVerdict,
 )
 
-#: The `stop_reason` a First-Screen Scan ends on, pinned as a literal rather than
-#: imported from the module: the value is the contract, so a rename inside must fail
-#: this suite rather than silently move the contract with it.
-FIRST_SCREEN_EXHAUSTED = "first_screen_exhausted"
-
 
 @pytest.fixture
 def config_path(tmp_path: Path) -> Path:
@@ -276,6 +271,30 @@ async def test_a_configured_ceiling_bounds_the_run(policy):
 
     assert report.scanned == 5
     assert report.stop_reason is StopReason.SCAN_CEILING
+
+
+@pytest.mark.asyncio
+async def test_the_card_ceiling_does_not_borrow_the_scroll_ceiling_name(policy):
+    """A run that has scrolled and then hits the card ceiling still names that ceiling.
+
+    Blaming the swipe limit for a stop it did not cause leaves the log tag and
+    `stop_reason` telling an operator two different stories (issue #287 review).
+    """
+    harness = Harness(
+        [card(DELIVERED_TEXT, sender=f"招聘者{i}", status="[送达]") for i in range(6)],
+        viewport_size=2,
+        unread_badge_count=5,
+    )
+    lines, log = recording_log()
+
+    report = await triage_run(
+        harness, policy=policy, log=log, max_inspected_cards=3
+    ).scan()
+
+    assert report.scroll_swipes == 1
+    assert report.stop_reason is StopReason.SCAN_CEILING
+    assert any("[Scan Ceiling]" in line for line in lines)
+    assert not any("[Scroll Ceiling]" in line for line in lines)
 
 
 @pytest.mark.asyncio
@@ -542,6 +561,22 @@ async def test_list_bottom_out_before_swipe_limit_stops_at_scroll_ceiling(policy
 
 
 @pytest.mark.asyncio
+async def test_higher_max_scroll_swipes_expands_inspection_ceiling(policy):
+    """When max_scroll_swipes is raised, max_inspected_cards scales so it doesn't prematurely halt."""
+    # 70 outbound messages; with 8 swipes, default 50 card limit would truncate early without dynamic scaling
+    cards = [card(f"Outbound {i}", status="[送达]") for i in range(70)]
+    harness = Harness(cards, viewport_size=8, has_unread_dot=True, unread_badge_count=2)
+    classifier = FakeClassifier(default=False)
+    settings = ChatAcknowledgmentSettings(max_scroll_swipes=8)
+
+    report = await triage_run(harness, classifier=classifier, policy=policy, settings=settings).scan()
+
+    assert report.stop_reason is StopReason.SCROLL_CEILING
+    assert report.scroll_swipes == 8
+    assert report.scanned > 50
+
+
+@pytest.mark.asyncio
 async def test_the_screen_is_re_read_after_an_acknowledgment_moves_a_card_up(policy):
     """An acknowledged card leaves the list, so the next cards move up and are judged."""
     first, second = "我们感谢您的投递 #1", "我们感谢您的投递 #2"
@@ -691,6 +726,76 @@ async def test_clean_category_without_unread_badge_exits_after_opening_list(poli
 
 
 @pytest.mark.asyncio
+async def test_a_cold_start_tab_bar_without_its_dot_yet_does_not_skip_the_list(policy):
+    """Issue #287 review: on a cold start the bar renders before its badge state does.
+
+    The dot is absent for a settle window and only then appears. A single absent
+    reading must not carry a skip, so the run falls through to the list and clears
+    the unread it actually has.
+    """
+    harness = Harness(
+        [card(REJECTION_TEXT, descriptor=DESCRIPTOR)],
+        has_unread_dot=True,
+        unread_badge_count=1,
+        dot_readings=[False, False, True],
+    )
+
+    report = await triage_run(
+        harness, classifier=FakeClassifier({REJECTION_TEXT: True}), policy=policy
+    ).scan()
+
+    assert report.stop_reason is StopReason.UNREAD_CLEARED
+    # It got there by scanning the card, not by trusting an unrendered probe.
+    assert report.scanned == 1
+    assert report.acknowledged == 1
+    assert report.blacklisted_companies == (COMPANY,)
+
+
+@pytest.mark.asyncio
+async def test_a_category_badge_that_renders_late_does_not_skip_the_list(policy):
+    """Tier 2 reads the same way: a late 仅沟通 badge is re-read before it is believed."""
+    harness = Harness(
+        [card(REJECTION_TEXT, descriptor=DESCRIPTOR)],
+        has_unread_dot=True,
+        unread_badge_count=2,
+        badge_readings=[None, None, 2],
+    )
+
+    report = await triage_run(
+        harness, classifier=FakeClassifier({REJECTION_TEXT: True}), policy=policy
+    ).scan()
+
+    assert report.scanned == 1
+    assert report.acknowledged == 1
+    assert report.blacklisted_companies == (COMPANY,)
+
+
+@pytest.mark.asyncio
+async def test_a_badge_that_blinks_absent_mid_run_keeps_the_scan_going(policy):
+    """A mid-run read of zero is re-read too: a blink must not cut the run short."""
+    harness = Harness(
+        [
+            card(REJECTION_TEXT, sender="严胜", descriptor=DESCRIPTOR),
+            card(INVITATION_TEXT, sender="张先生", descriptor="深至科技 | 后端"),
+        ],
+        viewport_size=2,
+        has_unread_dot=True,
+        unread_badge_count=2,
+        badge_readings=[2, 0, 0, 2],
+    )
+
+    report = await triage_run(
+        harness,
+        classifier=FakeClassifier({REJECTION_TEXT: True}),
+        policy=policy,
+    ).scan()
+
+    # The second card was still reached: the blink did not end the run early.
+    assert report.scanned == 2
+    assert report.acknowledged == 1
+
+
+@pytest.mark.asyncio
 async def test_an_unreachable_list_ends_the_run_before_any_card_is_read(policy):
     harness = Harness([card(REJECTION_TEXT)], on_list=False, open_list_ok=False)
     lines, log = recording_log()
@@ -702,3 +807,27 @@ async def test_an_unreachable_list_ends_the_run_before_any_card_is_read(policy):
     assert report.stop_reason is StopReason.LIST_UNREACHABLE
     assert report.scanned == 0
     assert any("无法进入" in line for line in lines)
+
+
+@pytest.mark.asyncio
+async def test_enter_list_always_navigates_to_ensure_jingoutong_selected(policy):
+    """Page source cannot distinguish active subtab; scan() must always call ensure_open_list."""
+    harness = Harness([card(REJECTION_TEXT, sender="严胜", descriptor=DESCRIPTOR)], on_list=True)
+    open_list_called = False
+    original_open_list = harness.open_list
+
+    def spy_open_list(*args, **kwargs):
+        nonlocal open_list_called
+        open_list_called = True
+        return original_open_list(*args, **kwargs)
+
+    harness.open_list = spy_open_list  # type: ignore[method-assign]
+    report = await triage_run(
+        harness,
+        classifier=FakeClassifier({REJECTION_TEXT: True}),
+        policy=policy,
+    ).scan()
+
+    assert open_list_called is True
+    assert report.rejections == 1
+

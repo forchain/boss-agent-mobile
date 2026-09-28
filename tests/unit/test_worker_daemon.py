@@ -7,6 +7,7 @@ Unit tests for Out-of-Process Automation Worker Daemon & CHECK_LOGIN Handler (Is
 from unittest.mock import MagicMock
 
 import pytest
+from selenium.common.exceptions import WebDriverException
 
 from boss_agent.broker.models import TaskStatus, TaskType
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
@@ -451,3 +452,56 @@ async def test_worker_survives_uncaught_exception_with_vanished_record(broker, m
 
 
 
+
+
+@pytest.mark.asyncio
+async def test_worker_reopens_a_dead_device_session_before_the_handler_runs(broker):
+    """A session the Appium server terminated between tasks must be replaced, not used.
+
+    The 22:29 CHECK_CHAT failure: the startup cleanup ran at 22:20, Appium's
+    new-command timeout killed the idle session, and the next task navigated a dead
+    driver for 6 recovery steps before failing with a UI-shaped error. The daemon
+    verifies the session the moment it claims work, so the handler gets a live driver
+    and the device-drop never reaches the task as a phantom UI bug.
+    """
+    from boss_agent.worker.handlers.base import BaseTaskHandler, HandlerResult
+
+    class DeadDriver:
+        def __init__(self) -> None:
+            self.quit_called = False
+
+        @property
+        def current_package(self) -> str:
+            raise WebDriverException("A session is either terminated or not started")
+
+        def quit(self) -> None:
+            self.quit_called = True
+
+    fresh_driver = MagicMock()
+    seen: list = []
+
+    class RecordingHandler(BaseTaskHandler):
+        @property
+        def task_type(self) -> TaskType:
+            return TaskType.CHECK_LOGIN
+
+        async def handle(self, task, broker, context) -> HandlerResult:
+            seen.append(context.driver)
+            return HandlerResult(success=True)
+
+    config = WorkerConfig(worker_id="worker-session-reopen", poll_interval_sec=0.01)
+    dead = DeadDriver()
+    context = WorkerContext(
+        config=config, driver=dead, driver_factory=lambda: fresh_driver
+    )
+    worker = AutomationWorker(
+        config=config, broker=broker, context=context, handlers=[RecordingHandler()]
+    )
+
+    task = await broker.create_task(task_type=TaskType.CHECK_LOGIN)
+    executed = await worker.run_once()
+
+    assert executed is True
+    assert seen == [fresh_driver], "the handler must run against a reopened session"
+    assert dead.quit_called is True, "the dead session must be released"
+    assert (await broker.get_task(task.id)).status == TaskStatus.SUCCESS

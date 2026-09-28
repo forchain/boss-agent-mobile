@@ -92,6 +92,8 @@ class Harness:
         has_unread_dot: bool = True,
         unread_badge_count: int | None = 1,
         auto_decrement_badge: bool = True,
+        dot_readings: list[bool] | None = None,
+        badge_readings: list[int | None] | None = None,
     ) -> None:
         self.cards = list(cards)
         self.viewport_size = viewport_size
@@ -104,6 +106,11 @@ class Harness:
         self.has_unread_dot = has_unread_dot
         self.unread_badge_count = unread_badge_count
         self.auto_decrement_badge = auto_decrement_badge
+        # Scripted probe readings, consumed one per call and then falling back to the
+        # steady-state values above. This is how a test models a screen that has not
+        # finished rendering: the first reading of a probe is not the account's state.
+        self.dot_readings = list(dot_readings or [])
+        self.badge_readings = list(badge_readings or [])
         self.scroll_offset = 0
         self.events: list[str] = []
 
@@ -116,9 +123,13 @@ class Harness:
         return self.open_list_ok
 
     def has_message_tab_unread_dot(self, timeout_sec: float = 1.0) -> bool:
+        if self.dot_readings:
+            return self.dot_readings.pop(0)
         return self.has_unread_dot
 
     def get_unread_badge_count(self, timeout_sec: float = 1.0) -> int | None:
+        if self.badge_readings:
+            return self.badge_readings.pop(0)
         return self.unread_badge_count
 
     def scroll_message_list(self) -> bool:
@@ -201,6 +212,11 @@ class FakeChatPage:
         return True
 
 
+async def no_pause(_seconds: float) -> None:
+    """Skip the preflight settle window: a scripted screen is never mid-render."""
+    return None
+
+
 def triage_run(
     harness: Harness,
     *,
@@ -209,7 +225,8 @@ def triage_run(
     settings: ChatAcknowledgmentSettings | None = None,
     log: Any = None,
     is_cancelled: Any = None,
-    max_inspected_cards: int = MAX_INSPECTED_CARDS,
+    pause: Any = no_pause,
+    max_inspected_cards: int | None = None,
 ) -> ChatTriage:
     """One triage run over the scripted device world, through the production adapters."""
     return ChatTriage(
@@ -220,6 +237,7 @@ def triage_run(
         settings=settings or ChatAcknowledgmentSettings(),
         log=log,
         is_cancelled=is_cancelled,
+        pause=pause,
         max_inspected_cards=max_inspected_cards,
     )
 

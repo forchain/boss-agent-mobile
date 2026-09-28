@@ -71,11 +71,18 @@ class ChatAcknowledgmentSettings:
             reply_text = self.rejection_reply_text
 
         raw_dry_run = payload.get("dry_run")
+        max_scan_depth = coerce_positive_int(payload.get("max_scan_depth"), self.max_scan_depth)
+
+        raw_swipes = payload.get("max_scroll_swipes")
+        if raw_swipes is not None:
+            max_scroll_swipes = coerce_positive_int(raw_swipes, self.max_scroll_swipes)
+        else:
+            max_scroll_swipes = max(self.max_scroll_swipes, (max_scan_depth + 5) // 6)
 
         return ChatAcknowledgmentSettings(
             rejection_reply_text=reply_text,
-            max_scan_depth=coerce_positive_int(payload.get("max_scan_depth"), self.max_scan_depth),
-            max_scroll_swipes=coerce_positive_int(payload.get("max_scroll_swipes"), self.max_scroll_swipes),
+            max_scan_depth=max_scan_depth,
+            max_scroll_swipes=max_scroll_swipes,
             # Coerced, not `bool(...)`: a payload of "false" must not read as True.
             dry_run=coerce_bool(raw_dry_run, default=self.dry_run),
         )

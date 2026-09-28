@@ -419,7 +419,7 @@
 								</div>
 							</div>
 
-							<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+							<div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
 								<div>
 									<label for="chat-cleanup-reply-input" class="block text-slate-400 mb-1 font-medium text-[11px]">
 										礼貌收尾文案
@@ -446,7 +446,24 @@
 										class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-cyan-500 font-mono text-xs"
 									/>
 								</div>
+								<div>
+									<label for="chat-cleanup-swipes-input" class="block text-slate-400 mb-1 font-medium text-[11px]">
+										最大翻页次数
+									</label>
+									<input
+										id="chat-cleanup-swipes-input"
+										type="number"
+										min="1"
+										max="50"
+										bind:value={chat.max_scroll_swipes}
+										placeholder={String(DEFAULT_CHAT_ACKNOWLEDGMENT.max_scroll_swipes)}
+										class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-cyan-500 font-mono text-xs"
+									/>
+								</div>
 							</div>
+							<p class="text-[11px] text-slate-500">
+								出站消息（送达/已读）零消耗跳过；若仍有未读角标，将向下滑动翻页深入扫描，最多翻页设定的次数。
+							</p>
 
 							<label class="flex items-start space-x-2 cursor-pointer">
 								<input type="checkbox" bind:checked={chatDryRun} class="mt-0.5 accent-cyan-500" />

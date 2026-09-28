@@ -197,29 +197,49 @@ export class RealtimeClient {
 export function createPocketBaseTransport(
 	pocketBase: {
 		collection: (name: string) => {
-			subscribe: (topic: string, handler: (event: any) => void) => Promise<void> | void;
-			unsubscribe: (topic: string) => Promise<void> | void;
+			subscribe: (topic: string, handler: (event: any) => void) => Promise<any> | any;
+			unsubscribe: (topic?: string) => Promise<any> | any;
 		};
 	}
 ): RealtimeTransport {
-	let topicCounter = 0;
 	return {
 		subscribe(collection, handler) {
-			const topic = `realtime-${++topicCounter}`;
+			let unsubscriber: (() => void) | null = null;
+			let active = true;
 			void Promise.resolve(
-				pocketBase.collection(collection).subscribe(topic, (event) => {
-					handler({ action: event?.action, record: event?.record ?? {} });
+				pocketBase.collection(collection).subscribe('*', (event) => {
+					if (active) {
+						handler({ action: event?.action, record: event?.record ?? {} });
+					}
 				})
-			).catch(() => {
-				// A refused subscription is the health gate's business, not a throw here.
-			});
+			)
+				.then((unsub) => {
+					if (typeof unsub === 'function') {
+						unsubscriber = unsub;
+					}
+					if (!active && unsubscriber) {
+						unsubscriber();
+					}
+				})
+				.catch(() => {
+					// A refused subscription is the health gate's business, not a throw here.
+				});
 			return () => {
-				try {
-					void Promise.resolve(pocketBase.collection(collection).unsubscribe(topic)).catch(
-						() => {}
-					);
-				} catch {
-					// ignore
+				active = false;
+				if (unsubscriber) {
+					try {
+						unsubscriber();
+					} catch {
+						// ignore
+					}
+				} else {
+					try {
+						void Promise.resolve(pocketBase.collection(collection).unsubscribe('*')).catch(
+							() => {}
+						);
+					} catch {
+						// ignore
+					}
 				}
 			};
 		}

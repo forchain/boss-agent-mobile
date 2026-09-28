@@ -120,6 +120,27 @@ describe('Chat acknowledgment settings (issue #208)', () => {
 		expect(reloaded.chat?.max_scan_depth).toBe(12);
 	});
 
+	it('keeps max_scroll_swipes when an unrelated setting is saved', async () => {
+		const { saveSettingsToLocalYaml, loadMergedSettings } = await import('../lib/server/settings');
+
+		saveSettingsToLocalYaml({ chat: { max_scroll_swipes: 9 } } as any);
+		// The writer emits a fixed key set and the normalizer returns a fixed key
+		// set, so a knob missing from either is deleted from local.yaml the next
+		// time any other setting is saved.
+		saveSettingsToLocalYaml({ chat: { rejection_reply_text: '好的' } } as any);
+
+		expect(fs.readFileSync(sandbox.file, 'utf-8')).toContain('max_scroll_swipes: 9');
+		expect(loadMergedSettings().chat?.max_scroll_swipes).toBe(9);
+	});
+
+	it('clamps a non-positive max_scroll_swipes to the documented default', async () => {
+		const { normalizeChatAcknowledgment } = await import('../lib/chatAcknowledgment');
+
+		expect(normalizeChatAcknowledgment({ max_scroll_swipes: 0 }).max_scroll_swipes).toBe(5);
+		expect(normalizeChatAcknowledgment({ max_scroll_swipes: 'nope' }).max_scroll_swipes).toBe(5);
+		expect(normalizeChatAcknowledgment({ max_scroll_swipes: 12.7 }).max_scroll_swipes).toBe(12);
+	});
+
 	it('never writes a blank reply text or a non-positive scan bound', async () => {
 		const { saveSettingsToLocalYaml, loadMergedSettings } = await import('../lib/server/settings');
 

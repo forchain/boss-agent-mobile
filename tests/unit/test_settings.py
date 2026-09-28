@@ -580,6 +580,19 @@ def test_payload_overrides_can_re_enable_a_live_run():
     assert ChatAcknowledgmentSettings().with_overrides({"dry_run": "maybe"}).dry_run is False
 
 
+def test_payload_overrides_max_scroll_swipes():
+    """Explicit max_scroll_swipes is honored; omitted swipes scales with max_scan_depth."""
+    base = ChatAcknowledgmentSettings(max_scroll_swipes=5, max_scan_depth=30)
+
+    # Explicit override
+    assert base.with_overrides({"max_scroll_swipes": 12}).max_scroll_swipes == 12
+    assert base.with_overrides({"max_scroll_swipes": 3}).max_scroll_swipes == 3
+
+    # Scaled automatically when max_scan_depth is increased without explicit swipes
+    assert base.with_overrides({"max_scan_depth": 50}).max_scroll_swipes >= 9
+    assert base.with_overrides({"max_scan_depth": 30}).max_scroll_swipes == 5
+
+
 def test_partial_chat_override_keeps_the_sibling_setting(tmp_path: Path):
     """A hand-edited block with only one key must not drop the other (ADR 0010)."""
     example = tmp_path / "settings.example.yaml"

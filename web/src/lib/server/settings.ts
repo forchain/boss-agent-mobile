@@ -492,6 +492,7 @@ export function saveSettingsToLocalYaml(
 		`chat:`,
 		`  rejection_reply_text: ${JSON.stringify(chat.rejection_reply_text)}`,
 		`  max_scan_depth: ${chat.max_scan_depth}`,
+		`  max_scroll_swipes: ${chat.max_scroll_swipes}`,
 		`  dry_run: ${chat.dry_run ? 'true' : 'false'}`,
 		``
 	].join('\n');

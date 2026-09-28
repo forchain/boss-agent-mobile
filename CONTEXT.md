@@ -283,11 +283,11 @@ The dedicated sub-tab/filter within the message screen (`tv_tab_3` -> `tv_title`
 _Avoid_: 新招呼, 全部消息, 互动标签
 
 **Communication Unread Badge (仅沟通未读角标)**:
-The numeric badge adjacent to the '仅沟通' sub-tab (`tv_count`) indicating the count of unread recruiter conversations in the communication filter. Serves as the Tier 2 preflight probe and the primary termination driver for the chat triage scan.
+The numeric badge adjacent to the '仅沟通' sub-tab (`tv_count`, anchored on that tab's own title node so another sub-tab's count is never read as its own) indicating the count of unread recruiter conversations in the communication filter. Serves as the Tier 2 preflight probe and the primary termination driver for the chat triage scan; an absent or zero reading only ends a run once it holds across the settle window, since a badge that has not been drawn yet is indistinguishable from a cleared one.
 _Avoid_: 未读计数, 小红点, 消息角标
 
 **Message Tab Unread Dot (底栏消息未读红点)**:
-The red notification dot on the bottom navigation '消息' tab (`fl_tab_3_red_dot`). Serves as the Tier 1 preflight probe: when the bottom bar is visible and lacks this dot, the entire account is guaranteed zero-unread, allowing instant triage short-circuit without navigating into the list.
+The red notification dot on the bottom navigation '消息' tab (`fl_tab_3_red_dot`). Serves as the Tier 1 preflight probe: when the bottom bar is visible and lacks this dot, the entire account is zero-unread and triage short-circuits without navigating into the list. An absence must hold across the settle window before it counts, and a bar that is not on screen at all reads as *not* clear — nothing can be concluded about an account whose navigation is not visible.
 _Avoid_: 底栏红点, 导航圆点, 消息红点
 
 **Rejection Blacklist Ingestion**:
@@ -307,7 +307,7 @@ The startup rule that a service queues one marked `CHECK_CHAT` before anything e
 _Avoid_: startup lock, init mutex, 启动检查
 
 **Unread-Badge Bounded Scan (未读角标驱动扫描)**:
-The `CHECK_CHAT` traversal rule: a run checks two tiers of unread preflight probes for instant short-circuiting on zero-unread accounts, reads the visible screen of the 仅沟通 list, evaluates unread messages while skipping outbound cards, and performs bounded downward scroll gestures (`scroll_message_list`) only when unread messages remain below the fold. The traversal terminates immediately once the unread badge is cleared (`unread_cleared`), or upon reaching safety ceilings (`scroll_ceiling` at `max_scroll_swipes` or list bottom). Supersedes First-Screen Scan (ADR 0017 supersedes ADR 0015).
+The `CHECK_CHAT` traversal rule: a run checks two tiers of unread preflight probes for a short-circuit on zero-unread accounts, reads the visible screen of the 仅沟通 list, evaluates unread messages while skipping outbound cards, and performs bounded downward scroll gestures (`scroll_message_list`) only when unread messages remain below the fold. The traversal terminates once the unread badge is cleared (`unread_cleared`), or upon reaching safety ceilings (`scroll_ceiling` at `max_scroll_swipes` or list bottom; `scan_ceiling` at the card bound). Every probe absence that ends or continues a run is confirmed across a settle window first, so a screen that has not finished rendering cannot pass for a clean account. Supersedes First-Screen Scan (ADR 0017 supersedes ADR 0015).
 _Avoid_: infinite scroll, unconstrained sweep, opening-screen only scan
 
 **System Doctor (`doctor.sh`)**:

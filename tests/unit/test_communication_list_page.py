@@ -312,13 +312,14 @@ def _recovery_page(driver: _NavDriver) -> CommunicationListPage:
     return page
 
 
-def test_open_list_returns_immediately_when_already_on_the_list():
-    """#228: a worker already on the list must not touch the screen at all."""
+def test_open_list_clicks_message_tab_then_communication_tab_even_when_subtab_visible():
+    """#228: page source cannot distinguish active subtab; open_list must click 消息 -> 仅沟通."""
     driver = _NavDriver(on_list=True)
     page = _recovery_page(driver)
 
     assert page.open_list(timeout_sec=0.1) is True
-    assert page.gestures.human_click.call_count == 0
+    clicked = [call.args[0].name for call in page.gestures.human_click.call_args_list]
+    assert clicked == ["消息", "仅沟通"]
     assert driver.keycodes == []
 
 
@@ -353,6 +354,8 @@ def test_recovery_prefers_the_on_screen_back_button_over_the_hardware_key():
     assert [c.args[0].name for c in page.gestures.human_click.call_args_list] == [
         "iv_back",
         "iv_back",
+        "消息",
+        "仅沟通",
     ]
 
 
@@ -362,6 +365,10 @@ def test_recovery_falls_back_to_the_hardware_back_key():
 
     assert page.open_list(timeout_sec=0.1, max_steps=4) is True
     assert driver.keycodes == [4]
+    assert [c.args[0].name for c in page.gestures.human_click.call_args_list] == [
+        "消息",
+        "仅沟通",
+    ]
 
 
 def test_recovery_reactivates_boss_when_back_escapes_to_the_launcher():
