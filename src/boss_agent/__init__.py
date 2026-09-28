@@ -39,7 +39,8 @@ with contextlib.suppress(ImportError):
     is_writable_screening_path,
     resolve_writable_screening_config_path,
 )
-from .screening import (
+with contextlib.suppress(ImportError):
+    from .screening import (
         CandidateScreener,
         CardScreeningVerdict,
         CardVerdictStage,

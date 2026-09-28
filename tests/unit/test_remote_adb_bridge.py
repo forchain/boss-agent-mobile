@@ -193,3 +193,17 @@ def test_target_unreachable_does_not_crash_bridge(tmp_path: Path):
         c.close()
     finally:
         bridge.stop()
+
+
+def test_boss_agent_imports_without_langsmith(monkeypatch: pytest.MonkeyPatch):
+    """When langsmith is not installed or raises ImportError, boss_agent and
+    its service submodules (e.g. remote_adb_bridge) must still import cleanly."""
+    import sys
+
+    monkeypatch.setitem(sys.modules, "langsmith", None)
+    for mod in list(sys.modules):
+        if mod == "boss_agent" or mod.startswith("boss_agent."):
+            monkeypatch.delitem(sys.modules, mod, raising=False)
+
+    import boss_agent  # noqa: F401
+    import boss_agent.services.remote_adb_bridge  # noqa: F401

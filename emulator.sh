@@ -69,8 +69,23 @@ find_adb_binary() {
     fi
 }
 
+find_python_binary() {
+    if [[ -n "${PYTHON_BIN:-}" ]]; then
+        echo "${PYTHON_BIN}"
+    elif [[ -x "${ROOT_DIR}/.venv/bin/python3" ]]; then
+        echo "${ROOT_DIR}/.venv/bin/python3"
+    elif command -v python3 >/dev/null 2>&1; then
+        echo "python3"
+    elif command -v python >/dev/null 2>&1; then
+        echo "python"
+    else
+        echo ""
+    fi
+}
+
 EMULATOR_BIN="$(find_emulator_binary)"
 ADB_BIN="$(find_adb_binary)"
+PYTHON_BIN="$(find_python_binary)"
 
 # --- Bounded ADB inspection ---------------------------------------------------
 # A wedged adb server, a device stuck in `offline`, or an unresponsive adbd must never
@@ -280,7 +295,7 @@ attach_logs() {
         touch "${LOG_FILE}"
     fi
 
-    exec tail -n 30 -f "${LOG_FILE}"
+    tail -n 30 -f "${LOG_FILE}"
 }
 
 get_primary_lan_ip() {
@@ -289,8 +304,10 @@ get_primary_lan_ip() {
         echo "${HOST_LAN_IP}"
         return 0
     fi
-    if command -v python3 >/dev/null 2>&1; then
-        LAN_IP="$(PYTHONPATH=src python3 -m boss_agent.services.remote_adb_bridge --print-lan-ip 2>/dev/null || true)"
+    local PY_BIN
+    PY_BIN="$(find_python_binary)"
+    if [[ -n "${PY_BIN}" ]]; then
+        LAN_IP="$(PYTHONPATH="${ROOT_DIR}/src:${PYTHONPATH:-}" "${PY_BIN}" -m boss_agent.services.remote_adb_bridge --print-lan-ip 2>/dev/null || true)"
     fi
     if [[ -z "${LAN_IP}" || "${LAN_IP}" =~ ^127\. ]]; then
         LAN_IP="$(ifconfig 2>/dev/null | grep -E 'inet[[:space:]]+(192\.168|10\.|172\.(1[6-9]|2[0-9]|3[01]))\.' | awk '{print $2}' | head -n 1 || true)"
@@ -301,17 +318,46 @@ get_primary_lan_ip() {
     echo "${LAN_IP}"
 }
 
-start_remote_bridge() {
+get_running_bridge_pid() {
     local PORT="${REMOTE_ADB_PORT:-6555}"
-    local TARGET_PORT="${TARGET_ADB_PORT:-5555}"
-
     if [[ -f "${BRIDGE_PID_FILE}" ]]; then
         local PID
         PID="$(cat "${BRIDGE_PID_FILE}" 2>/dev/null || true)"
         if [[ -n "${PID}" ]] && runner_process_alive "${PID}"; then
+            local CMD
+            CMD="$(ps -p "${PID}" -o args= 2>/dev/null || true)"
+            if [[ "${CMD}" == *"remote_adb_bridge"* ]]; then
+                echo "${PID}"
+                return 0
+            fi
+        fi
+        # PID file was stale or belongs to a recycled/unrelated process
+        rm -f "${BRIDGE_PID_FILE}" "${BRIDGE_READY_FILE}"
+    fi
+
+    # Fallback to listening port: verify listener process actually matches bridge
+    local PORT_PID
+    PORT_PID="$(runner_port_listener_pid "${PORT}")"
+    if [[ -n "${PORT_PID}" ]]; then
+        local CMD
+        CMD="$(ps -p "${PORT_PID}" -o args= 2>/dev/null || true)"
+        if [[ "${CMD}" == *"remote_adb_bridge"* ]]; then
+            echo "${PORT_PID}" > "${BRIDGE_PID_FILE}"
+            echo "${PORT_PID}"
             return 0
         fi
-        rm -f "${BRIDGE_PID_FILE}"
+    fi
+    echo ""
+}
+
+start_remote_bridge() {
+    local PORT="${REMOTE_ADB_PORT:-6555}"
+    local TARGET_PORT="${TARGET_ADB_PORT:-5555}"
+
+    local RUNNING_PID
+    RUNNING_PID="$(get_running_bridge_pid)"
+    if [[ -n "${RUNNING_PID}" ]]; then
+        return 0
     fi
 
     # Reclaim port from old orphaned bridge or socat if present
@@ -332,7 +378,9 @@ start_remote_bridge() {
 
     rm -f "${BRIDGE_READY_FILE}"
     echo "🌉 Starting Remote ADB Bridge daemon (0.0.0.0:${PORT} -> 127.0.0.1:${TARGET_PORT})..."
-    PYTHONPATH="${ROOT_DIR}/src:${PYTHONPATH:-}" nohup python3 -m boss_agent.services.remote_adb_bridge \
+    local PY_BIN
+    PY_BIN="$(find_python_binary)"
+    PYTHONPATH="${ROOT_DIR}/src:${PYTHONPATH:-}" nohup "${PY_BIN}" -m boss_agent.services.remote_adb_bridge \
         --host 0.0.0.0 \
         --port "${PORT}" \
         --target-host 127.0.0.1 \
@@ -366,17 +414,15 @@ stop_remote_bridge() {
         adb_query disconnect "${LAN_IP}:${PORT}" >/dev/null 2>&1 || true
     fi
 
-    if [[ -f "${BRIDGE_PID_FILE}" ]]; then
-        local PID
-        PID="$(cat "${BRIDGE_PID_FILE}" 2>/dev/null || true)"
-        if [[ -n "${PID}" ]]; then
-            kill -TERM "${PID}" 2>/dev/null || true
-            sleep 0.3
-            kill -KILL "${PID}" 2>/dev/null || true
-        fi
-        rm -f "${BRIDGE_PID_FILE}" "${BRIDGE_READY_FILE}"
-        echo "ℹ️ Stopped Remote ADB Bridge daemon."
+    local PID
+    PID="$(get_running_bridge_pid)"
+    if [[ -n "${PID}" ]]; then
+        kill -TERM "${PID}" 2>/dev/null || true
+        sleep 0.3
+        kill -KILL "${PID}" 2>/dev/null || true
+        echo "ℹ️ Stopped Remote ADB Bridge daemon (PID: ${PID})."
     fi
+    rm -f "${BRIDGE_PID_FILE}" "${BRIDGE_READY_FILE}"
 }
 
 ensure_lan_adb_connected() {
@@ -470,12 +516,10 @@ cmd_status() {
     local PORT="${REMOTE_ADB_PORT:-6555}"
     local LAN_IP
     LAN_IP="$(get_primary_lan_ip)"
-    local BRIDGE_PID=""
-    if [[ -f "${BRIDGE_PID_FILE}" ]]; then
-        BRIDGE_PID="$(cat "${BRIDGE_PID_FILE}" 2>/dev/null || true)"
-    fi
+    local BRIDGE_PID
+    BRIDGE_PID="$(get_running_bridge_pid)"
 
-    if [[ -n "${BRIDGE_PID}" ]] && runner_process_alive "${BRIDGE_PID}"; then
+    if [[ -n "${BRIDGE_PID}" ]]; then
         echo "🟢 Remote ADB Bridge is LISTENING (PID: ${BRIDGE_PID}, Port: ${PORT}, LAN: ${LAN_IP}:${PORT})"
     else
         echo "⚪ Remote ADB Bridge is NOT RUNNING (Port: ${PORT})"
@@ -565,8 +609,9 @@ cmd_start() {
         exec "${EMULATOR_BIN}" @"${TARGET_AVD}" -no-snapshot-load 2>&1 | tee -a "${LOG_FILE}"
     else
         echo "🚀 Starting Dedicated AVD '${TARGET_AVD}' in background..."
-        "${EMULATOR_BIN}" @"${TARGET_AVD}" -no-snapshot-load >> "${LOG_FILE}" 2>&1 &
+        nohup "${EMULATOR_BIN}" @"${TARGET_AVD}" -no-snapshot-load </dev/null >> "${LOG_FILE}" 2>&1 &
         local EMU_PID=$!
+        disown "${EMU_PID}" 2>/dev/null || true
         echo "${EMU_PID}" > "${PID_FILE}"
 
         echo "⏳ Waiting for Android system boot completion (AVD: ${TARGET_AVD})..."

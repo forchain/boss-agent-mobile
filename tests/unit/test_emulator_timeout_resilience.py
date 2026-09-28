@@ -245,6 +245,29 @@ def test_another_avd_does_not_match_the_dedicated_target(runner: RunnerScriptHar
 
 
 # ---------------------------------------------------------------------------
+# Remote ADB Bridge PID lifecycle & stale detection
+# ---------------------------------------------------------------------------
+def test_bridge_status_ignores_stale_pid_of_unrelated_process(runner: RunnerScriptHarness):
+    """When remote_bridge.pid points to an unrelated live process, status reports NOT RUNNING
+    and cleans up the stale PID file instead of falsely reporting the bridge is listening."""
+    import os
+
+    runner.script(devices=[("emulator-5554", "device")], avd_name=TARGET_AVD, boot_completed="1")
+    dot_boss = runner.runtime_root / ".boss_agent"
+    dot_boss.mkdir(parents=True, exist_ok=True)
+    bridge_pid_file = dot_boss / "remote_bridge.pid"
+    # Write current test process PID (definitely alive, definitely not remote_adb_bridge)
+    bridge_pid_file.write_text(f"{os.getpid()}\n", encoding="utf-8")
+
+    result = runner.run("status")
+
+    assert result.returncode == 0
+    assert "Remote ADB Bridge is NOT RUNNING" in result.stdout
+    assert "Remote ADB Bridge is LISTENING" not in result.stdout
+    assert not bridge_pid_file.exists(), "stale pidfile must be cleaned up"
+
+
+# ---------------------------------------------------------------------------
 # Structural guard: no adb call site may escape the bound
 # ---------------------------------------------------------------------------
 _ADB_REFERENCE = re.compile(r"\$\{ADB_BIN\}|\$ADB_BIN")
