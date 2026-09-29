@@ -112,6 +112,10 @@ _Avoid_: Hash key, job uid, composite id
 The dedicated triage view displaying newly discovered, deduplicated job records that have not yet undergone match evaluation.
 _Avoid_: Job list, raw queue, inbox view
 
+**Job Detail Modal**:
+The responsive modal dialog presentation for portrait and narrow viewports (< lg / 1024px) in the jobs discovery workbench (`/jobs`), encapsulating the Job Detail Studio. Triggered strictly by explicit user card interaction rather than initial page load, and supporting dismissal via backdrop click, sticky close button, and keyboard ESC key, as well as automatic dismissal upon terminal or removal actions (ignore, delete, blacklist, dispatch apply).
+_Avoid_: Detail popup, floating sheet, job drawer, mobile studio page, 下拉抽屉
+
 **SavedSearch**:
 The database-persisted search strategy entity stored in PocketBase encapsulating search keyword, multi-dimensional filter conditions, task type, and Cron scheduling metadata.
 _Avoid_: Search rule, search YAML, query profile
