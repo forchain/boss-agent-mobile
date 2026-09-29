@@ -99,5 +99,7 @@ export async function rerunTask(taskId: string): Promise<AutomationTask | null> 
 		{ task_type: original.task_type, payload: original.payload || {} },
 		taskId
 	);
-	return createAutomationTask(original.task_type, rebuilt.payload, rebuilt.source);
+	// The builder's task type, not the original's: the payload's Target Action and the
+	// handler it is routed to must say the same thing (#302).
+	return createAutomationTask(rebuilt.task_type, rebuilt.payload, rebuilt.source);
 }

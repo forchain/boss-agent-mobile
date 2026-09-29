@@ -125,7 +125,11 @@ def test_models_target_actions_and_state_ranks():
     assert STATE_RANK["ignored"] == -1
 
     assert TARGET_ACTION_RANK[TargetAction.SAVE_JD] == 1
-    assert TARGET_ACTION_RANK[TargetAction.AUTO_APPLY] == 2
+    # Outreach requires the *applied* rung, not merely a rung above enrichment. `matched`
+    # used to sit here at 2, which is how an undelivered draft read as finished work and was
+    # never revisited (issue #299).
+    assert TARGET_ACTION_RANK[TargetAction.AUTO_APPLY] == STATE_RANK[JobRecordStatus.APPLIED] == 3
+    assert STATE_RANK[JobRecordStatus.MATCHED] < TARGET_ACTION_RANK[TargetAction.AUTO_APPLY]
 
 
 def test_saved_search_serialization_with_target_action_and_max_jobs():

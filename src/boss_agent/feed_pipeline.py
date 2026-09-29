@@ -20,35 +20,39 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
+from .broker.models import TaskType
 from .feed_records import (
     card_facets_record,
     card_record,
     effective_company,
     effective_title,
     enriched_record,
+    posting_from_record,
 )
 from .job_store import INVALID_JOB_TITLES, JobRecordStore
 from .memory import StructuredCandidateProfile
 from .models import (
     APPLIED_SOURCE_AGENT,
     APPLIED_SOURCE_PLATFORM_HISTORICAL,
+    DEPTH_DECLARED,
+    DEPTH_LEGACY_HALF_PAIR,
+    DEPTH_LEGACY_PAIR,
+    DEPTH_UNSTATED,
     EXPIRED_POSTING_REASON,
     GREETING_SOURCE_AGENT,
     GREETING_SOURCE_HUMAN,
     HEADHUNTER_COMMUTE_PROBE_SKIP_REASON,
-    STATE_RANK,
-    TARGET_ACTION_RANK,
     ChatButtonState,
     FilterConfig,
     JobCardBrief,
-    JobPosting,
     JobRecordStatus,
     ScreeningPolicy,
     TargetAction,
+    depth_already_reached,
     greeting_is_human,
     is_communication_expired,
     is_direct_hire_company,
-    is_substantive_jd,
+    jd_is_usable_on_file,
 )
 from .pages import (
     ChatPage,
@@ -134,24 +138,6 @@ class FeedStreamResult:
     error_message: str | None = None
 
 
-#: How a task payload answered the one depth question (issue #302). Recorded so a run can
-#: say which shape it read: once no task in the queue reports ``legacy_pair``, the pair can
-#: stop being read at all.
-DEPTH_DECLARED = "declared_target_action"
-DEPTH_LEGACY_PAIR = "legacy_preview_pair"
-DEPTH_UNSTATED = "unstated_default"
-
-
-class FeedContractError(ValueError):
-    """A task payload whose depth cannot be resolved without guessing.
-
-
-    The defect this refuses was structural: two keys had to be true at the same time, and a
-    writer that supplied one silently produced a draft instead of a send. A payload that
-    states half of that pair is turned away rather than defaulted.
-    """
-
-
 @dataclass
 class FeedStreamConfig:
     """Declarative description of one feed run, parsed from a task payload."""
@@ -172,6 +158,13 @@ class FeedStreamConfig:
     # builder left in the queue (issue #302).
     send_greeting: bool = False
     depth_expression: str = DEPTH_UNSTATED
+    # True when the payload itself stated a Target Action rather than being inferred from
+    # the task type. A payload that states no depth at all keeps the default it always had:
+    # nothing goes out.
+    states_target_action: bool = False
+    # Set when the payload was read through a shape producers are no longer allowed to
+    # write. The run says so in its own log instead of failing the queued task.
+    depth_warning: str = ""
     candidate_profile: StructuredCandidateProfile | None = None
     source_task_id: str | None = None
     # A targeted application acts on the posting already on screen instead of scanning.
@@ -184,8 +177,18 @@ class FeedStreamConfig:
     direct_greeting: str = ""
 
     @classmethod
-    def from_payload(cls, payload: dict[str, Any] | None) -> "FeedStreamConfig":
-        """Parse the worker task payload this pipeline and both handlers share."""
+    def from_payload(
+        cls, payload: dict[str, Any] | None, *, task_type: TaskType | str | None = None
+    ) -> "FeedStreamConfig":
+        """Parse the worker task payload this pipeline and both handlers share.
+
+        ``task_type`` names the handler the task was routed to. Passing it here is what
+        keeps depth answered once, in one place: the handlers used to overwrite
+        ``target_action`` *after* parsing, so the config could hold a Target Action that
+        disagreed with the ``send_greeting`` derived from the payload — the same "two
+        answers to one question" shape #302 removes from the wire, reintroduced as mutable
+        state one layer up.
+        """
         from .settings import load_settings
 
         data = payload or {}
@@ -196,6 +199,13 @@ class FeedStreamConfig:
                 target_action = TargetAction(str(target_action_val).lower())
             except ValueError:
                 target_action = TargetAction.SAVE_JD
+        elif task_type is not None:
+            # The task type names the action when the payload does not. Only an *absent*
+            # Target Action is inferred this way: a payload that states one keeps it, so
+            # this can never promote a save-only run into an outreach run.
+            resolved_type = task_type if isinstance(task_type, TaskType) else TaskType(task_type)
+            if resolved_type == TaskType.AUTO_APPLY:
+                target_action = TargetAction.AUTO_APPLY
 
         raw_filter = data.get("filter")
         filter_config = (
@@ -213,32 +223,39 @@ class FeedStreamConfig:
         )
 
         # ---- the one depth question, answered once -------------------------------
-        # A new payload states depth only as ``target_action``. The legacy pair is still
-        # *read*, because a task queued before issue #302 was written with two keys and
-        # rewriting it now would change what its operator asked for. Stating exactly one of
-        # the two is refused instead of defaulting: "wrote half of a pair" was the shape that
-        # silently degraded an outreach run to a draft, and it must fail loudly from here on.
+        # A new payload states depth only as ``target_action``. Anything that still carries
+        # the legacy keys is read the way the worker that received it read it, because a
+        # task sitting in somebody's queue must not change meaning — or fail outright —
+        # because the code underneath it was upgraded. What is refused is the *producer*
+        # side (task_launch._refuse_hand_authored_depth): writing the pair, or half of it, is
+        # no longer something a caller can do at all.
         legacy_preview = data.get("preview_only")
         legacy_auto_send = data.get("auto_send")
+        legacy_half_warning = ""
+        states_target_action = bool(data.get("target_action") or data.get("action"))
         if (legacy_preview is None) != (legacy_auto_send is None):
-            half = "preview_only" if legacy_preview is None else "auto_send"
-            missing = "auto_send" if legacy_preview is None else "preview_only"
-            raise FeedContractError(
-                f"task payload states `{half}` without `{missing}`: the legacy depth pair has "
-                f"to be read as the pair its writer wrote it. Send one depth expression — "
-                f"`target_action` — instead (issue #302)."
+            # A documented historical shape: PR #297's own table shows the dashboard's
+            # "run scheduled now" hand-building `preview_only: true` with no `auto_send`.
+            # Read with the defaults that worker applied — `preview_only` defaulted True,
+            # `auto_send` False, so a half-written pair was always a draft — and say so,
+            # loudly, instead of letting it pass as an ordinary run.
+            stated = "preview_only" if legacy_preview is not None else "auto_send"
+            missing = "auto_send" if legacy_preview is not None else "preview_only"
+            legacy_preview = True
+            legacy_auto_send = False
+            send_greeting = False
+            depth_expression = DEPTH_LEGACY_HALF_PAIR
+            legacy_half_warning = (
+                f"task payload states `{stated}` without `{missing}` — read as a draft with "
+                f"the defaults an older worker applied. Depth is one expression now: state "
+                f"`target_action` (issue #302)."
             )
-
-        if legacy_preview is None and legacy_auto_send is None:
+        elif legacy_preview is None and legacy_auto_send is None:
             # Single-expression shape (or a payload that states no depth at all, in which
             # case the Target Action default of save_jd keeps it a non-sending run — the
             # behaviour such a payload always had).
-            send_greeting = target_action == TargetAction.AUTO_APPLY
-            depth_expression = (
-                DEPTH_DECLARED
-                if data.get("target_action") or data.get("action")
-                else DEPTH_UNSTATED
-            )
+            send_greeting = target_action == TargetAction.AUTO_APPLY and states_target_action
+            depth_expression = DEPTH_DECLARED if states_target_action else DEPTH_UNSTATED
         else:
             send_greeting = bool(legacy_auto_send) and not bool(legacy_preview)
             depth_expression = DEPTH_LEGACY_PAIR
@@ -264,8 +281,15 @@ class FeedStreamConfig:
             min_score=float(data.get("min_score", 70)),
             source_task_id=data.get("source_task_id"),
             send_greeting=send_greeting,
+            states_target_action=states_target_action,
             depth_expression=depth_expression,
-            direct_greeting=str(data.get("greeting_message") or ""),
+            depth_warning=legacy_half_warning,
+            # Only a targeted application carries the human's own copy in its payload, and
+            # only that payload shape may override what the record holds. A search dispatch
+            # that happened to include the key must not send one text to every card.
+            direct_greeting=(
+                str(data.get("greeting_message") or "") if data.get("direct_job_id") else ""
+            ),
             single_screen=bool(data.get("direct_job_id")),
             direct_job_id=data.get("direct_job_id"),
             is_headhunter=data.get("is_headhunter"),
@@ -297,28 +321,6 @@ class _CardRun:
     # plus where it came from, so the log can say it. See `_resolve_human_greeting`.
     human_greeting: str = ""
     human_greeting_origin: str = ""
-
-
-#: The markers that mean a JD was never fully read — the same set the detail page checks
-#: before it spends scrolls and taps on `expand_description_if_collapsed`. Reused here so a
-#: stored body is judged by the rule that already governs a freshly read one (#301).
-TRUNCATED_JD_MARKERS: tuple[str, ...] = ("查看更多", "展开")
-
-
-def _usable_inventory_jd(existing_record: dict[str, Any] | None) -> str:
-    """The JD a record already holds, when it is as good as a fresh read.
-
-    Two existing judgements and no third rule: :func:`is_substantive_jd` for "carries
-    enough signal to screen and greet from", and the truncation markers for "the text
-    stopped short of the full description". Anything else is unusable — no text at all, a
-    placeholder the platform shows, or a body still ending in an ellipsis.
-    """
-    jd = str((existing_record or {}).get("job_description") or "").strip()
-    if not jd or not is_substantive_jd(jd):
-        return ""
-    if any(marker in jd for marker in TRUNCATED_JD_MARKERS) or jd.endswith("..."):
-        return ""
-    return jd
 
 
 def _element_y(elem: Any) -> float | None:
@@ -711,7 +713,7 @@ class JobFeedPipeline:
                 f"{config.cooldown_days} 天，已释放回待评估流"
             )
 
-        if not is_released and self._depth_already_reached(config, existing_status, existing_record):
+        if not is_released and depth_already_reached(config.target_action, existing_status, existing_record):
             result.skipped += 1
             await self._log(
                 f"⏭️ [State Machine] '{card.title}' already at '{existing_status}' "
@@ -720,35 +722,6 @@ class JobFeedPipeline:
             await self.store.upsert_job_record(card_record_identity)
             return False
         return True
-
-    @staticmethod
-    def _depth_already_reached(
-        config: FeedStreamConfig,
-        existing_status: Any,
-        existing_record: dict[str, Any],
-    ) -> bool:
-        """Whether a stored record has already met the depth this run is configured for.
-
-        The two depths ask different questions, and the status ladder answers only one of
-        them. `STATE_RANK` orders records by how much is *known* about a posting —
-        `jd_saved` < `matched` < `applied` — which is exactly right for a 深度存JD sweep.
-        For 自动打招呼 it was wrong (issue #299): `matched` ranks above the save rung, so a
-        greeting that was drafted and never delivered counted as finished, and the detail
-        page was never opened again. That buried every record the backend's "AI 评估"
-        button wrote, and every draft a spent daily quota left behind.
-
-        Outreach has one honest rung: a message that actually left the app, which is what
-        `applied` with an `applied_source` means. `ignored` was already handled upstream.
-        """
-        if config.target_action == TargetAction.AUTO_APPLY:
-            return existing_status == JobRecordStatus.APPLIED
-
-        cur_rank = STATE_RANK.get(existing_status, 1)
-        has_full_jd = bool((existing_record.get("job_description") or "").strip())
-        is_already_progressed = cur_rank > TARGET_ACTION_RANK[TargetAction.SAVE_JD]
-        return cur_rank >= TARGET_ACTION_RANK[TargetAction.SAVE_JD] and (
-            is_already_progressed or has_full_jd
-        )
 
     async def _persist_rejection(self, run: _CardRun, verdict: CardScreeningVerdict) -> None:
         """Record a card that never earned a detail-page visit."""
@@ -820,29 +793,20 @@ class JobFeedPipeline:
         already communicated with, or that has stopped hiring, is worth no evaluation work at
         all and must still be recorded as such. That check costs one read of the button.
         """
-        inventory_jd = _usable_inventory_jd(existing_record)
+        stored_jd = str((existing_record or {}).get("job_description") or "").strip()
+        inventory_jd = stored_jd if jd_is_usable_on_file(stored_jd) else ""
         if not inventory_jd:
             return await self._extract_posting(card, run.config.screening_policy)
 
         record = existing_record or {}
         commute_km, commute_text = await self._commute_for_inventory(run, card, record)
-        stored_title = str(record.get("title") or "").strip()
-        if stored_title in INVALID_JOB_TITLES:
-            # A stored label that says "no title" is not the posting's title. The card's own
-            # title, which the feed already read, is the fallback a fresh visit would use.
-            stored_title = ""
-        posting = JobPosting(
-            title=stored_title or card.title,
-            company_name=str(record.get("company_name") or "").strip() or card.company_name,
-            salary_range=str(record.get("salary_range") or "").strip() or card.salary_range,
-            job_description=inventory_jd,
-            location=str(record.get("location") or "").strip() or card.location or None,
-            tags=list(record.get("tags") or []) or list(card.tags or []),
-            recruiter_name=str(record.get("recruiter_name") or "").strip() or card.recruiter_name,
-            recruiter_title=str(record.get("recruiter_title") or "").strip() or card.recruiter_title,
-            company_scale=str(record.get("company_scale") or "").strip() or card.company_scale,
-            industry=str(record.get("industry") or "").strip() or card.industry,
-            is_headhunter=bool(record.get("is_headhunter") or card.is_headhunter),
+        # The mapping is owned by feed_records, beside its inverse: a card judged from the
+        # stored record must be judged from the same facets a live read would have supplied,
+        # including the placeholder guards on title and company (#301).
+        posting = posting_from_record(
+            record,
+            card,
+            inventory_jd,
             commute_distance_km=commute_km,
             commute_distance_text=commute_text,
         )
@@ -1206,6 +1170,9 @@ class JobFeedPipeline:
         # Only a task queued before issue #298 can still arrive here: the contract's own
         # payloads state one depth expression and dispatch on it. The branch stays because an
         # in-flight payload that asked for the old draft-only shape is still honoured.
+        if config.depth_warning:
+            await self._log(f"⚠️ [Legacy Depth] {config.depth_warning}")
+
         if not config.send_greeting:
             await self._log(
                 f"⏸️ [NOT SENT] '{title}' @ '{company}' was drafted but this task's depth "
@@ -1319,16 +1286,34 @@ class JobFeedPipeline:
         greeting_source = payload.get("greeting_source") or (
             GREETING_SOURCE_AGENT if evaluation.greeting_message else ""
         )
+        # A run that reused a human copy asked no model to score the posting, so
+        # ``evaluation.match_score`` is the dataclass default — 0. And 0 is not "unknown",
+        # it is "the worst score possible": writing it deletes the very number the operator
+        # used to approve that copy in the panel. The stored score survives unless this run
+        # actually produced a new one.
+        # A run that reused a human copy asked no model to score the posting, so
+        # ``evaluation.match_score`` is the dataclass default - 0. And 0 is not "unknown",
+        # it is "the worst score possible": writing it deletes the number the operator used
+        # to approve that copy in the panel. So the key is left out when this run computed
+        # no score and the stored value stands; a never-scored record stays unscored rather
+        # than claiming a zero it was never given.
+        match_score = evaluation.match_score or payload.get("match_score")
         payload = {
             **payload,
             "status": status.value,
-            "match_score": evaluation.match_score,
             "greeting_message": greeting_message,
             "greeting_source": greeting_source,
             "jd_key_requirements": evaluation.jd_key_requirements
             or payload.get("jd_key_requirements", []),
         }
+        if match_score is not None:
+            payload["match_score"] = match_score
         saved = await self.store.upsert_job_record(dict(payload)) or {}
+        if match_score is None:
+            # Nothing was scored this run, so the run reports what the record says rather
+            # than a 0 that would read as judged-and-rejected.
+            match_score = saved.get("match_score")
+        match_score = match_score or 0
         run.result.processed += 1
         if run.result.outcome == "no_candidates":
             # The primary outcome is the first job that earned a verdict: the run's
@@ -1339,7 +1324,7 @@ class JobFeedPipeline:
                 "company_name": payload.get("company_name", ""),
                 "salary_range": payload.get("salary_range", ""),
             }
-            run.result.score = evaluation.match_score
+            run.result.score = match_score
             run.result.greeting_message = greeting_message
             run.result.jd_key_requirements = evaluation.jd_key_requirements
         # The action follows from the verdict alone: a matched record is a greeting that has
@@ -1353,7 +1338,7 @@ class JobFeedPipeline:
                     company_name=payload.get("company_name", ""),
                     status=status.value,
                     action=JobAction.PENDING_SEND,
-                    score=evaluation.match_score,
+                    score=match_score,
                     greeting_message=greeting_message,
                     record=saved,
                 ),
@@ -1369,7 +1354,7 @@ class JobFeedPipeline:
                     company_name=payload.get("company_name", ""),
                     status=status.value,
                     action=JobAction.APPLIED,
-                    score=evaluation.match_score,
+                    score=match_score,
                     greeting_message=greeting_message,
                     record=saved,
                 ),
@@ -1385,7 +1370,7 @@ class JobFeedPipeline:
                     action=JobAction.SAVED
                     if status is JobRecordStatus.JD_SAVED
                     else JobAction.SKIPPED,
-                    score=evaluation.match_score,
+                    score=match_score,
                     greeting_message=greeting_message,
                     record=saved,
                 ),

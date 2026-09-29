@@ -346,12 +346,16 @@ export interface RerunSource {
  * The contract fields are re-derived, so a divergence carried by the original — an
  * old default, a flag from a builder that no longer exists — cannot propagate. Only
  * the fields the builder cannot derive are carried over, by name.
+ *
+ * The task type comes back from the builder too. A rerun that kept `original.task_type`
+ * while the payload's Target Action said otherwise was one wire task answering the depth
+ * question twice, which is precisely what #302 removes.
  */
 export function rebuildRerunPayload(
 	original: RerunSource,
 	rerunOf: string,
 	source: LaunchSource = 'manual'
-): { payload: Record<string, unknown>; source: LaunchSource } {
+): { task_type: TaskTypeName; payload: Record<string, unknown>; source: LaunchSource } {
 	const prior = original.payload || {};
 
 	if (original.task_type === 'CHECK_CHAT') {
@@ -371,11 +375,16 @@ export function rebuildRerunPayload(
 				dry_run: prior.dry_run
 			}
 		});
-		return { payload: { ...launch.payload, rerun_of: rerunOf }, source };
+		return { task_type: launch.task_type, payload: { ...launch.payload, rerun_of: rerunOf }, source };
 	}
 
 	if (original.task_type === 'CHECK_LOGIN') {
-		return { payload: { ...buildLoginDiagnosticLaunch({ source }).payload, rerun_of: rerunOf }, source };
+		const probe = buildLoginDiagnosticLaunch({ source });
+		return {
+			task_type: probe.task_type,
+			payload: { ...probe.payload, rerun_of: rerunOf },
+			source
+		};
 	}
 
 	// A rerun states no depth. Since issue #298 the depth is the Target Action the original
@@ -397,7 +406,7 @@ export function rebuildRerunPayload(
 			},
 			{ source }
 		);
-		return { payload: { ...launch.payload, rerun_of: rerunOf }, source };
+		return { task_type: launch.task_type, payload: { ...launch.payload, rerun_of: rerunOf }, source };
 	}
 
 	const launch = buildSearchLaunch(
@@ -418,5 +427,5 @@ export function rebuildRerunPayload(
 	for (const key of RERUN_CARRIED_INPUTS) {
 		if (prior[key] !== undefined) carried[key] = prior[key];
 	}
-	return { payload: { ...launch.payload, ...carried, rerun_of: rerunOf }, source };
+	return { task_type: launch.task_type, payload: { ...launch.payload, ...carried, rerun_of: rerunOf }, source };
 }

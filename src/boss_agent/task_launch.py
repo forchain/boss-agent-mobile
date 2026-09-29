@@ -184,7 +184,7 @@ def build_search_launch(
     #302 remove the second switch and then the second key, rather than asking every caller
     to set both correctly.
     """
-    _refuse_stated_depth(mode, "a search")
+    _refuse_stated_depth(mode, "A search")
     _refuse_hand_authored_depth(preview_only, auto_send, "A search")
     action = _target_action_for(search)
     task_type = (
@@ -293,7 +293,7 @@ def build_direct_apply_launch(
     """
     if not job.job_id:
         raise LaunchContractError("a direct apply launch requires the job it targets")
-    _refuse_stated_depth(mode, "a targeted application")
+    _refuse_stated_depth(mode, "A targeted application")
     _refuse_hand_authored_depth(preview_only, auto_send, "A targeted application")
 
     payload: dict[str, Any] = {

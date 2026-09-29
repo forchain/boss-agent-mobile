@@ -15,6 +15,7 @@ from .job_store import INVALID_JOB_TITLES
 from .models import (
     INVALID_COMPANY_NAMES,
     JobCardBrief,
+    JobPosting,
     JobRecordStatus,
     is_invalid_company_name,
 )
@@ -85,6 +86,45 @@ def card_record(
         "relaxed_by_whitelist": bool(verdict and verdict.relaxed_by_whitelist),
         "screening_audit": verdict.screening_audit if verdict else "",
     }
+
+
+def posting_from_record(
+    record: dict[str, Any],
+    card: JobCardBrief,
+    job_description: str,
+    commute_distance_km: float | None = None,
+    commute_distance_text: str = "",
+) -> JobPosting:
+    """The posting a stored Job Record describes, without reading the detail page again.
+
+    The inverse of :func:`enriched_record`, and it lives beside it on purpose: a card
+    visited through #301's inventory path must be judged from exactly the same facets a
+    freshly extracted posting is judged from. Card facets win where the record has nothing
+    to add, and a placeholder in either is not an answer — the recruiter name drives the
+    greeting's salutation, so a mapping that disagreed with the live one would greet the
+    same posting differently depending on which path read it.
+    """
+    stored_title = str(record.get("title") or "").strip()
+    posting = JobPosting(
+        title=stored_title or card.title,
+        company_name=str(record.get("company_name") or "").strip() or card.company_name,
+        salary_range=str(record.get("salary_range") or "").strip() or card.salary_range,
+        job_description=job_description,
+        location=str(record.get("location") or "").strip() or card.location or None,
+        tags=list(record.get("tags") or []) or list(card.tags or []),
+        recruiter_name=str(record.get("recruiter_name") or "").strip() or card.recruiter_name,
+        recruiter_title=str(record.get("recruiter_title") or "").strip() or card.recruiter_title,
+        company_scale=str(record.get("company_scale") or "").strip() or card.company_scale,
+        industry=str(record.get("industry") or "").strip() or card.industry,
+        is_headhunter=bool(record.get("is_headhunter") or card.is_headhunter),
+        commute_distance_km=commute_distance_km,
+        commute_distance_text=commute_distance_text,
+    )
+    # The same guards a live read applies: "未注明职位"/"未注明公司" is not an identity, and
+    # the card is the fallback the detail page would have supplied.
+    posting.title = effective_title(posting, card)
+    posting.company_name = effective_company(posting, card)
+    return posting
 
 
 def enriched_record(

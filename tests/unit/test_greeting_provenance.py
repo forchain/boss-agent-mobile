@@ -290,7 +290,11 @@ async def test_a_targeted_application_greeting_outranks_the_record():
             "company_name": card.card.company_name,
             "greeting_message": modal_copy,
             # Screening is not what this test is about, and the workspace's configured
-            # blacklist would spend a semantic-screen call on the way to the send.
+            # blacklist would spend a semantic-screen call on the way to the send. The
+            # quota and cool-down are pinned too, so the assertion measures the payload and
+            # not whatever this machine happens to have in config/settings.local.yaml.
+            "daily_greeting_limit": 20,
+            "communication_cooldown_days": 0,
             "screening_policy": {"enable_screening": False},
             "min_score": 0,
             "auto_send": True,

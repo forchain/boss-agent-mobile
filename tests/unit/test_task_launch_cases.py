@@ -36,6 +36,24 @@ def _fixture() -> dict:
 CASES = _fixture()["cases"]
 
 
+#: Every key any builder of this repo has ever used to answer "does this run send?".
+#: A new payload answers it exactly once, with `target_action` (issue #302) — and the rule
+#: is checked by *both* language tiers against this same fixture, because "the builders
+#: agree" is only evidence while it is measured.
+ALL_DEPTH_KEYS = frozenset(
+    {"target_action", "action", "preview_only", "auto_send", "send_greeting", "dry_run", "mode"}
+)
+
+
+def assert_depth_stated_once(case: dict, payload: dict) -> None:
+    """The one shared payload shape's depth invariant: a single expression, no legacy pair."""
+    if case["kind"] not in ("search", "direct_apply"):
+        return
+    stated = set(payload) & ALL_DEPTH_KEYS
+    assert stated == {"target_action"}, f"{case['case']} states depth as {sorted(stated)}"
+
+
+
 def _saved_search(spec: dict | None) -> SavedSearch | None:
     if spec is None:
         return None
@@ -99,6 +117,7 @@ def test_python_builder_matches_the_shared_case(case: dict) -> None:
     assert launch.source.value == case["expected"]["source"]
     for key in case["contract"]:
         assert launch.payload.get(key) == case["expected"]["payload"][key], key
+    assert_depth_stated_once(case, launch.payload)
 
 
 def test_the_declared_defaults_are_the_shared_ones() -> None:

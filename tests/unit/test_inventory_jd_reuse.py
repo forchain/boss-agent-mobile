@@ -414,16 +414,112 @@ async def test_a_save_only_sweep_never_reopens_a_record_it_can_already_read():
 
 
 def test_usability_is_the_existing_rule_applied_to_the_stored_text():
-    """No new threshold: the same two judgements that govern a fresh read govern a stored one."""
-    from boss_agent.feed_pipeline import _usable_inventory_jd
+    """No new threshold: the same two judgements that govern a fresh read govern a stored one.
 
-    assert _usable_inventory_jd({"job_description": GOOD_JD}) == GOOD_JD
-    assert _usable_inventory_jd(None) == ""
-    assert _usable_inventory_jd({}) == ""
-    assert _usable_inventory_jd({"job_description": ""}) == ""
-    assert _usable_inventory_jd({"job_description": SHORT_JD}) == ""
-    assert _usable_inventory_jd({"job_description": "无详细岗位描述"}) == ""
-    assert _usable_inventory_jd({"job_description": TRUNCATED_JD}) == ""
-    assert _usable_inventory_jd({"job_description": GOOD_JD + "..."}) == ""
-    # Surrounding whitespace is not part of the body, and a usable body is returned as-is.
-    assert _usable_inventory_jd({"job_description": f"  \n{GOOD_JD}  "}) == GOOD_JD
+    The predicate is `models.jd_is_usable_on_file`, which composes `is_substantive_jd` with
+    `jd_is_truncated` — the very check the detail page runs before it spends scrolls and taps
+    on 查看更多. One rule, one owner (#301).
+    """
+    from boss_agent.models import jd_is_truncated, jd_is_usable_on_file
+
+    assert jd_is_usable_on_file(GOOD_JD) is True
+    assert jd_is_usable_on_file(None) is False
+    assert jd_is_usable_on_file("") is False
+    assert jd_is_usable_on_file("   ") is False
+    assert jd_is_usable_on_file(SHORT_JD) is False
+    assert jd_is_usable_on_file("无详细岗位描述") is False
+    assert jd_is_usable_on_file(TRUNCATED_JD) is False
+    assert jd_is_usable_on_file(GOOD_JD + "...") is False
+    # Surrounding whitespace is not part of the body.
+    assert jd_is_usable_on_file(f"  \n{GOOD_JD}  ") is True
+
+    # …and the truncation half is literally the detail page's own rule.
+    from boss_agent.pages import JobDetailPage  # noqa: F401  (import seam smoke)
+
+    assert jd_is_truncated("岗位职责短…查看更多") is True
+    assert jd_is_truncated(GOOD_JD) is False
+
+
+@pytest.mark.asyncio
+async def test_the_fast_path_still_relaxes_the_ceiling_for_a_passion_token():
+    """A whitelisted title still buys the distant posting a visit *and* a greeting.
+
+    The relaxation runs on the posting assembled from the stored JD, so the fast path has
+    to reach it with the same fields a live read would have produced — otherwise #301 would
+    quietly turn an exemption into a rejection.
+    """
+    store = InMemoryJobRecordStore()
+    card = _card("大模型平台工程师", "智元创新")
+    await store.upsert_job_record(
+        _on_file(card, commute_distance_km=22.0, commute_distance_text="距离家庭住址22.0千米")
+    )
+
+    policy = ScreeningPolicy(max_commute_distance_km=5.0, title_whitelist=["大模型"])
+    detail = _detail_page()
+    chat = _sent_chat()
+    logs: list[str] = []
+
+    async def log(line: str) -> None:
+        logs.append(line)
+
+    pipeline = _pipeline(
+        store,
+        feed=ScriptedFeed([[card]]),
+        detail=detail,
+        chat=chat,
+        screener=_screener(),
+        log=log,
+    )
+    result = await pipeline.stream_jobs(_apply_config(max_jobs=1, screening_policy=policy))
+
+    detail.extract_job_posting.assert_not_called()
+    detail.extract_commute_distance.assert_not_called()
+    assert any("白名单放宽" in line for line in logs), logs
+    assert result.applied_count == 1
+    stored = await store.get_job_record_by_fingerprint(card.card.fingerprint)
+    assert stored["relaxed_by_whitelist"] is True
+    assert stored["status"] == JobRecordStatus.APPLIED.value
+
+
+@pytest.mark.asyncio
+async def test_the_fast_path_is_stopped_by_cancellation_before_anything_is_sent():
+    """The cancellation probe is not a detail-page step, and the fast path keeps it that way."""
+    store = InMemoryJobRecordStore()
+    card = _card("AI Agent 平台工程师", "智元创新")
+    await store.upsert_job_record(_on_file(card))
+
+    detail = _detail_page()
+    chat = _sent_chat()
+    logs: list[str] = []
+
+    async def log(line: str) -> None:
+        logs.append(line)
+
+    cancelled = {"value": False}
+
+    async def is_cancelled() -> bool:
+        return cancelled["value"]
+
+    pipeline = _pipeline(
+        store,
+        feed=ScriptedFeed([[card]]),
+        detail=detail,
+        chat=chat,
+        screener=_screener(),
+        is_cancelled=is_cancelled,
+        log=log,
+    )
+
+    async def cancel_after_first_read() -> int:
+        cancelled["value"] = True
+        return 0
+
+    store.count_today_applied_jobs = cancel_after_first_read  # type: ignore[method-assign]
+
+    result = await pipeline.stream_jobs(_apply_config(max_jobs=1, screening_policy=NO_FILTERS))
+
+    chat.click_send.assert_not_called()
+    assert result.cancelled is True
+    assert any("Task Cancelled" in line for line in logs), logs
+    stored = await store.get_job_record_by_fingerprint(card.card.fingerprint)
+    assert stored["status"] != JobRecordStatus.APPLIED.value

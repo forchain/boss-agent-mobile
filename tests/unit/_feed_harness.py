@@ -32,7 +32,6 @@ GOOD_JD = (
     "岗位职责：主导企业级大模型应用与Agent工作流平台建设，负责推理链编排、"
     "向量检索体系优化以及多智能体协同框架的架构设计与落地。"
 )
-TODAY = datetime.now(UTC).isoformat()
 
 
 def _card(title: str, company: str, y: int | None = None, digest: str = "") -> LocatedJobCard:

@@ -20,17 +20,21 @@ a run says which:
 """
 
 import json
+from unittest.mock import MagicMock
 
 import pytest
+from _card_fixtures import located  # noqa: F401
+from _feed_harness import GOOD_JD, ScriptedFeed, _card, _detail_page, _pipeline, _posting
 
 from boss_agent.feed_pipeline import (
     DEPTH_DECLARED,
     DEPTH_LEGACY_PAIR,
     DEPTH_UNSTATED,
-    FeedContractError,
     FeedStreamConfig,
 )
+from boss_agent.job_store import InMemoryJobRecordStore
 from boss_agent.models import FilterConfig, SavedSearch, SearchConfig
+from boss_agent.screening import CandidateScreener
 from boss_agent.task_launch import (
     DirectApplyTarget,
     LaunchContractError,
@@ -175,16 +179,88 @@ def test_a_payload_that_states_no_depth_at_all_keeps_its_old_default():
     assert config.direct_greeting == "李工您好，我在面板里改过这版。"
 
 
-@pytest.mark.parametrize("half", [{"auto_send": True}, {"preview_only": False}])
-def test_half_a_pair_is_refused_instead_of_defaulted(half):
-    """The defect class, made structurally unreachable.
+#: The shape PR #297 documented the dashboard's "run scheduled now" producing: one half of
+#: the pair, written by a real producer, sitting in a real queue.
+@pytest.mark.parametrize(
+    ("half", "stated", "missing"),
+    [
+        ({"preview_only": True}, "preview_only", "auto_send"),
+        ({"auto_send": True}, "auto_send", "preview_only"),
+        ({"preview_only": False}, "preview_only", "auto_send"),
+    ],
+    ids=["preview-only", "auto-send-only", "preview-false-only"],
+)
+def test_half_a_legacy_pair_is_still_read_and_said_out_loud(half, stated, missing):
+    """A queued half-pair keeps the meaning its writer's worker gave it — and is named.
 
-    Before this change `{"auto_send": true}` silently became `preview_only=True` — a draft.
-    A payload can no longer be half-written: the worker says so instead of guessing.
+    Every half of the legacy pair defaulted to "do not send", so none of these may become a
+    real dispatch. What changed is that the run now reports the shape instead of passing as
+    an ordinary depth-annotated task.
     """
-    payload = {"target_action": "auto_apply", "keyword": "Agent", **half}
-    with pytest.raises(FeedContractError, match="without"):
-        FeedStreamConfig.from_payload(payload)
+    config = FeedStreamConfig.from_payload(
+        {"target_action": "auto_apply", "keyword": "Agent", **half}
+    )
+
+    assert config.send_greeting is False, half
+    assert config.depth_expression == "legacy_preview_half_pair", half
+    assert f"states `{stated}` without `{missing}`" in config.depth_warning, config.depth_warning
+
+
+@pytest.mark.asyncio
+async def test_the_run_logs_the_legacy_half_pair_it_read():
+    """The warning reaches the task log, which is the only place an operator reads it."""
+    store = InMemoryJobRecordStore()
+    card = _card("库存岗位", "智元创新")
+    await store.upsert_job_record(
+        {
+            "fingerprint": card.card.fingerprint,
+            "title": card.card.title,
+            "company_name": card.card.company_name,
+            "recruiter_name": card.card.recruiter_name,
+            "status": "jd_saved",
+            "job_description": GOOD_JD,
+        }
+    )
+    detail = _detail_page()
+    detail.extract_job_posting.return_value = _posting(card.card.title, card.card.company_name)
+    logs: list[str] = []
+
+    async def log(line: str) -> None:
+        logs.append(line)
+
+    pipeline = _pipeline(
+        store,
+        feed=ScriptedFeed([[card]]),
+        detail=detail,
+        chat=MagicMock(),
+        screener=CandidateScreener(llm_client=_llm()),
+        log=log,
+    )
+
+    config = FeedStreamConfig.from_payload(
+        {
+            "target_action": "auto_apply",
+            "keyword": "Agent",
+            "max_jobs": 1,
+            "preview_only": True,
+            "min_score": 70.0,
+            "screening_policy": {"enable_screening": False},
+        }
+    )
+    await pipeline.stream_jobs(config)
+
+    assert any("Legacy Depth" in line and "preview_only" in line for line in logs), logs
+    assert any("does not dispatch" in line or "NOT SENT" in line for line in logs), logs
+
+
+def _llm() -> MagicMock:
+    llm = MagicMock()
+    llm.chat_completion_json.return_value = {
+        "match_score": 90,
+        "match_reasons": ["契合"],
+        "greeting_message": "草稿",
+    }
+    return llm
 
 
 def test_a_producer_cannot_write_the_pair_by_hand():

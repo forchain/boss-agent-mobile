@@ -17,7 +17,7 @@ from boss_agent.broker.models import AutomationTask, TaskType
 from boss_agent.broker.pocketbase_adapter import BaseTaskBroker
 from boss_agent.feed_pipeline import FeedStreamConfig, JobFeedPipeline
 from boss_agent.memory import StructuredCandidateProfile
-from boss_agent.models import JobRecordStatus, TargetAction, is_masked_company_name
+from boss_agent.models import JobRecordStatus, is_masked_company_name
 from boss_agent.screening import CandidateScreener
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.handlers.base import BaseTaskHandler, HandlerResult
@@ -51,28 +51,29 @@ class AutoApplyHandler(BaseTaskHandler):
         screener = CandidateScreener(llm_client=self.llm_client)
         profile = await self._resolve_profile(broker, payload)
 
-        config = FeedStreamConfig.from_payload(payload)
+        # The task type goes into the parser rather than being stamped onto the config
+        # afterwards: an AUTO_APPLY run streams outreach even when the payload omitted the
+        # redundant target_action field, and depth must have exactly one answering site
+        # (issue #302). A payload that *does* state a Target Action keeps it.
+        config = FeedStreamConfig.from_payload(payload, task_type=TaskType.AUTO_APPLY)
         config.source_task_id = task.id
         config.candidate_profile = profile
-        # The task type names the action, so an AUTO_APPLY run always streams outreach
-        # even when the payload omitted the redundant target_action field.
-        config.target_action = TargetAction.AUTO_APPLY
 
         # An AUTO_APPLY run built by the launch contract states its depth once, as its
-        # Target Action, and that depth sends (issues #298 and #302). The other two lines
-        # name where a depth actually came from, so a queued task written by an older
-        # builder is visible in the log rather than silently reinterpreted.
-        mode_desc = (
-            "Auto-Send"
-            if config.send_greeting
-            else f"DRAFT ONLY (payload depth read as: {config.depth_expression})"
-        )
+        # Target Action, and that depth sends (issues #298 and #302).
+        #
+        # The shape the depth was read from is named on every run, not only on the drafts:
+        # #302 leaves the legacy pair readable only until nothing writes it any more, and
+        # that is a call the task log has to evidence. Grep the fleet for depth=legacy_
+        # and delete the reading path when the count is zero.
+        mode_desc = "Auto-Send" if config.send_greeting else "DRAFT ONLY"
         search_name = payload.get("search_name") or payload.get("saved_search_name") or ""
         strategy_desc = f"strategy='{search_name}', " if search_name else ""
         await broker.append_log(
             task.id,
             f"Starting AUTO_APPLY ({strategy_desc}candidate='{profile.name}', "
-            f"keyword='{config.keyword}', min_score={config.min_score}, mode='{mode_desc}')",
+            f"keyword='{config.keyword}', min_score={config.min_score}, "
+            f"mode='{mode_desc}', depth='{config.depth_expression}')",
         )
 
         refusal = await self._preflight(broker, task, payload, config, store, screener)

@@ -216,6 +216,9 @@ describe('rerun rebuilds through the builder', () => {
 			'orig-1'
 		);
 
+		// A rerun is the task its payload describes, not the task the original was: a
+		// save-only payload rerun under an AUTO_APPLY type would answer the depth twice.
+		expect(rebuilt.task_type).toBe('AUTO_APPLY');
 		expect(rebuilt.payload.min_score).toBe(MIN_SCORE);
 		// The strategy says 自动打招呼, so a rerun of it greets. The draft-only flags it
 		// carried came from a depth that no longer exists.

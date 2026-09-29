@@ -809,7 +809,6 @@ def test_config_from_payload_carries_the_task_contract():
 # and never went out. These tests pin the rung that actually counts as delivered.
 # ---------------------------------------------------------------------------
 
-_SCREEN = {"pass": True, "reason": "契合"}
 
 
 def _greet(score: int = 90, greeting: str = "王总您好,幸会!") -> dict:
@@ -1099,33 +1098,3 @@ async def test_a_draft_still_satisfies_a_depth_save_jd_run():
     detail.extract_job_posting.assert_not_called()
     assert result.skipped == 1
     assert any("State Machine" in line for line in logs), logs
-
-
-def test_the_write_ladder_and_the_visit_rule_answer_different_questions():
-    """#299 keeps two rules apart that the old code conflated.
-
-    `STATE_RANK` orders a record by how much is *known* about it, and that ordering is the
-    monotonic write guard the store relies on — a later save-only pass must not demote an
-    applied job. Whether a run still *owes* the posting work is a different question, and
-    answering it with the write ladder is what silently buried every undelivered draft.
-    """
-    from boss_agent.models import STATE_RANK, TARGET_ACTION_RANK
-
-    # The write ladder is unchanged, `matched` and its two documented exceptions included.
-    assert STATE_RANK[JobRecordStatus.JD_SAVED] < STATE_RANK[JobRecordStatus.MATCHED]
-    assert STATE_RANK[JobRecordStatus.MATCHED] < STATE_RANK[JobRecordStatus.APPLIED]
-    # …and that is exactly why `matched` ranks as "enough" for an outreach run: it is
-    # numerically at the auto_apply rung while still being an unsent draft.
-    assert STATE_RANK[JobRecordStatus.MATCHED] == TARGET_ACTION_RANK[TargetAction.AUTO_APPLY]
-
-    draft = {"status": JobRecordStatus.MATCHED.value, "job_description": GOOD_JD}
-    applied = {**draft, "status": JobRecordStatus.APPLIED.value, "applied_at": TODAY}
-    outreach = FeedStreamConfig(target_action=TargetAction.AUTO_APPLY)
-    save_only = FeedStreamConfig(target_action=TargetAction.SAVE_JD)
-
-    reached = JobFeedPipeline._depth_already_reached
-    assert reached(outreach, draft["status"], draft) is False, "a draft still owes a send"
-    assert reached(outreach, applied["status"], applied) is True
-    assert reached(save_only, draft["status"], draft) is True
-    # A save-only run with no JD on file still has work to do.
-    assert reached(save_only, JobRecordStatus.UNMATCHED.value, {"job_description": ""}) is False
