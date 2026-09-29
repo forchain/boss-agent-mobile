@@ -18,13 +18,23 @@ keeps today's behaviour exactly: draft, then gate on the score.
 from unittest.mock import MagicMock
 
 import pytest
-from _feed_harness import GOOD_JD, TODAY, ScriptedFeed, _apply_config, _card, _detail_page, _pipeline, _posting
+from _feed_harness import (
+    GOOD_JD,
+    TODAY,
+    ScriptedFeed,
+    _apply_config,
+    _card,
+    _detail_page,
+    _pipeline,
+    _posting,
+)
+
 from boss_agent.feed_pipeline import FeedStreamConfig
 from boss_agent.job_store import InMemoryJobRecordStore
 from boss_agent.models import (
+    APPLIED_SOURCE_AGENT,
     GREETING_SOURCE_AGENT,
     GREETING_SOURCE_HUMAN,
-    APPLIED_SOURCE_AGENT,
     JobCardBrief,
     JobRecordStatus,
     TargetAction,

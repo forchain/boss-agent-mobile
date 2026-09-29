@@ -41,12 +41,14 @@ from .models import (
     ChatButtonState,
     FilterConfig,
     JobCardBrief,
+    JobPosting,
     JobRecordStatus,
     ScreeningPolicy,
     TargetAction,
     greeting_is_human,
     is_communication_expired,
     is_direct_hire_company,
+    is_substantive_jd,
 )
 from .pages import (
     ChatPage,
@@ -242,6 +244,28 @@ class _CardRun:
     # plus where it came from, so the log can say it. See `_resolve_human_greeting`.
     human_greeting: str = ""
     human_greeting_origin: str = ""
+
+
+#: The markers that mean a JD was never fully read — the same set the detail page checks
+#: before it spends scrolls and taps on `expand_description_if_collapsed`. Reused here so a
+#: stored body is judged by the rule that already governs a freshly read one (#301).
+TRUNCATED_JD_MARKERS: tuple[str, ...] = ("查看更多", "展开")
+
+
+def _usable_inventory_jd(existing_record: dict[str, Any] | None) -> str:
+    """The JD a record already holds, when it is as good as a fresh read.
+
+    Two existing judgements and no third rule: :func:`is_substantive_jd` for "carries
+    enough signal to screen and greet from", and the truncation markers for "the text
+    stopped short of the full description". Anything else is unusable — no text at all, a
+    placeholder the platform shows, or a body still ending in an ellipsis.
+    """
+    jd = str((existing_record or {}).get("job_description") or "").strip()
+    if not jd or not is_substantive_jd(jd):
+        return ""
+    if any(marker in jd for marker in TRUNCATED_JD_MARKERS) or jd.endswith("..."):
+        return ""
+    return jd
 
 
 def _element_y(elem: Any) -> float | None:
@@ -719,12 +743,98 @@ class JobFeedPipeline:
         try:
             if await self._back_out_if_contacted(run, card.fingerprint):
                 return
-            posting = await self._extract_posting(card, run.config.screening_policy)
+            posting = await self._read_posting(run, card, existing_record)
             if posting is None:
                 return
             await self._evaluate_and_act(run, posting)
         finally:
             self.detail_page.navigate_back()
+
+    async def _read_posting(
+        self,
+        run: _CardRun,
+        card: JobCardBrief,
+        existing_record: dict[str, Any] | None,
+    ) -> Any | None:
+        """The posting behind this card — from the record's JD when it can be, else from the device.
+
+        Issue #301. A card that comes back for a second look has usually been read already,
+        and the detail-page work that costs real time — scrolling to the `查看更多` hotspot,
+        tapping it, re-reading the body, hunting the distance widget below the fold — buys
+        nothing when the Job Record already holds a usable JD. So that is asked first.
+
+        The contact-control probe is deliberately *not* skipped: a posting the platform has
+        already communicated with, or that has stopped hiring, is worth no evaluation work at
+        all and must still be recorded as such. That check costs one read of the button.
+        """
+        inventory_jd = _usable_inventory_jd(existing_record)
+        if not inventory_jd:
+            return await self._extract_posting(card, run.config.screening_policy)
+
+        record = existing_record or {}
+        commute_km, commute_text = await self._commute_for_inventory(run, card, record)
+        stored_title = str(record.get("title") or "").strip()
+        if stored_title in INVALID_JOB_TITLES:
+            # A stored label that says "no title" is not the posting's title. The card's own
+            # title, which the feed already read, is the fallback a fresh visit would use.
+            stored_title = ""
+        posting = JobPosting(
+            title=stored_title or card.title,
+            company_name=str(record.get("company_name") or "").strip() or card.company_name,
+            salary_range=str(record.get("salary_range") or "").strip() or card.salary_range,
+            job_description=inventory_jd,
+            location=str(record.get("location") or "").strip() or card.location or None,
+            tags=list(record.get("tags") or []) or list(card.tags or []),
+            recruiter_name=str(record.get("recruiter_name") or "").strip() or card.recruiter_name,
+            recruiter_title=str(record.get("recruiter_title") or "").strip() or card.recruiter_title,
+            company_scale=str(record.get("company_scale") or "").strip() or card.company_scale,
+            industry=str(record.get("industry") or "").strip() or card.industry,
+            is_headhunter=bool(record.get("is_headhunter") or card.is_headhunter),
+            commute_distance_km=commute_km,
+            commute_distance_text=commute_text,
+        )
+        skipped = "「查看更多」展开与正文重复抽取"
+        if commute_km is not None:
+            skipped += "、底部通勤距离探测"
+        await self._log(
+            f"♻️ [复用库存 JD] '{posting.title}' 使用岗位记录中的 JD（{len(inventory_jd)} 字），"
+            f"跳过{skipped}"
+        )
+        return posting
+
+    async def _commute_for_inventory(
+        self, run: _CardRun, card: JobCardBrief, record: dict[str, Any]
+    ) -> tuple[float | None, str]:
+        """The commute distance for an inventory visit: reuse it, probe it, or call it unknown.
+
+        Only the text is reusable wholesale. With the ceiling active and no distance ever
+        measured for this posting, skipping the probe would turn a real rejection into a
+        fail-open pass — so the widget is still fetched, just without the expansion and the
+        re-read wrapped around it, which is where the time actually goes. A headhunter
+        posting is spared exactly as a fresh visit spares it, and an unknown distance stays
+        fail-open.
+        """
+        stored = record.get("commute_distance_km")
+        if stored is not None:
+            return float(stored), str(record.get("commute_distance_text") or "")
+
+        policy = run.config.screening_policy
+        is_headhunter = bool(record.get("is_headhunter") or card.is_headhunter)
+        if not policy.should_probe_commute_distance(is_headhunter):
+            if policy.is_commute_filter_active and is_headhunter:
+                await self._log(
+                    f"📍 [App端强制过滤] '{card.title}' {HEADHUNTER_COMMUTE_PROBE_SKIP_REASON}"
+                )
+            return None, ""
+
+        try:
+            # The page object owns its own swipe budget; this path only declines to re-read
+            # the description around the probe.
+            distance_km, distance_text = self.detail_page.extract_commute_distance()
+        except Exception as e:
+            logger.warning("Commute probe failed for '%s': %s", card.title, e)
+            return None, ""
+        return distance_km, str(distance_text or "")
 
     async def _open_detail(self, located: LocatedJobCard | None) -> bool:
         """Tap the card (or fall back to the first list item) to reach its detail page.

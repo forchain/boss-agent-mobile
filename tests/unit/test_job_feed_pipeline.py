@@ -859,7 +859,11 @@ async def test_a_draft_that_never_sent_is_revisited_and_actually_sent(any_job_st
 
     result = await pipeline.stream_jobs(_apply_config(max_jobs=1))
 
-    detail.extract_job_posting.assert_called_once()
+    # The detail page *is* opened again — the visit the old ladder refused. Reading the
+    # posting is a separate question, and since #301 a usable JD on file means it is not
+    # re-read; `get_chat_button_state` is the proof the page was actually reached.
+    detail.get_chat_button_state.assert_called_once()
+    detail.extract_job_posting.assert_not_called()
     chat.click_send.assert_called_once()
     assert result.applied is True
 

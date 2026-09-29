@@ -251,6 +251,10 @@ The state of a Job Record whose greeting has been written by someone — an agen
 in the dashboard — but has never left the device — a backend "AI 评估", an agent run that drafted it, or a run whose daily quota ran out. It counts as *known* in the Job Lifecycle ladder and therefore satisfies a 深度存JD pass, but it never satisfies 自动打招呼: only a delivered message does (issue #299). Treating a draft as finished is what left records stranded, unreachable by any later run.
 _Avoid_: offline draft, pending manual send, soft-applied
 
+**Inventory JD Reuse**:
+Reading a Job Record's stored job description instead of the detail page, when the stored text passes the same two judgements a freshly extracted one is put through — enough signal to screen and greet from, and no `查看更多` / `展开` / trailing-ellipsis left in it. It skips the expansion tap, the body re-read, and the bottom distance probe *for a headhunter posting*, but never the contact-control probe, the commute ceiling (a distance never measured is still probed, and stays fail-open when unknown), the platform-history record, the same-employer guard or the quota count. It exists for the visits the Depth Visit Rule now allows, not instead of them.
+_Avoid_: JD cache, skip scraping, fast path
+
 **Depth Visit Rule**:
 Whether a run still owes a Job Record a detail-page visit, judged separately from the monotonic write ladder. A 深度存JD run is satisfied by a record that already holds a JD; an 自动打招呼 run is satisfied only by `applied`. The two questions share a status column and nothing else, and merging them is the defect #299 fixes.
 _Avoid_: state machine skip, rank check, already-progressed test
