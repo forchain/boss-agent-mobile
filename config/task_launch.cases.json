@@ -1,9 +1,10 @@
 {
-  "_comment": "The AutomationTask launch contract, shared by the pytest tier (tests/unit/test_task_launch_cases.py) and the vitest tier (web/src/tests/taskLaunchCases.test.ts). `source` is compared as a task attribute rather than a payload key. Only the keys listed in `contract` are compared: they are the ones the builder owns, so a difference in how each language normalizes a nested SavedSearch filter cannot masquerade as contract drift.",
+  "_comment": "The AutomationTask launch contract, shared by the pytest tier (tests/unit/test_task_launch_cases.py) and the vitest tier (web/src/tests/taskLaunchCases.test.ts). `source` is compared as a task attribute rather than a payload key. Only the keys listed in `contract` are compared: they are the ones the builder owns, so a difference in how each language normalizes a nested SavedSearch filter cannot masquerade as contract drift. `job` is the DirectApplyTarget a direct_apply case builds from, and is absent for every other kind. A case whose `mode` is null states no override: the kind decides what that means, which for a search dispatch is the SavedSearch Target Action.",
   "defaults": {
     "min_score": 70,
     "max_jobs": 30,
-    "preview_timeout_sec": 3.0
+    "preview_timeout_sec": 3.0,
+    "direct_apply_min_score": 0
   },
   "cases": [
     {
@@ -301,6 +302,106 @@
       }
     },
     {
+      "case": "search-scheduled-auto-apply-dispatches",
+      "note": "The regression: an 自动沟通 strategy run by cron drafted a greeting and stopped at [OFFLINE DRAFT], because an unstated mode meant preview.",
+      "kind": "search",
+      "source": "scheduler",
+      "mode": null,
+      "search": {
+        "id": "s_auto",
+        "name": "自动沟通",
+        "keyword": "agent",
+        "enable_search": true,
+        "enable_filter": true,
+        "target_action": "auto_apply",
+        "max_jobs": 30
+      },
+      "min_score": null,
+      "chat": null,
+      "contract": [
+        "saved_search_id",
+        "search_id",
+        "search_name",
+        "keyword",
+        "enable_search",
+        "enable_filter",
+        "target_action",
+        "max_jobs",
+        "min_score",
+        "preview_only",
+        "auto_send",
+        "preview_timeout_sec"
+      ],
+      "expected": {
+        "task_type": "AUTO_APPLY",
+        "payload": {
+          "saved_search_id": "s_auto",
+          "search_id": "s_auto",
+          "search_name": "自动沟通",
+          "keyword": "agent",
+          "enable_search": true,
+          "enable_filter": true,
+          "target_action": "auto_apply",
+          "max_jobs": 30,
+          "min_score": 70,
+          "preview_only": false,
+          "auto_send": true,
+          "preview_timeout_sec": 3.0
+        },
+        "source": "scheduler"
+      }
+    },
+    {
+      "case": "search-unstated-mode-honours-target-action",
+      "note": "Mode is an override, not a second opinion: omit it and the Target Action the operator configured is the execution depth.",
+      "kind": "search",
+      "source": "manual",
+      "mode": null,
+      "search": {
+        "id": "s_save",
+        "name": "深度存JD",
+        "keyword": "agent",
+        "enable_search": true,
+        "enable_filter": true,
+        "target_action": "save_jd",
+        "max_jobs": 5
+      },
+      "min_score": null,
+      "chat": null,
+      "contract": [
+        "saved_search_id",
+        "search_id",
+        "search_name",
+        "keyword",
+        "enable_search",
+        "enable_filter",
+        "target_action",
+        "max_jobs",
+        "min_score",
+        "preview_only",
+        "auto_send",
+        "preview_timeout_sec"
+      ],
+      "expected": {
+        "task_type": "SCRAPE_JOBS",
+        "payload": {
+          "saved_search_id": "s_save",
+          "search_id": "s_save",
+          "search_name": "深度存JD",
+          "keyword": "agent",
+          "enable_search": true,
+          "enable_filter": true,
+          "target_action": "save_jd",
+          "max_jobs": 5,
+          "min_score": 70,
+          "preview_only": true,
+          "auto_send": false,
+          "preview_timeout_sec": 3.0
+        },
+        "source": "manual"
+      }
+    },
+    {
       "case": "chat-configured-drill-wins",
       "kind": "chat_cleanup",
       "source": "manual",
@@ -407,6 +508,94 @@
           "search_name": "仅沟通清扫"
         },
         "source": "scheduler"
+      }
+    },
+    {
+      "case": "direct-apply-targeted-send",
+      "note": "A 定向投递 is outreach by definition, and the human already chose the posting, so the relevance threshold is cleared rather than left to veto it.",
+      "kind": "direct_apply",
+      "source": "manual",
+      "mode": null,
+      "search": null,
+      "job": {
+        "job_id": "j_1",
+        "title": "AI Agent 工程师",
+        "company_name": "煦象",
+        "greeting_message": "您好,我看到岗位与我的 Agent 工程实践高度吻合"
+      },
+      "min_score": null,
+      "chat": null,
+      "contract": [
+        "target_action",
+        "direct_job_id",
+        "keyword",
+        "job_title",
+        "company_name",
+        "greeting_message",
+        "min_score",
+        "preview_only",
+        "auto_send",
+        "preview_timeout_sec"
+      ],
+      "expected": {
+        "task_type": "AUTO_APPLY",
+        "payload": {
+          "target_action": "auto_apply",
+          "direct_job_id": "j_1",
+          "keyword": "AI Agent 工程师",
+          "job_title": "AI Agent 工程师",
+          "company_name": "煦象",
+          "greeting_message": "您好,我看到岗位与我的 Agent 工程实践高度吻合",
+          "min_score": 0,
+          "preview_only": false,
+          "auto_send": true,
+          "preview_timeout_sec": 3.0
+        },
+        "source": "manual"
+      }
+    },
+    {
+      "case": "direct-apply-draft-override",
+      "note": "DRAFT remains the explicit override for reading a greeting first.",
+      "kind": "direct_apply",
+      "source": "manual",
+      "mode": "draft",
+      "search": null,
+      "job": {
+        "job_id": "j_1",
+        "title": "AI Agent 工程师",
+        "company_name": "煦象",
+        "greeting_message": "您好,我看到岗位与我的 Agent 工程实践高度吻合"
+      },
+      "min_score": null,
+      "chat": null,
+      "contract": [
+        "target_action",
+        "direct_job_id",
+        "keyword",
+        "job_title",
+        "company_name",
+        "greeting_message",
+        "min_score",
+        "preview_only",
+        "auto_send",
+        "preview_timeout_sec"
+      ],
+      "expected": {
+        "task_type": "AUTO_APPLY",
+        "payload": {
+          "target_action": "auto_apply",
+          "direct_job_id": "j_1",
+          "keyword": "AI Agent 工程师",
+          "job_title": "AI Agent 工程师",
+          "company_name": "煦象",
+          "greeting_message": "您好,我看到岗位与我的 Agent 工程实践高度吻合",
+          "min_score": 0,
+          "preview_only": true,
+          "auto_send": false,
+          "preview_timeout_sec": 3.0
+        },
+        "source": "manual"
       }
     },
     {

@@ -16,7 +16,6 @@ from boss_agent.models import SavedSearch
 from boss_agent.settings import resolve_run_cleanup_on_startup
 from boss_agent.startup_cleanup import StartupCleanupGate
 from boss_agent.task_launch import (
-    LaunchMode,
     LaunchSource,
     TaskKind,
     TaskLaunch,
@@ -248,16 +247,17 @@ class AutomationScheduler:
             # tri-state intent: a scheduled drill that nobody configured.
             launch = build_chat_cleanup_launch(source=LaunchSource.SCHEDULER, search=search)
         else:
-            # Scheduled search depth honours the strategy's Target Action, not a
-            # scheduler opinion: a save-only search is preview by definition, and an
-            # auto-apply search drafts unless the operator asked for live dispatch. This
-            # used to send `preview_only=False`, inverting execution depth against every
-            # web builder for the same SavedSearch.
+            # No mode: the depth is the strategy's own Target Action, which is the
+            # execution depth the operator configured. This method used to send
+            # `preview_only=False`, and the builder it was moved onto then defaulted every
+            # unstated mode to preview, so a scheduled 自动沟通 run drafted its greeting,
+            # logged [OFFLINE DRAFT], and never opened a chat. A save-only search is still
+            # preview by definition; only a caller that wants to read the draft first
+            # states DRAFT, the way the launch modal does.
             launch = build_launch(
                 TaskKind.SEARCH,
                 source=LaunchSource.SCHEDULER,
                 search=search,
-                mode=LaunchMode.DRAFT,
             )
         return launch
 

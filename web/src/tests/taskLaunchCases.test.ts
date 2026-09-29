@@ -5,10 +5,12 @@ import { getProjectRoot } from '../lib/server/pythonRunner';
 import {
 	MIN_SCORE,
 	DEFAULT_MAX_JOBS,
+	DIRECT_APPLY_MIN_SCORE,
 	DEFAULT_PREVIEW_TIMEOUT_SEC,
 	buildLaunch,
 	buildSearchLaunch,
 	LaunchContractError,
+	type DirectApplyTarget,
 	type ChatAcknowledgment,
 	type LaunchKind,
 	type LaunchMode,
@@ -25,10 +27,12 @@ const FIXTURE_PATH = path.join(getProjectRoot(), 'config', 'task_launch.cases.js
 
 interface LaunchCase {
 	case: string;
+	note?: string;
 	kind: LaunchKind;
 	source: LaunchSource;
 	mode: LaunchMode | null;
 	search: SearchLaunchInput | null;
+	job?: DirectApplyTarget | null;
 	min_score: number | null;
 	chat: ChatAcknowledgment | null;
 	contract: string[];
@@ -52,6 +56,7 @@ describe('AutomationTask launch contract parity', () => {
 			const launch = buildLaunch(testCase.kind, {
 				source: testCase.source,
 				search: testCase.search,
+				job: testCase.job ?? null,
 				mode: testCase.mode === null ? undefined : testCase.mode,
 				chat: testCase.chat,
 				minScore: testCase.min_score === null ? undefined : testCase.min_score
@@ -71,6 +76,7 @@ describe('AutomationTask launch contract parity', () => {
 		expect(MIN_SCORE).toBe(defaults.min_score);
 		expect(DEFAULT_MAX_JOBS).toBe(defaults.max_jobs);
 		expect(DEFAULT_PREVIEW_TIMEOUT_SEC).toBe(defaults.preview_timeout_sec);
+		expect(DIRECT_APPLY_MIN_SCORE).toBe(defaults.direct_apply_min_score);
 	});
 
 	it('makes a manual and a scheduled launch of one search the same task', () => {
@@ -89,6 +95,45 @@ describe('AutomationTask launch contract parity', () => {
 		expect(manual.task_type).toBe(scheduled.task_type);
 		// Only provenance differs, and it is an attribute rather than a payload key.
 		expect(manual.source).not.toBe(scheduled.source);
+	});
+
+	it('sends an 自动沟通 strategy without anyone having to state a mode', () => {
+		// The reported bug: depth was a function of who remembered to pass `live`, so the
+		// strategies-page trigger, the dashboard "run scheduled now" and the cron scheduler
+		// all drafted a greeting and stopped at [OFFLINE DRAFT] for a strategy whose Target
+		// Action says 自动打招呼. The worker dispatches only on `auto_send && !preview_only`,
+		// so a launch that does not satisfy that gate is not an outreach run at all.
+		const search: SearchLaunchInput = { id: 's', name: '自动沟通', keyword: 'agent', target_action: 'auto_apply' };
+		for (const source of ['manual', 'scheduler'] as LaunchSource[]) {
+			const payload = buildSearchLaunch(search, { source }).payload;
+			expect(payload.target_action, source).toBe('auto_apply');
+			expect(payload.auto_send, source).toBe(true);
+			expect(payload.preview_only, source).toBe(false);
+		}
+
+		// Stating draft is now the only thing that keeps a greeting on the device.
+		const drafted = buildSearchLaunch(search, { source: 'manual', mode: 'draft' }).payload;
+		expect(drafted.auto_send).toBe(false);
+		expect(drafted.preview_only).toBe(true);
+	});
+
+	it('sends a 定向投递 without letting the score gate veto it', () => {
+		const job: DirectApplyTarget = {
+			job_id: 'j1',
+			title: 'AI Agent 工程师',
+			company_name: '煦象',
+			greeting_message: '您好'
+		};
+		const payload = buildLaunch('direct_apply', { source: 'manual', job }).payload;
+		expect(payload.target_action).toBe('auto_apply');
+		expect(payload.direct_job_id).toBe('j1');
+		expect(payload.auto_send).toBe(true);
+		expect(payload.preview_only).toBe(false);
+		expect(payload.min_score).toBe(DIRECT_APPLY_MIN_SCORE);
+
+		expect(() => buildLaunch('direct_apply', { source: 'manual', job: { job_id: '' } })).toThrow(
+			LaunchContractError
+		);
 	});
 
 	it('rejects a malformed target_action instead of defaulting to save_jd', () => {

@@ -222,7 +222,7 @@ The zero-token deterministic gatekeeper evaluation that examines the three card-
 _Avoid_: card filter, quick check, preliminary pass
 
 **Target Action (`target_action`)**:
-The configured execution depth for a search task governing whether discovered jobs undergo complete JD enrichment (`save_jd`) or automated greeting (`auto_apply`). Note: card digest only (`digest_only`) is deprecated in favor of full JD ingestion.
+The configured execution depth for a search task governing whether discovered jobs undergo complete JD enrichment (`save_jd`) or automated greeting (`auto_apply`). The launch contract resolves depth from it, so an `auto_apply` strategy that nobody downgraded actually sends its greeting; only an explicitly stated draft launch keeps a greeting on the device. Note: card digest only (`digest_only`) is deprecated in favor of full JD ingestion.
 _Avoid_: search mode, scrape level, crawl stage
 
 **Inline Description Expansion (Bottom-Right Hotspot Tap)**:

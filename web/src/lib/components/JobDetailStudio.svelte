@@ -21,6 +21,7 @@
 		getJobTags,
 		getJobDigest
 	} from '$lib/screening';
+	import { buildDirectApplyLaunch } from '$lib/taskLaunch';
 	import { formatCommuteDistance } from '$lib/commute';
 
 	let {
@@ -498,14 +499,21 @@
 		applyNotice = '正在下发定向投递任务至模拟器...';
 
 		try {
-			const task = await createAutomationTask('AUTO_APPLY', {
-				keyword: currentJob.title,
-				direct_job_id: currentJob.id,
-				greeting_message: customGreeting || currentJob.greeting_message,
-				company_name: currentJob.company_name,
-				job_title: currentJob.title,
-				candidate_profile: profile
-			});
+			// Through the launch contract: this payload used to state no `target_action`, no
+			// preview pair and no threshold, so the worker's draft-only defaults decided and
+			// the app promised a communication it never sent — and the score gate could veto
+			// a posting the human had just picked.
+			const launch = buildDirectApplyLaunch(
+				{
+					job_id: currentJob.id,
+					title: currentJob.title,
+					company_name: currentJob.company_name,
+					greeting_message: customGreeting || currentJob.greeting_message,
+					candidate_profile: profile
+				},
+				{ source: 'manual' }
+			);
+			const task = await createAutomationTask(launch.task_type, launch.payload, launch.source);
 
 			applyNotice = `🚀 投递任务已成功派发 (Task ID: ${task.id})，模拟器将自动执行沟通！`;
 			onActionCompleted?.('apply');

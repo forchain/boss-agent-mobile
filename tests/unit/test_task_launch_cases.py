@@ -18,7 +18,8 @@ from unittest.mock import patch
 import pytest
 
 from boss_agent import task_launch
-from boss_agent.models import FilterConfig, SavedSearch, SearchConfig
+from boss_agent.feed_pipeline import FeedStreamConfig
+from boss_agent.models import FilterConfig, SavedSearch, SearchConfig, TargetAction
 from boss_agent.rejection import ChatAcknowledgmentSettings
 
 FIXTURE_PATH = Path(__file__).parents[2] / "config" / "task_launch.cases.json"
@@ -50,6 +51,17 @@ def _saved_search(spec: dict | None) -> SavedSearch | None:
     )
 
 
+def _direct_apply_target(spec: dict | None) -> task_launch.DirectApplyTarget | None:
+    if spec is None:
+        return None
+    return task_launch.DirectApplyTarget(
+        job_id=spec["job_id"],
+        title=spec["title"],
+        company_name=spec["company_name"],
+        greeting_message=spec["greeting_message"],
+    )
+
+
 @pytest.mark.parametrize("case", CASES, ids=[c["case"] for c in CASES])
 def test_python_builder_matches_the_shared_case(case: dict) -> None:
     """Every shipped case is one the Python builder must reproduce exactly."""
@@ -58,6 +70,7 @@ def test_python_builder_matches_the_shared_case(case: dict) -> None:
         "source": task_launch.LaunchSource(case["source"]),
         "search": _saved_search(case["search"]),
         "mode": None if case["mode"] is None else task_launch.LaunchMode(case["mode"]),
+        "job": _direct_apply_target(case.get("job")),
     }
     if case["min_score"] is not None:
         kwargs["min_score"] = case["min_score"]
@@ -80,6 +93,7 @@ def test_the_declared_defaults_are_the_shared_ones() -> None:
     assert defaults["min_score"] == task_launch.MIN_SCORE
     assert defaults["max_jobs"] == task_launch.DEFAULT_MAX_JOBS
     assert defaults["preview_timeout_sec"] == task_launch.DEFAULT_PREVIEW_TIMEOUT_SEC
+    assert defaults["direct_apply_min_score"] == task_launch.DIRECT_APPLY_MIN_SCORE
 
 
 def test_the_job_ceiling_is_the_schemas_declared_default() -> None:
@@ -174,3 +188,52 @@ def test_legacy_tasks_without_provenance_are_treated_as_manual() -> None:
     assert task_launch.coerce_source(None) is task_launch.LaunchSource.MANUAL
     assert task_launch.coerce_source("nonsense") is task_launch.LaunchSource.MANUAL
     assert task_launch.coerce_source("test") is task_launch.LaunchSource.TEST
+
+
+def test_an_auto_apply_strategy_launch_reaches_the_dispatch_gate() -> None:
+    """The reported bug: a 自动沟通 run drafted a greeting and never sent one.
+
+    The pipeline dispatches only on `auto_send and not preview_only`, so a payload that
+    does not satisfy that gate is not an outreach run at all, whatever its strategy
+    declares. Read every launch back through the worker's own parser, because the defect
+    lived in the gap between the two: the builder wrote a depth no dispatch path could
+    reach, and the worker reported it as `Preview Draft Only (Safe Mode)`.
+    """
+    search = SavedSearch(
+        id="s",
+        name="自动沟通",
+        search=SearchConfig(keyword="agent"),
+        filter=FilterConfig(),
+        target_action="auto_apply",
+    )
+
+    for source in (task_launch.LaunchSource.MANUAL, task_launch.LaunchSource.SCHEDULER):
+        payload = task_launch.build_search_launch(search, source=source).payload
+        config = FeedStreamConfig.from_payload(payload)
+        assert config.target_action is TargetAction.AUTO_APPLY
+        assert config.auto_send and not config.preview_only, source
+
+    # Stating DRAFT remains the one thing that keeps a greeting on the device.
+    drafted = FeedStreamConfig.from_payload(
+        task_launch.build_search_launch(
+            search, source=task_launch.LaunchSource.MANUAL, mode=task_launch.LaunchMode.DRAFT
+        ).payload
+    )
+    assert not drafted.auto_send and drafted.preview_only
+
+
+def test_a_directed_application_sends_and_is_not_vetoed_by_the_score_gate() -> None:
+    """The human already chose this posting, so neither depth nor threshold may default.
+
+    The 定向投递 payload used to state neither, which left the worker to draft silently
+    and let a 70-point threshold refuse a job the operator had just clicked.
+    """
+    payload = task_launch.build_direct_apply_launch(
+        task_launch.DirectApplyTarget(job_id="j1", title="AI Agent 工程师", company_name="煦象"),
+        source=task_launch.LaunchSource.MANUAL,
+    ).payload
+    config = FeedStreamConfig.from_payload(payload)
+
+    assert config.single_screen and config.direct_job_id == "j1"
+    assert config.auto_send and not config.preview_only
+    assert config.min_score == task_launch.DIRECT_APPLY_MIN_SCORE

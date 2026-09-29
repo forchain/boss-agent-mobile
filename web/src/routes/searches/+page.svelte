@@ -431,11 +431,10 @@
 		const label = action === 'auto_apply' ? '自动沟通' : '深度存JD';
 		triggerStatus[search.id] = `正在下发 [${label}] 任务...`;
 		// The same builder the modal uses, so `min_score` and the preview flags are the
-		// contract's rather than this page's fourth copy of them.
-		const launch = buildSearchLaunch(
-			{ ...search, target_action: action },
-			{ source: 'manual', mode: 'draft' }
-		);
+		// contract's rather than this page's fourth copy of them. No `mode`: the action the
+		// operator just clicked *is* the depth they asked for, so an 自动沟通 click has to
+		// reach the send path instead of drafting and stopping at [OFFLINE DRAFT].
+		const launch = buildSearchLaunch({ ...search, target_action: action }, { source: 'manual' });
 		try {
 			const task = await createAutomationTask(launch.task_type, launch.payload);
 			triggerStatus[search.id] = `✅ 已派发 [${label}]: ${task.id}`;

@@ -12,6 +12,7 @@
 		updateSavedSearch,
 		formatCronHuman
 	} from '$lib/pocketbase';
+	import { buildSearchLaunch, DEFAULT_MAX_JOBS } from '$lib/taskLaunch';
 	import { dashboardRealtime } from '$lib/dashboardRealtime';
 	import TaskLaunchModal from '$lib/components/TaskLaunchModal.svelte';
 	import TaskLogModal from '$lib/components/TaskLogModal.svelte';
@@ -244,19 +245,14 @@
 	}
 
 	async function onRunScheduledNow(search: SavedSearch) {
-		const action = resolveTargetAction(search);
-		const type = action === 'auto_apply' ? 'AUTO_APPLY' : 'SCRAPE_JOBS';
-		const payload = {
-			search_id: search.id,
-			search_name: search.name,
-			keyword: search.keyword || '',
-			filter: search.filter || {},
-			target_action: action,
-			max_jobs: search.max_jobs || 30,
-			preview_only: true,
-			triggered_manually: true
-		};
-		const task = await createAutomationTask(type, payload);
+		// Through the shared builder rather than a hand-written payload: this one stated
+		// `preview_only: true` and no `auto_send`, so clicking an 自动沟通 strategy here
+		// drafted greetings and never sent one, and it carried a `min_score` of its own and
+		// a `triggered_manually` marker no handler reads any more. Omitting the mode means
+		// the strategy's Target Action decides, which is what "run the scheduled strategy"
+		// asks for.
+		const launch = buildSearchLaunch({ ...search, max_jobs: search.max_jobs || DEFAULT_MAX_JOBS }, { source: 'manual' });
+		const task = await createAutomationTask(launch.task_type, launch.payload, launch.source);
 		activeTaskId = task.id;
 		activeTask = task;
 		logLines = [`[Scheduled] 手动触发策略 [${search.name}] 任务下发成功 (ID: ${task.id})...`];
