@@ -33,6 +33,18 @@
 
 	// Responsive Modal State (Issue #290)
 	let isModalOpen = $state(false);
+	let windowWidth = $state<number>(typeof window !== 'undefined' ? window.innerWidth : 1200);
+
+	function checkIsDesktop(): boolean {
+		if (typeof window === 'undefined') return false;
+		if (typeof window.matchMedia === 'function') {
+			const mq = window.matchMedia('(min-width: 1024px)');
+			if (typeof mq?.matches === 'boolean') {
+				return mq.matches;
+			}
+		}
+		return windowWidth >= 1024;
+	}
 
 	// Pagination State
 	let currentPage = $state(1);
@@ -107,8 +119,21 @@
 	}
 
 	function handleSelectJob(job: JobRecord) {
-		selectedJobId = job.id;
-		isModalOpen = true;
+		const isDesktop = checkIsDesktop();
+		if (isDesktop) {
+			if (selectedJobId === job.id) {
+				// 桌面模式：点击当前已选中的，才弹窗
+				isModalOpen = true;
+			} else {
+				// 桌面模式：如果是切换，就不弹窗
+				selectedJobId = job.id;
+				isModalOpen = false;
+			}
+		} else {
+			// 移动端/竖屏视口：点击卡片始终选择并弹出详情窗口
+			selectedJobId = job.id;
+			isModalOpen = true;
+		}
 	}
 
 	function handleJobUpdated(updated: JobRecord) {
@@ -215,6 +240,8 @@
 		offJobRecords?.();
 	});
 </script>
+
+<svelte:window bind:innerWidth={windowWidth} />
 
 <svelte:head>
 	<title>职位匹配与破冰工作台 - Boss Agent Mobile</title>
@@ -360,6 +387,7 @@
 									handleSelectJob(job);
 								}
 							}}
+							title={selectedJobId === job.id ? '已选中此职位（再次点击弹出详情窗口）' : '点击切换此职位'}
 							class="p-4 rounded-2xl border transition text-left cursor-pointer relative overflow-hidden group {selectedJobId === job.id ? 'bg-slate-900 border-cyan-500/80 shadow-lg shadow-cyan-950/40' : 'bg-slate-900/60 hover:bg-slate-900/90 border-slate-800/80 hover:border-slate-700'}"
 						>
 							<!-- Left active indicator -->

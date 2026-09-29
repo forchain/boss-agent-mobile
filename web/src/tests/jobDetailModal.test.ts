@@ -55,7 +55,8 @@ function jsonResponse(body: unknown, status = 200): Response {
 	});
 }
 
-function stubFetch(record: JobRecord = TEST_JOB) {
+function stubFetch(recordsInput: JobRecord | JobRecord[] = TEST_JOB) {
+	const records = Array.isArray(recordsInput) ? recordsInput : [recordsInput];
 	const calls: Array<{ url: string; method: string; body: any }> = [];
 	vi.stubGlobal(
 		'fetch',
@@ -69,19 +70,21 @@ function stubFetch(record: JobRecord = TEST_JOB) {
 			calls.push({ url: target, method, body });
 
 			if (target.startsWith('/api/jobs/') && method === 'PATCH') {
-				return jsonResponse({ record: { ...record, ...(body || {}) } });
+				const id = target.split('/').pop()?.split('?')[0];
+				const existing = records.find((r) => r.id === id) || records[0];
+				return jsonResponse({ record: { ...existing, ...(body || {}) } });
 			}
 			if (target.startsWith('/api/jobs/') && method === 'DELETE') {
 				return jsonResponse({ success: true });
 			}
 			if (target.startsWith('/api/jobs')) {
 				return jsonResponse({
-					records: [record],
-					total: 1,
+					records,
+					total: records.length,
 					totalPages: 1,
 					page: 1,
 					perPage: 30,
-					counts: { all: 1, jd_saved: 1, matched: 0, applied: 0, ignored: 0, direct: 1, headhunter: 0 }
+					counts: { all: records.length, jd_saved: records.length, matched: 0, applied: 0, ignored: 0, direct: records.length, headhunter: 0 }
 				});
 			}
 			if (target.startsWith('/api/tasks')) {
@@ -316,5 +319,85 @@ describe('Jobs discovery page responsive modal integration (Issues #289, #290)',
 		await fireEvent.click(closeBtn);
 
 		expect(screen.queryByRole('dialog')).toBeNull();
+	});
+
+	it('in desktop mode: switching jobs updates selection without opening the modal', async () => {
+		const JOB_A: JobRecord = { ...TEST_JOB, id: 'job_a', title: 'Python 架构师' };
+		const JOB_B: JobRecord = { ...TEST_JOB, id: 'job_b', title: 'Golang 架构师' };
+		stubFetch([JOB_A, JOB_B]);
+		render(JobsPage);
+
+		await waitFor(() => expect(screen.getByText('全部 (2)')).toBeTruthy());
+
+		// Initially JOB_A is selected, modal is closed
+		expect(screen.queryByRole('dialog')).toBeNull();
+
+		// Clicking JOB_B (switching) should NOT open modal
+		const cardB = screen.getByRole('heading', { level: 3, name: 'Golang 架构师' });
+		await fireEvent.click(cardB);
+
+		expect(screen.queryByRole('dialog')).toBeNull();
+	});
+
+	it('in desktop mode: clicking the currently selected job opens the modal', async () => {
+		const JOB_A: JobRecord = { ...TEST_JOB, id: 'job_a', title: 'Python 架构师' };
+		const JOB_B: JobRecord = { ...TEST_JOB, id: 'job_b', title: 'Golang 架构师' };
+		stubFetch([JOB_A, JOB_B]);
+		render(JobsPage);
+
+		await waitFor(() => expect(screen.getByText('全部 (2)')).toBeTruthy());
+
+		// Initially JOB_A is selected. Clicking JOB_A (currently selected) opens modal
+		const cardA = screen.getByRole('heading', { level: 3, name: 'Python 架构师' });
+		await fireEvent.click(cardA);
+		expect(screen.getByRole('dialog')).toBeTruthy();
+
+		// Close modal
+		const closeBtn = screen.getByRole('button', { name: '关闭详情窗口' });
+		await fireEvent.click(closeBtn);
+		expect(screen.queryByRole('dialog')).toBeNull();
+
+		// Switch to JOB_B (switching does NOT open modal)
+		const cardB = screen.getByRole('heading', { level: 3, name: 'Golang 架构师' });
+		await fireEvent.click(cardB);
+		expect(screen.queryByRole('dialog')).toBeNull();
+
+		// Clicking JOB_B again (now currently selected) opens modal
+		await fireEvent.click(cardB);
+		expect(screen.getByRole('dialog')).toBeTruthy();
+	});
+
+	it('in mobile mode (< 1024px): clicking a job always opens the modal', async () => {
+		const originalInnerWidth = window.innerWidth;
+		Object.defineProperty(window, 'innerWidth', { writable: true, configurable: true, value: 375 });
+		const originalMatchMedia = window.matchMedia;
+		window.matchMedia = vi.fn().mockImplementation((query) => ({
+			matches: false,
+			media: query,
+			onchange: null,
+			addListener: vi.fn(),
+			removeListener: vi.fn(),
+			addEventListener: vi.fn(),
+			removeEventListener: vi.fn(),
+			dispatchEvent: vi.fn()
+		}));
+
+		try {
+			const JOB_A: JobRecord = { ...TEST_JOB, id: 'job_a', title: 'Python 架构师' };
+			const JOB_B: JobRecord = { ...TEST_JOB, id: 'job_b', title: 'Golang 架构师' };
+			stubFetch([JOB_A, JOB_B]);
+			render(JobsPage);
+
+			await waitFor(() => expect(screen.getByText('全部 (2)')).toBeTruthy());
+
+			// Clicking any job card on mobile opens the modal even if different
+			const cardB = screen.getByRole('heading', { level: 3, name: 'Golang 架构师' });
+			await fireEvent.click(cardB);
+
+			expect(screen.getByRole('dialog')).toBeTruthy();
+		} finally {
+			Object.defineProperty(window, 'innerWidth', { writable: true, configurable: true, value: originalInnerWidth });
+			window.matchMedia = originalMatchMedia;
+		}
 	});
 });
