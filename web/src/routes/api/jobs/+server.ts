@@ -4,6 +4,7 @@ import { getPocketBaseUrl } from '$lib/pocketbase';
 import { cleanJobTitle } from '$lib/screening';
 import { buildJobFilter, clampJobLimit, clampJobPage } from '$lib/jobQuery';
 import { computeFingerprint } from '$lib/server/jobFingerprint';
+import { brokerMessage } from '$lib/server/broker';
 
 import type { JobRecordsCounts } from '$lib/types';
 
@@ -179,9 +180,9 @@ export const POST: RequestHandler = async ({ request }) => {
 						const updated = await patchResp.json();
 						return json({ success: true, record: updated, is_new: false });
 					}
-					const patchErr = await patchResp.json().catch(() => ({}));
+					const message = await brokerMessage(patchResp);
 					return json(
-						{ success: false, error: patchErr.message || `Failed to update job in database (${patchResp.status})` },
+						{ success: false, message, error: message },
 						{ status: patchResp.status || 500 }
 					);
 				}
@@ -228,12 +229,13 @@ export const POST: RequestHandler = async ({ request }) => {
 			return json({ success: true, record: created, is_new: true });
 		}
 
-		const errData = await createResp.json().catch(() => ({}));
+		const message = await brokerMessage(createResp);
 		return json(
-			{ success: false, error: errData.message || `Failed to insert job in database (${createResp.status})` },
+			{ success: false, message, error: message },
 			{ status: createResp.status || 500 }
 		);
 	} catch (err: any) {
-		return json({ success: false, error: err?.message || 'Failed to upsert job' }, { status: 500 });
+		const message = err?.message || 'Failed to upsert job';
+		return json({ success: false, message, error: message }, { status: 500 });
 	}
 };
