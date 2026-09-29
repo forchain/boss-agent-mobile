@@ -327,6 +327,27 @@ describe('SvelteKit Server Endpoints', () => {
 		expect(data.greeting_message.length).toBeGreaterThan(10);
 	});
 
+	it('POST /api/match/evaluate forwards recruiter_name and formats dynamic salutation prefix', async () => {
+		const mockEvent: any = {
+			request: {
+				json: async () => ({
+					job_title: '资深 Agent 研发',
+					company_name: '智能未来',
+					salary_range: '40-60K',
+					job_description: '负责大模型 Agent 与 Android 移动端自动化架构设计，精通 Python',
+					recruiter_name: '钟先生 · 猎头顾问',
+					recruiter_title: '猎头顾问'
+				})
+			}
+		};
+
+		const response = await handleMatchPost(mockEvent);
+		const data = await response.json();
+
+		expect(response.status).toBe(200);
+		expect(data.greeting_message).toMatch(/^钟先生您好,幸会!/);
+	});
+
 	it('POST /api/match/evaluate safely handles masked API keys without latin-1 failure', async () => {
 		const mockEvent: any = {
 			request: {

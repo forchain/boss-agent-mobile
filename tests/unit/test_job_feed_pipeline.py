@@ -691,7 +691,7 @@ async def test_unsent_greeting_is_not_recorded_as_applied():
     assert result.applied is False
     assert await store.list_job_records(status="applied") == []
     matched = await store.list_job_records(status="matched")
-    assert matched[0]["greeting_message"] == "您好"
+    assert matched[0]["greeting_message"] == "王女士您好,幸会!"
     assert not matched[0]["applied_at"]
 
 

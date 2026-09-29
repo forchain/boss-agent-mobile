@@ -274,7 +274,9 @@ def test_evaluate_job_degrades_gracefully_when_screening_llm_fails():
     llm.chat_completion_json.side_effect = RuntimeError("Rate limit exceeded")
     screener = CandidateScreener(llm_client=llm)
 
-    result = screener.evaluate_job(card=_card(), jd_text=GOOD_JD, policy=ScreeningPolicy(jd_blacklist=["Java"]))
+    result = screener.evaluate_job(
+        card=_card(), jd_text=GOOD_JD, policy=ScreeningPolicy(jd_blacklist=["Java"])
+    )
 
     assert result.passed is True
     assert "降级放行" in result.reason
@@ -371,3 +373,43 @@ def test_jd_screen_prompt_carries_no_whitelist_veto():
     assert "大模型" not in system_prompt, "whitelist tokens must not leak into the JD prompt"
     assert "Java" in system_prompt, "blacklist criteria must remain"
     assert "核心职责" in system_prompt or "主技术栈" in system_prompt
+
+
+def test_evaluate_job_greeting_formats_salutation_from_card_recruiter():
+    """evaluate_job must pass card's recruiter through to JobPosting and enforce dynamic salutation."""
+    llm = MagicMock()
+    llm.chat_completion_json.side_effect = [
+        {"pass": True, "reason": "通过筛选"},
+        {
+            "match_score": 95,
+            "jd_key_requirements": ["多智能体"],
+            "match_reasons": ["经验匹配"],
+            "greeting_message": "您好！看到贵司正在招聘，希望能进一步交流！",
+        },
+    ]
+    screener = CandidateScreener(llm_client=llm)
+    card = _card(recruiter_name="李女士 · HRBP")
+
+    result = screener.evaluate_job(card, GOOD_JD, None)
+    assert result.passed is True
+    assert result.greeting_message.startswith("李女士您好,幸会!")
+
+
+def test_evaluate_job_greeting_formats_compound_and_single_surname_recruiters():
+    """Real name recruiters on card are converted to x总您好,幸会!."""
+    llm = MagicMock()
+    llm.chat_completion_json.side_effect = [
+        {"pass": True, "reason": "通过"},
+        {"match_score": 90, "greeting_message": "针对岗位核心挑战，我具备相关经验。"},
+        {"pass": True, "reason": "通过"},
+        {"match_score": 90, "greeting_message": "针对岗位核心挑战，我具备相关经验。"},
+    ]
+    screener = CandidateScreener(llm_client=llm)
+
+    # 1. Compound surname
+    res1 = screener.evaluate_job(_card(recruiter_name="诸葛孔明"), GOOD_JD, None)
+    assert res1.greeting_message.startswith("诸葛总您好,幸会!")
+
+    # 2. Single surname
+    res2 = screener.evaluate_job(_card(recruiter_name="张伟"), GOOD_JD, None)
+    assert res2.greeting_message.startswith("张总您好,幸会!")

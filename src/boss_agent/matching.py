@@ -4,6 +4,7 @@ boss_agent.matching
 Job match evaluation, alignment scoring, customized greeting generation, and Rich console formatting.
 """
 
+import re
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -16,9 +17,47 @@ from droid_agent_core.llm import LLMDecisionClient
 from .greeting_prompt import load_greeting_prompt
 from .llm_config import create_llm_client
 from .memory import StructuredCandidateProfile
-from .models import JobPosting, ScreeningPolicy, is_substantive_jd
+from .models import (
+    JobPosting,
+    ScreeningPolicy,
+    format_recruiter_greeting_prefix,
+    is_substantive_jd,
+)
 
 console = Console(stderr=True)
+
+_GREETING_OPENING_RE = re.compile(
+    r"^(?:(?:尊敬的)?(?:[^，,！!。\s\n]{1,8})?[，,\s]*)?"
+    r"(?:您好|你好|幸会|早上好|下午好|打扰了)[，,！!。\s]*"
+    r"(?:幸会[！!，,\s]*)?",
+    re.IGNORECASE,
+)
+
+
+def ensure_greeting_prefix(greeting: str, recruiter_name: str | None) -> str:
+    """Guarantee that greeting_message strictly starts with the dynamic recruiter salutation prefix.
+
+    Prefix rules:
+    - 'xx 女士' -> 'xx女士您好,幸会!'
+    - 'xx 先生' -> 'xx先生您好,幸会!'
+    - 'xxx(真名)' -> 'x总您好,幸会!' / 'xx总您好,幸会!'
+    - Missing / English / Abnormal -> '您好,幸会!'
+
+    Any redundant or existing greeting header is stripped and normalized to the canonical prefix.
+    """
+    expected_prefix = format_recruiter_greeting_prefix(recruiter_name)
+    if not greeting or not greeting.strip():
+        return expected_prefix
+
+    text = greeting.strip()
+    if text.startswith(expected_prefix):
+        return text
+
+    # Strip any leading greeting or salutation
+    m = _GREETING_OPENING_RE.match(text)
+    rest = text[len(m.group(0)) :].lstrip("，,、 \t\n") if m else text
+
+    return f"{expected_prefix}{rest}"
 
 
 @dataclass
@@ -137,12 +176,20 @@ class JobMatchGreetingService:
         system_prompt = self._build_system_prompt(greeting_prompt=greeting_prompt)
         system_prompt += self._build_blacklist_constraint_section(screening_policy)
 
+        prefix = format_recruiter_greeting_prefix(job.recruiter_name)
+        recruiter_info = job.recruiter_name or "招聘负责人"
+        if job.recruiter_title:
+            recruiter_info += f" ({job.recruiter_title})"
+
         user_prompt = (
             "请深入分析以下招聘岗位(JD)，提炼其核心诉求，评估契合度并生成针对该 JD 定制的破冰打招呼文案：\n\n"
             f"职位名称: {job.title}\n"
             f"招聘公司: {job.company_name}\n"
+            f"招聘人员: {recruiter_info}\n"
             f"薪资范围: {job.salary_range}\n"
             f"岗位描述(JD):\n{job.job_description or '暂无详细描述'}\n\n"
+            f"【打招呼开头称谓硬性要求】：\n"
+            f"打招呼文案 (greeting_message) 必须严格以“{prefix}”开头（请勿遗漏或改写该称谓前缀）。\n\n"
             "请严格以 JSON 格式输出以下结构：\n"
             "{\n"
             '  "match_score": 匹配度评分(0到100之间的整数),\n'
@@ -154,7 +201,7 @@ class JobMatchGreetingService:
             '    "针对核心诉求1的匹配证明与亮点",\n'
             '    "针对核心诉求2的匹配证明与亮点"\n'
             "  ],\n"
-            '  "greeting_message": "针对该JD痛点定制的破冰打招呼文案(80-150字，无模板套话，直击JD诉求)"\n'
+            f'  "greeting_message": "严格以“{prefix}”开头，针对该JD痛点定制的破冰打招呼文案(80-150字，无模板套话，直击JD诉求)"\n'
             "}"
         )
 
@@ -165,11 +212,15 @@ class JobMatchGreetingService:
 
         try:
             result_data = self.llm_client.chat_completion_json(messages)
-            return MatchGreetingResult.from_dict(result_data)
+            result = MatchGreetingResult.from_dict(result_data)
+            result.greeting_message = ensure_greeting_prefix(
+                result.greeting_message, job.recruiter_name
+            )
+            return result
         except Exception as e:
             console.print(f"[bold red]❌ LLM match evaluation error:[/bold red] {e}")
             fallback_msg = (
-                f"您好！看到贵公司正在招聘【{job.title}】，我对该方向有深入的实战落地经验，"
+                f"{prefix}看到贵公司正在招聘【{job.title}】，我对该方向有深入的实战落地经验，"
                 f"希望能与您进一步沟通交流！"
             )
             return MatchGreetingResult(
@@ -193,19 +244,27 @@ class JobMatchGreetingService:
         if profile:
             self.set_candidate_profile(profile)
 
+        prefix = format_recruiter_greeting_prefix(job.recruiter_name)
+        recruiter_info = job.recruiter_name or "招聘负责人"
+        if job.recruiter_title:
+            recruiter_info += f" ({job.recruiter_title})"
+
         system_prompt = self._build_system_prompt(greeting_prompt=greeting_prompt)
         system_prompt += (
             "\n\n【微调优化特别说明】：\n"
             "求职者对当前招呼语提出了具体的修改建议或批注。你必须充分吸纳求职者的反馈，"
-            "重新生成一版契合 JD、满足求职者要求、且符合反套路和精炼原则（80-150字）的破冰打招呼语。\n"
+            f"重新生成一版契合 JD、满足求职者要求、且严格以“{prefix}”开头的破冰打招呼语（80-150字，符合反套路和精炼原则）。\n"
             '请严格以 JSON 格式输出：{"revised_greeting": "重写后的破冰招呼语全文"}'
         )
 
         user_content = (
             f"职位名称: {job.title}\n"
             f"招聘公司: {job.company_name}\n"
+            f"招聘人员: {recruiter_info}\n"
             f"薪资范围: {job.salary_range}\n"
             f"岗位描述(JD):\n{job.job_description or '暂无详细描述'}\n\n"
+            f"【打招呼开头称谓硬性要求】:\n"
+            f"修改后的招呼语必须严格以“{prefix}”开头。\n\n"
             f"【当前打招呼语】:\n{current_greeting}\n\n"
             f"【求职者微调修改意见】:\n{critique}\n\n"
             "请根据上述修改意见重新生成破冰打招呼文案，严格以 JSON 格式输出：\n"
@@ -224,7 +283,7 @@ class JobMatchGreetingService:
             res = self.llm_client.chat_completion_json(messages)
             revised = str(res.get("revised_greeting") or "").strip()
             if revised:
-                return revised
+                return ensure_greeting_prefix(revised, job.recruiter_name)
             llm_error = ValueError("LLM returned empty revised_greeting")
         except Exception as e:
             llm_error = e

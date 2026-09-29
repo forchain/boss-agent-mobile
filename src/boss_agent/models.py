@@ -66,6 +66,153 @@ def normalize_recruiter_name(raw: str) -> str:
     return split_recruiter_name(raw)[0]
 
 
+COMMON_COMPOUND_SURNAMES: frozenset[str] = frozenset(
+    {
+        "欧阳",
+        "太史",
+        "端木",
+        "上官",
+        "司马",
+        "东方",
+        "独孤",
+        "南宫",
+        "万俟",
+        "闻人",
+        "夏侯",
+        "诸葛",
+        "尉迟",
+        "公羊",
+        "赫连",
+        "澹台",
+        "皇甫",
+        "宗政",
+        "濮阳",
+        "公冶",
+        "太叔",
+        "申屠",
+        "公孙",
+        "慕容",
+        "仲孙",
+        "钟离",
+        "长孙",
+        "宇文",
+        "司徒",
+        "司空",
+        "司寇",
+        "子车",
+        "微生",
+        "呼延",
+        "拓跋",
+        "乐正",
+        "壤驷",
+        "公良",
+        "漆雕",
+        "巫马",
+        "公西",
+        "令狐",
+    }
+)
+
+GENERIC_ROLE_TOKENS: frozenset[str] = frozenset(
+    {
+        "hr",
+        "hrbp",
+        "猎头",
+        "猎头顾问",
+        "招聘者",
+        "招聘",
+        "招聘顾问",
+        "招聘专员",
+        "招聘经理",
+        "人事",
+        "人事经理",
+        "顾问",
+        "面试官",
+        "管理员",
+        "工作人员",
+        "合伙人",
+        "团队",
+        "部门",
+    }
+)
+
+
+def parse_recruiter_title(raw: str | None) -> str:
+    """Parse a recruiter name into an appropriate Chinese salutation title.
+
+    Supported patterns:
+    - 'xx 女士' (e.g. '张女士', '张女士 · HR') -> '张女士'
+    - 'xx 先生' (e.g. '钟先生', '钟先生 · 猎头顾问') -> '钟先生'
+    - 'xxx(真名)' (e.g. '张伟', '诸葛孔明', '欧阳六') -> recognizes single or compound surname -> '张总', '诸葛总', '欧阳总'
+    - 'xx 总' (e.g. '张总', '诸葛总') -> '张总', '诸葛总'
+    - Pure English, digits, generic roles, or missing/abnormal names -> '' (falls back to generic greeting)
+    """
+    if not raw:
+        return ""
+    text = str(raw).strip()
+    if not text:
+        return ""
+
+    # 1. Normalize spaces before gendered suffixes e.g. "张 女士" -> "张女士"
+    text = re.sub(r"\s*(女士|先生)", r"\1", text)
+
+    # 2. Strip Boss separator and attached title (e.g. "钟先生 · 猎头顾问" -> "钟先生")
+    name = split_recruiter_name(text)[0]
+
+    # 3. Strip brackets/parentheses (e.g. "张女士(HR)", "李女士【招聘】")
+    name = re.sub(r"[\(（\[【].*?[\)）\]】]", "", name).strip()
+
+    # 4. Strip trailing role tokens separated by whitespace or delimiter
+    name = re.split(r"[\s/|_\-]+", name)[0].strip()
+
+    if not name:
+        return ""
+
+    # Check generic role tokens
+    if name.lower() in GENERIC_ROLE_TOKENS:
+        return ""
+
+    # Must contain only Chinese characters (English/digits/abnormal -> fallback)
+    if not re.match(r"^[\u4e00-\u9fa5]+$", name):
+        return ""
+
+    # Check "xx女士", "xx先生", "xx总"
+    if name.endswith("女士"):
+        if len(name) >= 3:
+            return name
+        return ""
+    if name.endswith("先生"):
+        if len(name) >= 3:
+            return name
+        return ""
+    if name.endswith("总"):
+        if len(name) in (2, 3):
+            return name
+        return ""
+
+    # Real name (2-4 characters):
+    if 2 <= len(name) <= 4:
+        if len(name) >= 3 and name[:2] in COMMON_COMPOUND_SURNAMES:
+            return f"{name[:2]}总"
+        return f"{name[0]}总"
+
+    return ""
+
+
+def format_recruiter_greeting_prefix(raw: str | None) -> str:
+    """Format the opening greeting prefix for a recruiter.
+
+    - 'xx 女士' -> 'xx女士您好,幸会!'
+    - 'xx 先生' -> 'xx先生您好,幸会!'
+    - 'xxx(真名)' -> 'x总您好,幸会!' or 'xx总您好,幸会!' (compound surname)
+    - Fallback -> '您好,幸会!'
+    """
+    title = parse_recruiter_title(raw)
+    if title:
+        return f"{title}您好,幸会!"
+    return "您好,幸会!"
+
+
 def compute_job_fingerprint(company_name: str, title: str, recruiter_name: str) -> str:
     """Compute normalized SHA-256 fingerprint for a job card using the canonical 3 fields."""
     import hashlib
@@ -299,9 +446,7 @@ def sanitize_tags(
     return cleaned
 
 
-_CN_JD_HEADER_WORDS = (
-    "岗位职责|工作职责|职位描述|任职要求|任职资格|加分项|基本要求|必须要求|关于我们|公司介绍|加分条件|薪酬福利"
-)
+_CN_JD_HEADER_WORDS = "岗位职责|工作职责|职位描述|任职要求|任职资格|加分项|基本要求|必须要求|关于我们|公司介绍|加分条件|薪酬福利"
 _EN_JD_HEADER_WORDS = (
     r"role summary|role overview|job summary|job description|responsibilit(?:y|ies)|"
     r"requirement(?:s)?|qualification(?:s)?|preferred (?:qualifications|requirements)|"
@@ -1055,8 +1200,7 @@ class ScreeningPolicy:
 
         return (
             False,
-            f"【App端强制过滤】距离家庭住址 {commute_distance_km:.1f}km "
-            f"超过通勤上限 {limit:.1f}km",
+            f"【App端强制过滤】距离家庭住址 {commute_distance_km:.1f}km 超过通勤上限 {limit:.1f}km",
         )
 
     def evaluate_app_enforced_filters(

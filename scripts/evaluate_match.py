@@ -18,14 +18,16 @@ sys.path.insert(0, str(root_dir / "src"))
 from boss_agent.llm_config import load_llm_config  # noqa: E402
 from boss_agent.matching import JobMatchGreetingService  # noqa: E402
 from boss_agent.memory import StructuredCandidateProfile  # noqa: E402
-from boss_agent.models import JobPosting  # noqa: E402
+from boss_agent.models import JobPosting, format_recruiter_greeting_prefix  # noqa: E402
 from droid_agent_core.llm import LLMConfig, OpenAIChatClient  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Evaluate job match and generate greeting")
     parser.add_argument("--job", "-j", type=str, required=True, help="Job details JSON string")
-    parser.add_argument("--profile", "-p", type=str, default=None, help="Candidate profile JSON string")
+    parser.add_argument(
+        "--profile", "-p", type=str, default=None, help="Candidate profile JSON string"
+    )
     parser.add_argument(
         "--greeting-prompt",
         type=str,
@@ -59,7 +61,9 @@ def build_llm_client(llm_config_arg: str | None) -> OpenAIChatClient:
                 default_cfg = load_llm_config()
                 if _is_masked_key(api_key):
                     api_key = default_cfg.api_key
-                if (not base_url or base_url == "https://api.openai.com/v1") and _is_masked_key(config_data.get("api_key")):
+                if (not base_url or base_url == "https://api.openai.com/v1") and _is_masked_key(
+                    config_data.get("api_key")
+                ):
                     base_url = default_cfg.base_url
                     model = default_cfg.model
 
@@ -87,6 +91,8 @@ def main() -> None:
             company_name=job_dict.get("company_name") or job_dict.get("company") or "招聘公司",
             salary_range=job_dict.get("salary_range") or job_dict.get("salary") or "面议",
             job_description=job_dict.get("job_description") or job_dict.get("description") or "",
+            recruiter_name=job_dict.get("recruiter_name") or job_dict.get("recruiter") or None,
+            recruiter_title=job_dict.get("recruiter_title") or None,
         )
     except Exception as e:
         sys.stdout.write(json.dumps({"error": f"Invalid job JSON: {e}"}, ensure_ascii=False) + "\n")
@@ -111,10 +117,14 @@ def main() -> None:
 
             mgr = ResumeMemoryManager()
             cached = mgr.load_cached_memory()
-            if cached and (cached.profile_document or cached.work_experiences or cached.core_skills) and (
-                not candidate_profile
-                or candidate_profile.name in ("测试候选人", "求职者", "")
-                or not candidate_profile.profile_document
+            if (
+                cached
+                and (cached.profile_document or cached.work_experiences or cached.core_skills)
+                and (
+                    not candidate_profile
+                    or candidate_profile.name in ("测试候选人", "求职者", "")
+                    or not candidate_profile.profile_document
+                )
             ):
                 candidate_profile = cached
         except Exception as e:
@@ -133,12 +143,19 @@ def main() -> None:
         sys.stdout.write(json.dumps(result.to_dict(), ensure_ascii=False) + "\n")
     except Exception as e:
         sys.stderr.write(f"Match evaluation error: {e}\n")
-        sys.stdout.write(json.dumps({
-            "match_score": 50,
-            "match_reasons": [f"评估出现异常: {e}"],
-            "jd_key_requirements": ["待提取"],
-            "greeting_message": f"您好！看到贵司正在招聘【{job.title}】，我对该方向非常感兴趣，希望能与您沟通！"
-        }, ensure_ascii=False) + "\n")
+        prefix = format_recruiter_greeting_prefix(getattr(job, "recruiter_name", None))
+        sys.stdout.write(
+            json.dumps(
+                {
+                    "match_score": 50,
+                    "match_reasons": [f"评估出现异常: {e}"],
+                    "jd_key_requirements": ["待提取"],
+                    "greeting_message": f"{prefix}看到贵司正在招聘【{job.title}】，我对该方向非常感兴趣，希望能与您沟通！",
+                },
+                ensure_ascii=False,
+            )
+            + "\n"
+        )
 
 
 if __name__ == "__main__":
