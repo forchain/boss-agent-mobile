@@ -108,6 +108,8 @@ def main() -> None:
             company_name=job_dict.get("company_name") or job_dict.get("company") or "招聘公司",
             salary_range=job_dict.get("salary_range") or job_dict.get("salary") or "面议",
             job_description=job_dict.get("job_description") or job_dict.get("description") or "",
+            recruiter_name=job_dict.get("recruiter_name") or job_dict.get("recruiter") or None,
+            recruiter_title=job_dict.get("recruiter_title") or None,
         )
     except Exception as e:
         sys.stdout.write(json.dumps({"error": f"Invalid job JSON: {e}"}, ensure_ascii=False) + "\n")
