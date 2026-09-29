@@ -152,6 +152,180 @@ describe('Job communication API endpoints', () => {
 		expect(patch!.body).toEqual({ greeting_message: '您好' });
 	});
 
+	it('PATCH /api/jobs/:id handles camelCase clearCommunication and removes it from payload', async () => {
+		const calls: Array<{ url: string; body: any }> = [];
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string, init?: any) => {
+				calls.push({ url: String(url), body: init?.body ? JSON.parse(init.body) : null });
+				return new Response(JSON.stringify({ id: 'job_camel', status: 'jd_saved' }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				});
+			})
+		);
+
+		const { PATCH } = await import('../routes/api/jobs/[id]/+server');
+		const res = await PATCH({
+			params: { id: 'job_camel' },
+			request: { json: async () => ({ clearCommunication: true }) }
+		} as any);
+
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body.success).toBe(true);
+
+		const patch = calls.find((c) => c.url.includes('/api/collections/job_records/records/job_camel'));
+		expect(patch).toBeDefined();
+		expect(patch!.body.status).toBe('jd_saved');
+		expect(patch!.body.applied_at).toBe('');
+		expect(patch!.body.applied_source).toBe('');
+		expect(patch!.body.clearCommunication).toBeUndefined();
+		expect(patch!.body.clear_communication).toBeUndefined();
+	});
+
+	it('PATCH /api/jobs/:id strips system fields and unknown fields from payload', async () => {
+		const calls: Array<{ url: string; body: any }> = [];
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string, init?: any) => {
+				calls.push({ url: String(url), body: init?.body ? JSON.parse(init.body) : null });
+				return new Response(JSON.stringify({ id: 'job_clean', greeting_message: 'Hi' }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				});
+			})
+		);
+
+		const { PATCH } = await import('../routes/api/jobs/[id]/+server');
+		const res = await PATCH({
+			params: { id: 'job_clean' },
+			request: {
+				json: async () => ({
+					id: 'job_override_attempt',
+					created: '2026-01-01',
+					updated: '2026-01-02',
+					match_reasons: ['great candidate'],
+					unknown_client_field: 123,
+					greeting_message: 'Hi',
+					status: 'matched'
+				})
+			}
+		} as any);
+
+		expect(res.status).toBe(200);
+		const patch = calls.find((c) => c.url.includes('/records/job_clean'));
+		expect(patch).toBeDefined();
+		expect(patch!.body).toEqual({
+			greeting_message: 'Hi',
+			status: 'matched'
+		});
+		expect(patch!.body.id).toBeUndefined();
+		expect(patch!.body.created).toBeUndefined();
+		expect(patch!.body.updated).toBeUndefined();
+		expect(patch!.body.match_reasons).toBeUndefined();
+		expect(patch!.body.unknown_client_field).toBeUndefined();
+	});
+
+	it('PATCH /api/jobs/:id coerces null date fields to empty string', async () => {
+		const calls: Array<{ url: string; body: any }> = [];
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string, init?: any) => {
+				calls.push({ url: String(url), body: init?.body ? JSON.parse(init.body) : null });
+				return new Response(JSON.stringify({ id: 'job_date' }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				});
+			})
+		);
+
+		const { PATCH } = await import('../routes/api/jobs/[id]/+server');
+		await PATCH({
+			params: { id: 'job_date' },
+			request: {
+				json: async () => ({
+					applied_at: null,
+					first_seen_at: null,
+					last_seen_at: null
+				})
+			}
+		} as any);
+
+		const patch = calls.find((c) => c.url.includes('/records/job_date'));
+		expect(patch).toBeDefined();
+		expect(patch!.body.applied_at).toBe('');
+		expect(patch!.body.first_seen_at).toBe('');
+		expect(patch!.body.last_seen_at).toBe('');
+	});
+
+	it('PATCH /api/jobs/:id propagates detailed error message from broker on 400', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () => {
+				return new Response(
+					JSON.stringify({
+						code: 400,
+						message: 'Failed to update record.',
+						data: {
+							status: {
+								code: 'validation_not_in_list',
+								message: 'Value must be one of the permitted values'
+							}
+						}
+					}),
+					{
+						status: 400,
+						headers: { 'Content-Type': 'application/json' }
+					}
+				);
+			})
+		);
+
+		const { PATCH } = await import('../routes/api/jobs/[id]/+server');
+		const res = await PATCH({
+			params: { id: 'job_err' },
+			request: { json: async () => ({ status: 'invalid_status' }) }
+		} as any);
+
+		expect(res.status).toBe(400);
+		const body = await res.json();
+		expect(body.success).toBe(false);
+		expect(body.message).toContain('Failed to update record.');
+		expect(body.message).toContain('status: Value must be one of the permitted values');
+		expect(body.error).toBe(body.message);
+	});
+
+	it('PATCH /api/jobs/:id returns 404 when record is not found', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () => {
+				return new Response(
+					JSON.stringify({
+						code: 404,
+						message: 'The requested resource was not found.'
+					}),
+					{
+						status: 404,
+						headers: { 'Content-Type': 'application/json' }
+					}
+				);
+			})
+		);
+
+		const { PATCH } = await import('../routes/api/jobs/[id]/+server');
+		const res = await PATCH({
+			params: { id: 'nonexistent' },
+			request: { json: async () => ({ greeting_message: 'hello' }) }
+		} as any);
+
+		expect(res.status).toBe(404);
+		const body = await res.json();
+		expect(body.success).toBe(false);
+		expect(body.message).toBe('Job record not found');
+		expect(body.error).toBe('Job record not found');
+	});
+
 	it('POST /api/jobs/communication releases every role of a direct-hire company', async () => {
 		const applied = [
 			{ id: 'j1', company_name: '深至科技', status: 'applied', is_headhunter: false },

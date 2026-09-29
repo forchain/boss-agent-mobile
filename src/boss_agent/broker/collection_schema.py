@@ -413,7 +413,7 @@ JOB_RECORDS = Collection(
         Field(FINGERPRINT_FIELD, TEXT, required=True, unique=True),
         Field("title", TEXT, required=True, default=""),
         Field("company_name", TEXT, required=True, default=""),
-        Field("recruiter_name", TEXT, required=True, default=""),
+        Field("recruiter_name", TEXT, required=False, default=""),
         Field("salary_range", TEXT, default=""),
         Field("location", TEXT, default=""),
         Field("digest", TEXT, default=""),
