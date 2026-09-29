@@ -1706,6 +1706,73 @@ class CommunicationListPage(BaseBossPage):
             is not None
         )
 
+    def has_message_tab_unread_dot(self, timeout_sec: float = 1.0) -> bool:
+        """Check whether the bottom navigation 消息 tab currently shows an unread red dot.
+
+        One reading of the Tier 1 preflight probe. With the bottom navigation bar
+        present (entry_tab found), an absent `communication_list.message_tab_unread_dot`
+        is what a zero-unread account looks like — but so is a bar that has only just
+        rendered, so the caller confirms the absence over a settle window before it
+        trusts one reading. If the bottom navigation bar is not visible on the current
+        screen (e.g. within an inner chat or subpage), returns True so the caller
+        proceeds with standard list recovery: nothing can be concluded about an account
+        whose navigation is not on screen.
+        """
+        entry_tab = self.find_by_key("communication_list.entry_tab", timeout_sec=timeout_sec)
+        if not entry_tab:
+            return True
+        return self.find_now("communication_list.message_tab_unread_dot") is not None
+
+    def get_unread_badge_count(self, timeout_sec: float = 1.0) -> int | None:
+        """Read the unread count badge on the 仅沟通 category sub-tab.
+
+        Returns the parsed integer count (e.g. 1, 5, 99) when the badge is present, or
+        None when it is absent — which means 0 unread in 仅沟通 *if* the badge has been
+        drawn. One reading cannot tell those apart, so the caller re-reads a cleared or
+        absent badge across a settle window before it treats the category as zero-unread.
+        """
+        elem = self.find_by_key("communication_list.unread_badge", timeout_sec=timeout_sec)
+        if elem is None:
+            return None
+        raw = getattr(elem, "text", "")
+        if not isinstance(raw, str):
+            return None
+        raw_text = raw.strip()
+        if not raw_text:
+            return None
+        import re
+
+        digits = re.sub(r"[^\d]", "", raw_text)
+        if digits:
+            return int(digits)
+        return 1
+
+    def scroll_message_list(self) -> bool:
+        """Perform a humanized scroll downwards on the conversation RecyclerView.
+
+        Prefers the bounds of the RecyclerView container when found, falling back
+        to window dimensions. Returns True if the gesture was performed, False otherwise.
+        """
+        if not self.driver:
+            return False
+        recycler = self.find_now("communication_list.recycler_view")
+        rect = getattr(recycler, "rect", None) if recycler else None
+        if rect and isinstance(rect, dict) and rect.get("width") and rect.get("height"):
+            w = rect["width"]
+            h = rect["height"]
+            x = rect.get("x", 0)
+            y = rect.get("y", 0)
+            start = Point(x + w * 0.5, y + h * 0.75)
+            end = Point(x + w * 0.5, y + h * 0.25)
+        else:
+            size = self._get_window_size()
+            w, h = size["width"], size["height"]
+            start = Point(w * 0.5, h * 0.75)
+            end = Point(w * 0.5, h * 0.25)
+        self.gestures.human_swipe(start, end, duration_ms=500)
+        self.gestures.random_sleep(0.3, 0.6)
+        return True
+
     def wait_for_list_return(self, timeout_sec: float = 5.0) -> bool:
         """Wait for the platform to drop the conversation and land back on the list."""
         return self.is_on_list(timeout_sec=timeout_sec)
@@ -1713,7 +1780,11 @@ class CommunicationListPage(BaseBossPage):
     def open_list(self, timeout_sec: float = 5.0, max_steps: int = LIST_RECOVERY_MAX_STEPS) -> bool:
         """Navigate into the 仅沟通 list from whatever screen the app is currently on.
 
-        The first check means an app already showing the list is never clicked at all.
+        The message column and the 仅沟通 sub-tab are directly clicked. Because Android
+        accessibility and page source do not differentiate which sub-tab (全部, 新招呼,
+        仅沟通, 有交换) is active, presence of the tab marker cannot be used to bypass
+        clicks. Clicking 消息 -> 仅沟通 ensures the 仅沟通 list is explicitly active.
+
         From anywhere else the loop spends at most ``max_steps`` screens trying to
         reach the message column, then clicks 消息 -> 仅沟通 and confirms the landing.
 
@@ -1728,8 +1799,6 @@ class CommunicationListPage(BaseBossPage):
         unreachable list into a multi-minute stall.
         """
         for step in range(max_steps + 1):
-            if self.is_on_list(timeout_sec=0.0):
-                return True
             if self._open_message_column(timeout_sec=timeout_sec):
                 return True
             if step == max_steps:
@@ -1749,6 +1818,7 @@ class CommunicationListPage(BaseBossPage):
         if not sub_tab:
             return False
         self.gestures.human_click(sub_tab)
+        self.gestures.random_sleep(0.2, 0.4)
         return self.is_on_list(timeout_sec=timeout_sec)
 
     def _recover_one_step(self) -> None:

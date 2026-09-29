@@ -191,6 +191,7 @@ def build_chat_cleanup_launch(
     mode: LaunchMode | None = None,
     rejection_reply_text: str | None = None,
     max_scan_depth: int | None = None,
+    max_scroll_swipes: int | None = None,
 ) -> TaskLaunch:
     """Launch a 仅沟通 rejection cleanup.
 
@@ -207,6 +208,9 @@ def build_chat_cleanup_launch(
             ack.rejection_reply_text if rejection_reply_text is None else rejection_reply_text
         ),
         "max_scan_depth": ack.max_scan_depth if max_scan_depth is None else int(max_scan_depth),
+        "max_scroll_swipes": (
+            ack.max_scroll_swipes if max_scroll_swipes is None else int(max_scroll_swipes)
+        ),
     }
     if search is not None:
         payload["saved_search_id"] = search.id

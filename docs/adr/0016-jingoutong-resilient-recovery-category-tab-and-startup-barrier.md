@@ -14,8 +14,8 @@ ADR 0011's "no back-button scanning" rule was driven by *cost*, measured on the 
 
 ## Decision
 1. **Multi-tier recovery in `CommunicationListPage.open_list()`**:
-   - Pre-check `is_on_list()`; an app already on the list is never clicked at all.
-   - Otherwise loop at most `LIST_RECOVERY_MAX_STEPS` (6) times: try `消息` → `仅沟通` (`_open_message_column`), confirm the landing, and only then unwind one screen (`_recover_one_step`).
+   - Because Android accessibility / page source cannot differentiate which sub-tab (`全部`, `新招呼`, `仅沟通`, `有交换`) is currently active, `is_on_list()` (checking mere presence of the `仅沟通` tab node) cannot be used to bypass navigation.
+   - The loop attempts `消息` → `仅沟通` (`_open_message_column`) directly to guarantee the `仅沟通` list is selected, and unwinds one screen (`_recover_one_step`) up to `LIST_RECOVERY_MAX_STEPS` (6) times when the bottom message tab is not yet reached.
    - `_recover_one_step` probes a single short locator list `communication_list.back_btn` (the measured `iv_back` / `iv_back_ai`, then the generic 返回 content-desc) and clicks it with a humanized click. **The hardware `KEYCODE_BACK` is the fallback, not the default.**
    - Every step re-runs `_ensure_foreground()`, so a Back press that did escape to the launcher re-activates Boss instead of being compounded by the next press.
    - Each action is followed by a jittered settle pause (`BACK_INTERVAL_SEC`), so recovery cannot degenerate into a runaway click burst.

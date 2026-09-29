@@ -3,26 +3,37 @@ boss_agent.chat_triage
 ======================
 Deep Chat Triage module (Spec #267, ADR 0013's chat half).
 
-One engine owns the whole 仅沟通 rejection story: the bounded First-Screen Scan,
-the stop-reason taxonomy, the zero-token Outbound Message Indicator bypass, the
-classify → guardrail → blacklist-ingest → acknowledge ordering, dry-run, and the
-per-run tallies. Its interface is one verb — ``scan()`` — returning a Triage Report.
-The CHECK_CHAT handler configures a run and maps that report into task telemetry;
-it never touches a card, a page object or a device.
+One engine owns the whole 仅沟通 rejection story: the two-tier zero-unread preflight,
+the Unread-Badge Bounded Scan, the stop-reason taxonomy, the zero-token Outbound
+Message Indicator bypass, the classify → guardrail → blacklist-ingest → acknowledge
+ordering, dry-run, and the per-run tallies. Its interface is one verb — ``scan()`` —
+returning a Triage Report. The CHECK_CHAT handler configures a run and maps that
+report into task telemetry; it never touches a card, a page object or a device.
 
-The scan reads the *opening screen* of the list and nothing else (ADR 0015). The
-list is ordered newest-first, and marking a conversation 不感兴趣 drops it from the
-list, so the top of the screen is both where new state arrives and where the list
-drains from. A pass therefore judges what it can see, re-reads the screen after each
-acknowledgment, and stops once nothing on it is new: no scrolling, no pagination,
-and no per-run accumulation to reason about.
+A run opens with a preflight that can end it before any card is read: the bottom
+bar's 消息 dot first, then the 仅沟通 badge behind it. An absent probe means one of two
+very different things — a clean account, or a screen that has not finished rendering —
+and only one of them justifies skipping the scan, so an absence is believed only once
+it survives a settle window (``UNREAD_ABSENCE_CONFIRMATIONS`` readings). Anything less
+falls through to the scan, where a wrong guess costs nothing but time.
 
-Paging was tried twice and removed. The list yields an unbounded run of zero-token
-outbound cards and of preserved cards that are never removed, so neither a depth
-bound nor a card ceiling nor a time cursor could keep a run from walking the whole
-backlog on every dispatch (Issues #239, ADR 0014). The cost is coverage, and it is
-deliberate: a card below the fold is reached only after the cards above it leave the
-list. See ADR 0015.
+Past the preflight the scan is bounded by the platform's own unread badge (ADR 0017).
+It reads the opening viewport, re-reads the screen after each acknowledgment, and
+while the 仅沟通 badge still counts unread messages it pages downwards with humanized
+swipes — so a rejection buried under a stack of outbound-waiting threads is reached.
+The list is ordered newest-first and drops a conversation from view when it is marked
+不感兴趣, so the top of the screen is both where new state arrives and where the list
+drains from. A run stops when the badge clears, when the list stops yielding new
+cards, or at one of its ceilings (``max_scroll_swipes``, ``max_scan_depth`` for LLM
+evaluations, and ``MAX_INSPECTED_CARDS`` as the loop's termination guarantee), and
+every exit names its ``stop_reason``.
+
+Paging had been tried twice and removed (Issues #207, #239, ADRs 0011 and 0014):
+nothing bounded a walk that kept meeting fresh zero-token outbound cards and
+never-removed preserved ones, so a run could walk the whole backlog on every dispatch.
+ADR 0015 responded by reading the opening screen and nothing else, which blinded the
+scan to unreads pushed below the fold; ADR 0017 restores paging with the one bound
+that was missing — the unread badge the platform already maintains.
 
 The device world crosses two narrow ports — a list reader and a chat actor — and
 cards cross as data with an opaque handle, never a device reference. The production
@@ -30,6 +41,7 @@ adapters wrap the existing page objects, which keep owning 仅沟通 List Recove
 extraction and descriptor parsing (ADR 0016 is not revisited).
 """
 
+import asyncio
 import logging
 from collections import Counter
 from collections.abc import Awaitable, Callable
@@ -46,7 +58,7 @@ from .pages import (
     CommunicationListPage,
     StartupDialogPage,
 )
-from .rejection import ChatAcknowledgmentSettings
+from .rejection import ChatAcknowledgmentSettings, DEFAULT_MAX_SCROLL_SWIPES
 
 logger = logging.getLogger(__name__)
 
@@ -58,8 +70,10 @@ VIEWPORT_SIZE = 10
 #: evaluations, and an outbound card costs none — so on its own it cannot stop a
 #: screen that keeps yielding fresh outbound cards as acknowledged ones leave it.
 #: This is a safety bound, not a tuning knob: it exists so the scan loop always
-#: terminates.
-MAX_INSPECTED_CARDS = 300
+#: terminates. It is set to the traversal's own reach — `max_scroll_swipes` (5)
+#: viewports past the opening screen, at `VIEWPORT_SIZE` (10) cards each — so it
+#: never truncates a run the swipe ceiling would have allowed (ADR 0017).
+MAX_INSPECTED_CARDS = 50
 
 #: Characters of message text echoed into task logs.
 PREVIEW_CHARS = 40
@@ -70,19 +84,31 @@ PAGE_TIMEOUT_SEC = 5.0
 #: Timeout budget for the cheap "is the list already showing" probe.
 LIST_PROBE_TIMEOUT_SEC = 1.0
 
+#: Readings an absent unread probe must survive before a run calls the account clean.
+#: A zero-unread preflight is a *skip*, so one absent reading cannot carry it: on a
+#: cold start the bottom bar renders before its badge state is populated, and a list
+#: that has only just appeared has not drawn its 仅沟通 count yet. Either would
+#: otherwise be read as a clean account and swallow real unreads.
+UNREAD_ABSENCE_CONFIRMATIONS = 3
+
+#: Wall-clock gap between those readings, so a render that is merely late is not
+#: mistaken for an absent probe.
+SETTLE_PAUSE_SEC = 0.35
+
 
 class StopReason(StrEnum):
     """Why a triage run stopped.
 
-    The first six are the scan's own exits. ``LIST_UNREACHABLE`` is the entry
+    The first seven are the scan's own exits. ``LIST_UNREACHABLE`` is the entry
     failure that precedes them: the list could not be opened, so no card was read.
     """
 
-    FIRST_SCREEN_EXHAUSTED = "first_screen_exhausted"
+    UNREAD_CLEARED = "unread_cleared"
     EMPTY_LIST = "empty_list"
     CANCELLED = "cancelled"
     MAX_SCAN_DEPTH = "max_scan_depth"
     SCAN_CEILING = "scan_ceiling"
+    SCROLL_CEILING = "scroll_ceiling"
     LOST_LIST = "lost_list"
     LIST_UNREACHABLE = "list_unreachable"
 
@@ -130,6 +156,7 @@ class TriageReport:
     guardrail_blocked: int = 0
     blacklisted_companies: tuple[str, ...] = ()
     visited_keys: frozenset[str] = frozenset()
+    scroll_swipes: int = 0
 
     @property
     def blacklisted_count(self) -> int:
@@ -141,6 +168,7 @@ class TriageReport:
         note = f" [{', '.join(self.blacklisted_companies)}]" if self.blacklisted_companies else ""
         return (
             f"Finished CHECK_CHAT: scanned {self.scanned} card(s), "
+            f"scrolled {self.scroll_swipes} swipe(s), "
             f"evaluated {self.evaluated} message(s), "
             f"{self.skipped_outbound} skipped as outbound, "
             f"{self.rejections} rejection(s) detected, "
@@ -179,6 +207,15 @@ class ChatListReader(Protocol):
 
     def confirm_back_on_list(self) -> bool:
         """Confirm the platform landed back on the list after an acknowledgment."""
+
+    def has_message_tab_unread_dot(self) -> bool:
+        """Check whether the bottom navigation 消息 tab shows an unread red dot."""
+
+    def get_unread_badge_count(self) -> int | None:
+        """The unread count badge on the 仅沟通 sub-tab; None when absent."""
+
+    def scroll_list_down(self) -> bool:
+        """Perform a single humanized scroll down on the conversation list."""
 
 
 @runtime_checkable
@@ -242,6 +279,15 @@ class CommunicationListAdapter:
     def confirm_back_on_list(self) -> bool:
         return self._page.wait_for_list_return(timeout_sec=self._timeout_sec)
 
+    def has_message_tab_unread_dot(self) -> bool:
+        return self._page.has_message_tab_unread_dot(timeout_sec=LIST_PROBE_TIMEOUT_SEC)
+
+    def get_unread_badge_count(self) -> int | None:
+        return self._page.get_unread_badge_count(timeout_sec=LIST_PROBE_TIMEOUT_SEC)
+
+    def scroll_list_down(self) -> bool:
+        return self._page.scroll_message_list()
+
 
 class ChatActorAdapter:
     """The production chat actor: the chat page object, behind triage's vocabulary."""
@@ -276,16 +322,24 @@ class ChatTriage:
         settings: ChatAcknowledgmentSettings,
         log: Callable[[str], Awaitable[None]] | None = None,
         is_cancelled: Callable[[], Awaitable[bool]] | None = None,
-        max_inspected_cards: int = MAX_INSPECTED_CARDS,
+        pause: Callable[[float], Awaitable[None]] | None = None,
+        max_inspected_cards: int | None = None,
     ) -> None:
         self.list_reader = list_reader
         self.chat_actor = chat_actor
         self.classifier = classifier
         self.policy = policy
         self.settings = settings
-        self.max_inspected_cards = max_inspected_cards
+        if max_inspected_cards is not None:
+            self.max_inspected_cards = max_inspected_cards
+        elif self.settings.max_scroll_swipes > DEFAULT_MAX_SCROLL_SWIPES:
+            self.max_inspected_cards = (self.settings.max_scroll_swipes + 1) * VIEWPORT_SIZE
+        else:
+            self.max_inspected_cards = MAX_INSPECTED_CARDS
         self._log_sink = log
         self._cancel_probe = is_cancelled
+        # Injected so a test drives the settle window without waiting it out.
+        self._pause = pause or asyncio.sleep
 
     # ------------------------------------------------------------------
     # Composition
@@ -321,23 +375,96 @@ class ChatTriage:
         )
 
     # ------------------------------------------------------------------
+    # Unread probes
+    # ------------------------------------------------------------------
+    def _message_tab_dot_reads_clear(self) -> bool:
+        """One reading of the bottom 消息 tab's unread dot: True when no dot is shown.
+
+        A bar that is not on screen at all reads as *not* clear rather than clear: the
+        probe can conclude nothing about an account whose navigation is not visible, so
+        the run falls through to the list instead of skipping it.
+        """
+        return not self.list_reader.has_message_tab_unread_dot()
+
+    def _unread_badge_reads_clear(self) -> bool:
+        """One reading of the 仅沟通 badge: True when it is absent or counts zero."""
+        count = self.list_reader.get_unread_badge_count()
+        return count is None or count <= 0
+
+    async def _confirm_clear(self, reads_clear: Callable[[], bool]) -> bool:
+        """Whether "no unread" holds across a settle window of repeated readings.
+
+        ``UNREAD_ABSENCE_CONFIRMATIONS`` readings spaced by ``SETTLE_PAUSE_SEC``, so a
+        badge that merely has not been drawn yet cannot pass for a cleared one. A single
+        positive reading fails the confirmation immediately — the run is only ever
+        slowed down when the probe is about to make it skip work.
+        """
+        for reading in range(UNREAD_ABSENCE_CONFIRMATIONS):
+            if not reads_clear():
+                return False
+            if reading + 1 < UNREAD_ABSENCE_CONFIRMATIONS:
+                await self._pause(SETTLE_PAUSE_SEC)
+        return True
+
+    async def _badge_after_confirming_clear(self) -> int | None:
+        """The 仅沟通 unread count, or None once an absent badge has been confirmed.
+
+        A positive reading comes straight back — the common case while unreads remain,
+        and it costs no extra probe. A zero count or an absent badge is re-read across
+        the settle window first, so only a *confirmed* absence reports as ``None``; a
+        count that simply had not rendered yet is returned as itself and the run keeps
+        scanning rather than skipping the unreads it was about to find.
+        """
+        count = self.list_reader.get_unread_badge_count()
+        if count is not None and count > 0:
+            return count
+        if await self._confirm_clear(self._unread_badge_reads_clear):
+            return None
+        return self.list_reader.get_unread_badge_count()
+
+    # ------------------------------------------------------------------
     # Public entry point
     # ------------------------------------------------------------------
     async def scan(self) -> TriageReport:
-        """Run one First-Screen Scan and report what it found and did."""
+        """Run an Unread-Badge Bounded Scan and report what it found and did."""
+        # Tier 1 Preflight: inspect bottom tab red dot if bottom nav is visible
+        if await self._confirm_clear(self._message_tab_dot_reads_clear):
+            await self._log(
+                "🔔 [Preflight Tier 1] 底栏「消息」无未读红点（已连续确认 "
+                f"{UNREAD_ABSENCE_CONFIRMATIONS} 次），零点击零卡片瞬时放行"
+                "（stop_reason=unread_cleared）"
+            )
+            return TriageReport(
+                stop_reason=StopReason.UNREAD_CLEARED, dry_run=self.settings.dry_run
+            )
+
         if not await self._enter_list():
             return TriageReport(
                 stop_reason=StopReason.LIST_UNREACHABLE, dry_run=self.settings.dry_run
             )
 
+        # Tier 2 Preflight: check 仅沟通 category sub-tab unread badge count
+        badge_count = await self._badge_after_confirming_clear()
+        if badge_count is None:
+            await self._log(
+                "🔔 [Preflight Tier 2] 「仅沟通」无未读角标（红点由其他分类引起），无需处理卡片，"
+                "瞬时放行（stop_reason=unread_cleared）"
+            )
+            return TriageReport(
+                stop_reason=StopReason.UNREAD_CLEARED, dry_run=self.settings.dry_run
+            )
+
         await self._log(
-            f"📥 [List] 已进入「仅沟通」列表，本次只扫描首屏最多 {VIEWPORT_SIZE} 张卡片，不翻页"
+            f"📥 [List] 已进入「仅沟通」列表，当前未读角标: {badge_count}，"
+            f"启动未读角标驱动扫描（max_swipes={self.settings.max_scroll_swipes}）"
         )
 
         counters: Counter[TriageKind] = Counter()
         visited_keys: set[str] = set()
         blacklisted: list[str] = []
         evaluated = scanned = rejections = guardrail_blocked = 0
+        scroll_swipes = 0
+        consecutive_empty_scrolls = 0
         stop_reason: StopReason | None = None
 
         while True:
@@ -353,15 +480,57 @@ class ChatTriage:
 
             pending = [card for card in visible if card.key not in visited_keys]
             if not pending:
-                # Nothing on screen is new. Marking a conversation 不感兴趣 removes it
-                # from the list, so whatever is still here is what this run cannot
-                # advance -- and the scan is finished by construction.
-                stop_reason = StopReason.FIRST_SCREEN_EXHAUSTED
+                # All visible cards in current viewport have been visited.
+                current_badge = await self._badge_after_confirming_clear()
+                if current_badge is None:
+                    stop_reason = StopReason.UNREAD_CLEARED
+                    await self._log(
+                        "🎉 [Unread Cleared] 「仅沟通」未读角标已清零，未读消息处理完毕，扫描结束"
+                        f"（stop_reason={stop_reason.value}）"
+                    )
+                    break
+
+                if scroll_swipes >= self.settings.max_scroll_swipes:
+                    stop_reason = StopReason.SCROLL_CEILING
+                    await self._log(
+                        f"🛑 [Scroll Ceiling] 滑动翻页已达上限 {self.settings.max_scroll_swipes} 次，"
+                        f"仍有未读角标 ({current_badge})，终止扫描"
+                    )
+                    break
+
+                if scanned >= self.max_inspected_cards:
+                    # The card ceiling is the scan's own bound, so it reports as one
+                    # whatever the swipe count happens to be: naming it a scroll
+                    # ceiling would tell an operator the swipe limit had fired when it
+                    # had not, and leave the log tag contradicting `stop_reason`.
+                    stop_reason = StopReason.SCAN_CEILING
+                    await self._log(
+                        f"🛑 [Scan Ceiling] 单次扫描已达 {self.max_inspected_cards} 张卡片上限，"
+                        "终止扫描"
+                    )
+                    break
+
+                scroll_swipes += 1
                 await self._log(
-                    f"✅ [首屏] 首屏 {len(visible)} 张卡片均已处理，本次不翻页，扫描结束"
-                    f"（stop_reason={stop_reason.value}）"
+                    f"📜 [Scroll] 当前屏幕卡片已遍历完毕，未读角标仍存在 ({current_badge})，"
+                    f"向下滑动翻页第 {scroll_swipes}/{self.settings.max_scroll_swipes} 次"
                 )
-                break
+                self.list_reader.scroll_list_down()
+
+                new_visible = self.list_reader.visible_cards(VIEWPORT_SIZE)
+                new_keys = {c.key for c in new_visible} - visited_keys
+                if not new_keys:
+                    consecutive_empty_scrolls += 1
+                    if consecutive_empty_scrolls >= 2:
+                        stop_reason = StopReason.SCROLL_CEILING
+                        await self._log(
+                            "🛑 [Scroll Ceiling] 连续 2 次滑动未发现新卡片（列表已触底），"
+                            "终止扫描"
+                        )
+                        break
+                else:
+                    consecutive_empty_scrolls = 0
+                continue
 
             lost_list = False
             for card in pending:
@@ -381,8 +550,19 @@ class ChatTriage:
                     # The platform shifted the remaining cards up: abandon this
                     # screen snapshot and re-read before continuing.
                     lost_list = outcome.lost_list
+                    if not lost_list:
+                        badge_after = await self._badge_after_confirming_clear()
+                        if badge_after is None:
+                            stop_reason = StopReason.UNREAD_CLEARED
+                            await self._log(
+                                "🎉 [Unread Cleared] 会话处理后「仅沟通」未读角标已清零，"
+                                f"未读消息处理完毕，扫描结束（stop_reason={stop_reason.value}）"
+                            )
+                            break
                     break
 
+            if stop_reason is not None:
+                break
             if lost_list:
                 # We are no longer looking at the list; reading cards here could
                 # interact with an unrelated screen, so stop instead.
@@ -395,7 +575,7 @@ class ChatTriage:
                 stop_reason = StopReason.SCAN_CEILING
                 await self._log(
                     f"🛑 [Scan Ceiling] 单次扫描已达 {self.max_inspected_cards} 张卡片上限，"
-                    f"终止列表扫描"
+                    "终止列表扫描"
                 )
                 break
             # Loop back for another read of the same screen: an acknowledged card leaves
@@ -416,6 +596,7 @@ class ChatTriage:
             guardrail_blocked=guardrail_blocked,
             blacklisted_companies=tuple(blacklisted),
             visited_keys=frozenset(visited_keys),
+            scroll_swipes=scroll_swipes,
         )
 
     # ------------------------------------------------------------------
@@ -423,12 +604,11 @@ class ChatTriage:
     # ------------------------------------------------------------------
     async def _enter_list(self) -> bool:
         """Bring the 仅沟通 list to the front, narrating the recovery it needed."""
-        if self.list_reader.is_on_list():
-            return True
         # A dispatch can land while the app sits on a job detail, an open chat, a
-        # filter sheet or even the launcher, so the list is navigated to rather than
-        # assumed (issue #228).
-        await self._log("🔄 [Navigation] 当前不在「仅沟通」列表，启动自愈导航返回「消息」栏目")
+        # filter sheet, or an alternate chat tab (e.g. 有交换, 新招呼). Because page source
+        # cannot differentiate which sub-tab is currently active, ensure_open_list()
+        # explicitly clicks 消息 -> 仅沟通 rather than assuming presence equals selection.
+        await self._log("🔄 [Navigation] 启动自愈导航返回「消息」栏目并进入「仅沟通」列表")
         if self.list_reader.ensure_open_list():
             return True
         await self._log("❌ [List] 无法进入「仅沟通」列表，任务终止")

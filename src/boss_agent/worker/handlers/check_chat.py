@@ -84,7 +84,9 @@ class CheckChatHandler(BaseTaskHandler):
         await broker.append_log(
             task.id,
             f"Starting CHECK_CHAT (dry_run={settings.dry_run}, "
-            f"max_scan_depth={settings.max_scan_depth}, reply='{settings.rejection_reply_text}')",
+            f"max_scan_depth={settings.max_scan_depth}, "
+            f"max_scroll_swipes={settings.max_scroll_swipes}, "
+            f"reply='{settings.rejection_reply_text}')",
         )
 
         report = await ChatTriage.for_task(
@@ -119,6 +121,7 @@ class CheckChatHandler(BaseTaskHandler):
                 "failed": report.failed,
                 "stop_reason": report.stop_reason.value,
                 "visited_keys": sorted(report.visited_keys),
+                "scroll_swipes": report.scroll_swipes,
             },
         )
 

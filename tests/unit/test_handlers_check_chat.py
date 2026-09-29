@@ -207,17 +207,29 @@ async def test_handler_processes_single_card_through_the_real_page_object(
     driver = MagicMock()
     driver.get_window_size.return_value = {"width": 1080, "height": 2400}
 
+    badge_elem = MagicMock(text="1")
+
     def mock_find(by, value):
         if "view_chat_item" in value:
             return [card_elem]
+        if "tv_count" in value:
+            return [badge_elem] if badge_elem.text else []
         if "仅沟通" in value or "不感兴趣" in value or "重复推荐" in value:
-            return [MagicMock()]
+            return [MagicMock(text="仅沟通")]
+        if "tv_tab_3" in value or "tab_3" in value or "消息" in value:
+            return [MagicMock(text="消息")]
         return []
 
     driver.find_elements.side_effect = mock_find
 
     context = WorkerContext(config=WorkerConfig(worker_id="real-page"), driver=driver)
     chat_double = MagicMock()
+
+    def _send_and_clear(*a, **k):
+        badge_elem.text = ""
+        return True
+
+    chat_double.send_message.side_effect = _send_and_clear
     # Only the chat is scripted: the 仅沟通 list stays the real page object reading
     # the mock hierarchy above.
     pages = lambda driver: TriagePages(  # noqa: E731 - a one-line injected seam

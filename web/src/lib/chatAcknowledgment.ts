@@ -9,6 +9,7 @@ import type { ChatAcknowledgmentConfig } from './types';
 export const DEFAULT_CHAT_ACKNOWLEDGMENT: ChatAcknowledgmentConfig = {
 	rejection_reply_text: '收到 谢谢',
 	max_scan_depth: 30,
+	max_scroll_swipes: 5,
 	dry_run: false
 };
 
@@ -23,23 +24,42 @@ export const DEFAULT_CHAT_ACKNOWLEDGMENT: ChatAcknowledgmentConfig = {
 export const DEFAULT_LAUNCH_CHAT_DRY_RUN = true;
 
 /**
+ * Clamp a positive-integer chat knob. A non-numeric or non-positive value
+ * degrades to the documented default rather than letting the worker run
+ * unbounded — the Python side coerces the same way (`coerce_positive_int`).
+ */
+function positiveInt(raw: unknown, fallback: number): number {
+	const parsed = Number(raw);
+	return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+}
+
+/**
  * Clamp a chat acknowledgment block. A blank reply text or a non-positive scan
  * bound degrades to the documented default rather than disabling the workflow
  * or letting the worker scan unbounded. Anything that is not explicitly true
  * leaves dry-run off, so a malformed value can never silently stop the worker
  * from blacklisting the employers it identifies.
+ *
+ * Every key the worker reads is returned, because a save writes this object back
+ * over the on-disk `chat:` block: a knob the worker supports but this function
+ * drops would be silently deleted from `local.yaml` on the next dashboard save.
+ * That is what the realm fixture pins (`config/defaults.fixture.json`), and why
+ * adding a chat setting means adding it here too.
  */
 export function normalizeChatAcknowledgment(raw: any): ChatAcknowledgmentConfig {
 	const candidate = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
 	const reply =
 		typeof candidate.rejection_reply_text === 'string' ? candidate.rejection_reply_text.trim() : '';
-	const depth = Number(candidate.max_scan_depth);
 	return {
 		rejection_reply_text: reply || DEFAULT_CHAT_ACKNOWLEDGMENT.rejection_reply_text,
-		max_scan_depth:
-			Number.isFinite(depth) && depth > 0
-				? Math.floor(depth)
-				: DEFAULT_CHAT_ACKNOWLEDGMENT.max_scan_depth,
+		max_scan_depth: positiveInt(
+			candidate.max_scan_depth,
+			DEFAULT_CHAT_ACKNOWLEDGMENT.max_scan_depth
+		),
+		max_scroll_swipes: positiveInt(
+			candidate.max_scroll_swipes,
+			DEFAULT_CHAT_ACKNOWLEDGMENT.max_scroll_swipes
+		),
 		dry_run: candidate.dry_run === true
 	};
 }

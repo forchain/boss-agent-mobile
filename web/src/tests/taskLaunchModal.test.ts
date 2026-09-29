@@ -34,7 +34,7 @@ const AUTO_APPLY_SEARCH = {
 
 // Chosen to differ from the client-side defaults, so the assertions prove the form
 // carries what the settings endpoint served rather than restating the fallback.
-const SERVED_CHAT = { rejection_reply_text: '多谢，祝顺利', max_scan_depth: 12, dry_run: false };
+const SERVED_CHAT = { rejection_reply_text: '多谢，祝顺利', max_scan_depth: 12, max_scroll_swipes: 8, dry_run: false };
 
 function jsonResponse(body: unknown): Response {
 	return new Response(JSON.stringify(body), {
@@ -86,6 +86,9 @@ describe('Task launch modal category tabs (issue #229)', () => {
 		expect((screen.getByLabelText('最大扫描条数') as HTMLInputElement).value).toBe(
 			String(SERVED_CHAT.max_scan_depth)
 		);
+		expect((screen.getByLabelText('最大翻页次数') as HTMLInputElement).value).toBe(
+			String(SERVED_CHAT.max_scroll_swipes)
+		);
 		expect(screen.getByRole('checkbox')).toBeTruthy();
 		expect(screen.getByText('🧪 下发演练扫描')).toBeTruthy();
 	});
@@ -106,6 +109,7 @@ describe('Task launch modal category tabs (issue #229)', () => {
 		expect(taskType).toBe('CHECK_CHAT');
 		expect(payload.rejection_reply_text).toBe(SERVED_CHAT.rejection_reply_text);
 		expect(payload.max_scan_depth).toBe(SERVED_CHAT.max_scan_depth);
+		expect(payload.max_scroll_swipes).toBe(SERVED_CHAT.max_scroll_swipes);
 		expect(payload.dry_run).toBe(true);
 	});
 

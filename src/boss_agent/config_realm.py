@@ -103,11 +103,16 @@ def _chat_defaults() -> dict[str, Any]:
     than replaced, so one key's default cannot mask another's. The values are the
     rejection module's own constants rather than a second copy of them.
     """
-    from .rejection import DEFAULT_MAX_SCAN_DEPTH, DEFAULT_REJECTION_REPLY_TEXT
+    from .rejection import (
+        DEFAULT_MAX_SCAN_DEPTH,
+        DEFAULT_MAX_SCROLL_SWIPES,
+        DEFAULT_REJECTION_REPLY_TEXT,
+    )
 
     return {
         "rejection_reply_text": DEFAULT_REJECTION_REPLY_TEXT,
         "max_scan_depth": DEFAULT_MAX_SCAN_DEPTH,
+        "max_scroll_swipes": DEFAULT_MAX_SCROLL_SWIPES,
         "dry_run": False,
     }
 

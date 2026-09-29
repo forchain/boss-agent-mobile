@@ -204,6 +204,13 @@ class AutomationWorker:
         """Execute one claimed task with heartbeat renewal, then record its outcome."""
         start_time = time.monotonic()
 
+        # An idle Appium session is terminated by the server's new-command timeout,
+        # so verify the device session the moment work is claimed. A dead one is
+        # dropped here and reopened lazily by the handler through the context's
+        # factory, instead of the handler navigating a corpse for six recovery steps
+        # and reporting the device drop as a UI failure.
+        self.context.ensure_device_session()
+
         # Non-mutating broker proxy that mirrors handler append_log calls to worker console
         handler_broker = cast(BaseTaskBroker, _TaskLoggingBrokerProxy(self.broker))
 

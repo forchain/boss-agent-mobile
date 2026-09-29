@@ -24,6 +24,7 @@
   "chat_defaults": {
     "rejection_reply_text": "收到 谢谢",
     "max_scan_depth": 30,
+    "max_scroll_swipes": 5,
     "dry_run": false
   }
 }

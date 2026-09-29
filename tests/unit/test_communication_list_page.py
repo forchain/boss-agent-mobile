@@ -26,6 +26,9 @@ NEW_LOCATOR_KEYS = (
     "communication_list.company_position",
     "communication_list.message_text",
     "communication_list.outbound_status",
+    "communication_list.message_tab_unread_dot",
+    "communication_list.unread_badge",
+    "communication_list.recycler_view",
     "chat.disinterest_btn",
     "chat.disinterest_reason_option",
 )
@@ -39,6 +42,25 @@ def registry():
 def test_communication_list_and_disinterest_locators_are_configured(registry):
     for key in NEW_LOCATOR_KEYS:
         assert registry.get_selectors(key), f"Missing locator configuration for '{key}'"
+
+
+def test_message_tab_unread_dot_locator_targets_fl_tab_3_red_dot(registry):
+    selectors = registry.get_selectors("communication_list.message_tab_unread_dot")
+    assert selectors
+    assert any("fl_tab_3_red_dot" in sel.value for sel in selectors)
+
+
+def test_unread_badge_locator_targets_tv_count_and_jingoutong(registry):
+    selectors = registry.get_selectors("communication_list.unread_badge")
+    assert selectors
+    assert any("tv_count" in sel.value for sel in selectors)
+    assert any("仅沟通" in sel.value for sel in selectors)
+
+
+def test_recycler_view_locator_targets_recyclerview(registry):
+    selectors = registry.get_selectors("communication_list.recycler_view")
+    assert selectors
+    assert any("recyclerView" in sel.value for sel in selectors)
 
 
 def test_communication_tab_locator_targets_the_jingoutong_subtab(registry):
@@ -290,13 +312,14 @@ def _recovery_page(driver: _NavDriver) -> CommunicationListPage:
     return page
 
 
-def test_open_list_returns_immediately_when_already_on_the_list():
-    """#228: a worker already on the list must not touch the screen at all."""
+def test_open_list_clicks_message_tab_then_communication_tab_even_when_subtab_visible():
+    """#228: page source cannot distinguish active subtab; open_list must click 消息 -> 仅沟通."""
     driver = _NavDriver(on_list=True)
     page = _recovery_page(driver)
 
     assert page.open_list(timeout_sec=0.1) is True
-    assert page.gestures.human_click.call_count == 0
+    clicked = [call.args[0].name for call in page.gestures.human_click.call_args_list]
+    assert clicked == ["消息", "仅沟通"]
     assert driver.keycodes == []
 
 
@@ -331,6 +354,8 @@ def test_recovery_prefers_the_on_screen_back_button_over_the_hardware_key():
     assert [c.args[0].name for c in page.gestures.human_click.call_args_list] == [
         "iv_back",
         "iv_back",
+        "消息",
+        "仅沟通",
     ]
 
 
@@ -340,6 +365,10 @@ def test_recovery_falls_back_to_the_hardware_back_key():
 
     assert page.open_list(timeout_sec=0.1, max_steps=4) is True
     assert driver.keycodes == [4]
+    assert [c.args[0].name for c in page.gestures.human_click.call_args_list] == [
+        "消息",
+        "仅沟通",
+    ]
 
 
 def test_recovery_reactivates_boss_when_back_escapes_to_the_launcher():
@@ -561,3 +590,64 @@ def test_find_message_cards_resolves_parent_container_on_fallback():
     cards = page._find_message_cards()
     assert cards == [parent_card]
     text_node.find_element.assert_called_with(by="xpath", value="..")
+
+
+def test_has_message_tab_unread_dot_detects_dot_when_bottom_nav_present():
+    driver = MagicMock()
+    page = CommunicationListPage(driver)
+
+    # When entry_tab is found and red dot is found
+    page.find_by_key = MagicMock(return_value=MagicMock())
+    page.find_now = MagicMock(return_value=MagicMock())
+    assert page.has_message_tab_unread_dot() is True
+
+    # When entry_tab is found but red dot is absent
+    page.find_now = MagicMock(return_value=None)
+    assert page.has_message_tab_unread_dot() is False
+
+    # When entry_tab is absent (bottom nav not on screen), fails open to True
+    page.find_by_key = MagicMock(return_value=None)
+    assert page.has_message_tab_unread_dot() is True
+
+
+def test_get_unread_badge_count_parses_count():
+    driver = MagicMock()
+    page = CommunicationListPage(driver)
+
+    badge_elem = MagicMock()
+    page.find_by_key = MagicMock(return_value=badge_elem)
+
+    badge_elem.text = " 3 "
+    assert page.get_unread_badge_count() == 3
+
+    badge_elem.text = "99+"
+    assert page.get_unread_badge_count() == 99
+
+    badge_elem.text = "0"
+    assert page.get_unread_badge_count() == 0
+
+    badge_elem.text = ""
+    assert page.get_unread_badge_count() is None
+
+    page.find_by_key = MagicMock(return_value=None)
+    assert page.get_unread_badge_count() is None
+
+
+def test_scroll_message_list_swipes_down():
+    driver = MagicMock()
+    page = CommunicationListPage(driver)
+    page.gestures = MagicMock()
+    page._get_window_size = MagicMock(return_value={"width": 1080, "height": 2400})
+
+    # When recycler element is found with valid rect
+    recycler = MagicMock()
+    recycler.rect = {"x": 0, "y": 200, "width": 1080, "height": 1800}
+    page.find_now = MagicMock(return_value=recycler)
+
+    assert page.scroll_message_list() is True
+    assert page.gestures.human_swipe.called
+    start, end = page.gestures.human_swipe.call_args[0][:2]
+    assert start.x == 540.0
+    assert start.y == 200 + 1800 * 0.75
+    assert end.x == 540.0
+    assert end.y == 200 + 1800 * 0.25

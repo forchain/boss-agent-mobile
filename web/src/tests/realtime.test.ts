@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import {
 	DEFAULT_RETRY_DELAYS_MS,
 	RealtimeClient,
+	createPocketBaseTransport,
 	type BrokerEvent,
 	type BrokerEventHandler,
 	type RealtimeTransport
@@ -232,5 +233,48 @@ describe('Realtime subscription lifecycle', () => {
 		client.reset();
 		expect(transport.live).toBe(0);
 		expect(client.handlerCount('automation_tasks')).toBe(0);
+	});
+});
+
+describe('createPocketBaseTransport', () => {
+	it('subscribes to collection with wildcard topic * and routes events', async () => {
+		const unsubscribe = vi.fn();
+		const subscribe = vi.fn().mockResolvedValue(unsubscribe);
+		const pocketBase = {
+			collection: vi.fn().mockReturnValue({ subscribe, unsubscribe: vi.fn() })
+		};
+
+		const transport = createPocketBaseTransport(pocketBase as any);
+		const seen: BrokerEvent[] = [];
+		const stop = transport.subscribe('automation_tasks', (e) => seen.push(e));
+
+		expect(pocketBase.collection).toHaveBeenCalledWith('automation_tasks');
+		expect(subscribe).toHaveBeenCalledWith('*', expect.any(Function));
+
+		// Fire an event through the registered listener
+		const listener = subscribe.mock.calls[0][1];
+		listener({ action: 'update', record: { id: 't1', status: 'running' } });
+
+		expect(seen).toEqual([{ action: 'update', record: { id: 't1', status: 'running' } }]);
+
+		// Teardown should invoke the returned unsubscribe callback
+		await flush();
+		stop();
+		expect(unsubscribe).toHaveBeenCalled();
+	});
+
+	it('falls back to collection.unsubscribe(*) when subscribe returned no handle', async () => {
+		const collectionUnsubscribe = vi.fn();
+		const subscribe = vi.fn().mockResolvedValue(undefined);
+		const pocketBase = {
+			collection: vi.fn().mockReturnValue({ subscribe, unsubscribe: collectionUnsubscribe })
+		};
+
+		const transport = createPocketBaseTransport(pocketBase as any);
+		const stop = transport.subscribe('job_records', () => {});
+		await flush();
+
+		stop();
+		expect(collectionUnsubscribe).toHaveBeenCalledWith('*');
 	});
 });

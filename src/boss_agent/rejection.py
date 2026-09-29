@@ -23,6 +23,9 @@ DEFAULT_REJECTION_REPLY_TEXT: str = "收到 谢谢"
 #: consume this budget.
 DEFAULT_MAX_SCAN_DEPTH: int = 30
 
+#: Upper bound on how many downward scroll swipe gestures one CHECK_CHAT run may execute.
+DEFAULT_MAX_SCROLL_SWIPES: int = 5
+
 REJECTION_CLASSIFIER_SYSTEM_PROMPT: str = (
     "你是求职者在 Boss 直聘上的消息助理。你的唯一任务是判断招聘者发来的消息"
     "是否属于【明确拒信】。\n\n"
@@ -51,6 +54,7 @@ class ChatAcknowledgmentSettings:
 
     rejection_reply_text: str = DEFAULT_REJECTION_REPLY_TEXT
     max_scan_depth: int = DEFAULT_MAX_SCAN_DEPTH
+    max_scroll_swipes: int = DEFAULT_MAX_SCROLL_SWIPES
     dry_run: bool = False
 
     def with_overrides(self, payload: Mapping[str, Any] | None) -> "ChatAcknowledgmentSettings":
@@ -67,10 +71,18 @@ class ChatAcknowledgmentSettings:
             reply_text = self.rejection_reply_text
 
         raw_dry_run = payload.get("dry_run")
+        max_scan_depth = coerce_positive_int(payload.get("max_scan_depth"), self.max_scan_depth)
+
+        raw_swipes = payload.get("max_scroll_swipes")
+        if raw_swipes is not None:
+            max_scroll_swipes = coerce_positive_int(raw_swipes, self.max_scroll_swipes)
+        else:
+            max_scroll_swipes = max(self.max_scroll_swipes, (max_scan_depth + 5) // 6)
 
         return ChatAcknowledgmentSettings(
             rejection_reply_text=reply_text,
-            max_scan_depth=coerce_positive_int(payload.get("max_scan_depth"), self.max_scan_depth),
+            max_scan_depth=max_scan_depth,
+            max_scroll_swipes=max_scroll_swipes,
             # Coerced, not `bool(...)`: a payload of "false" must not read as True.
             dry_run=coerce_bool(raw_dry_run, default=self.dry_run),
         )

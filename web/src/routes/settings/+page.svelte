@@ -1438,7 +1438,7 @@
 				</span>
 			</div>
 
-			<div class="grid grid-cols-1 md:grid-cols-3 gap-5">
+			<div class="grid grid-cols-1 md:grid-cols-4 gap-5">
 				<div class="md:col-span-2">
 					<label for="chat-rejection-reply-input" class="block text-xs font-medium text-slate-300 mb-1.5">
 						礼貌收尾文案 (Polite Closing Message)
@@ -1470,6 +1470,23 @@
 					/>
 					<p class="text-[11px] text-slate-500 mt-1">
 						单次 CHECK_CHAT 任务最多交给大模型判定的消息条数，防止无限扫描；出站等待消息不占用该额度
+					</p>
+				</div>
+
+				<div>
+					<label for="chat-max-scroll-swipes-input" class="block text-xs font-medium text-slate-300 mb-1.5">
+						最大翻页次数 (Max Scroll Swipes)
+					</label>
+					<input
+						id="chat-max-scroll-swipes-input"
+						type="number"
+						min="1"
+						max="50"
+						bind:value={chatAck.max_scroll_swipes}
+						class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs font-mono text-slate-200 focus:outline-none focus:border-cyan-500"
+					/>
+					<p class="text-[11px] text-slate-500 mt-1">
+						未读角标仍存在时单次最多向下滑动翻页的次数，穿透出站消息积压并触达深层未读
 					</p>
 				</div>
 			</div>

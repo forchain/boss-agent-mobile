@@ -137,6 +137,11 @@ export interface ChatAcknowledgmentConfig {
 	 * carrying the outbound status badge are skipped for free and do not count.
 	 */
 	max_scan_depth: number;
+	/**
+	 * Safety ceiling on downward paging gestures one CHECK_CHAT run may perform
+	 * while the 仅沟通 unread badge still shows unread messages.
+	 */
+	max_scroll_swipes: number;
 	/** Drill mode: log proposed blacklist additions without writing any config. */
 	dry_run: boolean;
 }

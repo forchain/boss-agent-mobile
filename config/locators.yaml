@@ -223,6 +223,28 @@ communication_list:
     - "com.hpbr.bosszhipin:id/iv_back"
     - "com.hpbr.bosszhipin:id/iv_back_ai"
     - "//*[@content-desc='返回']"
+  # Bottom message tab unread red dot (Tier 1 preflight indicator).
+  # If this indicator is absent when bottom navigation is visible, there are 0 unread messages in any category.
+  message_tab_unread_dot:
+    - "com.hpbr.bosszhipin:id/fl_tab_3_red_dot"
+    - "//*[@resource-id='com.hpbr.bosszhipin:id/fl_tab_3_red_dot']"
+    - "//android.widget.TextView[@resource-id='com.hpbr.bosszhipin:id/tv_tab_3']/../../android.widget.FrameLayout[@resource-id='com.hpbr.bosszhipin:id/fl_tab_3_red_dot']"
+  # Category unread count badge on the sticky 仅沟通 sub-tab (Tier 2 preflight & termination indicator).
+  # If absent or text is "0", there are 0 unread messages in 仅沟通.
+  #
+  # Every entry stays anchored on the 仅沟通 tab's own title node. A bare `tv_count`
+  # lookup also matches the 新招呼 / 全部 sub-tabs, and another category's count would
+  # drive paging — or a zero-unread short-circuit — off the wrong tab's unread state.
+  # The alternates cover the badge sitting one container shallower or beside the title;
+  # each miss still costs an accessibility-tree scan (ADR 0011), so the list stays short.
+  unread_badge:
+    - "//android.widget.TextView[@resource-id='com.hpbr.bosszhipin:id/tv_title' and contains(@text, '仅沟通')]/../../android.widget.TextView[@resource-id='com.hpbr.bosszhipin:id/tv_count']"
+    - "//android.widget.TextView[@resource-id='com.hpbr.bosszhipin:id/tv_title' and contains(@text, '仅沟通')]/../android.widget.TextView[@resource-id='com.hpbr.bosszhipin:id/tv_count']"
+    - "//android.widget.TextView[@resource-id='com.hpbr.bosszhipin:id/tv_title' and contains(@text, '仅沟通')]/following-sibling::android.widget.TextView[@resource-id='com.hpbr.bosszhipin:id/tv_count']"
+  # Conversation list RecyclerView container for vertical scroll gestures.
+  recycler_view:
+    - "com.hpbr.bosszhipin:id/recyclerView"
+    - "//*[@resource-id='com.hpbr.bosszhipin:id/recyclerView']"
 
 chat:
   disinterest_btn:
