@@ -8,6 +8,7 @@ condition-action rule system (ADR 0010) and its distillation tests were
 removed with the subsystem.
 """
 
+import sys
 from unittest.mock import MagicMock
 
 import pytest
@@ -140,3 +141,58 @@ def test_service_refine_with_critique_raises_when_llm_returns_empty():
             current_greeting="您好，我对贵司AI架构师职位非常感兴趣。",
             critique="请强调我的英语能力",
         )
+
+
+def test_refine_script_carries_recruiter_into_salutation(monkeypatch, capsys):
+    """The refinement CLI must rebuild the salutation from the recruiter name.
+
+    Regression: the dashboard's 微调 path dropped recruiter identity, so
+    `refine_with_critique` enforced the *generic* "您好,幸会!" prefix over an
+    otherwise-correct rewrite. This pins the script boundary end to end.
+    """
+    import importlib.util
+    import json
+    from pathlib import Path
+
+    spec = importlib.util.spec_from_file_location(
+        "refine_greeting_script",
+        Path(__file__).resolve().parents[2] / "scripts" / "refine_greeting.py",
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    mock_llm = MagicMock()
+    mock_llm.chat_completion_json.return_value = {
+        "revised_greeting": "看到贵岗强调要有真实产出，我主导过 LangChain 与 LangGraph 全链路落地。"
+    }
+    monkeypatch.setattr(mod, "build_llm_client", lambda _cfg: mock_llm)
+
+    job_payload = {
+        "title": "AI 研发效能工程师",
+        "company_name": "某知名学术公司",
+        "salary_range": "3-4万元",
+        "job_description": "负责 AI 辅助研发全链路：编码/检索/评审/测试/发布与 MCP/Agent 建设。",
+        "recruiter_name": "吴灏颖",
+        "recruiter_title": "猎头顾问",
+    }
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "refine_greeting.py",
+            "--action",
+            "refine",
+            "--job",
+            json.dumps(job_payload, ensure_ascii=False),
+            "--current-greeting",
+            "您好,幸会!",
+            "--critique",
+            "语气更直接一些",
+        ],
+    )
+
+    mod.main()
+
+    out = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert out["success"] is True
+    assert out["revised_greeting"].startswith("吴总您好,幸会!")

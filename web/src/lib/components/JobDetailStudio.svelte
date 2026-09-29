@@ -135,6 +135,8 @@
 					company_name: currentJob.company_name,
 					salary_range: currentJob.salary_range,
 					job_description: currentJob.job_description,
+					recruiter_name: currentJob.recruiter_name,
+					recruiter_title: currentJob.recruiter_title,
 					candidate_profile: profile,
 					llmSettings: llmSettings
 				})
@@ -204,7 +206,9 @@
 						title: currentJob.title,
 						company_name: currentJob.company_name,
 						salary_range: currentJob.salary_range,
-						job_description: currentJob.job_description
+						job_description: currentJob.job_description,
+						recruiter_name: currentJob.recruiter_name,
+						recruiter_title: currentJob.recruiter_title
 					},
 					current_greeting: customGreeting,
 					critique: critiqueInput.trim(),
@@ -270,7 +274,9 @@
 						title: currentJob.title,
 						company_name: currentJob.company_name,
 						salary_range: currentJob.salary_range,
-						job_description: currentJob.job_description
+						job_description: currentJob.job_description,
+						recruiter_name: currentJob.recruiter_name,
+						recruiter_title: currentJob.recruiter_title
 					},
 					original_greeting: orig,
 					revised_greeting: rev,
