@@ -20,12 +20,24 @@ Execution depth is the divergence this module owns most strictly, because it was
 one that made ``auto_apply`` a lie: dispatch needs ``auto_send=True`` *and*
 ``preview_only=False``, only an explicit ``LaunchMode.LIVE`` ever produced that pair, and
 no scheduled or one-click path stated a mode. Every strategy trigger therefore drafted a
-greeting, logged ``[OFFLINE DRAFT]``, and never opened the chat — while the SavedSearch
+greeting, logged an offline draft, and never opened the chat — while the SavedSearch
 that configured it says 自动打招呼, because CONTEXT.md makes Target Action *the* execution
 depth. A targeted application had the same defect one layer closer to the wire: the job
 detail's 定向投递 button hand-built an ``AUTO_APPLY`` payload that stated neither flag, so
-the worker's defaults drafted instead of sent. Depth is derived here now — from the
-Target Action unless the caller states a mode — and no caller states the pair by hand.
+the worker's defaults drafted instead of sent.
+
+The remedy went one step further than deriving the pair from the Target Action whenever a
+caller forgot to state a mode. "Preview the greeting, hold it back" stopped being an
+execution depth at all (issue #298): an operator chooses between 深度存JD and 自动打招呼, and
+whether a message leaves the device follows from that choice alone. No entry states a depth
+for a search or a targeted application any more — the dedicated builders refuse one — and
+the only surface that still says "drill" is the 拒信清扫 cleanup, whose ``dry_run`` is a
+different intent on a different surface. Reading a greeting before it goes out is something
+a human does in the Web Dashboard now, not a mode the agent runs in.
+
+The two wire keys themselves survive this change: a task already queued was written by an
+older builder and the worker still reads both. Collapsing the payload onto a single depth
+expression is issue #302.
 
 This module turns ``(kind, provenance, search, job, mode)`` into a validated payload. The
 defaults are declared once, the wire keys stay stable for rollout, and
@@ -76,16 +88,17 @@ class LaunchSource(StrEnum):
 
 
 class LaunchMode(StrEnum):
-    """How deep a launch is allowed to go.
+    """Whether a 拒信清扫 drill may reply, and nothing else.
 
-    Two modes, not three: "dry run" and "draft" were the same wire intent expressed in
-    two vocabularies — compute it, show it, do not send it — and collapsing them is the
-    whole point of having one builder. ``None`` is a third, distinct state: *honour what
-    the configuration already decided* — the operator's ``chat.dry_run`` for a rejection
-    cleanup, the SavedSearch's Target Action for a search dispatch. Omitting the mode is
-    how a cron schedule of an 自动打招呼 strategy and a one-click 自动沟通 trigger say
-    *do what the strategy says*; only a caller that states a mode overrides it, which is
-    what the launch modal's preview option is for.
+    Two modes, not three: "dry run" and "draft" were the same wire intent expressed in two
+    vocabularies — compute it, show it, do not send it — and collapsing them is the whole
+    point of having one builder. ``None`` is the third, distinct state: *honour what the
+    configuration already decided*, which for a cleanup is the operator's ``chat.dry_run``.
+
+    It stopped being a depth override for searches and targeted applications in issue #298.
+    Those kinds derive their depth from their Target Action and refuse a stated mode,
+    because "generate it but keep it on the device" is no longer a run mode — it is what the
+    dashboard does before a human decides to dispatch.
     """
 
     DRAFT = "draft"
@@ -150,9 +163,9 @@ def build_search_launch(
     search: SavedSearch,
     *,
     source: LaunchSource,
-    mode: LaunchMode | None = None,
     candidate_profile: dict[str, Any] | None = None,
     min_score: int | None = None,
+    mode: LaunchMode | None = None,
 ) -> TaskLaunch:
     """Launch a saved search as a scrape or an auto-apply run.
 
@@ -160,17 +173,19 @@ def build_search_launch(
     the modal can offer a stricter threshold than the baseline, and the baseline is what
     everyone else gets. Leaving it unset used to mean three different numbers.
 
-    ``mode`` is a caller *override*, not a competing depth: omit it and the search's
-    own Target Action decides, because that is the execution depth the operator
-    configured.
+    ``mode`` is accepted only so that it can be refused. A search's depth is the Target
+    Action the operator configured; a caller restating it is precisely how the gate in
+    PR #297 came to be missed five times over, so issue #298 closes the door rather than
+    asking every caller to set the second switch correctly.
     """
+    _refuse_stated_depth(mode, "a search")
     action = _target_action_for(search)
     task_type = (
         TaskType.AUTO_APPLY if action == TargetAction.AUTO_APPLY else TaskType.SCRAPE_JOBS
     )
 
     # A save-only search never greets, so its preview flags are not a caller choice.
-    preview_only, auto_send = _preview_flags(action, mode)
+    preview_only, auto_send = _preview_flags(action)
 
     search_dict = search.to_dict()
     payload: dict[str, Any] = {
@@ -195,26 +210,38 @@ def build_search_launch(
     return TaskLaunch(task_type=task_type, payload=payload, source=source)
 
 
-def _preview_flags(action: TargetAction, mode: LaunchMode | None) -> tuple[bool, bool]:
-    """The (preview_only, auto_send) pair the handlers consume.
+def _preview_flags(action: TargetAction) -> tuple[bool, bool]:
+    """The (preview_only, auto_send) pair the handlers consume, derived from one input.
 
-    Wire keys stay stable for rollout; only who computes them changes. The pair is one
-    intent stated twice — the worker dispatches only on ``auto_send and not
-    preview_only`` — so it is produced here and never authored by a caller.
+    Two wire keys, one intent, written by exactly one function: the worker dispatches only
+    on ``auto_send and not preview_only``, so a caller that authors the pair can get either
+    half wrong and the payload still looks valid. ``auto_apply`` sends — that is what the
+    operator's configured depth means — and ``save_jd`` never does.
 
-    The old table returned preview for anything short of an explicit LIVE, which made
-    depth a function of who remembered to state a mode: an 自动沟通 strategy dispatched
-    by cron, by the strategies page, or by the dashboard's "run scheduled now" drafted
-    its greeting, logged ``[OFFLINE DRAFT]``, and never opened the chat. Target Action
-    *is* the configured execution depth, so it is what an unstated mode resolves to,
-    and DRAFT is the explicit override for a caller that wants to read a greeting
-    before anything leaves the device.
+    Both keys stay on the wire because a queued task was built by an older builder and the
+    worker still reads the pair. Issue #302 collapses them into the single expression this
+    function already derives.
     """
     if action != TargetAction.AUTO_APPLY:
         return True, False  # A save-only search is preview by definition.
-    if mode is LaunchMode.DRAFT:
-        return True, False
     return False, True
+
+
+def _refuse_stated_depth(mode: LaunchMode | None, subject: str) -> None:
+    """Reject a caller that tries to declare the depth of a ``subject`` launch.
+
+    The refusal is the point. The defect was never a wrong value in a payload — it was that
+    five callers each got to restate a depth the contract had already decided, and one of
+    them (issue #297) got it wrong everywhere except the modal's dropdown. Silently
+    ignoring a stated mode would leave that door open for the next entry to walk through.
+    """
+    if mode is not None:
+        stated = "auto_apply" if mode == LaunchMode.LIVE else "save_jd"
+        raise LaunchContractError(
+            f"{subject} does not take a launch mode: its execution depth follows its "
+            f"Target Action, not its caller. Drop the mode (the Target Action already "
+            f"states {stated}, and only 拒信清扫 still has a drill to declare)."
+        )
 
 
 @dataclass(frozen=True)
@@ -237,7 +264,7 @@ def build_direct_apply_launch(
     job: DirectApplyTarget,
     *,
     source: LaunchSource,
-    mode: LaunchMode | None = None,
+    mode: LaunchMode | None = None,  # accepted only to be refused, exactly like a search
 ) -> TaskLaunch:
     """Launch one targeted application: greet the posting already on screen.
 
@@ -247,11 +274,16 @@ def build_direct_apply_launch(
     human just chose. It used to state neither: no ``target_action``, no preview pair, no
     threshold, so the worker's draft-only defaults decided, and a rerun of the payload
     fell through to a keyword sweep.
+
+    There is no preview depth to choose here either (issue #298): whoever clicks 定向投递
+    wants that greeting sent. Reading it first happens in the dashboard, where saving a
+    greeting marks it as the human's own copy and the agent sends it verbatim.
     """
     if not job.job_id:
         raise LaunchContractError("a direct apply launch requires the job it targets")
+    _refuse_stated_depth(mode, "a targeted application")
 
-    preview_only, auto_send = _preview_flags(TargetAction.AUTO_APPLY, mode)
+    preview_only, auto_send = _preview_flags(TargetAction.AUTO_APPLY)
     payload: dict[str, Any] = {
         "target_action": TargetAction.AUTO_APPLY.value,
         "direct_job_id": job.job_id,
@@ -327,9 +359,9 @@ def build_launch(
 ) -> TaskLaunch:
     """The one entry point: turn a launch request into a validated task.
 
-    `mode` stays optional for every kind, and each kind says what leaving it unstated
-    means: the configured drill for a cleanup, the Target Action for a search, and
-    outreach for a targeted application.
+    `mode` means "drill, or actually reply", and only the 拒信清扫 cleanup may state it. A
+    search and a targeted application derive their depth from their Target Action and
+    refuse the mode outright, so the vote every entry used to get is now cast once, here.
     """
     if kind == TaskKind.SEARCH:
         if search is None:

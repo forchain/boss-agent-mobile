@@ -76,6 +76,15 @@ def test_python_builder_matches_the_shared_case(case: dict) -> None:
         kwargs["min_score"] = case["min_score"]
 
     ack = ChatAcknowledgmentSettings(**(case["chat"] or {}))
+    if case.get("expect_error"):
+        # A case may state something the contract must refuse instead of a payload to build.
+        with (
+            patch("boss_agent.task_launch.resolve_chat_acknowledgment_settings", return_value=ack),
+            pytest.raises(task_launch.LaunchContractError),
+        ):
+            task_launch.build_launch(**kwargs)
+        return
+
     with patch(
         "boss_agent.task_launch.resolve_chat_acknowledgment_settings", return_value=ack
     ):
@@ -131,11 +140,9 @@ def test_a_scheduled_and_a_manual_launch_of_one_search_are_the_same_task() -> No
         filter=FilterConfig(),
         target_action="auto_apply",
     )
-    manual = task_launch.build_search_launch(
-        search, source=task_launch.LaunchSource.MANUAL, mode=task_launch.LaunchMode.DRAFT
-    )
+    manual = task_launch.build_search_launch(search, source=task_launch.LaunchSource.MANUAL)
     scheduled = task_launch.build_search_launch(
-        search, source=task_launch.LaunchSource.SCHEDULER, mode=task_launch.LaunchMode.DRAFT
+        search, source=task_launch.LaunchSource.SCHEDULER
     )
 
     assert manual.payload == scheduled.payload
@@ -213,13 +220,12 @@ def test_an_auto_apply_strategy_launch_reaches_the_dispatch_gate() -> None:
         assert config.target_action is TargetAction.AUTO_APPLY
         assert config.auto_send and not config.preview_only, source
 
-    # Stating DRAFT remains the one thing that keeps a greeting on the device.
-    drafted = FeedStreamConfig.from_payload(
+    # And a caller cannot buy the old preview depth back. Since issue #298 the only switch
+    # left on an outreach run is its Target Action, so declaring a mode is refused outright.
+    with pytest.raises(task_launch.LaunchContractError, match="does not take a launch mode"):
         task_launch.build_search_launch(
             search, source=task_launch.LaunchSource.MANUAL, mode=task_launch.LaunchMode.DRAFT
-        ).payload
-    )
-    assert not drafted.auto_send and drafted.preview_only
+        )
 
 
 def test_a_directed_application_sends_and_is_not_vetoed_by_the_score_gate() -> None:

@@ -245,12 +245,11 @@
 	}
 
 	async function onRunScheduledNow(search: SavedSearch) {
-		// Through the shared builder rather than a hand-written payload: this one stated
-		// `preview_only: true` and no `auto_send`, so clicking an 自动沟通 strategy here
-		// drafted greetings and never sent one, and it carried a `min_score` of its own and
-		// a `triggered_manually` marker no handler reads any more. Omitting the mode means
-		// the strategy's Target Action decides, which is what "run the scheduled strategy"
-		// asks for.
+		// Through the shared builder rather than a hand-written payload: this one used to
+		// state `preview_only: true` with no `auto_send` and its own `min_score`, so
+		// clicking an 自动沟通 strategy here drafted greetings and never sent one. It now
+		// states no depth at all — issue #298 took that choice away from every entry, and
+		// "run the scheduled strategy" means the strategy's own Target Action.
 		const launch = buildSearchLaunch({ ...search, max_jobs: search.max_jobs || DEFAULT_MAX_JOBS }, { source: 'manual' });
 		const task = await createAutomationTask(launch.task_type, launch.payload, launch.source);
 		activeTaskId = task.id;

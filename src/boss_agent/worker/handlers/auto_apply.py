@@ -58,9 +58,13 @@ class AutoApplyHandler(BaseTaskHandler):
         # even when the payload omitted the redundant target_action field.
         config.target_action = TargetAction.AUTO_APPLY
 
+        # An AUTO_APPLY run built by the launch contract is always Auto-Send: depth comes
+        # from the Target Action, and the preview tier is gone (issue #298). Anything else
+        # on this line is a task an older builder had already queued.
         mode_desc = (
-            "Auto-Send" if (config.auto_send and not config.preview_only)
-            else "Preview Draft Only (Safe Mode)"
+            "Auto-Send"
+            if config.auto_send and not config.preview_only
+            else "Draft Only (legacy preview payload)"
         )
         search_name = payload.get("search_name") or payload.get("saved_search_name") or ""
         strategy_desc = f"strategy='{search_name}', " if search_name else ""

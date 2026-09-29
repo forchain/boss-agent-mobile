@@ -32,6 +32,8 @@ interface LaunchCase {
 	source: LaunchSource;
 	mode: LaunchMode | null;
 	search: SearchLaunchInput | null;
+	/** A case that states something the contract must refuse instead of a payload. */
+	expect_error?: boolean;
 	job?: DirectApplyTarget | null;
 	min_score: number | null;
 	chat: ChatAcknowledgment | null;
@@ -53,14 +55,23 @@ describe('AutomationTask launch contract parity', () => {
 	it.each(fixture().cases.map((c) => [c.case, c] as const))(
 		'builds the shared case %s identically',
 		(_name, testCase) => {
-			const launch = buildLaunch(testCase.kind, {
+			const request = {
 				source: testCase.source,
 				search: testCase.search,
 				job: testCase.job ?? null,
 				mode: testCase.mode === null ? undefined : testCase.mode,
 				chat: testCase.chat,
 				minScore: testCase.min_score === null ? undefined : testCase.min_score
-			});
+			};
+
+			if (testCase.expect_error) {
+				expect(() => buildLaunch(testCase.kind, request), testCase.case).toThrow(
+					LaunchContractError
+				);
+				return;
+			}
+
+			const launch = buildLaunch(testCase.kind, request);
 
 			expect(launch.task_type).toBe(testCase.expected.task_type);
 			// Provenance is a task attribute, not a payload key.
@@ -88,8 +99,8 @@ describe('AutomationTask launch contract parity', () => {
 			keyword: 'agent',
 			target_action: 'auto_apply'
 		};
-		const manual = buildSearchLaunch(search, { source: 'manual', mode: 'draft' });
-		const scheduled = buildSearchLaunch(search, { source: 'scheduler', mode: 'draft' });
+		const manual = buildSearchLaunch(search, { source: 'manual' });
+		const scheduled = buildSearchLaunch(search, { source: 'scheduler' });
 
 		expect(manual.payload).toEqual(scheduled.payload);
 		expect(manual.task_type).toBe(scheduled.task_type);
@@ -111,10 +122,15 @@ describe('AutomationTask launch contract parity', () => {
 			expect(payload.preview_only, source).toBe(false);
 		}
 
-		// Stating draft is now the only thing that keeps a greeting on the device.
-		const drafted = buildSearchLaunch(search, { source: 'manual', mode: 'draft' }).payload;
-		expect(drafted.auto_send).toBe(false);
-		expect(drafted.preview_only).toBe(true);
+		// …and there is no way back to the preview tier. Issue #298 deleted the second
+		// switch instead of leaving it for callers to set correctly, so a stated mode is
+		// refused by the contract rather than quietly re-opening the PR #297 hole.
+		expect(() => buildSearchLaunch(search, { source: 'manual', mode: 'draft' })).toThrow(
+			/does not take a launch mode/
+		);
+		expect(() => buildSearchLaunch(search, { source: 'manual', mode: 'live' })).toThrow(
+			LaunchContractError
+		);
 	});
 
 	it('sends a 定向投递 without letting the score gate veto it', () => {
@@ -163,8 +179,8 @@ describe('AutomationTask launch contract parity', () => {
 describe('rerun rebuilds through the builder', () => {
 	it('re-derives the contract fields instead of spreading the original', async () => {
 		const { rebuildRerunPayload } = await import('../lib/taskLaunch');
-		// An original carrying a stale threshold and a preview flag from a builder that
-		// no longer exists.
+		// An original carrying a stale threshold and preview flags from a builder that no
+		// longer exists — including the depth keys issue #298 stopped producing.
 		const rebuilt = rebuildRerunPayload(
 			{
 				task_type: 'AUTO_APPLY',
@@ -183,7 +199,10 @@ describe('rerun rebuilds through the builder', () => {
 		);
 
 		expect(rebuilt.payload.min_score).toBe(MIN_SCORE);
-		expect(rebuilt.payload.preview_only).toBe(true);
+		// The strategy says 自动打招呼, so a rerun of it greets. The draft-only flags it
+		// carried came from a depth that no longer exists.
+		expect(rebuilt.payload.preview_only).toBe(false);
+		expect(rebuilt.payload.auto_send).toBe(true);
 		expect(rebuilt.payload.rerun_of).toBe('orig-1');
 		expect(rebuilt.source).toBe('manual');
 		expect('triggered_manually' in rebuilt.payload).toBe(false);
@@ -209,17 +228,26 @@ describe('rerun rebuilds through the builder', () => {
 		expect(rebuilt.payload.company_name).toBe('深至科技');
 	});
 
-	it('keeps a live run live and a draft run draft', async () => {
+	it('reruns a 定向投递 as an application, whatever depth keys the original carried', async () => {
 		const { rebuildRerunPayload } = await import('../lib/taskLaunch');
-		const live = rebuildRerunPayload(
+		// A legacy draft-only payload from before the preview tier was cancelled. Its
+		// Target Action still says outreach, and that is the only depth statement left.
+		const rerun = rebuildRerunPayload(
 			{
 				task_type: 'AUTO_APPLY',
-				payload: { saved_search_id: 's1', target_action: 'auto_apply', preview_only: false, auto_send: true }
+				payload: {
+					saved_search_id: 's1',
+					target_action: 'auto_apply',
+					direct_job_id: 'job-9',
+					preview_only: true,
+					auto_send: false
+				}
 			},
 			'o'
 		);
-		expect(live.payload.preview_only).toBe(false);
-		expect(live.payload.auto_send).toBe(true);
+		expect(rerun.payload.target_action).toBe('auto_apply');
+		expect(rerun.payload.preview_only).toBe(false);
+		expect(rerun.payload.auto_send).toBe(true);
 	});
 
 	it('lets the configured drill mode win for a chat cleanup rerun', async () => {

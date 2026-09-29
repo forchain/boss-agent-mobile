@@ -247,13 +247,12 @@ class AutomationScheduler:
             # tri-state intent: a scheduled drill that nobody configured.
             launch = build_chat_cleanup_launch(source=LaunchSource.SCHEDULER, search=search)
         else:
-            # No mode: the depth is the strategy's own Target Action, which is the
-            # execution depth the operator configured. This method used to send
-            # `preview_only=False`, and the builder it was moved onto then defaulted every
-            # unstated mode to preview, so a scheduled 自动沟通 run drafted its greeting,
-            # logged [OFFLINE DRAFT], and never opened a chat. A save-only search is still
-            # preview by definition; only a caller that wants to read the draft first
-            # states DRAFT, the way the launch modal does.
+            # No mode — and since issue #298 a search cannot take one. The depth is the
+            # strategy's own Target Action, which is the execution depth the operator
+            # configured. This method used to send `preview_only=False`, and the builder it
+            # was moved onto then defaulted every unstated mode to preview, so a scheduled
+            # 自动沟通 run drafted its greeting and never opened a chat. A save-only search
+            # is still preview by definition; previewing is no longer a mode anyone runs in.
             launch = build_launch(
                 TaskKind.SEARCH,
                 source=LaunchSource.SCHEDULER,

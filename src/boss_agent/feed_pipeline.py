@@ -84,7 +84,10 @@ class JobAction(StrEnum):
 
     SAVED = "saved"
     APPLIED = "applied"
-    OFFLINE_DRAFT = "offline_draft"
+    # Drafted, persisted, deliberately not sent this round — the record stays
+    # re-sendable. Issue #298 renamed this from `offline_draft`: "offline draft" read
+    # like a terminal product tier, when the intent is "not delivered yet".
+    PENDING_SEND = "pending_send"
     SKIPPED = "skipped"
 
 
@@ -962,9 +965,13 @@ class JobFeedPipeline:
         )
         await self._log(f'Tailored Greeting Draft: "{greeting}"')
 
+        # Only a task queued before issue #298 can still arrive here: every launch the
+        # contract builds today derives this pair from its Target Action, so an 自动打招呼
+        # run dispatches. The branch stays because an in-flight payload is still honoured.
         if not (config.auto_send and not config.preview_only):
             await self._log(
-                f"💾 [OFFLINE DRAFT] Saved JD and drafted greeting for '{title}' (status: matched)."
+                f"⏸️ [NOT SENT] '{title}' @ '{company}' was drafted but this task's depth "
+                f"does not dispatch it; the record stays re-sendable (status: matched)."
             )
             await self._finalize_verdict(run, enriched, JobRecordStatus.MATCHED, evaluation)
             return
@@ -979,10 +986,14 @@ class JobFeedPipeline:
 
         if await self._quota_exhausted(run):
             applied_today = run.applied_today
+            # Running out of quota is not a depth a task chose. The JD and the draft are
+            # saved, the record stays in the re-sendable `matched` state, and the next run
+            # owes it a real dispatch — which is what issue #299 makes happen instead of
+            # letting `matched` read as "already done".
             await self._log(
                 f"⚠️ [LIMIT REACHED] Daily greeting limit reached "
-                f"({applied_today}/{config.daily_greeting_limit}). Degrading to offline draft "
-                f"for '{title}' @ '{company}' (status: matched)."
+                f"({applied_today}/{config.daily_greeting_limit}). '{title}' @ '{company}' is "
+                f"not sent this round and stays re-sendable (status: matched)."
             )
             await self._finalize_verdict(run, enriched, JobRecordStatus.MATCHED, evaluation)
             return
@@ -1006,7 +1017,8 @@ class JobFeedPipeline:
             else:
                 await self._log(
                     f"⚠️ [AUTO_SEND] Could not send greeting to {title} @ {company}: "
-                    "send control unavailable. Kept as a matched draft for manual sending."
+                    "send control unavailable. Not counted as communicated; the record "
+                    "stays re-sendable (status: matched)."
                 )
             self.chat_page.navigate_back()
 
@@ -1081,8 +1093,8 @@ class JobFeedPipeline:
             run.result.score = evaluation.match_score
             run.result.greeting_message = evaluation.greeting_message
             run.result.jd_key_requirements = evaluation.jd_key_requirements
-        # The action follows from the verdict alone: a matched record is a draft awaiting a
-        # manual send, whether or not this run already dispatched an earlier greeting.
+        # The action follows from the verdict alone: a matched record is a greeting that has
+        # not left the device yet, whether or not this run already dispatched an earlier one.
         if status is JobRecordStatus.MATCHED:
             await self._emit(
                 run,
@@ -1091,7 +1103,7 @@ class JobFeedPipeline:
                     title=payload.get("title", ""),
                     company_name=payload.get("company_name", ""),
                     status=status.value,
-                    action=JobAction.OFFLINE_DRAFT,
+                    action=JobAction.PENDING_SEND,
                     score=evaluation.match_score,
                     greeting_message=evaluation.greeting_message,
                     record=saved,

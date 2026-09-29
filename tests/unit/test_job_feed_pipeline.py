@@ -553,8 +553,9 @@ async def test_quota_is_read_once_per_card_and_the_log_reuses_that_read():
 
 
 @pytest.mark.asyncio
-async def test_quota_exhaustion_degrades_to_offline_draft_and_keeps_discovering():
-    """Once the daily limit is hit, outreach degrades to drafts but discovery continues."""
+async def test_quota_exhaustion_sends_nothing_and_keeps_the_record_resendable():
+    """Once the daily limit is hit nothing goes out, discovery continues, and the record is
+    left in the state the next run can actually send from (issue #298)."""
     store = InMemoryJobRecordStore()
     for i in range(20):
         await store.upsert_job_record(
@@ -601,17 +602,20 @@ async def test_quota_exhaustion_degrades_to_offline_draft_and_keeps_discovering(
     assert result.quota_exhausted is True
     assert result.applied is False
     assert any("daily greeting limit reached" in line.lower() for line in logs)
+    # Issue #298: a spent quota is "not this round", not a product tier called offline draft.
+    assert any("not sent this round and stays re-sendable" in line for line in logs), logs
+    assert not any("OFFLINE DRAFT" in line or "offline draft" in line for line in logs), logs
     chat.click_send.assert_not_called()
     assert detail.open_chat.call_count == 0, "no chat is opened once the quota is spent"
-    # Both jobs were still discovered and kept as drafts.
+    # Both jobs were still discovered and kept re-sendable.
     matched = await store.list_job_records(status="matched")
     assert {r["title"] for r in matched} == {"AI Agent 一号", "AI Agent 二号"}
     assert result.outcome == JobRecordStatus.MATCHED.value
 
 
 @pytest.mark.asyncio
-async def test_draft_after_a_dispatch_is_still_reported_as_offline_draft():
-    """Story 12: a quota-degraded card is a draft even once an earlier greeting went out.
+async def test_unsent_card_after_a_dispatch_is_still_reported_as_pending_send():
+    """Story 12: a quota-degraded card is unsent even once an earlier greeting went out.
 
     The degraded card must not be reported as skipped just because the same run had
     already dispatched a greeting to a different job.
@@ -659,10 +663,53 @@ async def test_draft_after_a_dispatch_is_still_reported_as_offline_draft():
     assert [o.status for o in outcomes] == ["applied", "matched"]
     assert [o.action for o in outcomes] == [
         JobAction.APPLIED,
-        JobAction.OFFLINE_DRAFT,
-    ], "the quota-degraded card is a draft, not a skip"
+        JobAction.PENDING_SEND,
+    ], "the quota-degraded card is unsent, not skipped"
     matched = await store.list_job_records(status="matched")
     assert {r["title"] for r in matched} == {"AI Agent 二号"}
+
+
+@pytest.mark.asyncio
+async def test_a_queued_preview_payload_is_still_honoured_and_never_sends():
+    """An in-flight task built before issue #298 keeps the depth it was written with.
+
+    The preview tier is gone from the contract, but the wire keys stay readable precisely so
+    a task already in the queue is not silently turned into a real dispatch while the
+    worker upgrades underneath it (issue #298 keeps both keys for this reason).
+    """
+    store = InMemoryJobRecordStore()
+    feed = ScriptedFeed([[_card("AI Agent 一号", "甲公司")]])
+    detail = _detail_page()
+    detail.extract_job_posting.return_value = _posting("AI Agent 一号", "甲公司")
+    llm = MagicMock()
+    llm.chat_completion_json.side_effect = [
+        {"pass": True, "reason": "契合"},
+        {"match_score": 90, "match_reasons": ["契合"], "greeting_message": "您好甲"},
+    ]
+    chat = MagicMock()
+    chat.click_send.return_value = True
+    logs: list[str] = []
+
+    async def log(line: str) -> None:
+        logs.append(line)
+
+    pipeline = _pipeline(
+        store,
+        feed=feed,
+        detail=detail,
+        screener=CandidateScreener(llm_client=llm),
+        chat=chat,
+        log=log,
+    )
+
+    legacy = _apply_config(preview_only=True, auto_send=False)
+    result = await pipeline.stream_jobs(legacy)
+
+    chat.click_send.assert_not_called()
+    detail.open_chat.assert_not_called()
+    assert result.applied is False
+    assert await store.list_job_records(status="matched"), "the draft stays re-sendable"
+    assert not any("OFFLINE DRAFT" in line for line in logs), logs
 
 
 @pytest.mark.asyncio

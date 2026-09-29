@@ -9,11 +9,16 @@
  * now", and preview depth differed per caller.
  *
  * Execution depth is what this mirror exists to keep honest, because depth was the
- * divergence that made auto_apply a lie: dispatch needs auto_send AND not
- * preview_only, only an explicitly stated live mode produced that pair, and no
- * scheduled or one-click path stated one. So every 自动沟通 trigger drafted a greeting,
- * logged [OFFLINE DRAFT], and never opened a chat. Depth is derived from the strategy
- * here, and no caller authors the pair by hand.
+ * divergence that made auto_apply a lie: dispatch needs auto_send AND not preview_only,
+ * only an explicitly stated live mode produced that pair, and no scheduled or one-click
+ * path stated one — so every 自动沟通 trigger drafted a greeting and never opened a chat.
+ *
+ * PR #297 made the contract derive depth from the strategy. Issue #298 then deleted the
+ * second switch: "preview it, do not send it" is not an execution depth any more, because
+ * an operator picks between 深度存JD and 自动打招呼 and whether a message leaves the device
+ * follows from that alone. A search and a targeted application therefore refuse a stated
+ * mode. Only 拒信清扫 keeps a drill, and its dry_run is a different intent on a different
+ * surface.
  *
  * Both languages are pinned by `config/task_launch.cases.json`, so the builder cannot
  * drift from the worker's expectation.
@@ -41,14 +46,13 @@ export const DEFAULT_PREVIEW_TIMEOUT_SEC = 3.0;
 export type LaunchSource = 'manual' | 'test' | 'scheduler';
 
 /**
- * How deep a launch may go.
+ * Whether a 拒信清扫 drill may reply — nothing else.
  *
  * `undefined` is the third, distinct state: *honour what the configuration already
- * decided* — the operator's `chat.dry_run` for a rejection cleanup, the SavedSearch's
- * Target Action for a search dispatch. A cron schedule of an 自动打招呼 strategy and a
- * one-click 自动沟通 trigger both omit the mode and mean "do what the strategy says";
- * only the launch modal states one, and `draft` is how it says "let me read the
- * greeting before anything leaves the device".
+ * decided*, which for a cleanup is the operator's `chat.dry_run`. It stopped being a
+ * depth override for searches and targeted applications in issue #298: those kinds derive
+ * their depth from their Target Action and refuse a stated mode, because reading a greeting
+ * before it goes out is what the dashboard does, not a mode the agent runs in.
  */
 export type LaunchMode = 'draft' | 'live' | undefined;
 
@@ -109,36 +113,52 @@ function targetActionFor(search: SearchLaunchInput): TargetActionName {
 }
 
 /**
- * The (preview_only, auto_send) pair the handlers consume. Wire keys stay stable for
- * rollout; only who computes them changes. The pair is one intent stated twice — the
- * worker dispatches only on `auto_send && !preview_only` — so it is produced here and
- * never authored by a caller.
+ * The (preview_only, auto_send) pair the handlers consume, derived from one input.
  *
- * The old table returned preview for anything short of an explicit live, which made
- * depth a function of who remembered to state a mode: an 自动沟通 strategy run by cron,
- * by the strategies page, or by the dashboard "run scheduled now" drafted its greeting,
- * logged [OFFLINE DRAFT], and never opened the chat. Target Action *is* the configured
- * execution depth, so it is what an unstated mode resolves to, and draft is the
- * explicit override for a caller that wants to read a greeting first.
+ * Two wire keys, one intent, written by exactly one function: the worker dispatches only on
+ * `auto_send && !preview_only`, so a caller that authors the pair can get either half wrong
+ * and the payload still looks valid. `auto_apply` sends — that is what the operator's
+ * configured depth means — and `save_jd` never does.
+ *
+ * Both keys stay on the wire because a queued task was built by an older builder and the
+ * worker still reads the pair. Issue #302 collapses them into the single expression this
+ * function already derives.
  */
-function previewFlags(action: TargetActionName, mode: LaunchMode): [boolean, boolean] {
+function previewFlags(action: TargetActionName): [boolean, boolean] {
 	if (action !== 'auto_apply') return [true, false]; // Save-only: nothing to send.
-	if (mode === 'draft') return [true, false];
 	return [false, true];
+}
+
+/**
+ * Reject a caller that tries to declare the depth of a `subject` launch.
+ *
+ * The refusal is the point (issue #298). The defect was never a wrong value in a payload —
+ * it was five callers each getting to restate a depth the contract had already decided,
+ * and one of them got it wrong everywhere outside the modal's dropdown. Ignoring a stated
+ * mode would leave that door open for the next entry to walk through.
+ */
+function refuseStatedDepth(mode: LaunchMode, subject: string): void {
+	if (mode === undefined) return;
+	const stated = mode === 'live' ? 'auto_apply' : 'save_jd';
+	throw new LaunchContractError(
+		`${subject} does not take a launch mode: its execution depth follows its Target Action, not its caller. Drop the mode (the Target Action already states ${stated}, and only 拒信清扫 still has a drill to declare).`
+	);
 }
 
 export function buildSearchLaunch(
 	search: SearchLaunchInput,
 	options: {
 		source: LaunchSource;
+		/** Accepted only so it can be refused — a search's depth is its Target Action. */
 		mode?: LaunchMode;
 		minScore?: number;
 		// Opaque too: forwarded to the worker as the payload's candidate block.
 		candidateProfile?: unknown;
 	}
 ): TaskLaunch {
+	refuseStatedDepth(options.mode, 'A search');
 	const action = targetActionFor(search);
-	const [previewOnly, autoSend] = previewFlags(action, options.mode);
+	const [previewOnly, autoSend] = previewFlags(action);
 
 	const payload: Record<string, unknown> = {
 		saved_search_id: search.id,
@@ -186,12 +206,17 @@ export interface DirectApplyTarget {
  */
 export function buildDirectApplyLaunch(
 	job: DirectApplyTarget,
-	options: { source: LaunchSource; mode?: LaunchMode }
+	options: {
+		source: LaunchSource;
+		/** Accepted only so it can be refused — 定向投递 sends, by definition. */
+		mode?: LaunchMode;
+	}
 ): TaskLaunch {
 	if (!job.job_id) {
 		throw new LaunchContractError('a direct apply launch requires the job it targets');
 	}
-	const [previewOnly, autoSend] = previewFlags('auto_apply', options.mode);
+	refuseStatedDepth(options.mode, 'A targeted application');
+	const [previewOnly, autoSend] = previewFlags('auto_apply');
 	const payload: Record<string, unknown> = {
 		target_action: 'auto_apply',
 		direct_job_id: job.job_id,
@@ -246,9 +271,9 @@ export function buildLoginDiagnosticLaunch(options: { source: LaunchSource }): T
 /**
  * The one entry point: turn a launch request into a validated task.
  *
- * `mode` stays optional for every kind, and each kind says what leaving it unstated
- * means: the configured drill for a cleanup, the Target Action for a search, and
- * outreach for a targeted application.
+ * `mode` means "drill, or actually reply", and only the 拒信清扫 cleanup may state it. A
+ * search and a targeted application derive their depth from their Target Action and refuse
+ * the mode outright, so the vote every entry used to get is now cast once, here.
  */
 export function buildLaunch(
 	kind: LaunchKind,
@@ -335,8 +360,9 @@ export function rebuildRerunPayload(
 		return { payload: { ...buildLoginDiagnosticLaunch({ source }).payload, rerun_of: rerunOf }, source };
 	}
 
-	// A rerun keeps the depth the original ran at: draft stays a draft, live stays live.
-	const live = prior.preview_only === false && prior.auto_send === true;
+	// A rerun states no depth. Since issue #298 the depth is the Target Action the original
+	// carried, so a rerun of an 自动沟通 task greets and a rerun of a 深度存JD task does not —
+	// the same task the first run was, with no preview tier left to inherit.
 
 	// A targeted application is not a search dispatch: it names a Job Record, and the
 	// search's Target Action has nothing to do with it. It used to fall through to the
@@ -351,7 +377,7 @@ export function rebuildRerunPayload(
 				greeting_message: prior.greeting_message,
 				candidate_profile: prior.candidate_profile
 			},
-			{ source, mode: live ? 'live' : 'draft' }
+			{ source }
 		);
 		return { payload: { ...launch.payload, rerun_of: rerunOf }, source };
 	}
@@ -367,7 +393,7 @@ export function rebuildRerunPayload(
 			target_action: prior.target_action,
 			max_jobs: prior.max_jobs
 		},
-		{ source, mode: live ? 'live' : 'draft' }
+		{ source }
 	);
 
 	const carried: Record<string, unknown> = {};
