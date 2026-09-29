@@ -7,7 +7,11 @@ Boss 直聘 Android application automation domain layer.
 import contextlib
 
 with contextlib.suppress(ImportError):
-    from .matching import JobMatchGreetingService, MatchGreetingResult
+    from .matching import (
+        JobMatchGreetingService,
+        MatchGreetingResult,
+        ensure_greeting_prefix,
+    )
 
 with contextlib.suppress(ImportError):
     from .greeting_prompt import load_greeting_prompt
@@ -29,16 +33,18 @@ from .models import (
     SavedSearch,
     ScreeningPolicy,
     SearchConfig,
+    format_recruiter_greeting_prefix,
     is_headhunter_agency_name,
     is_masked_company_name,
+    parse_recruiter_title,
 )
 
 with contextlib.suppress(ImportError):
     from .screening_config import (
-    append_company_blacklist_entry,
-    is_writable_screening_path,
-    resolve_writable_screening_config_path,
-)
+        append_company_blacklist_entry,
+        is_writable_screening_path,
+        resolve_writable_screening_config_path,
+    )
 with contextlib.suppress(ImportError):
     from .screening import (
         CandidateScreener,
@@ -156,4 +162,7 @@ __all__ = [
     "resolve_pocketbase_url",
     "run_job_application_graph",
     "run_resume_lifecycle_graph",
+    "ensure_greeting_prefix",
+    "format_recruiter_greeting_prefix",
+    "parse_recruiter_title",
 ]

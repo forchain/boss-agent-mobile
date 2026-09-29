@@ -328,7 +328,7 @@ def test_full_lifecycle_job_application_graph_with_profile():
     assert state["deep_screen_pass"] is True
     assert state["status"] == "greeting_drafted"
     assert state["match_score"] == 95
-    assert "张总监" in state["greeting_message"]
+    assert "张总" in state["greeting_message"]
     assert mock_llm.chat_completion_json.call_count == 2
 
 

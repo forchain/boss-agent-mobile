@@ -3,6 +3,7 @@ import type { RequestHandler } from './$types';
 import { runPythonScript } from '$lib/server/pythonRunner';
 import { sanitizeLlmSettingsForRunner } from '$lib/server/settings';
 import { pushGreetingPromptArg } from '$lib/server/greetingPromptConfig';
+import { formatRecruiterGreetingPrefix } from '$lib/server/salutation';
 
 export const POST: RequestHandler = async ({ request }) => {
 	try {
@@ -12,6 +13,8 @@ export const POST: RequestHandler = async ({ request }) => {
 			company_name = '贵司',
 			salary_range = '面议',
 			job_description = '',
+			recruiter_name = '',
+			recruiter_title = '',
 			candidate_profile = null,
 			llmSettings = null
 		} = body;
@@ -20,7 +23,9 @@ export const POST: RequestHandler = async ({ request }) => {
 			job_title,
 			company_name,
 			salary_range,
-			job_description
+			job_description,
+			recruiter_name,
+			recruiter_title
 		};
 
 		const args = ['--job', JSON.stringify(jobPayload)];
@@ -69,7 +74,8 @@ export const POST: RequestHandler = async ({ request }) => {
 
 		score = Math.min(score, 98);
 
-		const greeting = `${company_name}招聘的 ${job_title || '该'} 岗位，我特别关注到对“${reqs[0]?.split('：')[0] || '核心架构'}”的明确诉求——这正是我过往深耕的实战场景。结合全栈与大模型 Agent 落地经验，我主导过从底层通信到智能决策的全链路构建。非常期待能与您就岗位的具体挑战进一步深入沟通！`;
+		const prefix = formatRecruiterGreetingPrefix(recruiter_name);
+		const greeting = `${prefix}看到${company_name}招聘的 ${job_title || '该'} 岗位，我特别关注到对“${reqs[0]?.split('：')[0] || '核心架构'}”的明确诉求——这正是我过往深耕的实战场景。结合全栈与大模型 Agent 落地经验，我主导过从底层通信到智能决策的全链路构建。非常期待能与您就岗位的具体挑战进一步深入沟通！`;
 
 		return json({
 			match_score: score,

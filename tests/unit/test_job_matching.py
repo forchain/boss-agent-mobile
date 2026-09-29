@@ -265,3 +265,153 @@ def test_job_match_greeting_service_default_client_uses_realm(monkeypatch):
     service = JobMatchGreetingService()
     assert service.llm_client is not None
     assert service.llm_client.config.model == "matching-realm-model"
+
+
+def test_parse_recruiter_title_and_format_prefix():
+    from boss_agent.models import format_recruiter_greeting_prefix, parse_recruiter_title
+
+    cases = [
+        # xx 女士
+        ("张女士", "张女士", "张女士您好,幸会!"),
+        ("张女士 · HR", "张女士", "张女士您好,幸会!"),
+        ("李女士•资深顾问", "李女士", "李女士您好,幸会!"),
+        ("王女士 (HRBP)", "王女士", "王女士您好,幸会!"),
+        ("欧阳女士", "欧阳女士", "欧阳女士您好,幸会!"),
+        # xx 先生
+        ("钟先生", "钟先生", "钟先生您好,幸会!"),
+        ("钟先生 · 猎头顾问", "钟先生", "钟先生您好,幸会!"),
+        ("司马先生", "司马先生", "司马先生您好,幸会!"),
+        # xxx (真名) - Compound surnames
+        ("诸葛孔明", "诸葛总", "诸葛总您好,幸会!"),
+        ("诸葛亮", "诸葛总", "诸葛总您好,幸会!"),
+        ("欧阳六", "欧阳总", "欧阳总您好,幸会!"),
+        ("司马迁", "司马总", "司马总您好,幸会!"),
+        ("上官婉儿", "上官总", "上官总您好,幸会!"),
+        # xxx (真名) - Single surnames
+        ("张伟", "张总", "张总您好,幸会!"),
+        ("王小明", "王总", "王总您好,幸会!"),
+        ("李明", "李总", "李总您好,幸会!"),
+        # Existing xx总
+        ("张总", "张总", "张总您好,幸会!"),
+        ("诸葛总", "诸葛总", "诸葛总您好,幸会!"),
+        # Fallbacks (English, numbers, generic role placeholders, empty)
+        ("Alice", "", "您好,幸会!"),
+        ("Bob Smith", "", "您好,幸会!"),
+        ("Tom · HR", "", "您好,幸会!"),
+        ("HR", "", "您好,幸会!"),
+        ("招聘专员", "", "您好,幸会!"),
+        ("猎头顾问", "", "您好,幸会!"),
+        ("12345", "", "您好,幸会!"),
+        ("", "", "您好,幸会!"),
+        (None, "", "您好,幸会!"),
+    ]
+
+    for raw, expected_title, expected_prefix in cases:
+        assert parse_recruiter_title(raw) == expected_title, (
+            f"parse_recruiter_title failed for {raw!r}"
+        )
+        assert format_recruiter_greeting_prefix(raw) == expected_prefix, (
+            f"format_recruiter_greeting_prefix failed for {raw!r}"
+        )
+
+
+def test_ensure_greeting_prefix_normalization():
+    from boss_agent.matching import ensure_greeting_prefix
+
+    # 1. Already exact match
+    exact = "张女士您好,幸会!看到贵司正在招聘AI架构师..."
+    assert ensure_greeting_prefix(exact, "张女士") == exact
+
+    # 2. Chinese punctuation variant normalized
+    variant = "张女士您好，幸会！看到贵司正在招聘AI架构师..."
+    assert (
+        ensure_greeting_prefix(variant, "张女士") == "张女士您好,幸会!看到贵司正在招聘AI架构师..."
+    )
+
+    # 3. Redundant generic greeting stripped
+    redundant = "您好！看到贵司正在招聘AI架构师..."
+    assert (
+        ensure_greeting_prefix(redundant, "钟先生 · 猎头顾问")
+        == "钟先生您好,幸会!看到贵司正在招聘AI架构师..."
+    )
+
+    # 4. Redundant name greeting stripped
+    redundant_name = "张伟您好！看到贵司正在招聘AI架构师..."
+    assert (
+        ensure_greeting_prefix(redundant_name, "张伟")
+        == "张总您好,幸会!看到贵司正在招聘AI架构师..."
+    )
+
+    # 5. Compound surname greeting
+    greeting_comp = "您好，关注到贵司在招Agent专家..."
+    assert (
+        ensure_greeting_prefix(greeting_comp, "诸葛孔明")
+        == "诸葛总您好,幸会!关注到贵司在招Agent专家..."
+    )
+
+    # 6. No leading greeting at all
+    no_greeting = "针对贵司在大模型架构上的技术诉求，我主导过多智能体项目..."
+    assert (
+        ensure_greeting_prefix(no_greeting, "欧阳六")
+        == "欧阳总您好,幸会!针对贵司在大模型架构上的技术诉求，我主导过多智能体项目..."
+    )
+
+    # 7. Fallback when recruiter is None or English
+    assert ensure_greeting_prefix("您好！看到贵司招聘...", None) == "您好,幸会!看到贵司招聘..."
+    assert ensure_greeting_prefix("您好！看到贵司招聘...", "Alice") == "您好,幸会!看到贵司招聘..."
+
+    # 8. Empty input returns expected prefix alone
+    assert ensure_greeting_prefix("", "张女士") == "张女士您好,幸会!"
+
+
+def test_evaluate_and_draft_greeting_enforces_dynamic_salutation():
+    mock_llm = MagicMock()
+    # Mock LLM returns generic "您好！" greeting
+    mock_llm.chat_completion_json.return_value = {
+        "match_score": 90,
+        "match_reasons": ["大模型经验契合"],
+        "greeting_message": "您好！看到贵司正在招聘AI Agent专家，我具备深入的落地经验。",
+    }
+
+    service = JobMatchGreetingService(llm_client=mock_llm)
+    job = JobPosting(
+        title="AI Agent 专家",
+        company_name="智元创新",
+        salary_range="40-60K",
+        job_description="负责大模型与多智能体系统研发，有端侧落地与通信架构经验优先。",
+        recruiter_name="钟先生 · 猎头顾问",
+    )
+
+    result = service.evaluate_and_draft_greeting(job=job)
+
+    # 1. Output must strictly begin with dynamic salutation
+    assert result.greeting_message.startswith("钟先生您好,幸会!")
+    assert (
+        result.greeting_message
+        == "钟先生您好,幸会!看到贵司正在招聘AI Agent专家，我具备深入的落地经验。"
+    )
+
+    # 2. System and user prompts passed to LLM must explicitly mandate the salutation
+    messages_passed = mock_llm.chat_completion_json.call_args[0][0]
+    user_msg = messages_passed[1]["content"]
+    assert "钟先生 (猎头顾问)" in user_msg
+    assert "钟先生您好,幸会!" in user_msg
+    assert "【打招呼开头称谓硬性要求】" in user_msg
+
+
+def test_evaluate_and_draft_greeting_fallback_includes_dynamic_salutation():
+    mock_llm = MagicMock()
+    mock_llm.chat_completion_json.side_effect = RuntimeError("API down")
+
+    service = JobMatchGreetingService(llm_client=mock_llm)
+    job = JobPosting(
+        title="Python 高级开发",
+        company_name="智能未来",
+        salary_range="25-35K",
+        job_description="负责微服务框架与后台数据流服务，熟练掌握Python异步编程架构。",
+        recruiter_name="诸葛孔明",
+    )
+
+    result = service.evaluate_and_draft_greeting(job=job)
+    assert result.match_score == 50
+    assert result.greeting_message.startswith("诸葛总您好,幸会!")

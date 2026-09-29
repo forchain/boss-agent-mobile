@@ -241,7 +241,7 @@ def test_job_match_greeting_service_traceable():
 
     res = service.evaluate_and_draft_greeting(job)
     assert res.match_score == 85
-    assert res.greeting_message == "Hello, I have extensive Appium agent experience."
+    assert "Hello, I have extensive Appium agent experience." in res.greeting_message
 
 
 def test_resume_memory_manager_traceable(tmp_path):
