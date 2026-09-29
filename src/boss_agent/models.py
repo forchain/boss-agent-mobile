@@ -641,6 +641,31 @@ def classify_chat_button(button_text: str | None, enabled: bool = True) -> ChatB
 APPLIED_SOURCE_AGENT = "agent_auto_send"
 APPLIED_SOURCE_PLATFORM_HISTORICAL = "platform_historical"
 
+#: Provenance of the greeting text on a Job Record (issue #300). This is what decides
+#: whether a run may spend tokens re-drafting it: an operator who previews a greeting does
+#: so by generating or editing it in the Web Dashboard, and once that copy exists the
+#: agent sends it verbatim instead of writing a new one over it on every sweep.
+#:
+#: A record written before this field existed carries neither value, and
+#: :func:`greeting_is_human` reads that as "not human" — the safe direction, because the
+#: cost of guessing wrong is a regenerated draft, not a message nobody approved.
+GREETING_SOURCE_AGENT = "agent_draft"
+GREETING_SOURCE_HUMAN = "human"
+
+
+def greeting_is_human(record: dict | None) -> bool:
+    """Whether a Job Record's greeting was written by a human rather than drafted by the agent.
+
+    Unknown provenance is not human provenance. A legacy record — and a record whose
+    ``greeting_source`` arrived as something else entirely — keeps today's behaviour of
+    being drafted for, so shipping the field cannot silently freeze an old agent draft in
+    place as if somebody had approved it.
+    """
+    if not record:
+        return False
+    text = (record.get("greeting_message") or "").strip()
+    return bool(text) and str(record.get("greeting_source") or "") == GREETING_SOURCE_HUMAN
+
 EXPIRED_POSTING_REASON = "岗位已失效/停止招聘"
 
 # Telemetry shared by both detail-inspecting handlers when a headhunter posting is
@@ -799,10 +824,54 @@ STATE_RANK: dict[str, int] = {
     JobRecordStatus.APPLIED: 3,
 }
 
+#: How a task payload answered the one depth question (issue #302), recorded so a run can
+#: say which shape it read. Once nothing reports `legacy_*`, the legacy reading goes away.
+DEPTH_DECLARED = "declared_target_action"
+DEPTH_LEGACY_PAIR = "legacy_preview_pair"
+DEPTH_LEGACY_HALF_PAIR = "legacy_preview_half_pair"
+DEPTH_UNSTATED = "unstated_default"
+
+
+#: How a task payload answered the one depth question (issue #302), recorded so a run can
+#: say which shape it read. Once nothing reports `legacy_*`, the legacy reading goes away.
+DEPTH_DECLARED = "declared_target_action"
+DEPTH_LEGACY_PAIR = "legacy_preview_pair"
+DEPTH_LEGACY_HALF_PAIR = "legacy_preview_half_pair"
+DEPTH_UNSTATED = "unstated_default"
+
+
+#: The state rank each Target Action requires. This is the Depth Visit Rule's table:
+#: 深度存JD is satisfied by a record that has reached the enrichment rung, while
+#: 自动打招呼 is satisfied only at `applied` — a greeting that actually left the app.
+#: `matched` used to sit at this action's rank, which is how an undelivered draft read as
+#: finished work and was never revisited (issue #299).
 TARGET_ACTION_RANK: dict[str, int] = {
     TargetAction.SAVE_JD: 1,
-    TargetAction.AUTO_APPLY: 2,
+    TargetAction.AUTO_APPLY: STATE_RANK[JobRecordStatus.APPLIED],
 }
+
+
+def depth_already_reached(
+    target_action: TargetAction, existing_status: str, existing_record: dict | None
+) -> bool:
+    """Whether a stored record has already met the depth this run is configured for.
+
+    The two depths ask different questions, and the Job Lifecycle ladder answers only one of
+    them. `STATE_RANK` orders a record by how much is *known* about it, which is the right
+    guard for writes and for a 深度存JD sweep. It is the wrong guard for 自动打招呼, whose
+    requirement is a delivered message: comparing ranks there counted a draft — `matched` —
+    as finished work, and every undelivered greeting the backend or a spent quota produced
+    was skipped forever after (issue #299).
+    """
+    rank = STATE_RANK.get(existing_status, 0)
+    required = TARGET_ACTION_RANK.get(target_action, STATE_RANK[JobRecordStatus.JD_SAVED])
+    if rank < required:
+        return False
+    if target_action != TargetAction.SAVE_JD:
+        return True
+    # A save-only pass is satisfied by enrichment itself, so a record that got as far as a
+    # draft has plainly been read; one that never produced a JD is not done yet.
+    return rank > required or bool(((existing_record or {}).get("job_description") or "").strip())
 
 
 @dataclass
@@ -1016,6 +1085,32 @@ def is_substantive_jd(jd: str | None) -> bool:
     """Whether an extracted JD carries enough signal to screen or greet from."""
     text = jd or ""
     return len(text) >= MIN_JD_CHARS and text not in UNUSABLE_JD_MARKERS
+
+
+#: The markers that mean a job description was never fully expanded. One declaration,
+#: read by the detail page before it spends scrolls and taps on `查看更多`
+#: (`pages.JobDetailPage.expand_description_if_collapsed`) and by the feed pipeline before
+#: it decides a stored JD is as good as a fresh read (issue #301). Two owners for this rule
+#: is how a stored body and a live body could stop meaning the same thing.
+TRUNCATED_JD_MARKERS: tuple[str, ...] = ("查看更多", "展开")
+
+
+def jd_is_truncated(jd: str | None) -> bool:
+    """Whether a job description stops short of the full text on screen."""
+    text = (jd or "").strip()
+    return (
+        any(marker in text for marker in TRUNCATED_JD_MARKERS) or text.endswith("...")
+    )
+
+
+def jd_is_usable_on_file(jd: str | None) -> bool:
+    """Whether a JD a record already holds is as good as reading the page again (#301).
+
+    The two judgements a freshly extracted JD is put through, applied to the stored text:
+    enough signal to work from, and not truncated. Not a third rule.
+    """
+    text = (jd or "").strip()
+    return bool(text) and is_substantive_jd(text) and not jd_is_truncated(text)
 
 
 #: Unambiguous staffing/agency markers. Deliberately excludes broad industry

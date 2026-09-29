@@ -16,7 +16,33 @@ on who dispatched it. And task provenance — a first-class CONTEXT.md attribute
 defined ``manual``/``test``/``scheduler`` semantics — existed nowhere in code, faked
 instead with payload markers like ``startup_cleanup`` and ``scheduled``.
 
-This module turns ``(kind, provenance, search, mode)`` into a validated payload. The
+Execution depth is the divergence this module owns most strictly, because it was the
+one that made ``auto_apply`` a lie: dispatch needs ``auto_send=True`` *and*
+``preview_only=False``, only an explicit ``LaunchMode.LIVE`` ever produced that pair, and
+no scheduled or one-click path stated a mode. Every strategy trigger therefore drafted a
+greeting, logged an offline draft, and never opened the chat — while the SavedSearch
+that configured it says 自动打招呼, because CONTEXT.md makes Target Action *the* execution
+depth. A targeted application had the same defect one layer closer to the wire: the job
+detail's 定向投递 button hand-built an ``AUTO_APPLY`` payload that stated neither flag, so
+the worker's defaults drafted instead of sent.
+
+The remedy went one step further than deriving the pair from the Target Action whenever a
+caller forgot to state a mode. "Preview the greeting, hold it back" stopped being an
+execution depth at all (issue #298): an operator chooses between 深度存JD and 自动打招呼, and
+whether a message leaves the device follows from that choice alone. No entry states a depth
+for a search or a targeted application any more — the dedicated builders refuse one — and
+the only surface that still says "drill" is the 拒信清扫 cleanup, whose ``dry_run`` is a
+different intent on a different surface. Reading a greeting before it goes out is something
+a human does in the Web Dashboard now, not a mode the agent runs in.
+
+The pair itself is gone from everything this module produces (issue #302). Depth has one
+expression on the wire — the `target_action` the operator configured — because a payload
+with two keys that must both be right is a payload whose readers must guess which half the
+writer meant. The worker still *reads* the old pair while tasks written by an earlier
+builder sit in the queue, and refuses a payload that states exactly one half of it: that is
+the shape that used to degrade silently.
+
+This module turns ``(kind, provenance, search, job, mode)`` into a validated payload. The
 defaults are declared once, the wire keys stay stable for rollout, and
 ``config/task_launch.cases.json`` pins the output so the TypeScript builder cannot
 drift from it.
@@ -36,6 +62,11 @@ from .settings import resolve_chat_acknowledgment_settings
 #: The baseline relevance threshold. One value, so a manual launch and a scheduled run
 #: of the same SavedSearch cannot disagree about which jobs qualify.
 MIN_SCORE = 70
+
+#: The threshold a targeted application is exempt from. The human already chose
+#: the posting, so an LLM score must not quietly veto the greeting the way it vetoes
+#: a feed sweep -- and a threshold left to the worker default would do exactly that.
+DIRECT_APPLY_MIN_SCORE = 0
 
 #: Baseline job ceiling for a search dispatch. An alias, not a restatement: the
 #: Collection Schema declares the `saved_searches.max_jobs` default, and a second
@@ -60,13 +91,17 @@ class LaunchSource(StrEnum):
 
 
 class LaunchMode(StrEnum):
-    """How deep a launch is allowed to go.
+    """Whether a 拒信清扫 drill may reply, and nothing else.
 
-    Two modes, not three: "dry run" and "draft" were the same wire intent expressed in
-    two vocabularies — compute it, show it, do not send it — and collapsing them is the
-    whole point of having one builder. ``None`` is a third, distinct state: *honour the
-    configured* ``chat.dry_run``, which is what the searches-page trigger has always
-    meant by omitting the key.
+    Two modes, not three: "dry run" and "draft" were the same wire intent expressed in two
+    vocabularies — compute it, show it, do not send it — and collapsing them is the whole
+    point of having one builder. ``None`` is the third, distinct state: *honour what the
+    configuration already decided*, which for a cleanup is the operator's ``chat.dry_run``.
+
+    It stopped being a depth override for searches and targeted applications in issue #298.
+    Those kinds derive their depth from their Target Action and refuse a stated mode,
+    because "generate it but keep it on the device" is no longer a run mode — it is what the
+    dashboard does before a human decides to dispatch.
     """
 
     DRAFT = "draft"
@@ -77,6 +112,7 @@ class TaskKind(StrEnum):
     """The Task Handler Strategy a launch targets."""
 
     SEARCH = "search"
+    DIRECT_APPLY = "direct_apply"
     CHAT_CLEANUP = "chat_cleanup"
     LOGIN_DIAGNOSTIC = "login_diagnostic"
 
@@ -130,23 +166,30 @@ def build_search_launch(
     search: SavedSearch,
     *,
     source: LaunchSource,
-    mode: LaunchMode | None = LaunchMode.DRAFT,
     candidate_profile: dict[str, Any] | None = None,
     min_score: int | None = None,
+    mode: LaunchMode | None = None,
+    preview_only: bool | None = None,
+    auto_send: bool | None = None,
 ) -> TaskLaunch:
     """Launch a saved search as a scrape or an auto-apply run.
 
     ``min_score`` is a caller *choice*, not a competing default: the parameter exists so
     the modal can offer a stricter threshold than the baseline, and the baseline is what
     everyone else gets. Leaving it unset used to mean three different numbers.
+
+    ``mode``, ``preview_only`` and ``auto_send`` are accepted only so that they can be
+    refused. A search's depth is the Target Action the operator configured, stated once on
+    the wire: PR #297 came from a gate that needed two keys to agree, and issues #298 and
+    #302 remove the second switch and then the second key, rather than asking every caller
+    to set both correctly.
     """
+    _refuse_stated_depth(mode, "A search")
+    _refuse_hand_authored_depth(preview_only, auto_send, "A search")
     action = _target_action_for(search)
     task_type = (
         TaskType.AUTO_APPLY if action == TargetAction.AUTO_APPLY else TaskType.SCRAPE_JOBS
     )
-
-    # A save-only search never greets, so its preview flags are not a caller choice.
-    preview_only, auto_send = _preview_flags(action, mode)
 
     search_dict = search.to_dict()
     payload: dict[str, Any] = {
@@ -160,8 +203,9 @@ def build_search_launch(
         "target_action": action.value,
         "max_jobs": search.max_jobs or DEFAULT_MAX_JOBS,
         "min_score": MIN_SCORE if min_score is None else int(min_score),
-        "preview_only": preview_only,
-        "auto_send": auto_send,
+        # One depth expression: `target_action`, above. The legacy pair is not written
+        # because a reader that has to combine two keys is a reader that can be handed half
+        # of one (issue #302).
         "preview_timeout_sec": DEFAULT_PREVIEW_TIMEOUT_SEC,
     }
     if search_dict.get("screening_policy"):
@@ -171,17 +215,103 @@ def build_search_launch(
     return TaskLaunch(task_type=task_type, payload=payload, source=source)
 
 
-def _preview_flags(action: TargetAction, mode: LaunchMode | None) -> tuple[bool, bool]:
-    """The (preview_only, auto_send) pair the handlers consume today.
+def _refuse_hand_authored_depth(preview_only: Any, auto_send: Any, subject: str) -> None:
+    """Reject a caller that authors the legacy depth keys on a ``subject`` launch.
 
-    Wire keys stay stable for rollout; only who computes them changes. A save-only
-    search is preview by definition — it has nothing to send.
+    ``preview_only`` and ``auto_send`` were one intent written twice, and the worker
+    dispatched only when both halves agreed. That pairing is the whole PR #297 defect: a
+    caller that set one and not the other produced a payload that looked valid and drafted
+    instead of sending. Issue #302 takes the pair away from producers altogether, so writing
+    it is now an error rather than a second opinion the contract had to live with.
     """
-    if action != TargetAction.AUTO_APPLY:
-        return True, False
-    if mode == LaunchMode.LIVE:
-        return False, True
-    return True, False
+    stated = [
+        name
+        for name, value in (("preview_only", preview_only), ("auto_send", auto_send))
+        if value is not None
+    ]
+    if stated:
+        raise LaunchContractError(
+            f"{subject} does not take {', '.join(stated)}: its depth is one expression — the "
+            f"Target Action. The preview_only/auto_send pair exists only for the worker to "
+            f"read tasks an older builder had already queued (issue #302)."
+        )
+
+
+def _refuse_stated_depth(mode: LaunchMode | None, subject: str) -> None:
+    """Reject a caller that tries to declare the depth of a ``subject`` launch.
+
+    The refusal is the point. The defect was never a wrong value in a payload — it was that
+    five callers each got to restate a depth the contract had already decided, and one of
+    them (issue #297) got it wrong everywhere except the modal's dropdown. Silently
+    ignoring a stated mode would leave that door open for the next entry to walk through.
+    """
+    if mode is not None:
+        stated = "auto_apply" if mode == LaunchMode.LIVE else "save_jd"
+        raise LaunchContractError(
+            f"{subject} does not take a launch mode: its execution depth follows its "
+            f"Target Action, not its caller. Drop the mode (the Target Action already "
+            f"states {stated}, and only 拒信清扫 still has a drill to declare)."
+        )
+
+
+@dataclass(frozen=True)
+class DirectApplyTarget:
+    """The posting a 定向投递 acts on.
+
+    Deliberately minimal: the worker re-reads the record from the State Stream Broker by
+    ``job_id``, so a launch carries only what that record cannot resolve for itself — the
+    greeting the human edited, and the profile it was written for.
+    """
+
+    job_id: str
+    title: str = ""
+    company_name: str = ""
+    greeting_message: str = ""
+    candidate_profile: dict[str, Any] | None = None
+
+
+def build_direct_apply_launch(
+    job: DirectApplyTarget,
+    *,
+    source: LaunchSource,
+    mode: LaunchMode | None = None,  # accepted only to be refused, exactly like a search
+    preview_only: bool | None = None,  # ditto for the legacy pair (issue #302)
+    auto_send: bool | None = None,
+) -> TaskLaunch:
+    """Launch one targeted application: greet the posting already on screen.
+
+    A targeted application is outreach by definition — that is what its button says — so
+    it declares ``auto_apply`` instead of leaving the worker to infer it, and it states
+    ``DIRECT_APPLY_MIN_SCORE`` instead of leaving the baseline veto on a posting the
+    human just chose. It used to state neither: no ``target_action``, no depth at all, no
+    threshold, so the worker's draft-only defaults decided, and a rerun of the payload
+    fell through to a keyword sweep.
+
+    There is no preview depth to choose here either (issue #298): whoever clicks 定向投递
+    wants that greeting sent. Reading it first happens in the dashboard, where saving a
+    greeting marks it as the human's own copy and the agent sends it verbatim.
+    """
+    if not job.job_id:
+        raise LaunchContractError("a direct apply launch requires the job it targets")
+    _refuse_stated_depth(mode, "A targeted application")
+    _refuse_hand_authored_depth(preview_only, auto_send, "A targeted application")
+
+    payload: dict[str, Any] = {
+        "target_action": TargetAction.AUTO_APPLY.value,
+        "direct_job_id": job.job_id,
+        # The feed path labels records by the keyword it searched. A targeted run has no
+        # search, so the posting's own title is the only label it can carry.
+        "keyword": job.title,
+        "job_title": job.title,
+        "company_name": job.company_name,
+        "greeting_message": job.greeting_message,
+        "min_score": DIRECT_APPLY_MIN_SCORE,
+        # `target_action: auto_apply` above is the whole depth statement (issue #302).
+        "preview_timeout_sec": DEFAULT_PREVIEW_TIMEOUT_SEC,
+    }
+    if job.candidate_profile:
+        payload["candidate_profile"] = job.candidate_profile
+    return TaskLaunch(task_type=TaskType.AUTO_APPLY, payload=payload, source=source)
 
 
 def build_chat_cleanup_launch(
@@ -234,14 +364,31 @@ def build_launch(
     *,
     source: LaunchSource,
     search: SavedSearch | None = None,
+    job: DirectApplyTarget | None = None,
     mode: LaunchMode | None = None,
     **kwargs: Any,
 ) -> TaskLaunch:
-    """The one entry point: turn a launch request into a validated task."""
+    """The one entry point: turn a launch request into a validated task.
+
+    `mode` means "drill, or actually reply", and only the 拒信清扫 cleanup may state it. A
+    search and a targeted application derive their depth from their Target Action and
+    refuse the mode outright, so the vote every entry used to get is now cast once, here.
+    """
     if kind == TaskKind.SEARCH:
         if search is None:
             raise LaunchContractError("a search launch requires a SavedSearch")
         return build_search_launch(search, source=source, mode=mode, **kwargs)
+    if kind == TaskKind.DIRECT_APPLY:
+        if job is None:
+            raise LaunchContractError("a direct apply launch requires the job it targets")
+        return build_direct_apply_launch(job, source=source, mode=mode, **kwargs)
+    if kind == TaskKind.CHAT_CLEANUP and (
+        kwargs.get("preview_only") is not None or kwargs.get("auto_send") is not None
+    ):
+        # A cleanup has a drill, not a greeting depth; the pair means nothing here.
+        _refuse_hand_authored_depth(
+            kwargs.get("preview_only"), kwargs.get("auto_send"), "A rejection cleanup"
+        )
     if kind == TaskKind.CHAT_CLEANUP:
         return build_chat_cleanup_launch(source=source, search=search, mode=mode, **kwargs)
     if kind == TaskKind.LOGIN_DIAGNOSTIC:

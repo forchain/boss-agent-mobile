@@ -14,7 +14,6 @@ from typing import Any
 from boss_agent.broker.models import AutomationTask, TaskType
 from boss_agent.broker.pocketbase_adapter import BaseTaskBroker
 from boss_agent.feed_pipeline import FeedStreamConfig, JobFeedPipeline
-from boss_agent.models import TargetAction
 from boss_agent.screening import CandidateScreener
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.handlers.base import BaseTaskHandler, HandlerResult
@@ -44,10 +43,11 @@ class ScrapeJobsHandler(BaseTaskHandler):
             return HandlerResult(success=False, error_message="Driver session is unavailable")
 
         payload = task.payload or {}
-        config = FeedStreamConfig.from_payload(payload)
+        # Resolved by the parser, not stamped on afterwards: a SCRAPE_JOBS task never
+        # sends a greeting, and the depth question has exactly one answering site (#302).
+        # A payload that states its own Target Action still wins.
+        config = FeedStreamConfig.from_payload(payload, task_type=TaskType.SCRAPE_JOBS)
         config.source_task_id = task.id
-        # The task type names the action: a SCRAPE_JOBS task never sends a greeting.
-        config.target_action = TargetAction.SAVE_JD
 
         search_name = payload.get("search_name") or payload.get("saved_search_name") or ""
         strategy_desc = f"strategy='{search_name}', " if search_name else ""

@@ -102,8 +102,18 @@ def _sticky_field_updates(existing: dict[str, Any], record_data: dict[str, Any])
     re-extracted from the JD text and may be refined by a later non-empty read.
     ``is_headhunter`` may be discovered by a later observation but never downgraded — a
     headhunter channel recorded as direct-hire would wrongly join the same-company pool.
+    ``greeting_message`` and ``greeting_source`` move together for the same reason: a
+    card-level pass that carries neither must leave a human's approved copy and its
+    provenance intact (issue #300).
     """
     updates: dict[str, Any] = {}
+    # The greeting and who wrote it travel together (issue #300): a pass that brings no
+    # greeting of its own must not erase a human's approved copy, and a pass that brings a
+    # new one must not leave the old provenance claim standing.
+    if record_data.get("greeting_message"):
+        updates["greeting_message"] = record_data["greeting_message"]
+    if record_data.get("greeting_source"):
+        updates["greeting_source"] = record_data["greeting_source"]
     if record_data.get("tags") and not existing.get("tags"):
         updates["tags"] = record_data["tags"]
     if record_data.get("jd_key_requirements"):
@@ -241,8 +251,6 @@ class InMemoryJobRecordStore(JobRecordStore):
             rec["status"] = advanced
         rec.update(_placeholder_fill(rec, record_data))
         rec.update(_sticky_field_updates(rec, record_data))
-        if record_data.get("greeting_message"):
-            rec["greeting_message"] = record_data["greeting_message"]
         if record_data.get("match_score") is not None:
             rec["match_score"] = record_data["match_score"]
         if "screened_reason" in record_data:
@@ -492,8 +500,6 @@ class PocketBaseJobRecordStore(JobRecordStore):
             body["status"] = advanced
         body.update(_placeholder_fill(existing, record_data))
         body.update(_sticky_field_updates(existing, record_data))
-        if record_data.get("greeting_message"):
-            body["greeting_message"] = record_data["greeting_message"]
         if record_data.get("match_score") is not None:
             body["match_score"] = record_data["match_score"]
         if "screened_reason" in record_data:

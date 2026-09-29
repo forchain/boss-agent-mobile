@@ -26,11 +26,14 @@
 	let searches = $state<SavedSearch[]>([]);
 	let selectedSearchId = $state<string>('');
 
-	// Task execution parameters
+	// Task execution parameters. `targetAction` is the *only* depth an operator chooses
+	// (issue #298): 深度存JD saves, 自动打招呼 greets, and whether a greeting leaves the
+	// device follows from that alone. The 安全预览 / 自动发送 dropdown that used to sit here
+	// was a second switch on the same intent, and PR #297's bug was exactly one caller
+	// forgetting it — so the switch is gone, and the chosen depth is what the launch carries.
 	let targetAction = $state<TargetAction>('save_jd');
 	let maxJobs = $state<number>(30);
 	let minScore = $state(75);
-	let taskMode = $state<'preview' | 'auto_send'>('preview');
 
 	// 仅沟通 rejection cleanup (issue #208). Drill mode starts ON — see
 	// DEFAULT_LAUNCH_CHAT_DRY_RUN — so this one-click trigger never sends real
@@ -90,13 +93,17 @@
 		try {
 			const profile = await getCandidateProfile();
 			// One builder, not three inline payloads. `min_score` stays a UI *choice*
-			// passed through the builder rather than a competing default, and the preview
-			// flags are derived from the chosen mode instead of restated here.
+			// passed through the builder rather than a competing default, and the depth is
+			// the Target Action selected above — the builder derives the send/no-send pair
+			// from it, so nothing here restates it.
 			const launch = buildSearchLaunch(
-				{ ...target, max_jobs: Number(maxJobs) > 0 ? Number(maxJobs) : target.max_jobs },
+				{
+					...target,
+					target_action: targetAction,
+					max_jobs: Number(maxJobs) > 0 ? Number(maxJobs) : target.max_jobs
+				},
 				{
 					source: 'manual',
-					mode: taskMode === 'auto_send' ? 'live' : 'draft',
 					minScore,
 					candidateProfile: profile || {}
 				}
@@ -347,19 +354,12 @@
 
 								{#if targetAction === 'auto_apply'}
 									<div class="p-3 bg-slate-950/80 border border-slate-800/80 rounded-xl space-y-3">
-										<div>
-											<label for="template-mode-select" class="block text-slate-400 mb-1 font-medium text-xs">
-												发送模式
-											</label>
-											<select
-												id="template-mode-select"
-												bind:value={taskMode}
-												class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-cyan-500 text-xs"
-											>
-												<option value="preview">🛡️ 安全预览模式 (输入草稿不发送)</option>
-												<option value="auto_send">⚡ 自动发送模式 (达标自动点击发送)</option>
-											</select>
-										</div>
+										<p class="text-[11px] text-slate-400 leading-relaxed">
+											🚀 自动打招呼会深度存JD、AI 匹配，并在达标时<b class="text-slate-300">真实发出招呼语</b>；
+											每日沟通额度用满时本轮不发送，岗位保持可再发。
+											<br />
+											想先读一遍再发？在岗位详情面板「AI 评估 / 编辑招呼语」生成并保存，即为人工稿：下次运行原文发送、不再重复生成。
+										</p>
 
 										<div>
 											<div class="flex justify-between items-center mb-1">

@@ -209,6 +209,8 @@ export const POST: RequestHandler = async ({ request }) => {
 			match_score: body.match_score ?? null,
 			jd_key_requirements: body.jd_key_requirements || [],
 			greeting_message: body.greeting_message || '',
+			// Whoever authors a greeting through the dashboard is a human, by definition (#300).
+			greeting_source: body.greeting_source || (body.greeting_message ? 'human' : ''),
 			search_keywords: body.search_keywords || [],
 			source_task_id: body.source_task_id || '',
 			first_seen_at: now,

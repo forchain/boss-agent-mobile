@@ -21,6 +21,8 @@
 		getJobTags,
 		getJobDigest
 	} from '$lib/screening';
+	import { buildDirectApplyLaunch } from '$lib/taskLaunch';
+	import { greetingProvenance, greetingProvenanceLabel, humanGreetingPatch } from '$lib/greetingProvenance';
 	import { formatCommuteDistance } from '$lib/commute';
 
 	let {
@@ -87,6 +89,12 @@
 	let selectedJobTags = $derived(currentJob ? getJobTags(currentJob) : []);
 	let selectedJobDigest = $derived(currentJob ? getJobDigest(currentJob) : '');
 
+	// Derived: whose words the greeting box is holding (issue #300). The panel has to say it,
+	// because "save this and the agent sends it verbatim" is the whole preview story once the
+	// run-level preview tier is gone.
+	let greetingProvenanceKind = $derived(greetingProvenance(currentJob));
+	let greetingProvenanceText = $derived(greetingProvenanceLabel(greetingProvenanceKind));
+
 	// Derived: Blacklist guardrail status for selected job
 	let blacklistGuardrail = $derived(
 		currentJob
@@ -149,12 +157,15 @@
 
 			const result: MatchEvaluateResponse = await res.json();
 
-			// Update record status to matched and persist evaluation details
+			// Update record status to matched and persist evaluation details. A copy the
+			// operator asked the dashboard to generate is theirs to approve: it is saved as a
+			// human greeting, so the next run sends this text verbatim instead of drafting a
+			// new one over it (#300).
 			const updatePayload: Partial<JobRecord> = {
 				status: 'matched',
 				match_score: result.match_score,
 				jd_key_requirements: result.jd_key_requirements,
-				greeting_message: result.greeting_message
+				...humanGreetingPatch(result.greeting_message)
 			};
 
 			const updated = await updateJobRecord(currentJob.id, updatePayload);
@@ -175,8 +186,8 @@
 		const hadChanged = customGreeting.trim() !== (currentJob.greeting_message || '').trim();
 		isSavingGreeting = true;
 		try {
-			await updateJobRecord(currentJob.id, { greeting_message: customGreeting });
-			localOverride = { ...currentJob, greeting_message: customGreeting };
+			await updateJobRecord(currentJob.id, humanGreetingPatch(customGreeting));
+			localOverride = { ...currentJob, ...humanGreetingPatch(customGreeting) };
 			onJobUpdated?.({ ...localOverride });
 			saveGreetingNotice = '✅ 打招呼语已保存';
 			if (hadChanged) {
@@ -243,8 +254,8 @@
 		refinementDiff = null;
 
 		try {
-			await updateJobRecord(currentJob.id, { greeting_message: newGreeting });
-			localOverride = { ...currentJob, greeting_message: newGreeting };
+			await updateJobRecord(currentJob.id, humanGreetingPatch(newGreeting));
+			localOverride = { ...currentJob, ...humanGreetingPatch(newGreeting) };
 			onJobUpdated?.({ ...localOverride });
 			saveGreetingNotice = '✅ 已采纳优化文案并保存';
 			setTimeout(() => {
@@ -498,14 +509,21 @@
 		applyNotice = '正在下发定向投递任务至模拟器...';
 
 		try {
-			const task = await createAutomationTask('AUTO_APPLY', {
-				keyword: currentJob.title,
-				direct_job_id: currentJob.id,
-				greeting_message: customGreeting || currentJob.greeting_message,
-				company_name: currentJob.company_name,
-				job_title: currentJob.title,
-				candidate_profile: profile
-			});
+			// Through the launch contract: this payload used to state no `target_action`, no
+			// preview pair and no threshold, so the worker's draft-only defaults decided and
+			// the app promised a communication it never sent — and the score gate could veto
+			// a posting the human had just picked.
+			const launch = buildDirectApplyLaunch(
+				{
+					job_id: currentJob.id,
+					title: currentJob.title,
+					company_name: currentJob.company_name,
+					greeting_message: customGreeting || currentJob.greeting_message,
+					candidate_profile: profile
+				},
+				{ source: 'manual' }
+			);
+			const task = await createAutomationTask(launch.task_type, launch.payload, launch.source);
 
 			applyNotice = `🚀 投递任务已成功派发 (Task ID: ${task.id})，模拟器将自动执行沟通！`;
 			onActionCompleted?.('apply');
@@ -791,6 +809,19 @@
 							<label for="custom-greeting-textarea" class="block text-xs font-semibold text-slate-400">
 								💬 定制破冰打招呼语 (已结合痛点，支持在线微调)
 							</label>
+							{#if greetingProvenanceText}
+								<span
+									id="greeting-provenance-badge"
+									class={[
+										'text-[10px] px-2 py-0.5 rounded-full border font-medium whitespace-nowrap',
+										greetingProvenanceKind === 'human'
+											? 'text-emerald-300 border-emerald-700/70 bg-emerald-950/40'
+											: 'text-slate-400 border-slate-700 bg-slate-900/60'
+									].join(' ')}
+								>
+									{greetingProvenanceText}
+								</span>
+							{/if}
 							{#if saveGreetingNotice}
 								<span class="text-xs text-emerald-400 font-medium">{saveGreetingNotice}</span>
 							{/if}

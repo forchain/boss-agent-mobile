@@ -401,3 +401,60 @@ describe('Jobs discovery page responsive modal integration (Issues #289, #290)',
 		}
 	});
 });
+
+describe('greeting provenance in the detail panel (issue #300)', () => {
+	it('marks a saved edit as the human’s own copy', async () => {
+		const calls = stubFetch({ ...EVALUATED_JOB, greeting_source: 'agent_draft' });
+		render(JobDetailModal, { props: { isOpen: true, job: EVALUATED_JOB, onClose: () => {} } });
+
+		const box = await screen.findByLabelText(/定制破冰打招呼语/);
+		await fireEvent.change(box, { target: { value: '李工您好，这版是我改过的。' } });
+		await fireEvent.click(screen.getByText('💾 保存修改'));
+
+		await waitFor(() =>
+			expect(calls.find((c) => c.method === 'PATCH' && c.body?.greeting_message)?.body.greeting_source)
+				.toBe('human')
+		);
+	});
+
+	it('marks a copy generated from the panel as the human’s too', async () => {
+		// Previewing a greeting is what a human does here now that the run has no preview
+		// depth (#298). Approving it means generating it and leaving it, so the dashboard's
+		// own generation is a human source — otherwise the next sweep drafts over it.
+		const calls = stubFetch(TEST_JOB);
+		render(JobDetailModal, { props: { isOpen: true, job: TEST_JOB, onClose: () => {} } });
+
+		const evaluate = screen.getByRole('button', { name: /开始 AI 匹配度评估/ });
+		await fireEvent.click(evaluate);
+
+		await waitFor(() =>
+			expect(calls.some((c) => c.method === 'PATCH' && c.body?.greeting_source === 'human'))
+				.toBe(true)
+		);
+	});
+
+	it('shows which copy the record holds', async () => {
+		render(JobDetailModal, {
+			props: {
+				isOpen: true,
+				job: { ...EVALUATED_JOB, greeting_source: 'human' },
+				onClose: () => {}
+			}
+		});
+		expect((await screen.findByText(/人工稿/)).textContent).toContain('原文发送');
+
+		cleanup();
+		render(JobDetailModal, {
+			props: {
+				isOpen: true,
+				job: { ...EVALUATED_JOB, greeting_source: 'agent_draft' },
+				onClose: () => {}
+			}
+		});
+		expect(await screen.findByText(/Agent 草稿/)).toBeTruthy();
+
+		cleanup();
+		render(JobDetailModal, { props: { isOpen: true, job: EVALUATED_JOB, onClose: () => {} } });
+		expect(await screen.findByText(/来源未知/)).toBeTruthy();
+	});
+});
