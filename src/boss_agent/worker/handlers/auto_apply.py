@@ -58,13 +58,14 @@ class AutoApplyHandler(BaseTaskHandler):
         # even when the payload omitted the redundant target_action field.
         config.target_action = TargetAction.AUTO_APPLY
 
-        # An AUTO_APPLY run built by the launch contract is always Auto-Send: depth comes
-        # from the Target Action, and the preview tier is gone (issue #298). Anything else
-        # on this line is a task an older builder had already queued.
+        # An AUTO_APPLY run built by the launch contract states its depth once, as its
+        # Target Action, and that depth sends (issues #298 and #302). The other two lines
+        # name where a depth actually came from, so a queued task written by an older
+        # builder is visible in the log rather than silently reinterpreted.
         mode_desc = (
             "Auto-Send"
-            if config.auto_send and not config.preview_only
-            else "Draft Only (legacy preview payload)"
+            if config.send_greeting
+            else f"DRAFT ONLY (payload depth read as: {config.depth_expression})"
         )
         search_name = payload.get("search_name") or payload.get("saved_search_name") or ""
         strategy_desc = f"strategy='{search_name}', " if search_name else ""

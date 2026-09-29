@@ -20,6 +20,12 @@
  * mode. Only 拒信清扫 keeps a drill, and its dry_run is a different intent on a different
  * surface.
  *
+ * Issue #302 removes the second *key*. A payload used to answer "does this send?" with
+ * `preview_only` and `auto_send`, both of which had to be right; a writer that supplied one
+ * produced a task that looked valid and drafted instead. New payloads answer that question
+ * once, with `target_action`, and a caller that hands the old keys back is refused. The
+ * worker still reads the pair while tasks an older builder queued are in the queue.
+ *
  * Both languages are pinned by `config/task_launch.cases.json`, so the builder cannot
  * drift from the worker's expectation.
  */
@@ -113,20 +119,21 @@ function targetActionFor(search: SearchLaunchInput): TargetActionName {
 }
 
 /**
- * The (preview_only, auto_send) pair the handlers consume, derived from one input.
+ * Reject a caller that hand-authors the legacy depth keys on a `subject` launch.
  *
- * Two wire keys, one intent, written by exactly one function: the worker dispatches only on
- * `auto_send && !preview_only`, so a caller that authors the pair can get either half wrong
- * and the payload still looks valid. `auto_apply` sends — that is what the operator's
- * configured depth means — and `save_jd` never does.
- *
- * Both keys stay on the wire because a queued task was built by an older builder and the
- * worker still reads the pair. Issue #302 collapses them into the single expression this
- * function already derives.
+ * `preview_only` and `auto_send` were one intent written twice, and the worker dispatched
+ * only when both halves agreed — so writing one and not the other produced a payload that
+ * looked valid and drafted instead of sending. That pairing is PR #297's root cause, and
+ * issue #302 takes the pair away from producers altogether.
  */
-function previewFlags(action: TargetActionName): [boolean, boolean] {
-	if (action !== 'auto_apply') return [true, false]; // Save-only: nothing to send.
-	return [false, true];
+function refuseHandAuthoredDepth(subject: string, depth?: { preview_only?: boolean; auto_send?: boolean }): void {
+	const stated = ['preview_only', 'auto_send'].filter(
+		(key) => (depth as Record<string, unknown> | undefined)?.[key] !== undefined
+	);
+	if (stated.length === 0) return;
+	throw new LaunchContractError(
+		`${subject} does not take ${stated.join(', ')}: its depth is one expression — the Target Action. The preview_only/auto_send pair exists only for the worker to read tasks an older builder had already queued (issue #302).`
+	);
 }
 
 /**
@@ -151,14 +158,17 @@ export function buildSearchLaunch(
 		source: LaunchSource;
 		/** Accepted only so it can be refused — a search's depth is its Target Action. */
 		mode?: LaunchMode;
+		/** Accepted only so they can be refused (issue #302). */
+		preview_only?: boolean;
+		auto_send?: boolean;
 		minScore?: number;
 		// Opaque too: forwarded to the worker as the payload's candidate block.
 		candidateProfile?: unknown;
 	}
 ): TaskLaunch {
 	refuseStatedDepth(options.mode, 'A search');
+	refuseHandAuthoredDepth('A search', options);
 	const action = targetActionFor(search);
-	const [previewOnly, autoSend] = previewFlags(action);
 
 	const payload: Record<string, unknown> = {
 		saved_search_id: search.id,
@@ -171,8 +181,7 @@ export function buildSearchLaunch(
 		target_action: action,
 		max_jobs: search.max_jobs || DEFAULT_MAX_JOBS,
 		min_score: options.minScore === undefined ? MIN_SCORE : Number(options.minScore),
-		preview_only: previewOnly,
-		auto_send: autoSend,
+		// One depth expression: `target_action`, above (issue #302).
 		preview_timeout_sec: DEFAULT_PREVIEW_TIMEOUT_SEC
 	};
 	if (search.screening_policy) payload.screening_policy = search.screening_policy;
@@ -210,13 +219,16 @@ export function buildDirectApplyLaunch(
 		source: LaunchSource;
 		/** Accepted only so it can be refused — 定向投递 sends, by definition. */
 		mode?: LaunchMode;
+		/** Accepted only so they can be refused (issue #302). */
+		preview_only?: boolean;
+		auto_send?: boolean;
 	}
 ): TaskLaunch {
 	if (!job.job_id) {
 		throw new LaunchContractError('a direct apply launch requires the job it targets');
 	}
 	refuseStatedDepth(options.mode, 'A targeted application');
-	const [previewOnly, autoSend] = previewFlags('auto_apply');
+	refuseHandAuthoredDepth('A targeted application', options);
 	const payload: Record<string, unknown> = {
 		target_action: 'auto_apply',
 		direct_job_id: job.job_id,
@@ -227,8 +239,7 @@ export function buildDirectApplyLaunch(
 		company_name: job.company_name ?? '',
 		greeting_message: job.greeting_message ?? '',
 		min_score: DIRECT_APPLY_MIN_SCORE,
-		preview_only: previewOnly,
-		auto_send: autoSend,
+		// `target_action: 'auto_apply'` above is the whole depth statement (issue #302).
 		preview_timeout_sec: DEFAULT_PREVIEW_TIMEOUT_SEC
 	};
 	if (job.candidate_profile) payload.candidate_profile = job.candidate_profile;
@@ -282,6 +293,9 @@ export function buildLaunch(
 		search?: SearchLaunchInput | null;
 		job?: DirectApplyTarget | null;
 		mode?: LaunchMode;
+		/** Accepted only so they can be refused — depth is one expression (issue #302). */
+		preview_only?: boolean;
+		auto_send?: boolean;
 		chat?: ChatAcknowledgment | null;
 		minScore?: number;
 		candidateProfile?: Record<string, unknown> | null;
@@ -295,7 +309,11 @@ export function buildLaunch(
 		if (!options.job) throw new LaunchContractError('a direct apply launch requires the job it targets');
 		return buildDirectApplyLaunch(options.job, options);
 	}
-	if (kind === 'chat_cleanup') return buildChatCleanupLaunch(options);
+	if (kind === 'chat_cleanup') {
+		// A cleanup has a drill, not a greeting depth, so the pair means nothing here.
+		refuseHandAuthoredDepth('A rejection cleanup', options);
+		return buildChatCleanupLaunch(options);
+	}
 	if (kind === 'login_diagnostic') return buildLoginDiagnosticLaunch(options);
 	throw new LaunchContractError(`unknown task kind ${kind}`);
 }

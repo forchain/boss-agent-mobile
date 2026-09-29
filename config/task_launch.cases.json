@@ -1,5 +1,5 @@
 {
-  "_comment": "The AutomationTask launch contract, shared by the pytest tier (tests/unit/test_task_launch_cases.py) and the vitest tier (web/src/tests/taskLaunchCases.test.ts). `source` is compared as a task attribute rather than a payload key. Only the keys listed in `contract` are compared: they are the ones the builder owns, so a difference in how each language normalizes a nested SavedSearch filter cannot masquerade as contract drift. `job` is the DirectApplyTarget a direct_apply case builds from, and is absent for every other kind. A case with `expect_error` states something the contract must refuse rather than a payload to build. Since issue #298 only 拒信清扫 has a `mode`: a search and a targeted application take their execution depth from their Target Action, so `mode: null` is the normal shape for them and a stated mode is the error case.",
+  "_comment": "The AutomationTask launch contract, shared by the pytest tier (tests/unit/test_task_launch_cases.py) and the vitest tier (web/src/tests/taskLaunchCases.test.ts). `source` is compared as a task attribute rather than a payload key. Only the keys listed in `contract` are compared: they are the ones the builder owns, so a difference in how each language normalizes a nested SavedSearch filter cannot masquerade as contract drift. `job` is the DirectApplyTarget a direct_apply case builds from, and is absent for every other kind. `depth_keys` is a payload field set a caller is not allowed to author; with `expect_error` the case names something the contract must refuse rather than a payload to build. Since issue #302 a search or targeted application carries exactly one depth expression — its `target_action` — and the legacy `preview_only` / `auto_send` pair is produced by nobody, so it never appears in an expected payload. Only 拒信清扫 still has a `mode`, because its `dry_run` is a drill rather than a greeting depth.",
   "defaults": {
     "min_score": 70,
     "max_jobs": 30,
@@ -9,7 +9,7 @@
   "cases": [
     {
       "case": "search-save-jd-sends-nothing",
-      "note": "A 深度存JD strategy never sends: the Target Action is the whole depth statement, and nothing in the payload votes again (issue #298).",
+      "note": "A 深度存JD strategy never sends: the Target Action is the whole depth statement, and nothing in the payload votes again (issue #298). Issue #302 collapses the depth to the single `target_action` expression: no `preview_only` / `auto_send` pair is produced any more.",
       "kind": "search",
       "source": "manual",
       "mode": null,
@@ -34,8 +34,6 @@
         "target_action",
         "max_jobs",
         "min_score",
-        "preview_only",
-        "auto_send",
         "preview_timeout_sec"
       ],
       "expected": {
@@ -50,8 +48,6 @@
           "target_action": "save_jd",
           "max_jobs": 5,
           "min_score": 70,
-          "preview_only": true,
-          "auto_send": false,
           "preview_timeout_sec": 3.0
         },
         "source": "manual"
@@ -59,7 +55,7 @@
     },
     {
       "case": "search-auto-apply-sends",
-      "note": "A 自动打招呼 strategy sends. Nobody states a mode for that to be true: depth is the Target Action the operator configured, so a manual launch and a cron run of one strategy are the same task.",
+      "note": "A 自动打招呼 strategy sends. Nobody states a mode for that to be true: depth is the Target Action the operator configured, so a manual launch and a cron run of one strategy are the same task. Issue #302 collapses the depth to the single `target_action` expression: no `preview_only` / `auto_send` pair is produced any more.",
       "kind": "search",
       "source": "manual",
       "mode": null,
@@ -84,8 +80,6 @@
         "target_action",
         "max_jobs",
         "min_score",
-        "preview_only",
-        "auto_send",
         "preview_timeout_sec"
       ],
       "expected": {
@@ -100,8 +94,6 @@
           "target_action": "auto_apply",
           "max_jobs": 30,
           "min_score": 70,
-          "preview_only": false,
-          "auto_send": true,
           "preview_timeout_sec": 3.0
         },
         "source": "manual"
@@ -109,7 +101,7 @@
     },
     {
       "case": "search-scheduled-auto-apply-dispatches",
-      "note": "The PR #297 regression, now with no depth for the scheduler to forget: an 自动沟通 strategy run by cron used to draft a greeting and stop, because an unstated mode meant preview.",
+      "note": "The PR #297 regression, now with no depth for the scheduler to forget: an 自动沟通 strategy run by cron used to draft a greeting and stop, because an unstated mode meant preview. Issue #302 collapses the depth to the single `target_action` expression: no `preview_only` / `auto_send` pair is produced any more.",
       "kind": "search",
       "source": "scheduler",
       "mode": null,
@@ -134,8 +126,6 @@
         "target_action",
         "max_jobs",
         "min_score",
-        "preview_only",
-        "auto_send",
         "preview_timeout_sec"
       ],
       "expected": {
@@ -150,8 +140,6 @@
           "target_action": "auto_apply",
           "max_jobs": 30,
           "min_score": 70,
-          "preview_only": false,
-          "auto_send": true,
           "preview_timeout_sec": 3.0
         },
         "source": "scheduler"
@@ -159,7 +147,7 @@
     },
     {
       "case": "search-stated-depth-is-refused",
-      "note": "Issue #298 removed the second switch rather than asking callers to set it right: a launch mode on a search is a contract error, not a silent override.",
+      "note": "Issue #298 removed the second switch rather than asking callers to set it right: a launch mode on a search is a contract error, not a silent override. Issue #302 collapses the depth to the single `target_action` expression: no `preview_only` / `auto_send` pair is produced any more.",
       "kind": "search",
       "source": "manual",
       "mode": "draft",
@@ -184,8 +172,6 @@
         "target_action",
         "max_jobs",
         "min_score",
-        "preview_only",
-        "auto_send",
         "preview_timeout_sec"
       ],
       "expect_error": true,
@@ -197,7 +183,7 @@
     },
     {
       "case": "search-default-max-jobs",
-      "note": "An unset ceiling is the declared baseline, not a per-caller number.",
+      "note": "An unset ceiling is the declared baseline, not a per-caller number. Issue #302 collapses the depth to the single `target_action` expression: no `preview_only` / `auto_send` pair is produced any more.",
       "kind": "search",
       "source": "manual",
       "mode": null,
@@ -222,8 +208,6 @@
         "target_action",
         "max_jobs",
         "min_score",
-        "preview_only",
-        "auto_send",
         "preview_timeout_sec"
       ],
       "expected": {
@@ -238,8 +222,6 @@
           "target_action": "auto_apply",
           "max_jobs": 30,
           "min_score": 70,
-          "preview_only": false,
-          "auto_send": true,
           "preview_timeout_sec": 3.0
         },
         "source": "manual"
@@ -247,7 +229,7 @@
     },
     {
       "case": "search-stricter-threshold",
-      "note": "min_score stays a caller *choice*; the depth still comes from the Target Action.",
+      "note": "min_score stays a caller *choice*; the depth still comes from the Target Action. Issue #302 collapses the depth to the single `target_action` expression: no `preview_only` / `auto_send` pair is produced any more.",
       "kind": "search",
       "source": "manual",
       "mode": null,
@@ -272,8 +254,6 @@
         "target_action",
         "max_jobs",
         "min_score",
-        "preview_only",
-        "auto_send",
         "preview_timeout_sec"
       ],
       "expected": {
@@ -288,8 +268,6 @@
           "target_action": "auto_apply",
           "max_jobs": 30,
           "min_score": 85,
-          "preview_only": false,
-          "auto_send": true,
           "preview_timeout_sec": 3.0
         },
         "source": "manual"
@@ -297,7 +275,7 @@
     },
     {
       "case": "search-scheduled-provenance",
-      "note": "Provenance is the only difference between a manual and a scheduled launch.",
+      "note": "Provenance is the only difference between a manual and a scheduled launch. Issue #302 collapses the depth to the single `target_action` expression: no `preview_only` / `auto_send` pair is produced any more.",
       "kind": "search",
       "source": "scheduler",
       "mode": null,
@@ -322,8 +300,6 @@
         "target_action",
         "max_jobs",
         "min_score",
-        "preview_only",
-        "auto_send",
         "preview_timeout_sec"
       ],
       "expected": {
@@ -338,8 +314,6 @@
           "target_action": "auto_apply",
           "max_jobs": 30,
           "min_score": 70,
-          "preview_only": false,
-          "auto_send": true,
           "preview_timeout_sec": 3.0
         },
         "source": "scheduler"
@@ -347,7 +321,7 @@
     },
     {
       "case": "direct-apply-targeted-send",
-      "note": "定向投递 is outreach by definition: it declares auto_apply, exempt the posting the human just chose from the relevance gate, and states no depth of its own.",
+      "note": "定向投递 is outreach by definition: it declares auto_apply, exempt the posting the human just chose from the relevance gate, and states no depth of its own. Issue #302 collapses the depth to the single `target_action` expression: no `preview_only` / `auto_send` pair is produced any more.",
       "kind": "direct_apply",
       "source": "manual",
       "mode": null,
@@ -368,8 +342,6 @@
         "company_name",
         "greeting_message",
         "min_score",
-        "preview_only",
-        "auto_send",
         "preview_timeout_sec"
       ],
       "expected": {
@@ -382,8 +354,6 @@
           "company_name": "煦象",
           "greeting_message": "您好,我看到岗位与我的 Agent 工程实践高度吻合",
           "min_score": 0,
-          "preview_only": false,
-          "auto_send": true,
           "preview_timeout_sec": 3.0
         },
         "source": "manual"
@@ -391,7 +361,7 @@
     },
     {
       "case": "direct-apply-stated-depth-is-refused",
-      "note": "The modal's 预览 used to be reachable here too. A targeted application that promises to send cannot be talked out of it by its caller (issue #298).",
+      "note": "The modal's 预览 used to be reachable here too. A targeted application that promises to send cannot be talked out of it by its caller (issue #298). Issue #302 collapses the depth to the single `target_action` expression: no `preview_only` / `auto_send` pair is produced any more.",
       "kind": "direct_apply",
       "source": "manual",
       "mode": "draft",
@@ -412,8 +382,6 @@
         "company_name",
         "greeting_message",
         "min_score",
-        "preview_only",
-        "auto_send",
         "preview_timeout_sec"
       ],
       "expect_error": true,
@@ -545,6 +513,91 @@
         "task_type": "CHECK_LOGIN",
         "payload": {},
         "source": "test"
+      }
+    },
+    {
+      "case": "search-hand-authored-pair-both-set-is-refused",
+      "note": "The defect class PR #297 came from was one intent written in two keys, where forgetting either half silently degraded the run to a draft. Issue #302 removes the pair from new payloads, so a caller that hand-authors one — or both — is a contract error now, not a depth.",
+      "kind": "search",
+      "source": "manual",
+      "mode": null,
+      "search": {
+        "id": "s_auto",
+        "name": "自动沟通",
+        "keyword": "agent",
+        "enable_search": true,
+        "enable_filter": true,
+        "target_action": "auto_apply",
+        "max_jobs": 30
+      },
+      "job": null,
+      "min_score": null,
+      "chat": null,
+      "depth_keys": {
+        "preview_only": false,
+        "auto_send": true
+      },
+      "expect_error": true,
+      "contract": [],
+      "expected": {
+        "task_type": null,
+        "payload": {},
+        "source": "manual"
+      }
+    },
+    {
+      "case": "search-hand-authored-half-written-key-is-refused",
+      "note": "The defect class PR #297 came from was one intent written in two keys, where forgetting either half silently degraded the run to a draft. Issue #302 removes the pair from new payloads, so a caller that hand-authors one — or both — is a contract error now, not a depth.",
+      "kind": "search",
+      "source": "manual",
+      "mode": null,
+      "search": {
+        "id": "s_auto",
+        "name": "自动沟通",
+        "keyword": "agent",
+        "enable_search": true,
+        "enable_filter": true,
+        "target_action": "auto_apply",
+        "max_jobs": 30
+      },
+      "job": null,
+      "min_score": null,
+      "chat": null,
+      "depth_keys": {
+        "preview_only": true
+      },
+      "expect_error": true,
+      "contract": [],
+      "expected": {
+        "task_type": null,
+        "payload": {},
+        "source": "manual"
+      }
+    },
+    {
+      "case": "direct_apply-hand-authored-half-written-key-is-refused",
+      "note": "The defect class PR #297 came from was one intent written in two keys, where forgetting either half silently degraded the run to a draft. Issue #302 removes the pair from new payloads, so a caller that hand-authors one — or both — is a contract error now, not a depth.",
+      "kind": "direct_apply",
+      "source": "manual",
+      "mode": null,
+      "search": null,
+      "job": {
+        "job_id": "j_1",
+        "title": "AI Agent 工程师",
+        "company_name": "煦象",
+        "greeting_message": "您好,我看到岗位与我的 Agent 工程实践高度吻合"
+      },
+      "min_score": null,
+      "chat": null,
+      "depth_keys": {
+        "auto_send": true
+      },
+      "expect_error": true,
+      "contract": [],
+      "expected": {
+        "task_type": null,
+        "payload": {},
+        "source": "manual"
       }
     }
   ]

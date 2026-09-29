@@ -159,11 +159,11 @@ describe('Task launch modal execution depth (issue #298)', () => {
 		await waitFor(() => expect(mocks.createAutomationTask).toHaveBeenCalledTimes(1));
 		const [taskType, payload] = mocks.createAutomationTask.mock.calls[0];
 		expect(taskType).toBe('AUTO_APPLY');
+		// Depth is one expression — the Target Action the form selected. No mode, and no
+		// legacy pair a caller could get half right (#298 then #302).
 		expect(payload.target_action).toBe('auto_apply');
-		// Depth follows the Target Action alone: nothing here states a mode, and nothing
-		// that would have to be set twice is left for a caller to get half right.
-		expect(payload.auto_send).toBe(true);
-		expect(payload.preview_only).toBe(false);
+		expect(payload.auto_send).toBeUndefined();
+		expect(payload.preview_only).toBeUndefined();
 	});
 
 	it('derives the depth from the chosen depth rather than a hidden mode', async () => {
@@ -175,8 +175,8 @@ describe('Task launch modal execution depth (issue #298)', () => {
 		const [taskType, payload] = mocks.createAutomationTask.mock.calls[0];
 		expect(taskType).toBe('SCRAPE_JOBS');
 		expect(payload.target_action).toBe('save_jd');
-		expect(payload.auto_send).toBe(false);
-		expect(payload.preview_only).toBe(true);
+		expect(payload.auto_send).toBeUndefined();
+		expect(payload.preview_only).toBeUndefined();
 	});
 
 	it('still lets the 拒信清扫 drill keep its own dry_run switch', async () => {

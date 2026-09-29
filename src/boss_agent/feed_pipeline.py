@@ -134,6 +134,24 @@ class FeedStreamResult:
     error_message: str | None = None
 
 
+#: How a task payload answered the one depth question (issue #302). Recorded so a run can
+#: say which shape it read: once no task in the queue reports ``legacy_pair``, the pair can
+#: stop being read at all.
+DEPTH_DECLARED = "declared_target_action"
+DEPTH_LEGACY_PAIR = "legacy_preview_pair"
+DEPTH_UNSTATED = "unstated_default"
+
+
+class FeedContractError(ValueError):
+    """A task payload whose depth cannot be resolved without guessing.
+
+
+    The defect this refuses was structural: two keys had to be true at the same time, and a
+    writer that supplied one silently produced a draft instead of a send. A payload that
+    states half of that pair is turned away rather than defaulted.
+    """
+
+
 @dataclass
 class FeedStreamConfig:
     """Declarative description of one feed run, parsed from a task payload."""
@@ -148,8 +166,12 @@ class FeedStreamConfig:
     cooldown_days: int = 0
     daily_greeting_limit: int = 20
     min_score: float = 70.0
-    preview_only: bool = True
-    auto_send: bool = False
+    # The one gate the dispatch path reads: does this run put a greeting on the wire?
+    # ``depth_expression`` records how the payload answered that, so a log line can say
+    # whether it was read from the single declared intent or from the legacy pair an older
+    # builder left in the queue (issue #302).
+    send_greeting: bool = False
+    depth_expression: str = DEPTH_UNSTATED
     candidate_profile: StructuredCandidateProfile | None = None
     source_task_id: str | None = None
     # A targeted application acts on the posting already on screen instead of scanning.
@@ -190,6 +212,37 @@ class FeedStreamConfig:
             else None
         )
 
+        # ---- the one depth question, answered once -------------------------------
+        # A new payload states depth only as ``target_action``. The legacy pair is still
+        # *read*, because a task queued before issue #302 was written with two keys and
+        # rewriting it now would change what its operator asked for. Stating exactly one of
+        # the two is refused instead of defaulting: "wrote half of a pair" was the shape that
+        # silently degraded an outreach run to a draft, and it must fail loudly from here on.
+        legacy_preview = data.get("preview_only")
+        legacy_auto_send = data.get("auto_send")
+        if (legacy_preview is None) != (legacy_auto_send is None):
+            half = "preview_only" if legacy_preview is None else "auto_send"
+            missing = "auto_send" if legacy_preview is None else "preview_only"
+            raise FeedContractError(
+                f"task payload states `{half}` without `{missing}`: the legacy depth pair has "
+                f"to be read as the pair its writer wrote it. Send one depth expression — "
+                f"`target_action` — instead (issue #302)."
+            )
+
+        if legacy_preview is None and legacy_auto_send is None:
+            # Single-expression shape (or a payload that states no depth at all, in which
+            # case the Target Action default of save_jd keeps it a non-sending run — the
+            # behaviour such a payload always had).
+            send_greeting = target_action == TargetAction.AUTO_APPLY
+            depth_expression = (
+                DEPTH_DECLARED
+                if data.get("target_action") or data.get("action")
+                else DEPTH_UNSTATED
+            )
+        else:
+            send_greeting = bool(legacy_auto_send) and not bool(legacy_preview)
+            depth_expression = DEPTH_LEGACY_PAIR
+
         raw_policy = data.get("screening_policy")
         daily_limit = int(
             data.get("daily_greeting_limit") or load_settings().get("daily_greeting_limit", 20)
@@ -209,9 +262,9 @@ class FeedStreamConfig:
             cooldown_days=resolve_communication_cooldown_days(data),
             daily_greeting_limit=daily_limit,
             min_score=float(data.get("min_score", 70)),
-            preview_only=bool(data.get("preview_only", True)),
-            auto_send=bool(data.get("auto_send", False)),
             source_task_id=data.get("source_task_id"),
+            send_greeting=send_greeting,
+            depth_expression=depth_expression,
             direct_greeting=str(data.get("greeting_message") or ""),
             single_screen=bool(data.get("direct_job_id")),
             direct_job_id=data.get("direct_job_id"),
@@ -1150,10 +1203,10 @@ class JobFeedPipeline:
             GREETING_SOURCE_HUMAN if run.human_greeting else GREETING_SOURCE_AGENT
         )
 
-        # Only a task queued before issue #298 can still arrive here: every launch the
-        # contract builds today derives this pair from its Target Action, so an 自动打招呼
-        # run dispatches. The branch stays because an in-flight payload is still honoured.
-        if not (config.auto_send and not config.preview_only):
+        # Only a task queued before issue #298 can still arrive here: the contract's own
+        # payloads state one depth expression and dispatch on it. The branch stays because an
+        # in-flight payload that asked for the old draft-only shape is still honoured.
+        if not config.send_greeting:
             await self._log(
                 f"⏸️ [NOT SENT] '{title}' @ '{company}' was drafted but this task's depth "
                 f"does not dispatch it; the record stays re-sendable (status: matched)."

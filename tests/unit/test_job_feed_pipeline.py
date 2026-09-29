@@ -570,7 +570,18 @@ async def test_a_queued_preview_payload_is_still_honoured_and_never_sends():
         log=log,
     )
 
-    legacy = _apply_config(preview_only=True, auto_send=False)
+    # The wire shape an older builder wrote, read through the worker's own parser.
+    legacy = FeedStreamConfig.from_payload(
+        {
+            "target_action": TargetAction.AUTO_APPLY.value,
+            "keyword": "Agent",
+            "max_jobs": 1,
+            "preview_only": True,
+            "auto_send": False,
+            "min_score": 70.0,
+        }
+    )
+    assert legacy.depth_expression == "legacy_preview_pair"
     result = await pipeline.stream_jobs(legacy)
 
     chat.click_send.assert_not_called()
@@ -654,7 +665,7 @@ async def test_preview_mode_never_dispatches():
         chat=chat,
     )
 
-    result = await pipeline.stream_jobs(_apply_config(max_jobs=1, preview_only=True))
+    result = await pipeline.stream_jobs(_apply_config(max_jobs=1, send_greeting=False))
 
     chat.click_send.assert_not_called()
     assert result.applied is False

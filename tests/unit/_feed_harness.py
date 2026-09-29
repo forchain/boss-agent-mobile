@@ -154,12 +154,19 @@ def _detail_page(
 
 
 def _apply_config(**overrides) -> FeedStreamConfig:
+    """A direct ``FeedStreamConfig`` for an outreach run.
+
+    Depth is one field here — ``send_greeting`` — because that is the single answer the
+    dispatch path reads. A test that wants the *wire* shape (and the legacy pair a queued
+    task still carries) should go through ``FeedStreamConfig.from_payload`` instead, which
+    is what ``test_depth_single_intent.py`` pins.
+    """
     data = {
         "target_action": TargetAction.AUTO_APPLY,
         "keyword": "Agent",
         "max_jobs": 5,
-        "auto_send": True,
-        "preview_only": False,
+        "send_greeting": True,
+        "depth_expression": "declared_target_action",
         "min_score": 70.0,
         "candidate_profile": StructuredCandidateProfile(name="李华", core_skills=["Python"]),
     }

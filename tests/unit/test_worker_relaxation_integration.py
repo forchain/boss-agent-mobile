@@ -53,7 +53,6 @@ async def test_auto_apply_rescued_headhunter_job_persists_relaxation_audit():
         task_type=TaskType.AUTO_APPLY,
         payload={
             "keyword": "大模型",
-            "preview_only": True,
             "screening_policy": {
                 "channel_preference": "direct_only",
                 "title_whitelist": ["大模型"],
@@ -109,7 +108,6 @@ async def test_auto_apply_app_rule_rejection_persists_ignored_record():
         task_type=TaskType.AUTO_APPLY,
         payload={
             "keyword": "平台",
-            "preview_only": True,
             "screening_policy": {
                 "channel_preference": "direct_only",
                 "title_whitelist": ["量子计算"],
@@ -383,7 +381,6 @@ async def test_auto_apply_distant_job_rescued_by_whitelist_still_drafts():
         task_type=TaskType.AUTO_APPLY,
         payload={
             "keyword": "大模型",
-            "preview_only": True,
             "screening_policy": {"max_commute_distance_km": 40.0, "title_whitelist": ["大模型"]},
         },
     )
@@ -427,7 +424,6 @@ async def test_auto_apply_nearby_job_proceeds_and_probes_distance():
         task_type=TaskType.AUTO_APPLY,
         payload={
             "keyword": "大模型",
-            "preview_only": True,
             "screening_policy": {"max_commute_distance_km": 40.0},
         },
     )
@@ -471,7 +467,6 @@ async def test_auto_apply_skips_distance_probe_when_filter_disabled():
         task_type=TaskType.AUTO_APPLY,
         payload={
             "keyword": "大模型",
-            "preview_only": True,
             "screening_policy": {"max_commute_distance_km": None},
         },
     )
@@ -511,7 +506,6 @@ async def test_auto_apply_headhunter_target_skips_distance_probe_and_proceeds():
         task_type=TaskType.AUTO_APPLY,
         payload={
             "keyword": "大模型",
-            "preview_only": True,
             "is_headhunter": True,
             "screening_policy": {"max_commute_distance_km": 40.0},
         },

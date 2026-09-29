@@ -221,6 +221,10 @@ _Avoid_: digest, snippet, short JD, brief intro
 The zero-token deterministic gatekeeper evaluation that examines the three card-level facets (`tv_position_name`, `fl_require_info`, `tv_digest`) against the active `ScreeningPolicy` to eliminate non-viable jobs before incurring expensive mobile navigation.
 _Avoid_: card filter, quick check, preliminary pass
 
+**Depth Expression**:
+The one key in a task payload that answers "does this run put a greeting on the wire" — `target_action`, the operator's configured Execution Depth. Issue #302 removed the second answer (`preview_only` + `auto_send`, which the send gate demanded both of) from everything the launch contract produces. The worker still *reads* that pair while tasks written by an older builder are in the queue, and records which shape it read, so the log says whether a run's depth was declared once or reconstructed from the legacy pair; a payload that states exactly half of the pair is refused rather than defaulted.
+_Avoid_: preview flags, send flags, depth boolean
+
 **Execution Depth**:
 The single choice an operator makes about how far a run goes: 深度存JD (`save_jd`) enriches and stops, 自动打招呼 (`auto_apply`) enriches, matches and sends. It is the Target Action, seen from the operator's side, and it is the only depth statement a launch carries — issue #298 removed the separate "preview it, do not send it" switch, because a second key on one intent is how a strategy that says 自动沟通 came to greet nobody. Reading a greeting before it goes out is a thing a human does in the Web Dashboard, not a mode the agent runs in. The only surviving drill is the 拒信清扫 `dry_run`, which governs replies in the inbox rather than greeting depth.
 _Avoid_: preview mode, safe mode, auto-send flag, send switch

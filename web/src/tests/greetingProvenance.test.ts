@@ -32,8 +32,10 @@ describe('greeting provenance classification (issue #300)', () => {
 		// Legacy rows, a column that arrived empty, and a value from some other writer all
 		// land here. The safe direction is the agent's: worst case it re-drafts.
 		for (const source of [undefined, null, '', '  ', 'who_knows']) {
-			expect(greetingProvenance({ greeting_message: '历史草稿', greeting_source: source }), source)
-				.toBe('unknown');
+			expect(
+				greetingProvenance({ greeting_message: '历史草稿', greeting_source: source }),
+				String(source)
+			).toBe('unknown');
 		}
 	});
 

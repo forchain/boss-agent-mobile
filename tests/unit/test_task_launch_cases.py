@@ -5,7 +5,7 @@ The AutomationTask launch contract — the Python half.
 
 ``config/task_launch.cases.json`` is consumed by this tier *and* by
 ``web/src/tests/taskLaunchCases.test.ts``. Neither builder owns the contract; the case
-table does. The divergences it pins were real: ``min_score`` was 75 in the launch
+table does, including the one-per-payload rule for how a run states its depth (#302). The divergences it pins were real: ``min_score`` was 75 in the launch
 modal, 70 in the scheduler and absent from "run scheduled now"; the scheduler sent
 ``preview_only=False`` where every web builder sent ``True``, so the same SavedSearch
 produced inverted execution depth depending on who dispatched it.
@@ -74,6 +74,10 @@ def test_python_builder_matches_the_shared_case(case: dict) -> None:
     }
     if case["min_score"] is not None:
         kwargs["min_score"] = case["min_score"]
+    # A case can hand the builder depth keys a caller is not allowed to author. That is the
+    # declaration issue #302 removes from the wire, so it arrives here as an extra kwarg
+    # rather than as a payload field.
+    kwargs.update(case.get("depth_keys") or {})
 
     ack = ChatAcknowledgmentSettings(**(case["chat"] or {}))
     if case.get("expect_error"):
@@ -218,7 +222,10 @@ def test_an_auto_apply_strategy_launch_reaches_the_dispatch_gate() -> None:
         payload = task_launch.build_search_launch(search, source=source).payload
         config = FeedStreamConfig.from_payload(payload)
         assert config.target_action is TargetAction.AUTO_APPLY
-        assert config.auto_send and not config.preview_only, source
+        # Read back through the worker's own parser, which is now the only place the depth
+        # question is answered at all (issue #302).
+        assert config.send_greeting, source
+        assert config.depth_expression == "declared_target_action", source
 
     # And a caller cannot buy the old preview depth back. Since issue #298 the only switch
     # left on an outreach run is its Target Action, so declaring a mode is refused outright.
@@ -241,5 +248,5 @@ def test_a_directed_application_sends_and_is_not_vetoed_by_the_score_gate() -> N
     config = FeedStreamConfig.from_payload(payload)
 
     assert config.single_screen and config.direct_job_id == "j1"
-    assert config.auto_send and not config.preview_only
+    assert config.send_greeting
     assert config.min_score == task_launch.DIRECT_APPLY_MIN_SCORE

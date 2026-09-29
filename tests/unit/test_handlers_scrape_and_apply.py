@@ -143,8 +143,14 @@ async def test_scrape_enrichment_falls_back_to_jd_digest_when_card_has_no_snippe
 
 
 @pytest.mark.asyncio
-async def test_auto_apply_handler_preview_mode_drafts_greeting(broker, mock_driver):
-    """Verify AutoApplyHandler in preview_only mode types greeting draft and pauses without sending."""
+async def test_auto_apply_handler_reads_a_legacy_preview_payload_and_never_sends(broker, mock_driver):
+    """A task queued before #302 keeps the depth its writer stated.
+
+    The payload carries the full legacy pair — both keys, as older builders always wrote
+    them — and the worker honours it instead of re-deriving depth from the task type, so an
+    in-flight draft is never promoted into a message nobody approved. The log names the
+    shape it read, which is how the pair can be deleted once nothing writes it.
+    """
     mock_title = MagicMock(text="Senior Python Agent Engineer")
     mock_company = MagicMock(text="Future Robotics")
     mock_salary = MagicMock(text="45-70K")
@@ -189,7 +195,9 @@ async def test_auto_apply_handler_preview_mode_drafts_greeting(broker, mock_driv
         payload={
             "keyword": "Python",
             "min_score": 75,
+            "target_action": "auto_apply",
             "preview_only": True,
+            "auto_send": False,
             "preview_timeout_sec": 0.01,
             "candidate_profile": {
                 "name": "Candidate",
@@ -207,6 +215,10 @@ async def test_auto_apply_handler_preview_mode_drafts_greeting(broker, mock_driv
     assert finished_task.status == TaskStatus.SUCCESS
     assert any("preview" in log.lower() or "greeting" in log.lower() for log in finished_task.logs)
     assert finished_task.payload.get("preview_only") is True
+    # The log says which shape produced this depth, so a legacy task stays visible.
+    assert any(
+        "draft only" in log.lower() and "legacy" in log.lower() for log in finished_task.logs
+    ), finished_task.logs
 
 
 @pytest.mark.asyncio

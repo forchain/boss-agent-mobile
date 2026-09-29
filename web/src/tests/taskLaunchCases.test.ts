@@ -37,6 +37,8 @@ interface LaunchCase {
 	job?: DirectApplyTarget | null;
 	min_score: number | null;
 	chat: ChatAcknowledgment | null;
+	/** Depth keys a caller is not allowed to author; expects the contract to refuse them. */
+	depth_keys?: { preview_only?: boolean; auto_send?: boolean };
 	contract: string[];
 	expected: { task_type: string; payload: Record<string, unknown> };
 }
@@ -61,7 +63,8 @@ describe('AutomationTask launch contract parity', () => {
 				job: testCase.job ?? null,
 				mode: testCase.mode === null ? undefined : testCase.mode,
 				chat: testCase.chat,
-				minScore: testCase.min_score === null ? undefined : testCase.min_score
+				minScore: testCase.min_score === null ? undefined : testCase.min_score,
+				...(testCase.depth_keys ?? {})
 			};
 
 			if (testCase.expect_error) {
@@ -109,17 +112,18 @@ describe('AutomationTask launch contract parity', () => {
 	});
 
 	it('sends an 自动沟通 strategy without anyone having to state a mode', () => {
-		// The reported bug: depth was a function of who remembered to pass `live`, so the
-		// strategies-page trigger, the dashboard "run scheduled now" and the cron scheduler
-		// all drafted a greeting and stopped at [OFFLINE DRAFT] for a strategy whose Target
-		// Action says 自动打招呼. The worker dispatches only on `auto_send && !preview_only`,
-		// so a launch that does not satisfy that gate is not an outreach run at all.
+		// The reported bug: depth was a function of who remembered to pass `live`, and the
+		// gate needed `auto_send && !preview_only`, so a caller that wrote one half produced
+		// a task that looked valid and drafted instead of greeting. A launch that cannot
+		// answer "does this send?" once is not an outreach run at all.
 		const search: SearchLaunchInput = { id: 's', name: '自动沟通', keyword: 'agent', target_action: 'auto_apply' };
 		for (const source of ['manual', 'scheduler'] as LaunchSource[]) {
 			const payload = buildSearchLaunch(search, { source }).payload;
 			expect(payload.target_action, source).toBe('auto_apply');
-			expect(payload.auto_send, source).toBe(true);
-			expect(payload.preview_only, source).toBe(false);
+			expect(payload.auto_send, source).toBeUndefined();
+			// One depth expression, no second key for a caller to forget (issue #302).
+			expect(payload.preview_only, source).toBeUndefined();
+
 		}
 
 		// …and there is no way back to the preview tier. Issue #298 deleted the second
@@ -131,6 +135,16 @@ describe('AutomationTask launch contract parity', () => {
 		expect(() => buildSearchLaunch(search, { source: 'manual', mode: 'live' })).toThrow(
 			LaunchContractError
 		);
+
+		// Issue #302 goes one step further: neither half of the legacy pair can be authored
+		// at all — not one key on its own, and not the pair "correctly" spelled out. There is
+		// nothing left for a caller to get half right.
+		expect(() => buildSearchLaunch(search, { source: 'manual', auto_send: true })).toThrow(
+			/does not take auto_send/
+		);
+		expect(
+			() => buildSearchLaunch(search, { source: 'manual', preview_only: false, auto_send: true })
+		).toThrow(/preview_only, auto_send/);
 	});
 
 	it('sends a 定向投递 without letting the score gate veto it', () => {
@@ -143,12 +157,16 @@ describe('AutomationTask launch contract parity', () => {
 		const payload = buildLaunch('direct_apply', { source: 'manual', job }).payload;
 		expect(payload.target_action).toBe('auto_apply');
 		expect(payload.direct_job_id).toBe('j1');
-		expect(payload.auto_send).toBe(true);
-		expect(payload.preview_only).toBe(false);
+		expect(payload.auto_send).toBeUndefined();
+		expect(payload.preview_only).toBeUndefined();
 		expect(payload.min_score).toBe(DIRECT_APPLY_MIN_SCORE);
 
 		expect(() => buildLaunch('direct_apply', { source: 'manual', job: { job_id: '' } })).toThrow(
 			LaunchContractError
+		);
+		// A hand-authored depth key is refused on a targeted application too (#302).
+		expect(() => buildLaunch('direct_apply', { source: 'manual', job, preview_only: true })).toThrow(
+			/does not take preview_only/
 		);
 	});
 
@@ -201,8 +219,9 @@ describe('rerun rebuilds through the builder', () => {
 		expect(rebuilt.payload.min_score).toBe(MIN_SCORE);
 		// The strategy says 自动打招呼, so a rerun of it greets. The draft-only flags it
 		// carried came from a depth that no longer exists.
-		expect(rebuilt.payload.preview_only).toBe(false);
-		expect(rebuilt.payload.auto_send).toBe(true);
+		expect(rebuilt.payload.target_action).toBe('auto_apply');
+		expect(rebuilt.payload.preview_only).toBeUndefined();
+		expect(rebuilt.payload.auto_send).toBeUndefined();
 		expect(rebuilt.payload.rerun_of).toBe('orig-1');
 		expect(rebuilt.source).toBe('manual');
 		expect('triggered_manually' in rebuilt.payload).toBe(false);
@@ -246,8 +265,8 @@ describe('rerun rebuilds through the builder', () => {
 			'o'
 		);
 		expect(rerun.payload.target_action).toBe('auto_apply');
-		expect(rerun.payload.preview_only).toBe(false);
-		expect(rerun.payload.auto_send).toBe(true);
+		expect(rerun.payload.preview_only).toBeUndefined();
+		expect(rerun.payload.auto_send).toBeUndefined();
 	});
 
 	it('lets the configured drill mode win for a chat cleanup rerun', async () => {
