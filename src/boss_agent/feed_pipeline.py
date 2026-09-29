@@ -619,25 +619,44 @@ class JobFeedPipeline:
                 f"{config.cooldown_days} 天，已释放回待评估流"
             )
 
-        required_rank = TARGET_ACTION_RANK.get(config.target_action, 1)
-        cur_rank = STATE_RANK.get(existing_status, 1)
-        has_full_jd = bool((existing_record.get("job_description") or "").strip())
-        is_already_progressed = cur_rank > TARGET_ACTION_RANK.get(TargetAction.SAVE_JD, 1)
-        if (
-            not is_released
-            and cur_rank >= required_rank
-            and (
-                is_already_progressed or config.target_action != TargetAction.SAVE_JD or has_full_jd
-            )
-        ):
+        if not is_released and self._depth_already_reached(config, existing_status, existing_record):
             result.skipped += 1
             await self._log(
                 f"⏭️ [State Machine] '{card.title}' already at '{existing_status}' "
-                f"(>= target '{config.target_action.value}'). Skipping detail opening."
+                f"(target '{config.target_action.value}' reached). Skipping detail opening."
             )
             await self.store.upsert_job_record(card_record_identity)
             return False
         return True
+
+    @staticmethod
+    def _depth_already_reached(
+        config: FeedStreamConfig,
+        existing_status: Any,
+        existing_record: dict[str, Any],
+    ) -> bool:
+        """Whether a stored record has already met the depth this run is configured for.
+
+        The two depths ask different questions, and the status ladder answers only one of
+        them. `STATE_RANK` orders records by how much is *known* about a posting —
+        `jd_saved` < `matched` < `applied` — which is exactly right for a 深度存JD sweep.
+        For 自动打招呼 it was wrong (issue #299): `matched` ranks above the save rung, so a
+        greeting that was drafted and never delivered counted as finished, and the detail
+        page was never opened again. That buried every record the backend's "AI 评估"
+        button wrote, and every draft a spent daily quota left behind.
+
+        Outreach has one honest rung: a message that actually left the app, which is what
+        `applied` with an `applied_source` means. `ignored` was already handled upstream.
+        """
+        if config.target_action == TargetAction.AUTO_APPLY:
+            return existing_status == JobRecordStatus.APPLIED
+
+        cur_rank = STATE_RANK.get(existing_status, 1)
+        has_full_jd = bool((existing_record.get("job_description") or "").strip())
+        is_already_progressed = cur_rank > TARGET_ACTION_RANK[TargetAction.SAVE_JD]
+        return cur_rank >= TARGET_ACTION_RANK[TargetAction.SAVE_JD] and (
+            is_already_progressed or has_full_jd
+        )
 
     async def _persist_rejection(self, run: _CardRun, verdict: CardScreeningVerdict) -> None:
         """Record a card that never earned a detail-page visit."""

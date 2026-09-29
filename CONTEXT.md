@@ -221,8 +221,12 @@ _Avoid_: digest, snippet, short JD, brief intro
 The zero-token deterministic gatekeeper evaluation that examines the three card-level facets (`tv_position_name`, `fl_require_info`, `tv_digest`) against the active `ScreeningPolicy` to eliminate non-viable jobs before incurring expensive mobile navigation.
 _Avoid_: card filter, quick check, preliminary pass
 
+**Execution Depth**:
+The single choice an operator makes about how far a run goes: 深度存JD (`save_jd`) enriches and stops, 自动打招呼 (`auto_apply`) enriches, matches and sends. It is the Target Action, seen from the operator's side, and it is the only depth statement a launch carries — issue #298 removed the separate "preview it, do not send it" switch, because a second key on one intent is how a strategy that says 自动沟通 came to greet nobody. Reading a greeting before it goes out is a thing a human does in the Web Dashboard, not a mode the agent runs in. The only surviving drill is the 拒信清扫 `dry_run`, which governs replies in the inbox rather than greeting depth.
+_Avoid_: preview mode, safe mode, auto-send flag, send switch
+
 **Target Action (`target_action`)**:
-The configured execution depth for a search task governing whether discovered jobs undergo complete JD enrichment (`save_jd`) or automated greeting (`auto_apply`). The launch contract resolves depth from it, so an `auto_apply` strategy that nobody downgraded actually sends its greeting; only an explicitly stated draft launch keeps a greeting on the device. Note: card digest only (`digest_only`) is deprecated in favor of full JD ingestion.
+The configured execution depth for a search task governing whether discovered jobs undergo complete JD enrichment (`save_jd`) or automated greeting (`auto_apply`). The launch contract derives depth from it alone, so an `auto_apply` strategy actually sends its greeting whoever dispatches it; a caller that states a depth for a search or a targeted application is refused. Note: card digest only (`digest_only`) is deprecated in favor of full JD ingestion.
 _Avoid_: search mode, scrape level, crawl stage
 
 **Inline Description Expansion (Bottom-Right Hotspot Tap)**:
@@ -237,6 +241,14 @@ _Avoid_: distance filter, geolocation check, address lookup
 **Job Lifecycle State**:
 The progression state of a Job Record tracking its data richness and application stage across mobile automation and backend manual actions (`ignored`, `jd_saved`, `matched`, `applied`; historical `digest_only` records map to `jd_saved`). The terminal `applied` state encompasses both Agent-Dispatched (`agent_auto_send`) greetings and Platform Historical Contacts (`platform_historical`); upon cool-down expiry or manual clearance, an `applied` record transitions back to `jd_saved` with its JD preserved for re-engagement.
 _Avoid_: job status flag, task progress, record phase
+
+**Draft Rung (`matched`)**:
+The state of a Job Record whose greeting has been written but has never left the device — a backend "AI 评估", an agent run that drafted it, or a run whose daily quota ran out. It counts as *known* in the Job Lifecycle ladder and therefore satisfies a 深度存JD pass, but it never satisfies 自动打招呼: only a delivered message does (issue #299). Treating a draft as finished is what left records stranded, unreachable by any later run.
+_Avoid_: offline draft, pending manual send, soft-applied
+
+**Depth Visit Rule**:
+Whether a run still owes a Job Record a detail-page visit, judged separately from the monotonic write ladder. A 深度存JD run is satisfied by a record that already holds a JD; an 自动打招呼 run is satisfied only by `applied`. The two questions share a status column and nothing else, and merging them is the defect #299 fixes.
+_Avoid_: state machine skip, rank check, already-progressed test
 
 **Communication Action Button (`btn_chat`)**:
 The primary call-to-action button widget (`com.hpbr.bosszhipin:id/btn_chat`) on the Job Detail Page reflecting platform engagement status ("立即沟通" / "聊一聊" for uncontacted jobs, "继续沟通" for previously contacted jobs, and "停止招聘" / "职位已关闭" for expired postings).

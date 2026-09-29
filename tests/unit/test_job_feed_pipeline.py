@@ -8,11 +8,12 @@ page stand in for the device, so pagination, boundary termination, call-to-actio
 backout, quota degradation and cancellation are all exercised without Appium.
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from _card_fixtures import located
 
 from boss_agent.feed_pipeline import (
     FeedStreamConfig,
@@ -23,6 +24,7 @@ from boss_agent.feed_pipeline import (
 from boss_agent.job_store import InMemoryJobRecordStore
 from boss_agent.memory import StructuredCandidateProfile
 from boss_agent.models import (
+    APPLIED_SOURCE_AGENT,
     ChatButtonState,
     JobCardBrief,
     JobPosting,
@@ -920,3 +922,329 @@ def test_config_from_payload_carries_the_task_contract():
     assert config.filter_config is not None
     assert config.filter_config.industries == ["人工智能"]
     assert config.screening_policy.title_blacklist == ["销售"]
+
+# ---------------------------------------------------------------------------
+# The `matched` rung is not "depth reached" (issue #299)
+#
+# A greeting that was drafted but never delivered is not an outreach that happened. The
+# ladder used to rank `matched` at the auto_apply depth, so a record left there — by the
+# backend's "AI 评估" button, or by a quota-degraded run — was skipped by every later run
+# and never went out. These tests pin the rung that actually counts as delivered.
+# ---------------------------------------------------------------------------
+
+_SCREEN = {"pass": True, "reason": "契合"}
+
+
+def _greet(score: int = 90, greeting: str = "王总您好,幸会!") -> dict:
+    return {"match_score": score, "match_reasons": ["契合"], "greeting_message": greeting}
+
+
+def _llm(*verdicts: dict) -> MagicMock:
+    llm = MagicMock()
+    llm.chat_completion_json.side_effect = list(verdicts)
+    return llm
+
+
+def _drafted_record(card: JobCardBrief, **overrides) -> dict:
+    """A `matched` record the way a draft leaves it: JD and greeting saved, nothing sent."""
+    record = {
+        "fingerprint": card.fingerprint,
+        "title": card.title,
+        "company_name": card.company_name,
+        "recruiter_name": card.recruiter_name,
+        "status": JobRecordStatus.MATCHED.value,
+        "job_description": GOOD_JD,
+        "greeting_message": "王总您好,幸会!我在 Agent 工作流编排上有多年经验…",
+        "match_score": 88,
+    }
+    record.update(overrides)
+    return record
+
+
+@pytest.mark.asyncio
+async def test_a_draft_that_never_sent_is_revisited_and_actually_sent(any_job_store):
+    """The core of #299: `matched` must not read as "already greeted".
+
+    Proven against both Job Record Store adapters, because the worker and the dashboard
+    can be pointed at either and the state ladder must not disagree between them.
+    """
+    store = any_job_store
+    card = _card("AI Agent 平台工程师", "智元创新")
+    await store.upsert_job_record(_drafted_record(card.card))
+
+    feed = ScriptedFeed([[card]])
+    detail = _detail_page()
+    detail.extract_job_posting.return_value = _posting(card.card.title, card.card.company_name)
+    chat = MagicMock()
+    chat.click_send.return_value = True
+    logs: list[str] = []
+
+    async def log(line: str) -> None:
+        logs.append(line)
+
+    pipeline = _pipeline(
+        store,
+        feed=feed,
+        detail=detail,
+        chat=chat,
+        screener=CandidateScreener(llm_client=_llm(_greet())),
+        log=log,
+    )
+
+    result = await pipeline.stream_jobs(_apply_config(max_jobs=1))
+
+    detail.extract_job_posting.assert_called_once()
+    chat.click_send.assert_called_once()
+    assert result.applied is True
+
+    stored = (await store.get_job_record_by_fingerprint(card.card.fingerprint)) or {}
+    assert stored["status"] == JobRecordStatus.APPLIED.value
+    assert stored["applied_source"] == APPLIED_SOURCE_AGENT
+    assert stored["applied_at"], "a real dispatch carries the stamp the quota counts"
+    assert not any("Skipping detail opening" in line for line in logs), logs
+
+
+@pytest.mark.asyncio
+async def test_a_dashboard_authored_draft_is_sendable_too():
+    """A `matched` record written by the backend's "AI 评估" is the same rung.
+
+    It never went through the feed at all, so it carries no dispatch stamp — which is
+    exactly the record the old ladder buried forever.
+    """
+    store = InMemoryJobRecordStore()
+    card = _card("大模型应用工程师", "煦象科技")
+    await store.upsert_job_record(_drafted_record(card.card, match_score=None))
+
+    detail = _detail_page()
+    detail.extract_job_posting.return_value = _posting(card.card.title, card.card.company_name)
+    chat = MagicMock()
+    chat.click_send.return_value = True
+
+    pipeline = _pipeline(
+        store,
+        feed=ScriptedFeed([[card]]),
+        detail=detail,
+        chat=chat,
+        screener=CandidateScreener(llm_client=_llm(_greet())),
+    )
+
+    result = await pipeline.stream_jobs(_apply_config(max_jobs=1))
+
+    assert result.applied_count == 1
+    assert chat.click_send.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_a_resend_counts_the_daily_quota_only_once():
+    """Delivering a draft spends one slot — and re-running must not spend it twice."""
+    store = InMemoryJobRecordStore()
+    card = _card("AI Agent 平台工程师", "智元创新")
+    await store.upsert_job_record(_drafted_record(card.card))
+
+    detail = _detail_page()
+    detail.extract_job_posting.return_value = _posting(card.card.title, card.card.company_name)
+    chat = MagicMock()
+    chat.click_send.return_value = True
+
+    pipeline = _pipeline(
+        store,
+        feed=ScriptedFeed([[card]]),
+        detail=detail,
+        chat=chat,
+        screener=CandidateScreener(llm_client=_llm(_greet(), _greet())),
+    )
+
+    await pipeline.stream_jobs(_apply_config(max_jobs=1))
+    assert await store.count_today_applied_jobs() == 1
+
+    # Second run over the same card: it is `applied` now, so it is skipped, not re-greeted.
+    feed = ScriptedFeed([[card]])
+    pipeline.list_page = feed
+    await pipeline.stream_jobs(_apply_config(max_jobs=1))
+    assert await store.count_today_applied_jobs() == 1
+    assert chat.click_send.call_count == 1, "an applied record is not greeted twice in a day"
+
+
+@pytest.mark.asyncio
+async def test_an_unsent_greeting_does_not_anchor_the_same_company_pool():
+    """A dispatch that never left the app stays re-sendable and claims no exclusion.
+
+    Recording it as `applied` would put the employer in the 直招同企避嫌 pool without anyone
+    ever being contacted, silencing its other postings for the whole cool-down window.
+    """
+    store = InMemoryJobRecordStore()
+    card = _card("AI Agent 平台工程师", "智元创新")
+    await store.upsert_job_record(_drafted_record(card.card))
+
+    detail = _detail_page()
+    detail.extract_job_posting.return_value = _posting(card.card.title, card.card.company_name)
+    chat = MagicMock()
+    chat.click_send.return_value = False  # the send control was not available
+
+    pipeline = _pipeline(
+        store,
+        feed=ScriptedFeed([[card]]),
+        detail=detail,
+        chat=chat,
+        screener=CandidateScreener(llm_client=_llm(_greet())),
+    )
+
+    result = await pipeline.stream_jobs(_apply_config(max_jobs=1))
+
+    assert result.applied is False
+    stored = await store.get_job_record_by_fingerprint(card.card.fingerprint)
+    assert stored["status"] == JobRecordStatus.MATCHED.value
+    assert not stored.get("applied_at")
+    assert card.card.company_name not in await store.get_applied_direct_companies()
+    assert await store.count_today_applied_jobs() == 0
+
+
+@pytest.mark.asyncio
+async def test_applied_and_ignored_records_are_still_skipped_for_their_own_reason():
+    """The two rungs that *are* finished still skip, and the logs tell them apart."""
+    store = InMemoryJobRecordStore()
+    # A headhunter contact: the same-employer anchor deliberately ignores masked
+    # channels, so this card reaches the state ladder instead of the 避嫌 guard.
+    contacted = located(JobCardBrief(
+        title="已沟通岗位", company_name="甲公司", recruiter_name="猎头王女士", is_headhunter=True
+    ))
+    rejected = _card("淘汰岗位", "乙公司")
+    await store.upsert_job_record(
+        {
+            **_drafted_record(contacted.card, status=JobRecordStatus.APPLIED.value,
+                              is_headhunter=True),
+            "applied_at": TODAY,
+            "applied_source": APPLIED_SOURCE_AGENT,
+        }
+    )
+    await store.upsert_job_record(
+        {
+            **_drafted_record(rejected.card, status=JobRecordStatus.IGNORED.value),
+            "screened_reason": "初筛淘汰：行业不符",
+        }
+    )
+
+    detail = _detail_page()
+    logs: list[str] = []
+
+    async def log(line: str) -> None:
+        logs.append(line)
+
+    pipeline = _pipeline(
+        store,
+        feed=ScriptedFeed([[contacted, rejected]]),
+        detail=detail,
+        screener=CandidateScreener(llm_client=_llm()),
+        log=log,
+    )
+
+    result = await pipeline.stream_jobs(_apply_config(max_jobs=2))
+
+    detail.extract_job_posting.assert_not_called()
+    assert result.skipped == 2
+    assert any("冷却期内已沟通" in line for line in logs), logs
+    assert any("Ignored Job" in line for line in logs), logs
+
+
+@pytest.mark.asyncio
+async def test_a_cooldown_expired_contact_is_released_and_greeted_again():
+    """The release path is untouched by #299: a stale `applied` returns to the flow."""
+    store = InMemoryJobRecordStore()
+    long_ago = (datetime.now(UTC) - timedelta(days=60)).isoformat()
+    card = _card("冷却到期岗位", "丙公司")
+    await store.upsert_job_record(
+        {
+            **_drafted_record(card.card, status=JobRecordStatus.APPLIED.value),
+            "applied_at": long_ago,
+            "applied_source": APPLIED_SOURCE_AGENT,
+        }
+    )
+
+    detail = _detail_page()
+    detail.extract_job_posting.return_value = _posting(card.card.title, card.card.company_name)
+    chat = MagicMock()
+    chat.click_send.return_value = True
+    logs: list[str] = []
+
+    async def log(line: str) -> None:
+        logs.append(line)
+
+    pipeline = _pipeline(
+        store,
+        feed=ScriptedFeed([[card]]),
+        detail=detail,
+        chat=chat,
+        screener=CandidateScreener(llm_client=_llm(_greet())),
+        log=log,
+    )
+
+    result = await pipeline.stream_jobs(_apply_config(max_jobs=1, cooldown_days=30))
+
+    assert any("冷却放宽" in line for line in logs), logs
+    assert result.applied_count == 1
+    stored = await store.get_job_record_by_fingerprint(card.card.fingerprint)
+    assert stored["status"] == JobRecordStatus.APPLIED.value
+
+
+@pytest.mark.asyncio
+async def test_a_draft_still_satisfies_a_depth_save_jd_run():
+    """#299 lifts `matched` out of the *outreach* rung only.
+
+    A 深度存JD sweep must not start re-opening detail pages it already holds a JD for, so a
+    record past the save rung still counts as finished for a save-only run.
+    """
+    store = InMemoryJobRecordStore()
+    card = _card("已有 JD 的岗位", "丁公司")
+    await store.upsert_job_record(_drafted_record(card.card))
+
+    detail = _detail_page()
+    logs: list[str] = []
+
+    async def log(line: str) -> None:
+        logs.append(line)
+
+    pipeline = _pipeline(
+        store,
+        feed=ScriptedFeed([[card]]),
+        detail=detail,
+        screener=CandidateScreener(llm_client=_llm()),
+        log=log,
+    )
+
+    result = await pipeline.stream_jobs(
+        FeedStreamConfig(target_action=TargetAction.SAVE_JD, keyword="Agent", max_jobs=1)
+    )
+
+    detail.extract_job_posting.assert_not_called()
+    assert result.skipped == 1
+    assert any("State Machine" in line for line in logs), logs
+
+
+def test_the_write_ladder_and_the_visit_rule_answer_different_questions():
+    """#299 keeps two rules apart that the old code conflated.
+
+    `STATE_RANK` orders a record by how much is *known* about it, and that ordering is the
+    monotonic write guard the store relies on — a later save-only pass must not demote an
+    applied job. Whether a run still *owes* the posting work is a different question, and
+    answering it with the write ladder is what silently buried every undelivered draft.
+    """
+    from boss_agent.models import STATE_RANK, TARGET_ACTION_RANK
+
+    # The write ladder is unchanged, `matched` and its two documented exceptions included.
+    assert STATE_RANK[JobRecordStatus.JD_SAVED] < STATE_RANK[JobRecordStatus.MATCHED]
+    assert STATE_RANK[JobRecordStatus.MATCHED] < STATE_RANK[JobRecordStatus.APPLIED]
+    # …and that is exactly why `matched` ranks as "enough" for an outreach run: it is
+    # numerically at the auto_apply rung while still being an unsent draft.
+    assert STATE_RANK[JobRecordStatus.MATCHED] == TARGET_ACTION_RANK[TargetAction.AUTO_APPLY]
+
+    draft = {"status": JobRecordStatus.MATCHED.value, "job_description": GOOD_JD}
+    applied = {**draft, "status": JobRecordStatus.APPLIED.value, "applied_at": TODAY}
+    outreach = FeedStreamConfig(target_action=TargetAction.AUTO_APPLY)
+    save_only = FeedStreamConfig(target_action=TargetAction.SAVE_JD)
+
+    reached = JobFeedPipeline._depth_already_reached
+    assert reached(outreach, draft["status"], draft) is False, "a draft still owes a send"
+    assert reached(outreach, applied["status"], applied) is True
+    assert reached(save_only, draft["status"], draft) is True
+    # A save-only run with no JD on file still has work to do.
+    assert reached(save_only, JobRecordStatus.UNMATCHED.value, {"job_description": ""}) is False
