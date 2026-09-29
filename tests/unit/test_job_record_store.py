@@ -405,3 +405,78 @@ async def test_in_memory_store_delete_releases_the_fingerprint():
     assert await store.delete_job_record(saved["id"]) is True
     assert await store.has_job_fingerprint("fp-delete") is False
     assert await store.delete_job_record("non-existent") is False
+
+
+@pytest.mark.asyncio
+async def test_both_adapters_carry_the_greeting_source_with_the_greeting(any_job_store):
+    """Provenance is a column, not a convention (issue #300).
+
+    The whole human-copy rule rests on the store round-tripping `greeting_source` next to
+    `greeting_message` — and on a later card-level re-scrape, which writes neither, not
+    quietly erasing a human's mark and handing the record back to the drafter.
+    """
+    store = any_job_store
+    rec = await store.upsert_job_record(
+        {
+            "fingerprint": "fp-prov-1",
+            "title": "AI Agent 平台工程师",
+            "company_name": "智元创新",
+            "recruiter_name": "王女士",
+            "status": "matched",
+            "greeting_message": "李工您好，这版是我改过的。",
+            "greeting_source": "human",
+        }
+    )
+    key = rec["fingerprint"]
+    stored = await store.get_job_record_by_fingerprint(key)
+    assert stored["greeting_source"] == "human"
+    assert stored["greeting_message"] == "李工您好，这版是我改过的。"
+
+    # A card-facet re-scrape carries no greeting at all: both fields survive it.
+    await store.upsert_job_record(
+        {"fingerprint": key, "title": "AI Agent 平台工程师", "company_name": "智元创新",
+         "recruiter_name": "王女士", "status": "matched"}
+    )
+    stored = await store.get_job_record_by_fingerprint(key)
+    assert stored["greeting_source"] == "human"
+    assert stored["greeting_message"] == "李工您好，这版是我改过的。"
+
+    # A new draft arrives with its own provenance, and the pair moves together. The rest of
+    # the record travels with it: a payload without a title is an incomplete record, and the
+    # PocketBase adapter turns that away.
+    await store.upsert_job_record(
+        {
+            "fingerprint": key,
+            "title": "AI Agent 平台工程师",
+            "company_name": "智元创新",
+            "recruiter_name": "王女士",
+            "status": "matched",
+            "greeting_message": "新的机器草稿",
+            "greeting_source": "agent_draft",
+        }
+    )
+    stored = await store.get_job_record_by_fingerprint(key)
+    assert stored["greeting_source"] == "agent_draft"
+    assert stored["greeting_message"] == "新的机器草稿"
+
+
+@pytest.mark.asyncio
+async def test_a_record_written_before_provenance_exists_reads_as_unknown(any_job_store):
+    """Legacy rows have no source, and `""` is the honest answer — not `agent_draft`.
+
+    The pipeline treats anything but `human` as "not approved by a person", so a blank
+    column must stay blank instead of being substituted into a claim about authorship.
+    """
+    store = any_job_store
+    await store.upsert_job_record(
+        {
+            "fingerprint": "fp-prov-2",
+            "title": "大模型应用工程师",
+            "company_name": "煦象科技",
+            "recruiter_name": "刘女士",
+            "status": "jd_saved",
+            "greeting_message": "",
+        }
+    )
+    stored = await store.get_job_record_by_fingerprint("fp-prov-2")
+    assert stored.get("greeting_source") in ("", None)

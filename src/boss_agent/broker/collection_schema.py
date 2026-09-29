@@ -427,6 +427,10 @@ JOB_RECORDS = Collection(
         Field("match_score", NUMBER),
         Field("jd_key_requirements", JSON, default=[]),
         Field("greeting_message", TEXT, default=""),
+        # Who wrote that greeting (issue #300): `agent_draft`, `human`, or empty for a
+        # record that predates the field. No writer default is substituted on read, so a
+        # missing column stays missing rather than pretending to be an approval.
+        Field("greeting_source", TEXT, default=""),
         Field("search_keywords", JSON, default=[]),
         Field("screened_reason", TEXT, default=""),
         Field("relaxed_by_whitelist", BOOL, default=False, sql_default="FALSE"),

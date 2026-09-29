@@ -242,8 +242,13 @@ _Avoid_: distance filter, geolocation check, address lookup
 The progression state of a Job Record tracking its data richness and application stage across mobile automation and backend manual actions (`ignored`, `jd_saved`, `matched`, `applied`; historical `digest_only` records map to `jd_saved`). The terminal `applied` state encompasses both Agent-Dispatched (`agent_auto_send`) greetings and Platform Historical Contacts (`platform_historical`); upon cool-down expiry or manual clearance, an `applied` record transitions back to `jd_saved` with its JD preserved for re-engagement.
 _Avoid_: job status flag, task progress, record phase
 
+**Greeting Provenance (`greeting_source`)**:
+Who wrote the greeting a Job Record holds: `human` — generated or edited in the Web Dashboard — or `agent_draft`. Provenance decides what the agent owes the text: a human copy is skipped by generation and sent verbatim, salutation and all, while anything else (including a record written before the field existed) is drafted for as usual. It exists because previewing stopped being a run mode: the way to read a greeting before it goes out is to write it here, and that only holds if the record remembers whose words they are. The 定向投递 modal's edited copy outranks the record's own.
+_Avoid_: greeting owner, approved flag, manual greeting
+
 **Draft Rung (`matched`)**:
-The state of a Job Record whose greeting has been written but has never left the device — a backend "AI 评估", an agent run that drafted it, or a run whose daily quota ran out. It counts as *known* in the Job Lifecycle ladder and therefore satisfies a 深度存JD pass, but it never satisfies 自动打招呼: only a delivered message does (issue #299). Treating a draft as finished is what left records stranded, unreachable by any later run.
+The state of a Job Record whose greeting has been written by someone — an agent, or a human
+in the dashboard — but has never left the device — a backend "AI 评估", an agent run that drafted it, or a run whose daily quota ran out. It counts as *known* in the Job Lifecycle ladder and therefore satisfies a 深度存JD pass, but it never satisfies 自动打招呼: only a delivered message does (issue #299). Treating a draft as finished is what left records stranded, unreachable by any later run.
 _Avoid_: offline draft, pending manual send, soft-applied
 
 **Depth Visit Rule**:

@@ -641,6 +641,31 @@ def classify_chat_button(button_text: str | None, enabled: bool = True) -> ChatB
 APPLIED_SOURCE_AGENT = "agent_auto_send"
 APPLIED_SOURCE_PLATFORM_HISTORICAL = "platform_historical"
 
+#: Provenance of the greeting text on a Job Record (issue #300). This is what decides
+#: whether a run may spend tokens re-drafting it: an operator who previews a greeting does
+#: so by generating or editing it in the Web Dashboard, and once that copy exists the
+#: agent sends it verbatim instead of writing a new one over it on every sweep.
+#:
+#: A record written before this field existed carries neither value, and
+#: :func:`greeting_is_human` reads that as "not human" — the safe direction, because the
+#: cost of guessing wrong is a regenerated draft, not a message nobody approved.
+GREETING_SOURCE_AGENT = "agent_draft"
+GREETING_SOURCE_HUMAN = "human"
+
+
+def greeting_is_human(record: dict | None) -> bool:
+    """Whether a Job Record's greeting was written by a human rather than drafted by the agent.
+
+    Unknown provenance is not human provenance. A legacy record — and a record whose
+    ``greeting_source`` arrived as something else entirely — keeps today's behaviour of
+    being drafted for, so shipping the field cannot silently freeze an old agent draft in
+    place as if somebody had approved it.
+    """
+    if not record:
+        return False
+    text = (record.get("greeting_message") or "").strip()
+    return bool(text) and str(record.get("greeting_source") or "") == GREETING_SOURCE_HUMAN
+
 EXPIRED_POSTING_REASON = "岗位已失效/停止招聘"
 
 # Telemetry shared by both detail-inspecting handlers when a headhunter posting is

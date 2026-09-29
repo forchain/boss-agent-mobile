@@ -243,6 +243,11 @@ class InMemoryJobRecordStore(JobRecordStore):
         rec.update(_sticky_field_updates(rec, record_data))
         if record_data.get("greeting_message"):
             rec["greeting_message"] = record_data["greeting_message"]
+        # Provenance travels with the text it describes (issue #300). The merge keeps an
+        # existing marker when a later pass brings no greeting of its own, so a card-level
+        # re-scrape cannot erase a human's approval and fall back to re-drafting it.
+        if record_data.get("greeting_source"):
+            rec["greeting_source"] = record_data["greeting_source"]
         if record_data.get("match_score") is not None:
             rec["match_score"] = record_data["match_score"]
         if "screened_reason" in record_data:
@@ -494,6 +499,8 @@ class PocketBaseJobRecordStore(JobRecordStore):
         body.update(_sticky_field_updates(existing, record_data))
         if record_data.get("greeting_message"):
             body["greeting_message"] = record_data["greeting_message"]
+        if record_data.get("greeting_source"):
+            body["greeting_source"] = record_data["greeting_source"]
         if record_data.get("match_score") is not None:
             body["match_score"] = record_data["match_score"]
         if "screened_reason" in record_data:

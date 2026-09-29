@@ -217,6 +217,8 @@ export interface JobRecord {
 	match_score?: number | null;
 	jd_key_requirements?: string[];
 	greeting_message?: string;
+	/** Who wrote that greeting: `human` or `agent_draft`; empty when unknown (#300). */
+	greeting_source?: 'human' | 'agent_draft' | '' | null;
 	search_keywords?: string[];
 	screened_reason?: string;
 	relaxed_by_whitelist?: boolean;

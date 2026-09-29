@@ -33,6 +33,8 @@ from .models import (
     APPLIED_SOURCE_AGENT,
     APPLIED_SOURCE_PLATFORM_HISTORICAL,
     EXPIRED_POSTING_REASON,
+    GREETING_SOURCE_AGENT,
+    GREETING_SOURCE_HUMAN,
     HEADHUNTER_COMMUTE_PROBE_SKIP_REASON,
     STATE_RANK,
     TARGET_ACTION_RANK,
@@ -42,6 +44,7 @@ from .models import (
     JobRecordStatus,
     ScreeningPolicy,
     TargetAction,
+    greeting_is_human,
     is_communication_expired,
     is_direct_hire_company,
 )
@@ -151,6 +154,10 @@ class FeedStreamConfig:
     single_screen: bool = False
     direct_job_id: str | None = None
     is_headhunter: bool | None = None
+    # The greeting a human edited in the 定向投递 modal. It outranks whatever the record
+    # already holds (issue #300) — and until then it travelled in the payload unread, so
+    # the button that promises to send *this* text sent a regenerated draft instead.
+    direct_greeting: str = ""
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any] | None) -> "FeedStreamConfig":
@@ -203,6 +210,7 @@ class FeedStreamConfig:
             preview_only=bool(data.get("preview_only", True)),
             auto_send=bool(data.get("auto_send", False)),
             source_task_id=data.get("source_task_id"),
+            direct_greeting=str(data.get("greeting_message") or ""),
             single_screen=bool(data.get("direct_job_id")),
             direct_job_id=data.get("direct_job_id"),
             is_headhunter=data.get("is_headhunter"),
@@ -228,6 +236,12 @@ class _CardRun:
     # Greetings already dispatched today, as read by this card's quota check. The read is
     # reused by the log lines instead of paying a second round trip per card.
     applied_today: int = 0
+    # The record this card already has on file, before anything in this run rewrote it.
+    existing_record: dict[str, Any] | None = None
+    # Whose words this run must send, when the answer is not "the agent's": a human's copy,
+    # plus where it came from, so the log can say it. See `_resolve_human_greeting`.
+    human_greeting: str = ""
+    human_greeting_origin: str = ""
 
 
 def _element_y(elem: Any) -> float | None:
@@ -574,6 +588,7 @@ class JobFeedPipeline:
         # The card itself is already a result: a detail-page failure must not lose it.
         run.result.jobs.append(persisted)
         run.jobs_index = len(run.result.jobs) - 1
+        run.existing_record = existing_record
         await self._inspect_detail(run, persisted, existing_record)
 
     async def _passes_state_machine(
@@ -820,6 +835,26 @@ class JobFeedPipeline:
             return None
         return posting
 
+    def _resolve_human_greeting(self, run: _CardRun) -> tuple[str, str]:
+        """The human-authored greeting this run must send verbatim, and where it came from.
+
+        Two sources outrank the agent (issue #300):
+
+        1. the copy in a 定向投递 payload — the operator edited it in the modal for *this*
+           send, so it outranks even the text the record already holds;
+        2. the record's own greeting, when its provenance says a human wrote it.
+
+        Anything else — an agent draft, a record predating provenance, a marker whose text
+        is empty — returns ``("", "")`` and the run drafts as it always did. The origin
+        comes back with the text so the log can name the source instead of guessing.
+        """
+        direct = (run.config.direct_greeting or "").strip()
+        if direct:
+            return direct, "定向投递编辑稿"
+        if greeting_is_human(run.existing_record):
+            return str(run.existing_record.get("greeting_message")).strip(), "岗位记录人工稿"
+        return "", ""
+
     async def _evaluate_and_act(self, run: _CardRun, posting: Any) -> None:
         """Run full-JD evaluation and persist whichever outcome the target action implies."""
         card = run.card
@@ -912,12 +947,17 @@ class JobFeedPipeline:
                 f"豁免通勤距离限制，继续采集"
             )
 
+        # Resolution happens before the screener, not after: a human copy means there is
+        # nothing to draft, and "nothing to draft" means no token is spent drafting it.
+        run.human_greeting, run.human_greeting_origin = self._resolve_human_greeting(run)
+
         evaluation = self.screener.evaluate_job(
             card=card,
             jd_text=jd_text,
             profile=config.candidate_profile,
             policy=config.screening_policy,
-            draft_greeting=config.target_action == TargetAction.AUTO_APPLY,
+            draft_greeting=config.target_action == TargetAction.AUTO_APPLY
+            and not run.human_greeting,
         )
 
         if "查看更多" in jd_text:
@@ -977,12 +1017,28 @@ class JobFeedPipeline:
         """Draft and, when allowed, dispatch the tailored greeting for one job."""
         config = run.config
         title, company = enriched["title"], enriched["company_name"]
-        greeting = evaluation.greeting_message
-        await self._log(
-            f"Evaluated '{title}' @ '{company}': Score {evaluation.match_score}/100 | "
-            f"Match Reasons: [{'; '.join(evaluation.match_reasons) or '无'}]"
+        # A human copy is the text; the screener's draft is the fallback. Neither one is
+        # rewritten here — `ensure_greeting_prefix` belongs to the drafting path, and
+        # applying it to approved words would send something the human never signed off on.
+        greeting = run.human_greeting or evaluation.greeting_message
+        if run.human_greeting:
+            await self._log(
+                f"📖 [复用人工招呼语] '{title}' @ '{company}': 来源 "
+                f"{run.human_greeting_origin}，跳过匹配起草，原文逐字发送。"
+            )
+            await self._log(f'Greeting To Send (verbatim): "{greeting}"')
+        else:
+            await self._log(
+                f"Evaluated '{title}' @ '{company}': Score {evaluation.match_score}/100 | "
+                f"Match Reasons: [{'; '.join(evaluation.match_reasons) or '无'}]"
+            )
+            await self._log(f'Tailored Greeting Draft: "{greeting}"')
+
+        # What this run persists as its verdict, whoever wrote the words.
+        enriched["greeting_message"] = greeting
+        enriched["greeting_source"] = (
+            GREETING_SOURCE_HUMAN if run.human_greeting else GREETING_SOURCE_AGENT
         )
-        await self._log(f'Tailored Greeting Draft: "{greeting}"')
 
         # Only a task queued before issue #298 can still arrive here: every launch the
         # contract builds today derives this pair from its Target Action, so an 自动打招呼
@@ -995,7 +1051,7 @@ class JobFeedPipeline:
             await self._finalize_verdict(run, enriched, JobRecordStatus.MATCHED, evaluation)
             return
 
-        if evaluation.match_score < config.min_score:
+        if not run.human_greeting and evaluation.match_score < config.min_score:
             await self._log(
                 f"⏭️ [AUTO_SEND] Skipped: Match score {evaluation.match_score} < "
                 f"threshold {config.min_score}"
@@ -1003,6 +1059,9 @@ class JobFeedPipeline:
             await self._finalize_verdict(run, enriched, JobRecordStatus.JD_SAVED, evaluation)
             return
 
+        # The score gate above is a feed-sweep rule. A human-approved copy is not score
+        # gated (issue #300): there is no score, because nothing was drafted to be scored.
+        # The quota, the cancellation probe and the company guard apply to it unchanged.
         if await self._quota_exhausted(run):
             applied_today = run.applied_today
             # Running out of quota is not a depth a task chose. The JD and the draft are
@@ -1090,11 +1149,19 @@ class JobFeedPipeline:
         evaluation: JobEvaluationResult,
     ) -> dict[str, Any]:
         """Persist one terminal verdict and report it to the observer."""
+        # An explicit greeting on the payload is the text this run decided to send. Only
+        # the agent's own draft comes from the evaluation, so a reused human copy is stored
+        # as what was actually sent rather than as an empty field (#300).
+        greeting_message = payload.get("greeting_message") or evaluation.greeting_message
+        greeting_source = payload.get("greeting_source") or (
+            GREETING_SOURCE_AGENT if evaluation.greeting_message else ""
+        )
         payload = {
             **payload,
             "status": status.value,
             "match_score": evaluation.match_score,
-            "greeting_message": evaluation.greeting_message,
+            "greeting_message": greeting_message,
+            "greeting_source": greeting_source,
             "jd_key_requirements": evaluation.jd_key_requirements
             or payload.get("jd_key_requirements", []),
         }
@@ -1110,7 +1177,7 @@ class JobFeedPipeline:
                 "salary_range": payload.get("salary_range", ""),
             }
             run.result.score = evaluation.match_score
-            run.result.greeting_message = evaluation.greeting_message
+            run.result.greeting_message = greeting_message
             run.result.jd_key_requirements = evaluation.jd_key_requirements
         # The action follows from the verdict alone: a matched record is a greeting that has
         # not left the device yet, whether or not this run already dispatched an earlier one.
@@ -1124,7 +1191,7 @@ class JobFeedPipeline:
                     status=status.value,
                     action=JobAction.PENDING_SEND,
                     score=evaluation.match_score,
-                    greeting_message=evaluation.greeting_message,
+                    greeting_message=greeting_message,
                     record=saved,
                 ),
             )
@@ -1140,7 +1207,7 @@ class JobFeedPipeline:
                     status=status.value,
                     action=JobAction.APPLIED,
                     score=evaluation.match_score,
-                    greeting_message=evaluation.greeting_message,
+                    greeting_message=greeting_message,
                     record=saved,
                 ),
             )
@@ -1156,7 +1223,7 @@ class JobFeedPipeline:
                     if status is JobRecordStatus.JD_SAVED
                     else JobAction.SKIPPED,
                     score=evaluation.match_score,
-                    greeting_message=evaluation.greeting_message,
+                    greeting_message=greeting_message,
                     record=saved,
                 ),
             )
@@ -1173,6 +1240,7 @@ class JobFeedPipeline:
 
         run.result.scanned = max(run.result.scanned, 1)
         target_record = await self._target_record(run.config)
+        run.existing_record = target_record
 
         chat_state = self.detail_page.get_chat_button_state()
         if chat_state in (ChatButtonState.COMMUNICATED, ChatButtonState.CLOSED):
