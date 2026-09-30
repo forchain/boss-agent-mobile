@@ -509,7 +509,9 @@ def provision_remote_pocketbase(
             )
             if patch_resp.ok:
                 added = sorted({f["name"] for f in merged} - _live_field_names(live))
-                logger.info("Migrated collection '%s' (+%s)", collection.name, ", ".join(added) or "none")
+                logger.info(
+                    "Migrated collection '%s' (+%s)", collection.name, ", ".join(added) or "none"
+                )
                 print(f"🔄 Migrated collection '{collection.name}' (+{', '.join(added) or 'none'})")
             else:
                 logger.error(
@@ -543,7 +545,9 @@ def provision_remote_pocketbase(
         if check_records.ok:
             total_items = check_records.json().get("totalItems", 0)
             if total_items == 0:
-                seeds = initial_searches if initial_searches is not None else DEFAULT_INITIAL_SEARCHES
+                seeds = (
+                    initial_searches if initial_searches is not None else DEFAULT_INITIAL_SEARCHES
+                )
                 for s_id, s_data in seeds.items():
                     record_payload = wire_payload(SAVED_SEARCHES, s_data)
                     record_payload["id"] = s_id
@@ -595,8 +599,19 @@ def _backfill_legacy_job_records(cursor: sqlite3.Cursor) -> None:
         rows = cursor.fetchall()
         for row in rows:
             (
-                rec_id, title, comp, rec_name, rec_title, is_hh,
-                loc, digest, jd, scale, ind, tags_json, reqs_json
+                rec_id,
+                title,
+                comp,
+                rec_name,
+                rec_title,
+                is_hh,
+                loc,
+                digest,
+                jd,
+                scale,
+                ind,
+                tags_json,
+                reqs_json,
             ) = row
 
             # 1. Clean title
@@ -614,7 +629,10 @@ def _backfill_legacy_job_records(cursor: sqlite3.Cursor) -> None:
             rloc = (loc or "").strip()
 
             # If location currently holds recruiter title
-            if rloc and any(kw in rloc for kw in ("猎头", "顾问", "专员", "专家", "HR", "经理", "总监", "助理", "主管")):
+            if rloc and any(
+                kw in rloc
+                for kw in ("猎头", "顾问", "专员", "专家", "HR", "经理", "总监", "助理", "主管")
+            ):
                 if not rtitle:
                     rtitle = rloc
                 rloc = ""
@@ -632,7 +650,20 @@ def _backfill_legacy_job_records(cursor: sqlite3.Cursor) -> None:
             if rtitle and " " in rtitle:
                 sub_toks = rtitle.rsplit(" ", 1)
                 if (
-                    sub_toks[1] in ("上海", "北京", "深圳", "广州", "杭州", "成都", "武汉", "南京", "苏州", "西安", "海外")
+                    sub_toks[1]
+                    in (
+                        "上海",
+                        "北京",
+                        "深圳",
+                        "广州",
+                        "杭州",
+                        "成都",
+                        "武汉",
+                        "南京",
+                        "苏州",
+                        "西安",
+                        "海外",
+                    )
                     or sub_toks[1].endswith("市")
                     or sub_toks[1].endswith("区")
                 ):
@@ -652,7 +683,9 @@ def _backfill_legacy_job_records(cursor: sqlite3.Cursor) -> None:
                 reqs = []
 
             try:
-                current_tags = json.loads(tags_json) if isinstance(tags_json, str) else (tags_json or [])
+                current_tags = (
+                    json.loads(tags_json) if isinstance(tags_json, str) else (tags_json or [])
+                )
             except Exception:
                 current_tags = []
 
@@ -664,11 +697,34 @@ def _backfill_legacy_job_records(cursor: sqlite3.Cursor) -> None:
                 if re.search(r"(\d+[-~至]\d+人|\d+人以上|少于\d+人|\d+人以下)", r_str):
                     if not new_scale:
                         new_scale = r_str
-                elif r_str in ("人工智能", "互联网", "互联网/AI", "电子商务", "游戏", "银行", "保险", "医疗健康", "计算机软件"):
+                elif r_str in (
+                    "人工智能",
+                    "互联网",
+                    "互联网/AI",
+                    "电子商务",
+                    "游戏",
+                    "银行",
+                    "保险",
+                    "医疗健康",
+                    "计算机软件",
+                ):
                     if not new_ind:
                         new_ind = r_str
                 elif (
-                    r_str in ("上海", "北京", "深圳", "广州", "杭州", "成都", "武汉", "南京", "苏州", "西安", "海外")
+                    r_str
+                    in (
+                        "上海",
+                        "北京",
+                        "深圳",
+                        "广州",
+                        "杭州",
+                        "成都",
+                        "武汉",
+                        "南京",
+                        "苏州",
+                        "西安",
+                        "海外",
+                    )
                     or r_str.endswith("市")
                     or r_str.endswith("区")
                 ):
@@ -680,16 +736,26 @@ def _backfill_legacy_job_records(cursor: sqlite3.Cursor) -> None:
             new_tags = current_tags if current_tags else remaining_tags
             new_digest = digest or jd or ""
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 UPDATE job_records
                 SET title = ?, recruiter_name = ?, recruiter_title = ?, is_headhunter = ?,
                     location = ?, digest = ?, company_scale = ?, industry = ?, tags = ?
                 WHERE id = ?
-            """, (
-                clean_title, rec, rtitle, 1 if new_is_hh else 0,
-                new_loc, new_digest, new_scale, new_ind, json.dumps(new_tags, ensure_ascii=False),
-                rec_id
-            ))
+            """,
+                (
+                    clean_title,
+                    rec,
+                    rtitle,
+                    1 if new_is_hh else 0,
+                    new_loc,
+                    new_digest,
+                    new_scale,
+                    new_ind,
+                    json.dumps(new_tags, ensure_ascii=False),
+                    rec_id,
+                ),
+            )
     except Exception as ex:
         logger.warning("Error during _backfill_legacy_job_records: %s", ex)
 

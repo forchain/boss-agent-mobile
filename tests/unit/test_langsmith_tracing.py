@@ -258,7 +258,9 @@ def test_resume_memory_manager_traceable(tmp_path):
     }
 
     resume_file = tmp_path / "resume.txt"
-    resume_file.write_text("张三 8年经验 清华大学计算机硕士 精通Python与LangGraph", encoding="utf-8")
+    resume_file.write_text(
+        "张三 8年经验 清华大学计算机硕士 精通Python与LangGraph", encoding="utf-8"
+    )
 
     memory_file = tmp_path / "memory.json"
     manager = ResumeMemoryManager(
@@ -318,4 +320,3 @@ def test_openai_chat_client_error_propagation():
         with pytest.raises(LLMError) as exc_info:
             client.chat_completion([{"role": "user", "content": "Hello"}])
         assert "500" in str(exc_info.value)
-

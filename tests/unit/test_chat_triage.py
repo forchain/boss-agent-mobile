@@ -287,9 +287,7 @@ async def test_the_card_ceiling_does_not_borrow_the_scroll_ceiling_name(policy):
     )
     lines, log = recording_log()
 
-    report = await triage_run(
-        harness, policy=policy, log=log, max_inspected_cards=3
-    ).scan()
+    report = await triage_run(harness, policy=policy, log=log, max_inspected_cards=3).scan()
 
     assert report.scroll_swipes == 1
     assert report.stop_reason is StopReason.SCAN_CEILING
@@ -536,7 +534,9 @@ async def test_badge_persists_past_max_scroll_swipes_stops_at_scroll_ceiling(pol
     classifier = FakeClassifier(default=False)
     settings = ChatAcknowledgmentSettings(max_scroll_swipes=3)
 
-    report = await triage_run(harness, classifier=classifier, policy=policy, settings=settings).scan()
+    report = await triage_run(
+        harness, classifier=classifier, policy=policy, settings=settings
+    ).scan()
 
     assert report.stop_reason is StopReason.SCROLL_CEILING
     assert report.scroll_swipes == 3
@@ -553,7 +553,9 @@ async def test_list_bottom_out_before_swipe_limit_stops_at_scroll_ceiling(policy
     classifier = FakeClassifier(default=False)
     settings = ChatAcknowledgmentSettings(max_scroll_swipes=10)
 
-    report = await triage_run(harness, classifier=classifier, policy=policy, settings=settings).scan()
+    report = await triage_run(
+        harness, classifier=classifier, policy=policy, settings=settings
+    ).scan()
 
     assert report.stop_reason is StopReason.SCROLL_CEILING
     assert report.scroll_swipes == 2
@@ -569,7 +571,9 @@ async def test_higher_max_scroll_swipes_expands_inspection_ceiling(policy):
     classifier = FakeClassifier(default=False)
     settings = ChatAcknowledgmentSettings(max_scroll_swipes=8)
 
-    report = await triage_run(harness, classifier=classifier, policy=policy, settings=settings).scan()
+    report = await triage_run(
+        harness, classifier=classifier, policy=policy, settings=settings
+    ).scan()
 
     assert report.stop_reason is StopReason.SCROLL_CEILING
     assert report.scroll_swipes == 8
@@ -830,4 +834,3 @@ async def test_enter_list_always_navigates_to_ensure_jingoutong_selected(policy)
 
     assert open_list_called is True
     assert report.rejections == 1
-

@@ -18,7 +18,9 @@ from boss_agent.graph import (
 def mock_broker():
     broker = MagicMock()
     broker.candidate_memory.get_candidate_profile = AsyncMock(return_value=None)
-    broker.candidate_memory.save_candidate_profile = AsyncMock(side_effect=lambda data, user_id="default": dict(data))
+    broker.candidate_memory.save_candidate_profile = AsyncMock(
+        side_effect=lambda data, user_id="default": dict(data)
+    )
     broker.candidate_memory.create_resume_revision = AsyncMock(
         return_value={"id": "rev-001", "file_name": "test_resume.txt", "diff_summary": "测试记录"}
     )

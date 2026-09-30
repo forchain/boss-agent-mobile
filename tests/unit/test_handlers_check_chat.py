@@ -182,9 +182,7 @@ def test_handler_declares_check_chat_task_type():
 
 
 @pytest.mark.asyncio
-async def test_handler_processes_single_card_through_the_real_page_object(
-    broker, context, policy
-):
+async def test_handler_processes_single_card_through_the_real_page_object(broker, context, policy):
     """#206: end-to-end single target resolved from a mock accessibility hierarchy."""
     sender_node = MagicMock(text="严胜")
     text_node = MagicMock(text=REJECTION_TEXT)

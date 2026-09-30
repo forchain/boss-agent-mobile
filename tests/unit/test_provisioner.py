@@ -285,7 +285,9 @@ def test_provision_sqlite_database_offline_structure(tmp_path: Path):
     pb_bin = shutil.which("pocketbase")
     if pb_bin:
         # Run pocketbase migrate up offline to create initial tables
-        res = subprocess.run([pb_bin, "migrate", "up", "--dir", str(db_dir)], capture_output=True, text=True)
+        res = subprocess.run(
+            [pb_bin, "migrate", "up", "--dir", str(db_dir)], capture_output=True, text=True
+        )
         assert res.returncode == 0
         assert db_file.exists()
 

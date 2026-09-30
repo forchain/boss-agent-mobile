@@ -117,9 +117,7 @@ def test_rest_dialect_declares_the_job_records_fields_it_used_to_omit() -> None:
 
 def test_job_description_keeps_its_explicit_length_cap_in_both_dialects() -> None:
     """PocketBase caps text at 5000 chars without an explicit max; an expanded JD needs more."""
-    rest_field = next(
-        f for f in pocketbase_fields(JOB_RECORDS) if f["name"] == "job_description"
-    )
+    rest_field = next(f for f in pocketbase_fields(JOB_RECORDS) if f["name"] == "job_description")
     assert rest_field["options"]["max"] > 5000
     assert "job_description TEXT" in sqlite_ddl(JOB_RECORDS)
 
@@ -197,9 +195,7 @@ def test_a_provisioned_database_carries_exactly_the_declared_columns(
 
 
 @pytest.mark.parametrize("collection", COLLECTIONS, ids=lambda c: c.name)
-def test_the_collections_metadata_is_rendered_from_the_schema(
-    tmp_path: Path, collection
-) -> None:
+def test_the_collections_metadata_is_rendered_from_the_schema(tmp_path: Path, collection) -> None:
     """`_collections.fields` is a view of the schema, not a third spelling."""
     db_file = _blank_pocketbase_db(tmp_path)
     assert provision_sqlite_database(db_file) is True
@@ -275,9 +271,7 @@ def test_remote_provisioning_patches_an_existing_collection_with_the_declared_fi
     session = _remote_session([live])
 
     with patch("requests.Session", return_value=session):
-        assert (
-            provision_remote_pocketbase("http://127.0.0.1:8090", "a@b.c", "pw") is True
-        )
+        assert provision_remote_pocketbase("http://127.0.0.1:8090", "a@b.c", "pw") is True
 
     assert session.patch.called, "an existing collection missing fields must be patched"
     body = session.patch.call_args.kwargs["json"]
@@ -352,7 +346,9 @@ def test_reading_an_older_record_degrades_to_the_declared_default() -> None:
 def test_normalized_reads_leave_derived_columns_for_the_domain() -> None:
     """A column the domain derives from a sibling key is not pre-filled."""
     normalized = normalize_record(
-        SAVED_SEARCHES, {"name": "s"}, exclude=("name", "keyword", "enable_search", "enable_filter", "target_action")
+        SAVED_SEARCHES,
+        {"name": "s"},
+        exclude=("name", "keyword", "enable_search", "enable_filter", "target_action"),
     )
     assert "target_action" not in normalized
     assert normalized["max_jobs"] == SAVED_SEARCH_MAX_JOBS

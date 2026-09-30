@@ -146,9 +146,10 @@ def test_relaxation_inspects_all_card_facets():
     """Relaxation matches against title, tags, company and digest facets alike."""
     policy = ScreeningPolicy(title_whitelist=["RAG", "字节跳动"])
     # tags facet
-    assert policy.evaluate_whitelist_relaxation(
-        title="平台工程师", tags=["RAG", "Python"]
-    ) == (True, "RAG")
+    assert policy.evaluate_whitelist_relaxation(title="平台工程师", tags=["RAG", "Python"]) == (
+        True,
+        "RAG",
+    )
     # company facet
     assert policy.evaluate_whitelist_relaxation(
         title="平台工程师", company_name="北京字节跳动科技有限公司"

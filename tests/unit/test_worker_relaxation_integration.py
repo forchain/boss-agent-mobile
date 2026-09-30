@@ -325,7 +325,9 @@ async def test_scrape_jobs_app_rule_violation_without_rescue_is_ignored():
 async def test_auto_apply_distant_job_is_ignored_before_chat_entry():
     """A distant job outside the whitelist must never open chat or spend quota."""
     broker = InMemoryTaskBroker()
-    context = WorkerContext(config=WorkerConfig(worker_id="w-distance-apply"), driver=_mock_driver())
+    context = WorkerContext(
+        config=WorkerConfig(worker_id="w-distance-apply"), driver=_mock_driver()
+    )
     llm = _drafting_llm()
     handler = AutoApplyHandler(llm_client=llm)
 
@@ -376,7 +378,9 @@ async def test_auto_apply_distant_job_is_ignored_before_chat_entry():
 async def test_auto_apply_distant_job_rescued_by_whitelist_still_drafts():
     """Whitelist Relaxation admits a distant job whose title hits a passion token."""
     broker = InMemoryTaskBroker()
-    context = WorkerContext(config=WorkerConfig(worker_id="w-distance-relax"), driver=_mock_driver())
+    context = WorkerContext(
+        config=WorkerConfig(worker_id="w-distance-relax"), driver=_mock_driver()
+    )
     handler = AutoApplyHandler(llm_client=_drafting_llm())
 
     task = await broker.create_task(
@@ -451,7 +455,8 @@ async def test_auto_apply_nearby_job_proceeds_and_probes_distance():
     assert result.success is True
     assert result.output["applied"] is False
     assert (
-        detail_cls.return_value.extract_job_posting.call_args.kwargs["probe_commute_distance"] is True
+        detail_cls.return_value.extract_job_posting.call_args.kwargs["probe_commute_distance"]
+        is True
     )
 
     records = await broker.job_store.list_job_records()
@@ -602,7 +607,9 @@ async def test_scrape_jobs_headhunter_card_skips_distance_probe_and_fails_open()
 async def test_scrape_jobs_distant_job_is_ingested_as_ignored():
     """A distant job is persisted as ignored instead of jd_saved/unmatched."""
     broker = InMemoryTaskBroker()
-    context = WorkerContext(config=WorkerConfig(worker_id="w-distance-scrape"), driver=_mock_driver())
+    context = WorkerContext(
+        config=WorkerConfig(worker_id="w-distance-scrape"), driver=_mock_driver()
+    )
     handler = ScrapeJobsHandler(llm_client=MagicMock())
     card, _card_elem = _scrape_card()
 
@@ -634,7 +641,8 @@ async def test_scrape_jobs_distant_job_is_ingested_as_ignored():
     assert result.output["scraped_count"] == 0
     assert result.output["skipped_count"] == 1
     assert (
-        detail_cls.return_value.extract_job_posting.call_args.kwargs["probe_commute_distance"] is True
+        detail_cls.return_value.extract_job_posting.call_args.kwargs["probe_commute_distance"]
+        is True
     )
 
     ignored = await broker.job_store.list_job_records(status="ignored")

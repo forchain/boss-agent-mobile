@@ -134,13 +134,19 @@ class LLMConfig:
         )
 
         temperature = float(
-            os.getenv("LLM_TEMPERATURE") or data.get("temperature") or FRAMEWORK_DEFAULTS["temperature"]
+            os.getenv("LLM_TEMPERATURE")
+            or data.get("temperature")
+            or FRAMEWORK_DEFAULTS["temperature"]
         )
         timeout_sec = float(
-            os.getenv("LLM_TIMEOUT_SEC") or data.get("timeout_sec") or FRAMEWORK_DEFAULTS["timeout_sec"]
+            os.getenv("LLM_TIMEOUT_SEC")
+            or data.get("timeout_sec")
+            or FRAMEWORK_DEFAULTS["timeout_sec"]
         )
         max_tokens = int(
-            os.getenv("LLM_MAX_TOKENS") or data.get("max_tokens") or FRAMEWORK_DEFAULTS["max_tokens"]
+            os.getenv("LLM_MAX_TOKENS")
+            or data.get("max_tokens")
+            or FRAMEWORK_DEFAULTS["max_tokens"]
         )
         extra_params = data.get("extra_params") or {}
 
@@ -281,8 +287,7 @@ class OpenAIChatClient(LLMDecisionClient):
 
         # Default: disable thinking for MiniMax models to prevent long-running CoT timeouts on structured tasks
         is_minimax = (
-            "minimax" in self.config.base_url.lower()
-            or "minimax" in self.config.model.lower()
+            "minimax" in self.config.base_url.lower() or "minimax" in self.config.model.lower()
         )
         if is_minimax and (not extra_payload or "thinking" not in extra_payload):
             payload["thinking"] = {"type": "disabled"}
@@ -308,9 +313,7 @@ class OpenAIChatClient(LLMDecisionClient):
         if response.status_code == 400:
             try:
                 fallback_payload = {
-                    k: v
-                    for k, v in payload.items()
-                    if k not in ("response_format", "thinking")
+                    k: v for k, v in payload.items() if k not in ("response_format", "thinking")
                 }
                 response = requests.post(
                     url,

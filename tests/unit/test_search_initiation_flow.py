@@ -54,7 +54,12 @@ async def test_scrape_jobs_delegates_search_to_fast_entry_without_pre_navigation
     )
 
     home_patch, open_patch, is_search_patch, search_patch = _patch_search_layer()
-    with home_patch as spy_home, open_patch as spy_open, is_search_patch, search_patch as spy_search:
+    with (
+        home_patch as spy_home,
+        open_patch as spy_open,
+        is_search_patch,
+        search_patch as spy_search,
+    ):
         await handler.handle(task, broker, context)
 
     assert spy_search.call_count == 1

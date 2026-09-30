@@ -63,9 +63,7 @@ def test_python_builder_matches_the_shared_case(case: dict) -> None:
         kwargs["min_score"] = case["min_score"]
 
     ack = ChatAcknowledgmentSettings(**(case["chat"] or {}))
-    with patch(
-        "boss_agent.task_launch.resolve_chat_acknowledgment_settings", return_value=ack
-    ):
+    with patch("boss_agent.task_launch.resolve_chat_acknowledgment_settings", return_value=ack):
         launch = task_launch.build_launch(**kwargs)
 
     assert launch.task_type.value == case["expected"]["task_type"]
@@ -141,7 +139,9 @@ def test_a_malformed_target_action_is_rejected_not_defaulted() -> None:
 
 def test_a_search_launch_without_a_search_is_refused() -> None:
     with pytest.raises(task_launch.LaunchContractError, match="requires a SavedSearch"):
-        task_launch.build_launch(task_launch.TaskKind.SEARCH, source=task_launch.LaunchSource.MANUAL)
+        task_launch.build_launch(
+            task_launch.TaskKind.SEARCH, source=task_launch.LaunchSource.MANUAL
+        )
 
 
 def test_the_min_score_baseline_is_not_a_competing_default() -> None:
@@ -149,9 +149,9 @@ def test_the_min_score_baseline_is_not_a_competing_default() -> None:
     search = SavedSearch(id="s", search=SearchConfig(keyword="agent"), filter=FilterConfig())
 
     assert (
-        task_launch.build_search_launch(
-            search, source=task_launch.LaunchSource.MANUAL
-        ).payload["min_score"]
+        task_launch.build_search_launch(search, source=task_launch.LaunchSource.MANUAL).payload[
+            "min_score"
+        ]
         == task_launch.MIN_SCORE
     )
     assert (

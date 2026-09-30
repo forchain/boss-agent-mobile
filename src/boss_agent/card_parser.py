@@ -293,9 +293,10 @@ def _rule_recruiter(text: str, draft: _Draft) -> bool:
     """
     if draft.recruiter_name:
         return False
-    if not (any(sep in text for sep in ("·", "•", "・")) or any(
-        kw in text for kw in RECRUITER_TITLE_KEYWORDS
-    )):
+    if not (
+        any(sep in text for sep in ("·", "•", "・"))
+        or any(kw in text for kw in RECRUITER_TITLE_KEYWORDS)
+    ):
         return False
 
     name, title, is_headhunter = parse_recruiter_info(text)
@@ -344,7 +345,11 @@ def _rule_company(text: str, draft: _Draft) -> bool:
     if draft.company:
         return False
     name, scale, industry = parse_company_scale_industry(text)
-    if not name or is_invalid_company_name(name) or company_duplicates_card_title(name, draft.title):
+    if (
+        not name
+        or is_invalid_company_name(name)
+        or company_duplicates_card_title(name, draft.title)
+    ):
         return False
     draft.company = name
     if scale and not draft.scale:
@@ -365,7 +370,11 @@ def _rule_tags_vs_snippet(text: str, draft: _Draft) -> bool:
     """The last rule always claims the node: a long line is a digest, a short one a tag."""
     if len(text) > SNIPPET_MIN_CHARS and not draft.snippet:
         draft.snippet = text
-    elif len(text) <= TAG_MAX_CHARS and not is_invalid_company_name(text) and not is_likely_location(text):
+    elif (
+        len(text) <= TAG_MAX_CHARS
+        and not is_invalid_company_name(text)
+        and not is_likely_location(text)
+    ):
         draft.tags.append(text)
     elif not draft.snippet:
         draft.snippet = text
@@ -404,15 +413,19 @@ def _facets_to_draft(facets: CardFacets) -> _Draft:
     company, scale, industry = parse_company_scale_industry(
         facets.company, explicit_scale=facets.scale, explicit_industry=facets.industry
     )
-    if company and (is_invalid_company_name(company) or company_duplicates_card_title(company, title)):
+    if company and (
+        is_invalid_company_name(company) or company_duplicates_card_title(company, title)
+    ):
         company = ""
 
     recruiter_name, recruiter_title, is_headhunter = parse_recruiter_info(facets.recruiter)
 
     location = facets.location
     # Safeguard: a locator can read the recruiter's title back as the city.
-    if location and not is_likely_location(location) and any(
-        kw in location for kw in RECRUITER_TITLE_KEYWORDS
+    if (
+        location
+        and not is_likely_location(location)
+        and any(kw in location for kw in RECRUITER_TITLE_KEYWORDS)
     ):
         if not recruiter_title:
             recruiter_title = location

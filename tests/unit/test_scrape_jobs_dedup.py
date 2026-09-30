@@ -69,7 +69,6 @@ async def test_scrape_jobs_handler_skips_existing_and_scrapes_new():
     handler = ScrapeJobsHandler(llm_client=MagicMock())
     context = WorkerContext(config=WorkerConfig(worker_id="test-worker"), driver=mock_driver)
     task = AutomationTask(
-
         task_type=TaskType.SCRAPE_JOBS,
         payload={"keyword": "agent", "max_jobs": 5},
     )
@@ -84,7 +83,10 @@ async def test_scrape_jobs_handler_skips_existing_and_scrapes_new():
         mock_startup.is_dialog_present.return_value = False
 
         mock_list = mock_list_cls.return_value
-        mock_list.extract_visible_job_cards.return_value = [located(card1, card1_elem), located(card2, card2_elem)]
+        mock_list.extract_visible_job_cards.return_value = [
+            located(card1, card1_elem),
+            located(card2, card2_elem),
+        ]
 
         mock_search = mock_search_cls.return_value
         mock_search.is_search_page.return_value = True
@@ -287,7 +289,10 @@ async def test_scrape_jobs_handler_preliminary_card_screening_and_enrichment():
         mock_startup.is_dialog_present.return_value = False
 
         mock_list = mock_list_cls.return_value
-        mock_list.extract_visible_job_cards.return_value = [located(card1, card1_elem), located(card2, card2_elem)]
+        mock_list.extract_visible_job_cards.return_value = [
+            located(card1, card1_elem),
+            located(card2, card2_elem),
+        ]
 
         mock_search = mock_search_cls.return_value
         mock_search.is_search_page.return_value = True
@@ -379,7 +384,10 @@ async def test_scrape_jobs_handler_facet_persistence_and_recruitment_type_teleme
         mock_startup.is_dialog_present.return_value = False
 
         mock_list = mock_list_cls.return_value
-        mock_list.extract_visible_job_cards.return_value = [located(card_hh, card_hh_elem), located(card_dir, card_dir_elem)]
+        mock_list.extract_visible_job_cards.return_value = [
+            located(card_hh, card_hh_elem),
+            located(card_dir, card_dir_elem),
+        ]
 
         mock_search = mock_search_cls.return_value
         mock_search.is_search_page.return_value = True
@@ -471,7 +479,9 @@ async def test_scrape_jobs_handler_logs_error_when_jd_contains_view_more():
         patch("boss_agent.feed_pipeline.JobDetailPage") as mock_detail_cls,
     ):
         mock_startup_cls.return_value.is_dialog_present.return_value = False
-        mock_list_cls.return_value.extract_visible_job_cards.return_value = [located(card, card_elem)]
+        mock_list_cls.return_value.extract_visible_job_cards.return_value = [
+            located(card, card_elem)
+        ]
         mock_search_cls.return_value.is_search_page.return_value = True
 
         mock_detail = mock_detail_cls.return_value
@@ -594,7 +604,9 @@ async def test_scrape_jobs_detail_enrichment_does_not_overwrite_title_with_unspe
         patch("boss_agent.feed_pipeline.JobListPage") as mock_list_cls,
         patch("boss_agent.feed_pipeline.JobDetailPage") as mock_detail_cls,
     ):
-        mock_list_cls.return_value.extract_visible_job_cards.return_value = [located(card, card_elem)]
+        mock_list_cls.return_value.extract_visible_job_cards.return_value = [
+            located(card, card_elem)
+        ]
         mock_list_cls.return_value.get_feed_bottom_boundary.return_value = None
         mock_detail = mock_detail_cls.return_value
         mock_detail.extract_job_posting.return_value = JobPosting(
@@ -611,7 +623,3 @@ async def test_scrape_jobs_detail_enrichment_does_not_overwrite_title_with_unspe
     assert len(records) == 1
     assert records[0]["title"] == "全栈技术负责人"
     assert records[0]["salary_range"] == "6-9万元"
-
-
-
-

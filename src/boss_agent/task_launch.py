@@ -141,9 +141,7 @@ def build_search_launch(
     everyone else gets. Leaving it unset used to mean three different numbers.
     """
     action = _target_action_for(search)
-    task_type = (
-        TaskType.AUTO_APPLY if action == TargetAction.AUTO_APPLY else TaskType.SCRAPE_JOBS
-    )
+    task_type = TaskType.AUTO_APPLY if action == TargetAction.AUTO_APPLY else TaskType.SCRAPE_JOBS
 
     # A save-only search never greets, so its preview flags are not a caller choice.
     preview_only, auto_send = _preview_flags(action, mode)

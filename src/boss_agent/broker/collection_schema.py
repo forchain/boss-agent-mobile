@@ -300,7 +300,9 @@ def normalize_record(
     for spec in collection.fields:
         if spec.name in skipped:
             continue
-        if (spec.name not in normalized or normalized[spec.name] is None) and spec.default is not None:
+        if (
+            spec.name not in normalized or normalized[spec.name] is None
+        ) and spec.default is not None:
             normalized[spec.name] = spec.default
     return normalized
 
@@ -359,8 +361,7 @@ AUTOMATION_TASKS = Collection(
         *_autodate(),
     ),
     indexes=(
-        "CREATE INDEX IF NOT EXISTS idx_status_created "
-        "ON automation_tasks (status, created)",
+        "CREATE INDEX IF NOT EXISTS idx_status_created ON automation_tasks (status, created)",
         "CREATE INDEX IF NOT EXISTS idx_worker_id ON automation_tasks (worker_id)",
     ),
 )
@@ -383,7 +384,9 @@ CANDIDATE_PROFILES = Collection(
         Field("raw_resume_text", TEXT, default=""),
         *_autodate(),
     ),
-    indexes=("CREATE UNIQUE INDEX IF NOT EXISTS idx_candidate_user_id ON candidate_profiles (user_id)",),
+    indexes=(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_candidate_user_id ON candidate_profiles (user_id)",
+    ),
 )
 
 RESUME_REVISIONS = Collection(
@@ -440,9 +443,7 @@ JOB_RECORDS = Collection(
         Field("source_task_id", TEXT),
         *_autodate(),
     ),
-    indexes=(
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_job_fingerprint ON job_records (fingerprint)",
-    ),
+    indexes=("CREATE UNIQUE INDEX IF NOT EXISTS idx_job_fingerprint ON job_records (fingerprint)",),
 )
 
 SAVED_SEARCHES = Collection(
@@ -460,7 +461,12 @@ SAVED_SEARCHES = Collection(
         # column is empty, so substitution here would invert execution depth. The
         # storage default still exists for rows written directly in SQL.
         Field("target_action", TEXT, sql_default="'save_jd'"),
-        Field("max_jobs", NUMBER, default=SAVED_SEARCH_MAX_JOBS, sql_default=str(SAVED_SEARCH_MAX_JOBS)),
+        Field(
+            "max_jobs",
+            NUMBER,
+            default=SAVED_SEARCH_MAX_JOBS,
+            sql_default=str(SAVED_SEARCH_MAX_JOBS),
+        ),
         Field("cron_expression", TEXT, default=""),
         Field("is_enabled", BOOL, default=False, sql_default="0"),
         Field("last_run_at", DATE),
@@ -483,6 +489,7 @@ COLLECTIONS_BY_NAME: Mapping[str, Collection] = {c.name: c for c in COLLECTIONS}
 # --------------------------------------------------------------------------- #
 # Migration backfills
 # --------------------------------------------------------------------------- #
+
 
 @dataclass(frozen=True)
 class Backfill:

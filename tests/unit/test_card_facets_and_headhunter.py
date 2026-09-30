@@ -72,7 +72,9 @@ def test_parse_company_scale_industry():
     assert ind2 == "人工智能"
 
     # 3. Already split parameters passed explicitly
-    comp3, scale3, ind3 = parse_company_scale_industry("游族网络", explicit_scale="1000-9999人", explicit_industry="游戏")
+    comp3, scale3, ind3 = parse_company_scale_industry(
+        "游族网络", explicit_scale="1000-9999人", explicit_industry="游戏"
+    )
     assert comp3 == "游族网络"
     assert scale3 == "1000-9999人"
     assert ind3 == "游戏"
@@ -356,8 +358,13 @@ def test_job_list_page_rejects_title_as_company_and_recovers_from_card_text():
 
 def test_clean_job_title_removes_placeholders_and_badges():
     """clean_job_title must remove trailing '&@', '&@ &@', whitespace and tags."""
-    assert clean_job_title("技术负责人-CTO级别｜pre-ipo公司｜医疗AI &@") == "技术负责人-CTO级别｜pre-ipo公司｜医疗AI"
-    assert clean_job_title("CTO，外企AI Startup，可远程办公 &@") == "CTO，外企AI Startup，可远程办公"
+    assert (
+        clean_job_title("技术负责人-CTO级别｜pre-ipo公司｜医疗AI &@")
+        == "技术负责人-CTO级别｜pre-ipo公司｜医疗AI"
+    )
+    assert (
+        clean_job_title("CTO，外企AI Startup，可远程办公 &@") == "CTO，外企AI Startup，可远程办公"
+    )
     assert clean_job_title("算法高级工程师-DataAgent &@  &@") == "算法高级工程师-DataAgent"
     assert clean_job_title("资深架构师 &@") == "资深架构师"
     assert clean_job_title("【MLBB】AI开发工程师 &@") == "【MLBB】AI开发工程师"
@@ -484,6 +491,7 @@ def test_job_list_page_skips_cards_without_company_name_or_unknown_company():
                 if "tv_company_name" in val_str:
                     return [mock_comp3]
             return []
+
         return _find
 
     mock_card_valid.find_elements.side_effect = mock_card_find(mock_card_valid)
@@ -642,10 +650,17 @@ def test_job_models_post_init_sanitizes_tags():
         recruiter_name="张瑞娟",
         recruiter_title="猎头顾问",
         location="上海",
-        tags=["经验不限", "本科", "全栈侧重前端", "全栈侧重后端", "全栈侧重前端", "全栈侧重后端", "张瑞娟 · 猎头顾问", "上海"],
+        tags=[
+            "经验不限",
+            "本科",
+            "全栈侧重前端",
+            "全栈侧重后端",
+            "全栈侧重前端",
+            "全栈侧重后端",
+            "张瑞娟 · 猎头顾问",
+            "上海",
+        ],
         jd_key_requirements=["经验不限", "本科", "张瑞娟 · 猎头顾问", "上海"],
     )
     assert rec.tags == ["经验不限", "本科", "全栈侧重前端", "全栈侧重后端"]
     assert rec.jd_key_requirements == ["经验不限", "本科"]
-
-

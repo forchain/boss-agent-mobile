@@ -95,7 +95,13 @@ class InMemoryCandidateMemoryStore(CandidateMemoryStore):
         # what caught that this one replaced wholesale where the other patched.
         merged = dict(self._profiles.get(user_id) or {})
         for key, value in profile_data.items():
-            if value is not None and value != "" and value != [] and value != {} or key not in merged:
+            if (
+                value is not None
+                and value != ""
+                and value != []
+                and value != {}
+                or key not in merged
+            ):
                 merged[key] = value
         self._profiles[user_id] = merged
         return dict(merged)
@@ -284,9 +290,7 @@ class PocketBaseCandidateMemoryStore(CandidateMemoryStore):
             logger.warning("Failed to query resume revisions from SQLite: %s", e)
             return []
 
-    def _save_sqlite_revision(
-        self, revision_data: dict[str, Any], user_id: str
-    ) -> dict[str, Any]:
+    def _save_sqlite_revision(self, revision_data: dict[str, Any], user_id: str) -> dict[str, Any]:
         db_path = self._resolve_sqlite_db_path()
         if not db_path:
             return revision_data

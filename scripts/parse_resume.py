@@ -41,7 +41,9 @@ logger = logging.getLogger("resume_parser")
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Parse resume file into structured profile JSON via LangGraph")
+    parser = argparse.ArgumentParser(
+        description="Parse resume file into structured profile JSON via LangGraph"
+    )
     parser.add_argument("--file", "-f", type=str, required=True, help="Path to resume file")
     parser.add_argument("--file-name", type=str, default="", help="Original file name")
     parser.add_argument(
@@ -100,9 +102,9 @@ def build_llm_client(llm_config_arg: str | None) -> OpenAIChatClient:
                 default_cfg = load_llm_config()
                 if _is_masked_key(api_key):
                     api_key = default_cfg.api_key
-                if (
-                    not base_url or base_url == "https://api.openai.com/v1"
-                ) and _is_masked_key(config_data.get("api_key")):
+                if (not base_url or base_url == "https://api.openai.com/v1") and _is_masked_key(
+                    config_data.get("api_key")
+                ):
                     base_url = default_cfg.base_url
                     model = default_cfg.model
 
@@ -187,7 +189,9 @@ def main() -> None:
                     memory_file_path=args.memory_path,
                 ).save_memory_profile(prof_obj)
             except Exception as mem_err:
-                logger.warning("Failed to sync profile to memory file %s: %s", args.memory_path, mem_err)
+                logger.warning(
+                    "Failed to sync profile to memory file %s: %s", args.memory_path, mem_err
+                )
 
         logger.info(
             "Resume successfully processed by LangGraph lifecycle for candidate: %s",
@@ -207,7 +211,9 @@ def main() -> None:
             + "\n"
         )
     except Exception as e:
-        logger.error("LangGraph resume lifecycle error: %s\nTraceback:\n%s", e, traceback.format_exc())
+        logger.error(
+            "LangGraph resume lifecycle error: %s\nTraceback:\n%s", e, traceback.format_exc()
+        )
         sys.stderr.write(f"LangGraph parse warning: {e}, falling back to heuristic normalizer.\n")
         try:
             normalized = ProfileNormalizer.normalize({}, raw_text=raw_text)

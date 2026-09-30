@@ -94,7 +94,6 @@ def resolve_text_constraint_limit(response_text: Any) -> int:
     return POCKETBASE_DEFAULT_TEXT_MAX_CHARS
 
 
-
 class BaseTaskBroker(ABC):
     """Abstract interface for the State Stream Task Broker.
 

@@ -71,15 +71,11 @@ def test_is_communication_expired_zero_cooldown_is_permanent():
 def test_is_communication_expired_falls_back_to_created_for_historical_contacts():
     """Platform historical contacts carry no applied_at, so their ingestion date governs expiry."""
     assert (
-        is_communication_expired(
-            {"applied_at": "", "created": _iso_days_ago(45)}, cooldown_days=30
-        )
+        is_communication_expired({"applied_at": "", "created": _iso_days_ago(45)}, cooldown_days=30)
         is True
     )
     assert (
-        is_communication_expired(
-            {"applied_at": "", "created": _iso_days_ago(3)}, cooldown_days=30
-        )
+        is_communication_expired({"applied_at": "", "created": _iso_days_ago(3)}, cooldown_days=30)
         is False
     )
 
@@ -172,7 +168,10 @@ async def test_applied_direct_companies_honours_cooldown_window(broker):
     )
 
     assert await broker.job_store.get_applied_direct_companies(cooldown_days=30) == {"商汤科技"}
-    assert await broker.job_store.get_applied_direct_companies(cooldown_days=0) == {"商汤科技", "小红书"}
+    assert await broker.job_store.get_applied_direct_companies(cooldown_days=0) == {
+        "商汤科技",
+        "小红书",
+    }
 
 
 # --------------------------------------------------------------------------------------
@@ -199,7 +198,10 @@ async def test_scrape_skips_card_already_recorded_as_applied(broker, mock_driver
     config = WorkerConfig(worker_id="test-worker-applied-skip", poll_interval_sec=0.01)
     context = WorkerContext(config=config, driver=mock_driver)
     worker = AutomationWorker(
-        config=config, broker=broker, context=context, handlers=[ScrapeJobsHandler(llm_client=MagicMock())]
+        config=config,
+        broker=broker,
+        context=context,
+        handlers=[ScrapeJobsHandler(llm_client=MagicMock())],
     )
 
     task = await broker.create_task(
@@ -249,7 +251,10 @@ async def test_scrape_skips_other_roles_from_communicated_direct_hire_company(br
     config = WorkerConfig(worker_id="test-worker-company-exclusion", poll_interval_sec=0.01)
     context = WorkerContext(config=config, driver=mock_driver)
     worker = AutomationWorker(
-        config=config, broker=broker, context=context, handlers=[ScrapeJobsHandler(llm_client=MagicMock())]
+        config=config,
+        broker=broker,
+        context=context,
+        handlers=[ScrapeJobsHandler(llm_client=MagicMock())],
     )
 
     task = await broker.create_task(
@@ -298,7 +303,10 @@ async def test_scrape_admits_headhunter_roles_from_same_company_name(broker, moc
     config = WorkerConfig(worker_id="test-worker-hh-exempt", poll_interval_sec=0.01)
     context = WorkerContext(config=config, driver=mock_driver)
     worker = AutomationWorker(
-        config=config, broker=broker, context=context, handlers=[ScrapeJobsHandler(llm_client=MagicMock())]
+        config=config,
+        broker=broker,
+        context=context,
+        handlers=[ScrapeJobsHandler(llm_client=MagicMock())],
     )
 
     task = await broker.create_task(
@@ -348,7 +356,10 @@ async def test_masked_company_names_never_join_the_exclusion_pool(broker, mock_d
     config = WorkerConfig(worker_id="test-worker-masked-exempt", poll_interval_sec=0.01)
     context = WorkerContext(config=config, driver=mock_driver)
     worker = AutomationWorker(
-        config=config, broker=broker, context=context, handlers=[ScrapeJobsHandler(llm_client=MagicMock())]
+        config=config,
+        broker=broker,
+        context=context,
+        handlers=[ScrapeJobsHandler(llm_client=MagicMock())],
     )
 
     await broker.create_task(
@@ -384,7 +395,10 @@ async def test_newly_communicated_company_is_cached_within_the_same_run(broker, 
     config = WorkerConfig(worker_id="test-worker-dynamic-cache", poll_interval_sec=0.01)
     context = WorkerContext(config=config, driver=mock_driver)
     worker = AutomationWorker(
-        config=config, broker=broker, context=context, handlers=[ScrapeJobsHandler(llm_client=MagicMock())]
+        config=config,
+        broker=broker,
+        context=context,
+        handlers=[ScrapeJobsHandler(llm_client=MagicMock())],
     )
 
     task = await broker.create_task(
@@ -400,7 +414,10 @@ async def test_newly_communicated_company_is_cached_within_the_same_run(broker, 
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_list = mock_list_cls.return_value
         mock_list.get_feed_bottom_boundary.return_value = None
-        mock_list.extract_visible_job_cards.return_value = [located(first_role), located(second_role)]
+        mock_list.extract_visible_job_cards.return_value = [
+            located(first_role),
+            located(second_role),
+        ]
         mock_search_cls.return_value.is_search_page.return_value = True
 
         mock_detail = mock_detail_cls.return_value
@@ -435,7 +452,10 @@ async def test_expired_communication_releases_card_for_reevaluation(broker, mock
     config = WorkerConfig(worker_id="test-worker-cooldown-release", poll_interval_sec=0.01)
     context = WorkerContext(config=config, driver=mock_driver)
     worker = AutomationWorker(
-        config=config, broker=broker, context=context, handlers=[ScrapeJobsHandler(llm_client=MagicMock())]
+        config=config,
+        broker=broker,
+        context=context,
+        handlers=[ScrapeJobsHandler(llm_client=MagicMock())],
     )
 
     await broker.create_task(
@@ -510,7 +530,10 @@ async def test_expired_communication_releases_record_back_to_candidate_pool(brok
     config = WorkerConfig(worker_id="test-worker-cooldown-transition", poll_interval_sec=0.01)
     context = WorkerContext(config=config, driver=mock_driver)
     worker = AutomationWorker(
-        config=config, broker=broker, context=context, handlers=[ScrapeJobsHandler(llm_client=MagicMock())]
+        config=config,
+        broker=broker,
+        context=context,
+        handlers=[ScrapeJobsHandler(llm_client=MagicMock())],
     )
 
     await broker.create_task(
@@ -692,7 +715,10 @@ async def test_permanent_cooldown_keeps_excluding_old_communications(broker, moc
     config = WorkerConfig(worker_id="test-worker-permanent-cooldown", poll_interval_sec=0.01)
     context = WorkerContext(config=config, driver=mock_driver)
     worker = AutomationWorker(
-        config=config, broker=broker, context=context, handlers=[ScrapeJobsHandler(llm_client=MagicMock())]
+        config=config,
+        broker=broker,
+        context=context,
+        handlers=[ScrapeJobsHandler(llm_client=MagicMock())],
     )
 
     await broker.create_task(

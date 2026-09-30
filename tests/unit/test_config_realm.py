@@ -100,7 +100,9 @@ def test_the_environment_sits_above_every_file(
 def test_the_nested_chat_block_deep_merges(tmp_path: Path) -> None:
     """A partial override must not drop a sibling key (ADR 0010)."""
     low = tmp_path / "example.yaml"
-    low.write_text("chat:\n  rejection_reply_text: '收到 谢谢'\n  max_scan_depth: 30\n", encoding="utf-8")
+    low.write_text(
+        "chat:\n  rejection_reply_text: '收到 谢谢'\n  max_scan_depth: 30\n", encoding="utf-8"
+    )
     high = tmp_path / "local.yaml"
     high.write_text("chat:\n  rejection_reply_text: '感谢回复'\n", encoding="utf-8")
 
@@ -183,7 +185,9 @@ def test_the_environment_is_part_of_the_cache_key(tmp_path: Path, monkeypatch) -
 def test_the_legacy_file_is_part_of_the_cache_key(tmp_path: Path, monkeypatch) -> None:
     """It is resolved relative to the working directory, so two loads can differ on it."""
     (tmp_path / "config").mkdir()
-    (tmp_path / "config" / "llm.local.yaml").write_text("api_key: 'sk-from-cwd'\n", encoding="utf-8")
+    (tmp_path / "config" / "llm.local.yaml").write_text(
+        "api_key: 'sk-from-cwd'\n", encoding="utf-8"
+    )
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("boss_agent.settings.DEFAULT_CONFIG_SEARCH_PATHS", [])
 

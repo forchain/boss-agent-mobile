@@ -96,7 +96,9 @@ def test_chat_page_send_message_flow():
     chat_page.click_send = MagicMock(return_value=True)  # type: ignore[method-assign]
 
     assert chat_page.send_message("收到 谢谢", timeout_sec=3.0) is True
-    chat_page.type_greeting_message.assert_called_once_with("收到 谢谢", timeout_sec=3.0, clear_first=True)
+    chat_page.type_greeting_message.assert_called_once_with(
+        "收到 谢谢", timeout_sec=3.0, clear_first=True
+    )
     chat_page.click_send.assert_called_once_with(timeout_sec=3.0)
 
 
@@ -117,4 +119,3 @@ def test_chat_page_clear_message_input():
     assert chat_page.clear_message_input(timeout_sec=2.0) is True
     chat_page.find_by_key.assert_called_with("chat.message_input", timeout_sec=2.0)
     mock_input.clear.assert_called_once()
-

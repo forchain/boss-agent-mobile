@@ -298,4 +298,3 @@ def test_evaluate_match_build_llm_client_fallback_on_masked_key():
     masked_json = '{"provider":"openai","base_url":"https://api.minimaxi.com/v1","api_key":"sk-cp-j••••••••••••uG8w","model":"MiniMax-M3"}'
     client = build_llm_client(masked_json)
     assert "•" not in str(client.config.api_key or "")
-

@@ -245,7 +245,9 @@ class GitWorktreeManager:
                     updated_worktree=True,
                 )
 
-            merge_res = self._run_git(["merge", "--ff-only", f"refs/remotes/{remote}/main"], cwd=main_wt)
+            merge_res = self._run_git(
+                ["merge", "--ff-only", f"refs/remotes/{remote}/main"], cwd=main_wt
+            )
             if merge_res.returncode == 0:
                 return MainSyncStatus(
                     base_ref="main",
@@ -256,7 +258,11 @@ class GitWorktreeManager:
                 )
             else:
                 # Merge failed (e.g. untracked file collision or non-ff diverged history)
-                err_msg = merge_res.stderr.strip() or merge_res.stdout.strip() or "Fast-forward merge failed"
+                err_msg = (
+                    merge_res.stderr.strip()
+                    or merge_res.stdout.strip()
+                    or "Fast-forward merge failed"
+                )
                 warning = (
                     f"⚠️ 本地 main 分支与远程同步失败 ({main_wt})！\n"
                     f"👉 失败原因: {err_msg}\n"
@@ -473,9 +479,7 @@ class ConfigSymlinkManager:
 
         return sorted(shared_files, key=lambda p: str(p))
 
-    def link_boss_agent(
-        self, target_worktree: Path, dry_run: bool = False
-    ) -> SymlinkEntry | None:
+    def link_boss_agent(self, target_worktree: Path, dry_run: bool = False) -> SymlinkEntry | None:
         """Symlink .boss_agent directory so worktree shares the main branch's database and runtime storage."""
         target_worktree = target_worktree.resolve()
         if target_worktree == self.main_repo_root:
@@ -801,9 +805,7 @@ def print_rich_report(result: WorktreeInitResult, dry_run: bool = False) -> None
     info_table.add_row("Base Commit", result.main_commit or "N/A")
 
     if result.base_ref != "main":
-        info_table.add_row(
-            "Base Ref", f"[bold yellow]{result.base_ref} (fallback)[/bold yellow]"
-        )
+        info_table.add_row("Base Ref", f"[bold yellow]{result.base_ref} (fallback)[/bold yellow]")
     else:
         info_table.add_row("Base Ref", f"[green]{result.base_ref}[/green]")
 
@@ -813,7 +815,9 @@ def print_rich_report(result: WorktreeInitResult, dry_run: bool = False) -> None
             "[bold yellow]⚠️ Dirty (Uncommitted changes - skipped)[/bold yellow]",
         )
     elif result.main_updated:
-        info_table.add_row("Local main Status", "[bold green]✅ Updated (fast-forwarded)[/bold green]")
+        info_table.add_row(
+            "Local main Status", "[bold green]✅ Updated (fast-forwarded)[/bold green]"
+        )
     else:
         info_table.add_row("Local main Status", "[dim]Up to date[/dim]")
 
@@ -872,9 +876,7 @@ def main() -> None:
         "--branch", "-b", help="Git branch name (defaults to current branch)", default=None
     )
     parser.add_argument("--path", "-p", help="Custom worktree destination directory", default=None)
-    parser.add_argument(
-        "--workspaces-dir", help="Custom parent workspaces directory", default=None
-    )
+    parser.add_argument("--workspaces-dir", help="Custom parent workspaces directory", default=None)
     parser.add_argument(
         "--fetch",
         action=argparse.BooleanOptionalAction,

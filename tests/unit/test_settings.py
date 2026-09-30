@@ -390,9 +390,7 @@ def test_resolve_server_url_explicit_arg_overrides_all(tmp_path: Path):
     custom_yaml.write_text("server_url: 'http://0.0.0.0:4723'\n", encoding="utf-8")
 
     with patch.dict("os.environ", {"APPIUM_SERVER_URL": "http://env-host:4723"}, clear=True):
-        url = resolve_server_url(
-            explicit_url="http://cli-override:4723/", config_path=custom_yaml
-        )
+        url = resolve_server_url(explicit_url="http://cli-override:4723/", config_path=custom_yaml)
         assert url == "http://cli-override:4723"
 
 
@@ -401,10 +399,13 @@ def test_worker_config_defaults_to_resolved_appium_url(tmp_path: Path):
     custom_yaml = tmp_path / "settings.local.yaml"
     custom_yaml.write_text("server_url: 'http://0.0.0.0:4723'\n", encoding="utf-8")
 
-    with patch(
-        "boss_agent.settings.DEFAULT_CONFIG_SEARCH_PATHS",
-        [custom_yaml],
-    ), patch.dict("os.environ", {}, clear=True):
+    with (
+        patch(
+            "boss_agent.settings.DEFAULT_CONFIG_SEARCH_PATHS",
+            [custom_yaml],
+        ),
+        patch.dict("os.environ", {}, clear=True),
+    ):
         cfg = WorkerConfig()
         assert cfg.appium_url == "http://0.0.0.0:4723"
 
@@ -473,9 +474,6 @@ def test_load_settings_legacy_llm_fallback(tmp_path: Path, monkeypatch):
         assert settings["base_url"] == "https://api.custom.com/v1"
 
 
-
-
-
 # ---------------------------------------------------------------------------
 # Chat acknowledgment settings (Issue #208)
 # ---------------------------------------------------------------------------
@@ -518,9 +516,7 @@ def test_resolve_chat_acknowledgment_settings_ignores_invalid_values():
         resolved = resolve_chat_acknowledgment_settings(
             settings={"chat": {"rejection_reply_text": "   ", "max_scan_depth": "not-a-number"}}
         )
-        zero_depth = resolve_chat_acknowledgment_settings(
-            settings={"chat": {"max_scan_depth": 0}}
-        )
+        zero_depth = resolve_chat_acknowledgment_settings(settings={"chat": {"max_scan_depth": 0}})
 
     assert resolved.rejection_reply_text == "收到 谢谢"
     assert resolved.max_scan_depth == 30
@@ -621,9 +617,7 @@ def test_settings_example_declares_chat_acknowledgment_defaults():
     assert example.is_file(), "config/settings.example.yaml is missing"
 
     with patch.dict("os.environ", {}, clear=True):
-        declared = resolve_chat_acknowledgment_settings(
-            settings=load_settings(config_path=example)
-        )
+        declared = resolve_chat_acknowledgment_settings(settings=load_settings(config_path=example))
 
     assert declared.rejection_reply_text == "收到 谢谢"
     assert declared.max_scan_depth == 30

@@ -215,9 +215,7 @@ def _parse_file(path: Path) -> dict[str, Any] | None:
         content = path.read_text(encoding="utf-8")
         if path.suffix in (".yaml", ".yml"):
             yaml = _compat_attr("yaml", None)
-            loaded = (
-                yaml.safe_load(content) if yaml is not None else _parse_yaml_fallback(content)
-            )
+            loaded = yaml.safe_load(content) if yaml is not None else _parse_yaml_fallback(content)
         else:
             loaded = json.loads(content)
     except Exception:

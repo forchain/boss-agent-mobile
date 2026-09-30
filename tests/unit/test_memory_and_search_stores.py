@@ -373,9 +373,7 @@ async def test_deleting_a_search_revokes_its_schedule(pb_session: FakePocketBase
 async def test_the_pocketbase_store_saves_the_collections_field_spellings() -> None:
     """The store is the one place that knows how a SavedSearch maps onto the record."""
     session = FakePocketBaseSession()
-    store = PocketBaseSavedSearchStore(
-        base_url="http://pb.test", session=session, headers=_headers
-    )
+    store = PocketBaseSavedSearchStore(base_url="http://pb.test", session=session, headers=_headers)
     await store.save_saved_search(_search())
 
     stored = session.collections["saved_searches"]["s1"]

@@ -88,7 +88,10 @@ def test_evaluate_commute_distance_ignores_channel_dimension():
 
 
 def test_evaluate_commute_distance_respects_disabled_filter():
-    assert ScreeningPolicy(max_commute_distance_km=None).evaluate_commute_distance(500.0) == (True, "")
+    assert ScreeningPolicy(max_commute_distance_km=None).evaluate_commute_distance(500.0) == (
+        True,
+        "",
+    )
     assert ScreeningPolicy(enable_screening=False).evaluate_commute_distance(500.0) == (True, "")
 
 
@@ -100,7 +103,9 @@ def test_commute_filter_active_only_with_positive_ceiling():
     assert ScreeningPolicy(max_commute_distance_km=-5.0).is_commute_filter_active is False
     # Screening off means nothing can be rejected, so no probe should be paid for.
     assert (
-        ScreeningPolicy(max_commute_distance_km=40.0, enable_screening=False).is_commute_filter_active
+        ScreeningPolicy(
+            max_commute_distance_km=40.0, enable_screening=False
+        ).is_commute_filter_active
         is False
     )
 
@@ -169,12 +174,16 @@ def test_commute_limit_roundtrip_when_disabled():
 
 
 def test_commute_limit_coerces_blank_and_string_values():
-    assert ScreeningPolicy.from_dict({"max_commute_distance_km": ""}).max_commute_distance_km is None
     assert (
-        ScreeningPolicy.from_dict({"max_commute_distance_km": "null"}).max_commute_distance_km is None
+        ScreeningPolicy.from_dict({"max_commute_distance_km": ""}).max_commute_distance_km is None
     )
     assert (
-        ScreeningPolicy.from_dict({"max_commute_distance_km": "35.5"}).max_commute_distance_km == 35.5
+        ScreeningPolicy.from_dict({"max_commute_distance_km": "null"}).max_commute_distance_km
+        is None
+    )
+    assert (
+        ScreeningPolicy.from_dict({"max_commute_distance_km": "35.5"}).max_commute_distance_km
+        == 35.5
     )
 
 

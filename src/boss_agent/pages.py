@@ -733,7 +733,9 @@ class JobListPage(BaseBossPage):
             facets = self._read_card_facets(card_elem)
             # Only pay for the accessibility-tree walk when the locator reads were
             # incomplete — the parser decides that, so the rule lives in one place.
-            text_nodes = self._read_card_text_nodes(card_elem) if needs_text_fallback(facets) else []
+            text_nodes = (
+                self._read_card_text_nodes(card_elem) if needs_text_fallback(facets) else []
+            )
             parsed = parse_card(facets, text_nodes)
             if parsed is None:
                 continue
@@ -1230,7 +1232,9 @@ class JobDetailPage(BaseBossPage):
                 f"'{raw_text}'. Failing open."
             )
         else:
-            _log_info(f"📍 [Commute Probe] Parsed commute distance: {distance_km} km ('{raw_text}')")
+            _log_info(
+                f"📍 [Commute Probe] Parsed commute distance: {distance_km} km ('{raw_text}')"
+            )
         return distance_km, raw_text
 
     def _detail_scroll_offset(self) -> float | None:

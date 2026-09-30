@@ -24,7 +24,9 @@ from droid_agent_core.llm import LLMConfig, OpenAIChatClient  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Refine greeting with critique or refine the Greeting Prompt")
+    parser = argparse.ArgumentParser(
+        description="Refine greeting with critique or refine the Greeting Prompt"
+    )
     parser.add_argument(
         "--action",
         choices=["refine", "prompt-refine"],
@@ -52,9 +54,13 @@ def parse_args() -> argparse.Namespace:
         default="",
         help="Revised greeting after revision (for prompt-refine)",
     )
-    parser.add_argument("--critique", "-c", type=str, default="", help="Candidate critique/feedback")
+    parser.add_argument(
+        "--critique", "-c", type=str, default="", help="Candidate critique/feedback"
+    )
     parser.add_argument("--history", type=str, default=None, help="Dialogue history JSON string")
-    parser.add_argument("--profile", "-p", type=str, default=None, help="Candidate profile JSON string")
+    parser.add_argument(
+        "--profile", "-p", type=str, default=None, help="Candidate profile JSON string"
+    )
     parser.add_argument(
         "--greeting-prompt",
         type=str,
@@ -134,10 +140,14 @@ def main() -> None:
 
             mgr = ResumeMemoryManager()
             cached = mgr.load_cached_memory()
-            if cached and (cached.profile_document or cached.work_experiences or cached.core_skills) and (
-                not candidate_profile
-                or candidate_profile.name in ("测试候选人", "求职者", "")
-                or not candidate_profile.profile_document
+            if (
+                cached
+                and (cached.profile_document or cached.work_experiences or cached.core_skills)
+                and (
+                    not candidate_profile
+                    or candidate_profile.name in ("测试候选人", "求职者", "")
+                    or not candidate_profile.profile_document
+                )
             ):
                 candidate_profile = cached
         except Exception as e:
@@ -201,9 +211,7 @@ def main() -> None:
                 current_prompt=args.greeting_prompt,
             )
             sys.stdout.write(
-                json.dumps(
-                    {"success": True, "refined_prompt": refined_prompt}, ensure_ascii=False
-                )
+                json.dumps({"success": True, "refined_prompt": refined_prompt}, ensure_ascii=False)
                 + "\n"
             )
         except Exception as e:
@@ -221,6 +229,7 @@ def main() -> None:
                 )
                 + "\n"
             )
+
 
 if __name__ == "__main__":
     main()

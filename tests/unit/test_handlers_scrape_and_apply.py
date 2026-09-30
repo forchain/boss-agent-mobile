@@ -79,7 +79,9 @@ async def test_scrape_jobs_handler_extracts_and_persists_jobs(broker, mock_drive
 
 
 @pytest.mark.asyncio
-async def test_scrape_enrichment_falls_back_to_jd_digest_when_card_has_no_snippet(broker, mock_driver):
+async def test_scrape_enrichment_falls_back_to_jd_digest_when_card_has_no_snippet(
+    broker, mock_driver
+):
     """A popup card without a snippet must not persist an empty digest; the enrichment
     should fall back to the digest derived from the full job description."""
     from boss_agent.models import ChatButtonState, JobPosting

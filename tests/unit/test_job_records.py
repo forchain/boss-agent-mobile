@@ -133,7 +133,12 @@ async def test_pocketbase_broker_job_records_mocked(monkeypatch):
     mock_session.patch.return_value = patch_resp
 
     res = await broker.job_store.upsert_job_record(
-        {"title": "Job 1", "company_name": "Comp 1", "recruiter_name": "Rec 1", "fingerprint": "test-fp"}
+        {
+            "title": "Job 1",
+            "company_name": "Comp 1",
+            "recruiter_name": "Rec 1",
+            "fingerprint": "test-fp",
+        }
     )
     assert res["id"] == "rec-123"
     assert mock_session.patch.called
@@ -174,7 +179,9 @@ async def test_pocketbase_broker_job_records_no_fallback_on_404(tmp_path, monkey
     mock_session = MagicMock()
     broker = PocketBaseTaskBroker(base_url="https://remote-pb:4433", session=mock_session)
 
-    get_404 = MagicMock(status_code=404, text='{"message":"Missing or invalid collection context."}')
+    get_404 = MagicMock(
+        status_code=404, text='{"message":"Missing or invalid collection context."}'
+    )
     mock_session.get.return_value = get_404
 
     # 1. has_job_fingerprint returns False and does not create fallback

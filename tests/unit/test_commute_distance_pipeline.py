@@ -61,7 +61,11 @@ def test_graph_carries_probed_distance_into_the_state():
 
 def test_app_enforced_filter_node_flags_distance_beyond_ceiling():
     state: JobApplicationState = {
-        "card": {"title": "大模型 Agent 平台架构师", "company_name": "某科技公司", "commute_distance_km": DISTANT},
+        "card": {
+            "title": "大模型 Agent 平台架构师",
+            "company_name": "某科技公司",
+            "commute_distance_km": DISTANT,
+        },
         "screening_policy": ScreeningPolicy(max_commute_distance_km=40.0).to_dict(),
     }
 
@@ -74,7 +78,11 @@ def test_app_enforced_filter_node_flags_distance_beyond_ceiling():
 
 def test_app_enforced_filter_node_passes_distance_within_ceiling():
     state: JobApplicationState = {
-        "card": {"title": "Agent 工程师", "company_name": "某科技公司", "commute_distance_km": NEARBY},
+        "card": {
+            "title": "Agent 工程师",
+            "company_name": "某科技公司",
+            "commute_distance_km": NEARBY,
+        },
         "screening_policy": ScreeningPolicy(max_commute_distance_km=40.0).to_dict(),
     }
 
@@ -92,7 +100,11 @@ def test_app_enforced_filter_node_fails_open_without_distance():
 
 def test_distant_job_without_whitelist_hit_is_rejected_by_router():
     state: JobApplicationState = {
-        "card": {"title": "Java 后端开发工程师", "company_name": "某银行", "commute_distance_km": DISTANT},
+        "card": {
+            "title": "Java 后端开发工程师",
+            "company_name": "某银行",
+            "commute_distance_km": DISTANT,
+        },
         "screening_policy": ScreeningPolicy(
             max_commute_distance_km=40.0, title_whitelist=["大模型"]
         ).to_dict(),
@@ -104,7 +116,11 @@ def test_distant_job_without_whitelist_hit_is_rejected_by_router():
 
 def test_distant_job_is_rescued_by_whitelist_relaxation():
     state: JobApplicationState = {
-        "card": {"title": "大模型 Agent 平台架构师", "company_name": "某科技", "commute_distance_km": DISTANT},
+        "card": {
+            "title": "大模型 Agent 平台架构师",
+            "company_name": "某科技",
+            "commute_distance_km": DISTANT,
+        },
         "screening_policy": ScreeningPolicy(
             max_commute_distance_km=40.0, title_whitelist=["大模型"]
         ).to_dict(),

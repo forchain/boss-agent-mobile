@@ -211,6 +211,7 @@ def test_worktree_manager_update_existing_worktree_already_ancestor(tmp_path):
 
     manager = GitWorktreeManager(cwd=str(tmp_path))
     with patch.object(manager, "_run_git") as mock_git:
+
         def mock_git_side_effect(args, **kwargs):
             if "branch" in args and "--show-current" in args:
                 return MagicMock(returncode=0, stdout="feat/existing\n", stderr="")
@@ -422,6 +423,7 @@ def test_init_worktree_default_current_worktree(tmp_path):
         ),
         patch("scripts.init_worktree.GitWorktreeManager._run_git") as mock_git,
     ):
+
         def mock_git_side_effect(args, **kwargs):
             if "merge-base" in args and "--is-ancestor" in args:
                 return MagicMock(returncode=1, stdout="", stderr="")
@@ -499,7 +501,9 @@ def test_worktree_manager_sync_main_worktree_clean_ff_merge(tmp_path):
                 # Working tree clean
                 return MagicMock(returncode=0, stdout="", stderr="")
             if "merge" in args and "--ff-only" in args:
-                return MagicMock(returncode=0, stdout="Updating abcdef..target_sha_123\nFast-forward", stderr="")
+                return MagicMock(
+                    returncode=0, stdout="Updating abcdef..target_sha_123\nFast-forward", stderr=""
+                )
             if "rev-parse" in args and "refs/heads/main" in args:
                 return MagicMock(returncode=0, stdout="target_sha_123\n", stderr="")
             return MagicMock(returncode=0, stdout="", stderr="")
@@ -516,8 +520,7 @@ def test_worktree_manager_sync_main_worktree_clean_ff_merge(tmp_path):
 
         # Verify merge was called on main_repo
         merge_called = any(
-            "merge" in args and "--ff-only" in args and cwd == main_repo
-            for args, cwd in calls
+            "merge" in args and "--ff-only" in args and cwd == main_repo for args, cwd in calls
         )
         assert merge_called is True
 
@@ -574,7 +577,9 @@ def test_init_worktree_with_dirty_main_end_to_end(tmp_path):
     (main_repo / "config" / "settings.local.yaml").write_text("k: v")
 
     with (
-        patch("scripts.init_worktree.GitWorktreeManager.get_main_repo_root", return_value=main_repo),
+        patch(
+            "scripts.init_worktree.GitWorktreeManager.get_main_repo_root", return_value=main_repo
+        ),
         patch("scripts.init_worktree.GitWorktreeManager.sync_main_branch") as mock_sync,
         patch("scripts.init_worktree.GitWorktreeManager.create_or_update_worktree") as mock_create,
     ):
@@ -611,4 +616,3 @@ def test_init_worktree_with_dirty_main_end_to_end(tmp_path):
 
         # Test printing rich report with warning doesn't fail
         print_rich_report(result, dry_run=False)
-

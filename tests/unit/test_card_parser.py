@@ -69,7 +69,9 @@ def test_a_company_that_is_really_the_title_is_rejected_then_recovered_from_text
     Left alone it poisons the fingerprint — the same job saves twice under different
     keys — and smuggles blacklisted employers past company-name screening.
     """
-    facets = _facets(title="Senior AI Agent Engineer（英语口语）", company="Senior AI Agent Engineer（英语口语）")
+    facets = _facets(
+        title="Senior AI Agent Engineer（英语口语）", company="Senior AI Agent Engineer（英语口语）"
+    )
     assert needs_text_fallback(facets) is True, (
         "the fallback decision must be made on the interpreted reads: the raw company "
         "read looks complete but interprets to nothing"
@@ -101,9 +103,7 @@ def test_an_incomplete_card_is_skipped_rather_than_persisted() -> None:
 
 def test_a_location_read_holding_the_recruiter_title_is_moved_to_the_recruiter() -> None:
     """A known mis-read: the city locator returns the recruiter's title instead."""
-    parsed = parse_card(
-        _facets(title="算法工程师", company="深至科技", location="猎头顾问")
-    )
+    parsed = parse_card(_facets(title="算法工程师", company="深至科技", location="猎头顾问"))
     assert parsed is not None
     assert parsed.location == ""
     assert parsed.recruiter_title == "猎头顾问"

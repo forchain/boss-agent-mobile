@@ -59,7 +59,8 @@ class AutoApplyHandler(BaseTaskHandler):
         config.target_action = TargetAction.AUTO_APPLY
 
         mode_desc = (
-            "Auto-Send" if (config.auto_send and not config.preview_only)
+            "Auto-Send"
+            if (config.auto_send and not config.preview_only)
             else "Preview Draft Only (Safe Mode)"
         )
         search_name = payload.get("search_name") or payload.get("saved_search_name") or ""
@@ -207,9 +208,7 @@ class AutoApplyHandler(BaseTaskHandler):
                     output={
                         "applied": False,
                         "status": "skipped_enterprise_exclusion",
-                        "reason": (
-                            f"直招企业 '{target_company}' 已有沟通记录，处于避嫌冷却期内"
-                        ),
+                        "reason": (f"直招企业 '{target_company}' 已有沟通记录，处于避嫌冷却期内"),
                     },
                 )
         return None

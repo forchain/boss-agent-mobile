@@ -120,6 +120,11 @@ def enriched_record(
         "screening_audit": verdict.screening_audit if verdict else "",
         "search_keywords": [keyword] if keyword else [],
         "source_task_id": source_task_id,
-        "commute_distance_km": getattr(posting, "commute_distance_km", None) or getattr(card, "commute_distance_km", None),
-        "commute_distance_text": (getattr(posting, "commute_distance_text", "") or getattr(card, "commute_distance_text", "") or ""),
+        "commute_distance_km": getattr(posting, "commute_distance_km", None)
+        or getattr(card, "commute_distance_km", None),
+        "commute_distance_text": (
+            getattr(posting, "commute_distance_text", "")
+            or getattr(card, "commute_distance_text", "")
+            or ""
+        ),
     }

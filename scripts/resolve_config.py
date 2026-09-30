@@ -62,9 +62,7 @@ def main(argv: list[str] | None = None) -> int:
         print(output)
 
     missing = [
-        key
-        for key in args.keys
-        if not (settings.get(key) or settings.get("chat", {}).get(key))
+        key for key in args.keys if not (settings.get(key) or settings.get("chat", {}).get(key))
     ]
     return 1 if missing else 0
 

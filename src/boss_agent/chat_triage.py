@@ -524,8 +524,7 @@ class ChatTriage:
                     if consecutive_empty_scrolls >= 2:
                         stop_reason = StopReason.SCROLL_CEILING
                         await self._log(
-                            "🛑 [Scroll Ceiling] 连续 2 次滑动未发现新卡片（列表已触底），"
-                            "终止扫描"
+                            "🛑 [Scroll Ceiling] 连续 2 次滑动未发现新卡片（列表已触底），终止扫描"
                         )
                         break
                 else:
@@ -642,9 +641,7 @@ class ChatTriage:
 
         if not verdict.is_rejection:
             note = f"（判定异常: {verdict.error}）" if verdict.error else ""
-            await self._log(
-                f"⏭️ [正常消息·LLM判定] '{sender}': {preview} {note}— 保留，不处理"
-            )
+            await self._log(f"⏭️ [正常消息·LLM判定] '{sender}': {preview} {note}— 保留，不处理")
             return TriageOutcome(kind=TriageKind.PRESERVED)
 
         await self._log(
@@ -717,9 +714,7 @@ class ChatTriage:
         try:
             written = self.policy.persist_company_blacklist(company)
         except Exception as exc:  # noqa: BLE001 - the in-memory policy still holds
-            await self._log(
-                f"⚠️ [持久化] 企业 '{company}' 已加入内存黑名单，但写入配置失败: {exc}"
-            )
+            await self._log(f"⚠️ [持久化] 企业 '{company}' 已加入内存黑名单，但写入配置失败: {exc}")
             return True, False
 
         if written is None:
@@ -729,9 +724,7 @@ class ChatTriage:
             )
             return True, False
 
-        await self._log(
-            f"🚫 [黑名单] 已将企业 '{company}' 加入公司黑名单并写入 {written}"
-        )
+        await self._log(f"🚫 [黑名单] 已将企业 '{company}' 加入公司黑名单并写入 {written}")
         return True, False
 
     async def _acknowledge(self, card: CommunicationCard) -> TriageOutcome:
@@ -742,9 +735,7 @@ class ChatTriage:
             return TriageOutcome(kind=TriageKind.FAILED)
 
         if not self.chat_actor.send_reply(self.settings.rejection_reply_text):
-            await self._log(
-                f"❌ [Send Error] 向 '{sender}' 发送礼貌回复失败，回退到列表"
-            )
+            await self._log(f"❌ [Send Error] 向 '{sender}' 发送礼貌回复失败，回退到列表")
             self.chat_actor.back_to_list()
             return TriageOutcome(kind=TriageKind.FAILED, navigated=True)
 
@@ -760,9 +751,7 @@ class ChatTriage:
             self.chat_actor.back_to_list()
             return TriageOutcome(kind=TriageKind.FAILED, navigated=True)
 
-        await self._log(
-            f"🗑️ [Disinterest] 已将 '{sender}' 标记为不感兴趣（重复推荐）"
-        )
+        await self._log(f"🗑️ [Disinterest] 已将 '{sender}' 标记为不感兴趣（重复推荐）")
 
         if not self.list_reader.confirm_back_on_list():
             await self._log(

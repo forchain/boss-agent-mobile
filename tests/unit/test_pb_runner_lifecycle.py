@@ -65,7 +65,9 @@ def test_pocketbase_preprovision_and_clean_boot(tmp_path: Path, pb_bin: str):
         healthy = False
         for _ in range(30):
             try:
-                with urllib.request.urlopen(f"http://127.0.0.1:{test_port}/api/health", timeout=1.0) as resp:
+                with urllib.request.urlopen(
+                    f"http://127.0.0.1:{test_port}/api/health", timeout=1.0
+                ) as resp:
                     if resp.status == 200:
                         healthy = True
                         break
@@ -74,7 +76,9 @@ def test_pocketbase_preprovision_and_clean_boot(tmp_path: Path, pb_bin: str):
         assert healthy, "PocketBase failed to become healthy within 3s"
 
         # 5. Check that saved_searches is immediately accessible with HTTP 200 (not 404!)
-        with urllib.request.urlopen(f"http://127.0.0.1:{test_port}/api/collections/saved_searches/records") as resp:
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{test_port}/api/collections/saved_searches/records"
+        ) as resp:
             assert resp.status == 200
             data = resp.read().decode("utf-8")
             assert "default_agent_search" in data
@@ -95,7 +99,9 @@ def test_pocketbase_preprovision_and_clean_boot(tmp_path: Path, pb_bin: str):
         healthy = False
         for _ in range(30):
             try:
-                with urllib.request.urlopen(f"http://127.0.0.1:{test_port}/api/health", timeout=1.0) as resp:
+                with urllib.request.urlopen(
+                    f"http://127.0.0.1:{test_port}/api/health", timeout=1.0
+                ) as resp:
                     if resp.status == 200:
                         healthy = True
                         break
@@ -104,7 +110,9 @@ def test_pocketbase_preprovision_and_clean_boot(tmp_path: Path, pb_bin: str):
         assert healthy
 
         # Verify saved_searches collection and records remain accessible
-        with urllib.request.urlopen(f"http://127.0.0.1:{test_port}/api/collections/saved_searches/records") as resp:
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{test_port}/api/collections/saved_searches/records"
+        ) as resp:
             assert resp.status == 200
             data = resp.read().decode("utf-8")
             assert "default_agent_search" in data
