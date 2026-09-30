@@ -38,15 +38,11 @@ WEB_URL="http://${WEB_HOST}:${WEB_PORT}"
 # listening socket to be handed back to the OS.
 WEB_STOP_TIMEOUT_SEC="${WEB_STOP_TIMEOUT_SEC:-10}"
 
-process_alive() {
-    runner_process_alive "${1:-}"
-}
-
 get_running_web_pid() {
     if [[ -f "${PID_FILE}" ]]; then
         local PID
         PID="$(cat "${PID_FILE}" 2>/dev/null || true)"
-        if [[ -n "${PID}" ]] && process_alive "${PID}"; then
+        if [[ -n "${PID}" ]] && runner_process_alive "${PID}"; then
             if ! runner_process_cwd_alive "${PID}"; then
                 rm -f "${PID_FILE}"
             else
@@ -58,7 +54,7 @@ get_running_web_pid() {
 
     # Fallback to the process listening on the port
     local PORT_PID
-    PORT_PID="$(listening_pid)"
+    PORT_PID="$(runner_port_listener_pid "${WEB_PORT}")"
     if [[ -n "${PORT_PID}" ]]; then
         if runner_process_cwd_alive "${PORT_PID}"; then
             echo "${PORT_PID}" > "${PID_FILE}"
@@ -69,33 +65,12 @@ get_running_web_pid() {
     echo ""
 }
 
-listening_pid() {
-    # LISTEN-only: a browser, curl, or a test client merely *connected* to the port must
-    # never be mistaken for the dashboard and must never be signalled.
-    runner_port_listener_pid "${WEB_PORT}"
-}
-
-attach_logs() {
-    local PID="$1"
-    echo "ℹ️ SvelteKit Web Dashboard is already running (PID: ${PID}) at ${WEB_URL}"
-    echo "👀 Attaching to live log stream (${LOG_FILE})... (Press Ctrl+C to detach)"
-    echo "----------------------------------------------------------------------"
-
-    trap 'echo -e "\n👋 Detached from Web Dashboard logs (Web server is still running in background)."; exit 0' INT TERM
-
-    if [[ ! -f "${LOG_FILE}" ]]; then
-        touch "${LOG_FILE}"
-    fi
-
-    exec tail -n 30 -f "${LOG_FILE}"
-}
-
 cmd_status() {
     echo "🔍 Checking SvelteKit Web Dashboard status..."
     local PID
     PID="$(get_running_web_pid)"
     local PORT_PID
-    PORT_PID="$(listening_pid)"
+    PORT_PID="$(runner_port_listener_pid "${WEB_PORT}")"
 
     if [[ -n "${PORT_PID}" ]] && ! runner_process_cwd_alive "${PORT_PID}"; then
         local STALE_CWD
@@ -122,28 +97,6 @@ cmd_status() {
     fi
 }
 
-log_web_event() {
-    runner_log_event "${LOG_FILE}" "$1"
-}
-
-port_in_use() {
-    [[ -n "$(listening_pid)" ]]
-}
-
-# Wait until the given predicate (a command receiving `PREDICATE_ARGS`) reports success,
-# re-checking once at the deadline so a state change during the final interval still counts.
-wait_until() {
-    runner_wait_until "$@"
-}
-
-process_gone() {
-    runner_process_gone "${1:-}"
-}
-
-port_released() {
-    ! port_in_use
-}
-
 cmd_stop() {
     echo "🛑 Stopping SvelteKit Web Dashboard..."
     local STOPPED=0
@@ -151,7 +104,7 @@ cmd_stop() {
     PID="$(get_running_web_pid)"
 
     if [[ -n "${PID}" ]]; then
-        log_web_event "🛑 [Web] ${RUNNER_WEB_SHUTDOWN_ACK}, shutting down Web Dashboard... (PID: ${PID}, port: ${WEB_PORT})"
+        runner_log_event "${LOG_FILE}" "🛑 [Web] ${RUNNER_WEB_SHUTDOWN_ACK}, shutting down Web Dashboard... (PID: ${PID}, port: ${WEB_PORT})"
         echo "   Shutdown feedback appended to ${LOG_FILE}"
         pkill -P "${PID}" 2>/dev/null || true
 
@@ -159,16 +112,16 @@ cmd_stop() {
         # their leases), then SIGKILL. The escalation itself is the library's, so every
         # service escalates identically.
         if ! runner_graceful_stop "${PID}" "${WEB_STOP_TIMEOUT_SEC}" "Web Dashboard"; then
-            log_web_event "⚠️ [Web] Graceful shutdown timed out after ${WEB_STOP_TIMEOUT_SEC}s; sending SIGKILL to PID ${PID}."
+            runner_log_event "${LOG_FILE}" "⚠️ [Web] Graceful shutdown timed out after ${WEB_STOP_TIMEOUT_SEC}s; sending SIGKILL to PID ${PID}."
         fi
         STOPPED=1
     fi
 
     # Reclaim the port from any process that outlived its parent (e.g. a detached vite dev server)
     pkill -f "vite dev.*${WEB_PORT}" 2>/dev/null || true
-    if port_in_use; then
+    if runner_port_in_use "${WEB_PORT}"; then
         local PORT_PID
-        PORT_PID="$(listening_pid)"
+        PORT_PID="$(runner_port_listener_pid "${WEB_PORT}")"
         if [[ -n "${PORT_PID}" ]]; then
             echo "⚠️ Port ${WEB_PORT} still held by PID ${PORT_PID}; reclaiming."
             runner_graceful_stop "${PORT_PID}" "${WEB_STOP_TIMEOUT_SEC}" "port ${WEB_PORT} listener"
@@ -177,14 +130,14 @@ cmd_stop() {
 
     rm -f "${PID_FILE}"
 
-    if ! wait_until "${WEB_STOP_TIMEOUT_SEC}" port_released; then
+    if ! runner_wait_until "${WEB_STOP_TIMEOUT_SEC}" runner_port_released "${WEB_PORT}"; then
         echo "❌ Error: port ${WEB_PORT} is still occupied after shutdown." >&2
-        log_web_event "❌ [Web] Port ${WEB_PORT} is still occupied after shutdown."
+        runner_log_event "${LOG_FILE}" "❌ [Web] Port ${WEB_PORT} is still occupied after shutdown."
         return 1
     fi
 
     if [[ ${STOPPED} -eq 1 ]]; then
-        log_web_event "✅ [Web] Web Dashboard stopped; port ${WEB_PORT} released."
+        runner_log_event "${LOG_FILE}" "✅ [Web] Web Dashboard stopped; port ${WEB_PORT} released."
         echo "✅ SvelteKit Web Dashboard stopped (port ${WEB_PORT} released)."
     else
         echo "ℹ️ No running Web Dashboard process found."
@@ -204,7 +157,7 @@ cmd_start() {
 
     # Reclaim the port if held by a stale process whose working directory was deleted
     local PORT_PID
-    PORT_PID="$(listening_pid)"
+    PORT_PID="$(runner_port_listener_pid "${WEB_PORT}")"
     if [[ -n "${PORT_PID}" ]] && ! runner_process_cwd_alive "${PORT_PID}"; then
         echo "⚠️ Port ${WEB_PORT} is held by stale process PID ${PORT_PID} whose working directory was deleted; reclaiming."
         runner_graceful_stop "${PORT_PID}" "${WEB_STOP_TIMEOUT_SEC}" "stale web listener"
@@ -219,7 +172,7 @@ cmd_start() {
             echo "ℹ️ SvelteKit Web Dashboard is already running in background (PID: ${RUNNING_PID:-unknown}) at ${WEB_URL}"
             return 0
         else
-            attach_logs "${RUNNING_PID:-unknown}"
+            runner_attached_logs "${RUNNING_PID:-unknown}" "${LOG_FILE}" "SvelteKit Web Dashboard" "${WEB_URL}"
             return 0
         fi
     fi

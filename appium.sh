@@ -83,58 +83,12 @@ fi
 APPIUM_HOST="${APPIUM_HOST:-${DEFAULT_HOST}}"
 APPIUM_PORT="${APPIUM_PORT:-${DEFAULT_PORT}}"
 
-find_appium_binary() {
-    if command -v appium >/dev/null 2>&1; then
-        echo "appium"
-    elif [[ -x "$HOME/.volta/bin/appium" ]]; then
-        echo "$HOME/.volta/bin/appium"
-    elif [[ -x "/opt/homebrew/bin/appium" ]]; then
-        echo "/opt/homebrew/bin/appium"
-    elif [[ -x "/usr/local/bin/appium" ]]; then
-        echo "/usr/local/bin/appium"
-    else
-        echo ""
-    fi
-}
-
-APPIUM_BIN="$(find_appium_binary)"
-
-get_running_appium_pid() {
-    if [[ -f "${PID_FILE}" ]]; then
-        local PID
-        PID="$(cat "${PID_FILE}" 2>/dev/null || true)"
-        if [[ -n "${PID}" ]] && ps -p "${PID}" >/dev/null 2>&1; then
-            echo "${PID}"
-            return 0
-        fi
-    fi
-
-    # Fallback to the port's *listener* — never a bare `lsof -ti`, which would adopt a
-    # client merely connected to the port and later signal it.
-    runner_resolve_pid "${PID_FILE}" "${APPIUM_PORT}"
-}
-
-attach_logs() {
-    local PID="$1"
-    local ENDPOINT="http://${APPIUM_HOST}:${APPIUM_PORT}"
-
-    echo "ℹ️ Appium server is already running (PID: ${PID}) at ${ENDPOINT}"
-    echo "👀 Attaching to live log stream (${LOG_FILE})... (Press Ctrl+C to detach)"
-    echo "----------------------------------------------------------------------"
-
-    trap 'echo -e "\n👋 Detached from Appium logs (Appium server is still running in background)."; exit 0' INT TERM
-
-    if [[ ! -f "${LOG_FILE}" ]]; then
-        touch "${LOG_FILE}"
-    fi
-
-    exec tail -n 30 -f "${LOG_FILE}"
-}
+APPIUM_BIN="$(runner_find_binary appium "$HOME/.volta/bin/appium" /opt/homebrew/bin/appium /usr/local/bin/appium)"
 
 cmd_status() {
     echo "🔍 Checking Appium server status..."
     local PID
-    PID="$(get_running_appium_pid)"
+    PID="$(runner_resolve_pid "${PID_FILE}" "${APPIUM_PORT}")"
     local HEALTH_URL
     HEALTH_URL="$(get_health_check_url "${APPIUM_HOST}" "${APPIUM_PORT}")"
 
@@ -158,7 +112,7 @@ cmd_stop() {
     echo "🛑 Stopping local Appium server..."
     local STOPPED=0
     local PID
-    PID="$(get_running_appium_pid)"
+    PID="$(runner_resolve_pid "${PID_FILE}" "${APPIUM_PORT}")"
 
     if [[ -n "${PID}" ]]; then
         runner_graceful_stop "${PID}" "${APPIUM_STOP_TIMEOUT_SEC}" "Appium"
@@ -228,12 +182,13 @@ cmd_start() {
     # Check if already running
     if curl -s -f "${HEALTH_URL}" >/dev/null 2>&1; then
         local RUNNING_PID
-        RUNNING_PID="$(get_running_appium_pid)"
+        RUNNING_PID="$(runner_resolve_pid "${PID_FILE}" "${APPIUM_PORT}")"
         if [[ ${DAEMON} -eq 1 ]]; then
             echo "ℹ️ Appium is already running in background (PID: ${RUNNING_PID:-unknown}) at http://${APPIUM_HOST}:${APPIUM_PORT}"
             exit 0
         else
-            attach_logs "${RUNNING_PID:-unknown}"
+            runner_attached_logs "${RUNNING_PID:-unknown}" "${LOG_FILE}" "Appium server" "http://${APPIUM_HOST}:${APPIUM_PORT}"
+            exit 0
         fi
     fi
 

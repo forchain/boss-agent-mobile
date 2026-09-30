@@ -350,3 +350,29 @@ runner_config_value() {
 
     printf '%s\n' "${FALLBACK}"
 }
+
+# --------------------------------------------------------------------------- #
+# Binary discovery
+# --------------------------------------------------------------------------- #
+
+# Locate an executable binary among candidates.
+# Checks arguments in order: if an argument is an executable file, returns it;
+# if it is found on PATH via command -v, returns it.
+# Echoes the found binary and returns 0, or echoes empty string if none found.
+runner_find_binary() {
+    local CANDIDATE
+    for CANDIDATE in "$@"; do
+        [[ -z "${CANDIDATE}" ]] && continue
+        if [[ -x "${CANDIDATE}" && ! -d "${CANDIDATE}" ]]; then
+            printf '%s\n' "${CANDIDATE}"
+            return 0
+        fi
+        if command -v "${CANDIDATE}" >/dev/null 2>&1; then
+            printf '%s\n' "${CANDIDATE}"
+            return 0
+        fi
+    done
+    printf ''
+    return 0
+}
+

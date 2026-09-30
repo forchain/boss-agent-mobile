@@ -294,6 +294,25 @@ def fake_toolchain_stub(tmp_path: Path) -> Path:
     return bin_dir
 
 
+def test_runner_find_binary_finds_executable_or_path_command(tmp_path: Path) -> None:
+    bin_dir = fake_toolchain_stub(tmp_path)
+    # Test path command
+    res = _run_library(bin_dir, "runner_find_binary non_existent_cmd sh")
+    assert res.stdout.strip() == "sh"
+
+    # Test executable file candidate
+    fake_exe = tmp_path / "custom_bin"
+    fake_exe.write_text("#!/bin/sh\necho hi\n", encoding="utf-8")
+    fake_exe.chmod(0o755)
+
+    res2 = _run_library(bin_dir, f'runner_find_binary non_existent_cmd "{fake_exe}"')
+    assert res2.stdout.strip() == str(fake_exe)
+
+    # Test non-existent candidates return empty
+    res3 = _run_library(bin_dir, "runner_find_binary non_existent_1 non_existent_2")
+    assert res3.stdout.strip() == ""
+
+
 # --------------------------------------------------------------------------- #
 # Every service's stop path goes through the shared probe
 # --------------------------------------------------------------------------- #

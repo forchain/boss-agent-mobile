@@ -41,51 +41,9 @@ BRIDGE_LOG_FILE=".boss_agent/remote_bridge.log"
 REMOTE_ADB_PORT="${REMOTE_ADB_PORT:-6555}"
 TARGET_ADB_PORT="${TARGET_ADB_PORT:-5555}"
 
-find_emulator_binary() {
-    if command -v emulator >/dev/null 2>&1; then
-        echo "emulator"
-    elif [[ -n "${ANDROID_HOME:-}" && -x "${ANDROID_HOME}/emulator/emulator" ]]; then
-        echo "${ANDROID_HOME}/emulator/emulator"
-    elif [[ -n "${ANDROID_SDK_ROOT:-}" && -x "${ANDROID_SDK_ROOT}/emulator/emulator" ]]; then
-        echo "${ANDROID_SDK_ROOT}/emulator/emulator"
-    elif [[ -x "$HOME/Library/Android/sdk/emulator/emulator" ]]; then
-        echo "$HOME/Library/Android/sdk/emulator/emulator"
-    else
-        echo ""
-    fi
-}
-
-find_adb_binary() {
-    if command -v adb >/dev/null 2>&1; then
-        echo "adb"
-    elif [[ -n "${ANDROID_HOME:-}" && -x "${ANDROID_HOME}/platform-tools/adb" ]]; then
-        echo "${ANDROID_HOME}/platform-tools/adb"
-    elif [[ -n "${ANDROID_SDK_ROOT:-}" && -x "${ANDROID_SDK_ROOT}/platform-tools/adb" ]]; then
-        echo "${ANDROID_SDK_ROOT}/platform-tools/adb"
-    elif [[ -x "$HOME/Library/Android/sdk/platform-tools/adb" ]]; then
-        echo "$HOME/Library/Android/sdk/platform-tools/adb"
-    else
-        echo ""
-    fi
-}
-
-find_python_binary() {
-    if [[ -n "${PYTHON_BIN:-}" ]]; then
-        echo "${PYTHON_BIN}"
-    elif [[ -x "${ROOT_DIR}/.venv/bin/python3" ]]; then
-        echo "${ROOT_DIR}/.venv/bin/python3"
-    elif command -v python3 >/dev/null 2>&1; then
-        echo "python3"
-    elif command -v python >/dev/null 2>&1; then
-        echo "python"
-    else
-        echo ""
-    fi
-}
-
-EMULATOR_BIN="$(find_emulator_binary)"
-ADB_BIN="$(find_adb_binary)"
-PYTHON_BIN="$(find_python_binary)"
+EMULATOR_BIN="$(runner_find_binary emulator "${ANDROID_HOME:-}/emulator/emulator" "${ANDROID_SDK_ROOT:-}/emulator/emulator" "$HOME/Library/Android/sdk/emulator/emulator")"
+ADB_BIN="$(runner_find_binary adb "${ANDROID_HOME:-}/platform-tools/adb" "${ANDROID_SDK_ROOT:-}/platform-tools/adb" "$HOME/Library/Android/sdk/platform-tools/adb")"
+PYTHON_BIN="$(runner_find_binary "${PYTHON_BIN:-}" "${ROOT_DIR}/.venv/bin/python3" python3 python)"
 
 # --- Bounded ADB inspection ---------------------------------------------------
 # A wedged adb server, a device stuck in `offline`, or an unresponsive adbd must never
@@ -304,8 +262,7 @@ get_primary_lan_ip() {
         echo "${HOST_LAN_IP}"
         return 0
     fi
-    local PY_BIN
-    PY_BIN="$(find_python_binary)"
+    local PY_BIN="${PYTHON_BIN:-$(runner_find_binary "${ROOT_DIR}/.venv/bin/python3" python3 python)}"
     if [[ -n "${PY_BIN}" ]]; then
         LAN_IP="$(PYTHONPATH="${ROOT_DIR}/src:${PYTHONPATH:-}" "${PY_BIN}" -m boss_agent.services.remote_adb_bridge --print-lan-ip 2>/dev/null || true)"
     fi
@@ -378,8 +335,7 @@ start_remote_bridge() {
 
     rm -f "${BRIDGE_READY_FILE}"
     echo "🌉 Starting Remote ADB Bridge daemon (0.0.0.0:${PORT} -> 127.0.0.1:${TARGET_PORT})..."
-    local PY_BIN
-    PY_BIN="$(find_python_binary)"
+    local PY_BIN="${PYTHON_BIN:-$(runner_find_binary "${ROOT_DIR}/.venv/bin/python3" python3 python)}"
     PYTHONPATH="${ROOT_DIR}/src:${PYTHONPATH:-}" nohup "${PY_BIN}" -m boss_agent.services.remote_adb_bridge \
         --host 0.0.0.0 \
         --port "${PORT}" \
