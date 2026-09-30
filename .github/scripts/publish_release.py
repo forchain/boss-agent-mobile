@@ -9,11 +9,10 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 COLLISION_NOTE = (
     "\n\n> ⚠️ **Note**: This release tag overwrites a legacy tag under the "
@@ -21,7 +20,7 @@ COLLISION_NOTE = (
 )
 
 
-def run_cmd(cmd: List[str], dry_run: bool = False) -> subprocess.CompletedProcess[str]:
+def run_cmd(cmd: list[str], dry_run: bool = False) -> subprocess.CompletedProcess[str]:
     """Run a shell command or simulate in dry-run mode."""
     print(f"[{'DRY-RUN' if dry_run else 'EXEC'}] {' '.join(cmd)}")
     if dry_run:
@@ -71,7 +70,7 @@ def _upsert_release(
         print(f"✓ Overwrote existing GitHub release {tag_name}")
 
 
-def execute_release_plan(plan: Dict[str, Any], dry_run: bool = False) -> None:
+def execute_release_plan(plan: dict[str, Any], dry_run: bool = False) -> None:
     """Execute tag creation and GitHub release with force-overwrite support."""
     current = plan.get("current_pr", {})
     tag_name = current.get("tag_name")

@@ -106,12 +106,16 @@ def test_persistent_candidate_profile_context():
     assert "移动端多端通信" in result.jd_key_requirements[0]
     assert "Agent" in result.greeting_message
 
-    # Verify the LLM call system prompt contained candidate background
+    # Verify the LLM call system prompt contained candidate background and output contract
+    # Per ADR 0010: Code keeps structural scaffolding (candidate profile interpolation,
+    # JSON output contract); editable prose lives in the Greeting Prompt document.
     messages_passed = mock_llm.chat_completion_json.call_args[0][0]
     system_msg = messages_passed[0]["content"]
     assert "王五" in system_msg
     assert "8年" in system_msg
-    assert "【打招呼破冰铁律与原则】" in system_msg
+    assert "[求职者背景画像]" in system_msg
+    assert "【输出格式硬性约定】" in system_msg
+    assert "【严格 JSON 输出】" in system_msg
 
 
 def test_full_context_unabbreviated_matching():

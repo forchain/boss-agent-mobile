@@ -58,7 +58,7 @@ from .pages import (
     CommunicationListPage,
     StartupDialogPage,
 )
-from .rejection import ChatAcknowledgmentSettings, DEFAULT_MAX_SCROLL_SWIPES
+from .rejection import DEFAULT_MAX_SCROLL_SWIPES, ChatAcknowledgmentSettings
 
 logger = logging.getLogger(__name__)
 

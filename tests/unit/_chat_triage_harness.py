@@ -16,7 +16,6 @@ from pathlib import Path
 from typing import Any
 
 from boss_agent.chat_triage import (
-    MAX_INSPECTED_CARDS,
     ChatActorAdapter,
     ChatTriage,
     CommunicationListAdapter,
