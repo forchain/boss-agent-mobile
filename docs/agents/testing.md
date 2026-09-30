@@ -26,7 +26,7 @@ uv run --extra dev pytest        # == pytest tests/unit
 ```
 
 This is the pre-completion gate for every change, human or agent. It collects
-`tests/unit` only, finishes in tens of seconds rather than minutes, and has zero side
+`tests/unit` only, finishes in tens of seconds (< 60 seconds budget) rather than minutes, and has zero side
 effects on the machine: no processes are signalled, no ports are bound, no shared runtime
 state is written, and no live LLM call is made. Use
 `uv run --extra dev pytest --collect-only -q` when you want to see exactly what a run

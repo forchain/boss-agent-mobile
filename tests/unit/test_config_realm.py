@@ -211,11 +211,23 @@ def test_explicit_invalidation_is_available(tmp_path: Path) -> None:
 
 
 def _run_cli(*args: str) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        [sys.executable, str(REPO_ROOT / "scripts" / "resolve_config.py"), *args],
-        capture_output=True,
-        text=True,
-        cwd=REPO_ROOT,
+    import contextlib
+    import io
+
+    from scripts import resolve_config
+
+    out = io.StringIO()
+    err = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = resolve_config.main(list(args))
+    except SystemExit as exc:
+        code = exc.code if isinstance(exc.code, int) else (0 if exc.code is None else 1)
+    return subprocess.CompletedProcess(
+        args=[sys.executable, str(REPO_ROOT / "scripts" / "resolve_config.py"), *args],
+        returncode=code,
+        stdout=out.getvalue(),
+        stderr=err.getvalue(),
     )
 
 

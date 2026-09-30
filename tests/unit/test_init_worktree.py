@@ -421,6 +421,9 @@ def test_init_worktree_default_current_worktree(tmp_path):
             "scripts.init_worktree.GitWorktreeManager.sync_main_branch",
             return_value="main_commit_123",
         ),
+        patch(
+            "scripts.init_worktree.ConfigSymlinkManager.get_git_tracked_files", return_value=set()
+        ),
         patch("scripts.init_worktree.GitWorktreeManager._run_git") as mock_git,
     ):
 
@@ -455,15 +458,30 @@ def test_init_worktree_e2e_dry_run(tmp_path):
     main_repo.mkdir()
     (main_repo / ".git").mkdir()
     (main_repo / "config").mkdir()
-    (main_repo / "config" / "settings.local.yaml").write_text("k: v")
-
-    result = init_worktree(
-        name="test-wt",
-        branch="feat/test-wt",
-        workspaces_dir=tmp_path / "workspaces",
-        cwd=main_repo,
-        dry_run=True,
-    )
+    with (
+        patch(
+            "scripts.init_worktree.GitWorktreeManager.get_main_repo_root", return_value=main_repo
+        ),
+        patch(
+            "scripts.init_worktree.ConfigSymlinkManager.get_git_tracked_files", return_value=set()
+        ),
+        patch(
+            "scripts.init_worktree.GitWorktreeManager.sync_main_branch",
+            return_value=MainSyncStatus(
+                base_ref="origin/main",
+                main_commit="sha123",
+                is_dirty=False,
+                updated_worktree=False,
+            ),
+        ),
+    ):
+        result = init_worktree(
+            name="test-wt",
+            branch="feat/test-wt",
+            workspaces_dir=tmp_path / "workspaces",
+            cwd=main_repo,
+            dry_run=True,
+        )
 
     assert isinstance(result, WorktreeInitResult)
     assert result.success is True
@@ -579,6 +597,9 @@ def test_init_worktree_with_dirty_main_end_to_end(tmp_path):
     with (
         patch(
             "scripts.init_worktree.GitWorktreeManager.get_main_repo_root", return_value=main_repo
+        ),
+        patch(
+            "scripts.init_worktree.ConfigSymlinkManager.get_git_tracked_files", return_value=set()
         ),
         patch("scripts.init_worktree.GitWorktreeManager.sync_main_branch") as mock_sync,
         patch("scripts.init_worktree.GitWorktreeManager.create_or_update_worktree") as mock_create,

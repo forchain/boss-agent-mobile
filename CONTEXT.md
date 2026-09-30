@@ -89,7 +89,7 @@ The session-scoped, opt-in test fixture (`BOSS_AGENT_ENFORCE_TEARDOWN=1`) that s
 _Avoid_: test cleanup hook, pre-test reset script, teardown helper
 
 **Fast Unit Test**:
-The in-memory verification tier (`tests/unit/`) that exercises module interfaces against mocked collaborators — no Automation Worker, no Appium session, no bound host port, and no live LLM endpoint. It is the tier an unadorned `pytest` runs, and the one that must finish in tens of seconds with zero side effects on the machine.
+The in-memory verification tier (`tests/unit/`) that exercises module interfaces against mocked collaborators — no Automation Worker, no Appium session, no bound host port, and no live LLM endpoint. It is the tier an unadorned `pytest` runs, and the one that must finish in tens of seconds (< 60 seconds budget) with zero side effects on the machine.
 _Avoid_: quick check, small spec, unit suite
 
 **Service Integration Test (`@pytest.mark.e2e`)**:

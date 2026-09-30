@@ -33,6 +33,8 @@ from _service_harness import (
 )
 from boss_agent.services.teardown import ServiceTeardownGate, TeardownGateError
 
+pytestmark = pytest.mark.e2e
+
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 GATE_TIMEOUT_SEC = 3.0
 

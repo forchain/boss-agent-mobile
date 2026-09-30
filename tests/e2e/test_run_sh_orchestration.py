@@ -16,6 +16,8 @@ import pytest
 
 from _service_harness import REPO_ROOT
 
+pytestmark = pytest.mark.e2e
+
 RUN_SH = REPO_ROOT / "run.sh"
 BUDGET_SEC = 10.0
 

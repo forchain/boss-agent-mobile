@@ -19,6 +19,8 @@ import pytest
 
 from _service_harness import REPO_ROOT, free_port, is_port_free, wait_for_port_bound
 
+pytestmark = pytest.mark.e2e
+
 WEB_SH = REPO_ROOT / "web.sh"
 SHUTDOWN_RECORD = "🛑 [Web] Received stop command, shutting down Web Dashboard..."
 SHUTDOWN_COMPLETE_RECORD = "Web Dashboard stopped"

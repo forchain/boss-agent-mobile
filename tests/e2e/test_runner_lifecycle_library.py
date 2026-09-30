@@ -25,6 +25,8 @@ import pytest
 
 from _service_harness import REPO_ROOT, free_port, is_port_free, wait_for_port_bound
 
+pytestmark = pytest.mark.e2e
+
 RUNNER_LIB = REPO_ROOT / "runner_lib.sh"
 STOP_BUDGET_SEC = 20.0
 

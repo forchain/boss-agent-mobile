@@ -30,11 +30,26 @@ into the handler under test — and to audit the tier, run it against a poisoned
 `droid_agent_core.llm.OpenAIChatClient`.
 """
 
+import socket
+import subprocess
 import time
 
 import pytest
 
 from droid_agent_core import gestures, locators
+
+_ORIG_POPEN = subprocess.Popen
+_ORIG_SOCKET_BIND = socket.socket.bind
+
+
+def _is_collection_only_invocation(args) -> bool:
+    if isinstance(args, (list, tuple)):
+        flat = " ".join(str(a) for a in args)
+    elif isinstance(args, str):
+        flat = args
+    else:
+        return False
+    return "--collect-only" in flat
 
 
 class _InstantPacingTime:
@@ -55,3 +70,31 @@ def instant_ui_pacing(monkeypatch: pytest.MonkeyPatch) -> None:
     """Let UI wait loops exhaust their budget, and gestures play out, without waiting."""
     for module in (locators, gestures):
         monkeypatch.setattr(module, "time", _InstantPacingTime(time))
+
+
+@pytest.fixture(autouse=True)
+def fast_unit_boundary_guard(
+    monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> None:
+    """Enforce Fast Unit tier boundary (ticket #306):
+    No test in tests/unit/ may spawn processes or bind ports.
+    Sanctioned exception: collection-only invocations (test_live_marker_isolation.py).
+    """
+
+    def _guarded_popen(*args, **kwargs):
+        cmd_args = args[0] if args else kwargs.get("args")
+        if _is_collection_only_invocation(cmd_args):
+            return _ORIG_POPEN(*args, **kwargs)
+        raise RuntimeError(
+            f"Fast Unit tier boundary violation in {request.node.nodeid}: "
+            f"subprocess execution is forbidden in the fast tier: {cmd_args!r}"
+        )
+
+    def _guarded_bind(self, *args, **kwargs):
+        raise RuntimeError(
+            f"Fast Unit tier boundary violation in {request.node.nodeid}: "
+            f"socket binding is forbidden in the fast tier: {args!r}"
+        )
+
+    monkeypatch.setattr(subprocess, "Popen", _guarded_popen)
+    monkeypatch.setattr(socket.socket, "bind", _guarded_bind)

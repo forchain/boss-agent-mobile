@@ -1,8 +1,11 @@
 """
-tests/unit/test_pb_runner_lifecycle.py
-======================================
+tests/e2e/test_pb_runner_lifecycle.py
+====================================
 Integration tests verifying PocketBase pre-provisioning, graceful shutdown,
 and database persistence across server restarts.
+
+Relocated from Fast Unit tier (ticket #306): boots real PocketBase broker daemon
+and runs offline migrations requiring pocketbase binary.
 """
 
 import shutil
@@ -14,8 +17,11 @@ from pathlib import Path
 
 import pytest
 
+from _service_harness import free_port
 from boss_agent.broker.provisioner import provision_sqlite_database
 from boss_agent.settings import resolve_git_common_root
+
+pytestmark = pytest.mark.e2e
 
 
 @pytest.fixture
@@ -52,8 +58,8 @@ def test_pocketbase_preprovision_and_clean_boot(tmp_path: Path, pb_bin: str):
     )
     assert su_res.returncode == 0
 
-    # 4. Start PocketBase server
-    test_port = "8977"
+    # 4. Start PocketBase server on ephemeral port
+    test_port = str(free_port())
     proc = subprocess.Popen(
         [pb_bin, "serve", "--dir", str(pb_dir), "--http", f"127.0.0.1:{test_port}"],
         stdout=subprocess.PIPE,
@@ -151,3 +157,30 @@ def test_pocketbase_script_and_pb_symlink():
     assert pb_sh.exists(), "pb.sh must exist"
     assert pb_sh.is_symlink(), "pb.sh must be a symlink"
     assert pb_sh.resolve() == pocketbase_sh.resolve(), "pb.sh must point to pocketbase.sh"
+
+
+def test_provision_sqlite_database_offline_structure(tmp_path: Path, pb_bin: str):
+    """Test provisioning on a clean database file initialized with core tables via offline migrate up."""
+    db_dir = tmp_path / "pb_data"
+    db_dir.mkdir(parents=True, exist_ok=True)
+    db_file = db_dir / "data.db"
+
+    res = subprocess.run(
+        [pb_bin, "migrate", "up", "--dir", str(db_dir)], capture_output=True, text=True
+    )
+    assert res.returncode == 0
+    assert db_file.exists()
+
+    assert provision_sqlite_database(db_file) is True
+
+    conn = sqlite3.connect(str(db_file))
+    c = conn.cursor()
+    c.execute("SELECT name FROM _collections")
+    col_names = {r[0] for r in c.fetchall()}
+    conn.close()
+
+    assert "automation_tasks" in col_names
+    assert "candidate_profiles" in col_names
+    assert "job_records" in col_names
+    assert "saved_searches" in col_names
+    assert "resume_revisions" in col_names

@@ -19,6 +19,8 @@ from boss_agent.services.remote_adb_bridge import (
     get_primary_lan_ip,
 )
 
+pytestmark = pytest.mark.e2e
+
 
 class MockTcpServer:
     """Minimal TCP server mimicking local AVD 127.0.0.1:5555."""
