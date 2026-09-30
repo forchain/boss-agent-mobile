@@ -580,7 +580,13 @@ async def test_auto_apply_handler_quota_exhausted_degrades_to_matched():
 
     task = await broker.create_task(
         task_type=TaskType.AUTO_APPLY,
-        payload={"keyword": "AI", "auto_send": True, "preview_only": False, "min_score": 0},
+        payload={
+            "keyword": "AI",
+            "auto_send": True,
+            "preview_only": False,
+            "min_score": 0,
+            "daily_greeting_limit": 20,
+        },
     )
 
     await worker.run_once()

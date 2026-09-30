@@ -7,7 +7,6 @@ The job screening workflow is a thin traced adapter over the deep ``CandidateScr
 module (ADR 0013); the resume lifecycle workflow below it remains self-contained.
 """
 
-import asyncio
 import logging
 from pathlib import Path
 from typing import Any, TypedDict
@@ -373,23 +372,14 @@ def make_resume_diff_analyzer_node(broker: Any | None = None):
 
             broker = PocketBaseBroker()
 
-        import asyncio
+        from .async_bridge import run_sync
 
         try:
-            asyncio.get_running_loop()
-            import concurrent.futures
-
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                existing = pool.submit(
-                    asyncio.run, broker.candidate_memory.get_candidate_profile(user_id=user_id)
-                ).result(timeout=3.0)
+            existing = run_sync(
+                broker.candidate_memory.get_candidate_profile(user_id=user_id), timeout=3.0
+            )
         except Exception:
-            try:
-                existing = asyncio.run(
-                    broker.candidate_memory.get_candidate_profile(user_id=user_id)
-                )
-            except Exception:
-                existing = None
+            existing = None
 
         new_prof = state.get("normalized_profile") or {}
         if not existing or (not existing.get("name") and not existing.get("raw_summary")):
@@ -522,15 +512,10 @@ def make_resume_persister_node(broker: Any | None = None):
             )
             return saved_prof, rev_rec
 
-        try:
-            try:
-                asyncio.get_running_loop()
-                import concurrent.futures
+        from .async_bridge import run_sync
 
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                    saved_prof, rev_rec = pool.submit(asyncio.run, _save()).result(timeout=10.0)
-            except RuntimeError:
-                saved_prof, rev_rec = asyncio.run(_save())
+        try:
+            saved_prof, rev_rec = run_sync(_save(), timeout=10.0)
         except Exception as e:
             logger.warning("Resume persister save fallback: %s", e)
             saved_prof = final

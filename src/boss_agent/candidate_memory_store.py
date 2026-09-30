@@ -15,7 +15,6 @@ offline SQLite fallback *inside the seam it protects* rather than loose in the b
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
 import json
 import logging
@@ -26,6 +25,11 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from boss_agent.async_bridge import execute_broker_request
+from boss_agent.errors import (
+    TransportError,
+)
 
 logger = logging.getLogger("boss_agent.candidate_memory_store")
 
@@ -151,7 +155,7 @@ class PocketBaseCandidateMemoryStore(CandidateMemoryStore):
 
     def _resolve_sqlite_db_path(self) -> Path | None:
         if self._sqlite_db_path is not None:
-            return self._sqlite_db_path
+            return self._sqlite_db_path if Path(self._sqlite_db_path).is_file() else None
         for candidate in (
             os.environ.get("PB_DB_PATH"),
             Path(".boss_agent/pb_data/data.db"),
@@ -269,6 +273,7 @@ class PocketBaseCandidateMemoryStore(CandidateMemoryStore):
                 conn.commit()
         except Exception as e:
             logger.warning("Failed to save candidate profile to SQLite fallback: %s", e)
+            raise TransportError(f"Failed to save candidate profile to SQLite fallback: {e}") from e
         return profile_data
 
     def _query_sqlite_revisions(self, user_id: str) -> list[dict[str, Any]]:
@@ -293,7 +298,7 @@ class PocketBaseCandidateMemoryStore(CandidateMemoryStore):
     def _save_sqlite_revision(self, revision_data: dict[str, Any], user_id: str) -> dict[str, Any]:
         db_path = self._resolve_sqlite_db_path()
         if not db_path:
-            return revision_data
+            raise TransportError("Cannot save resume revision: no SQLite database found")
         try:
             import sqlite3
 
@@ -330,7 +335,7 @@ class PocketBaseCandidateMemoryStore(CandidateMemoryStore):
                 }
         except Exception as e:
             logger.warning("Failed to save resume revision to SQLite: %s", e)
-            return revision_data
+            raise TransportError(f"Failed to save resume revision to SQLite: {e}") from e
 
     # ------------------------------------------------------------------ #
     # REST paths
@@ -341,32 +346,40 @@ class PocketBaseCandidateMemoryStore(CandidateMemoryStore):
 
     async def get_candidate_profile(self, user_id: str = "default") -> dict[str, Any] | None:
         url = self._collection_url("candidate_profiles")
-        loop = asyncio.get_running_loop()
         try:
-            resp = await loop.run_in_executor(
-                None,
+            resp = await execute_broker_request(
                 lambda: self.session.get(
                     url,
                     params={"filter": f"user_id='{user_id}'", "perPage": "1", "sort": "-updated"},
                     headers=self._headers(),
                 ),
+                expected_statuses=(200,),
+                allow_404=True,
+                error_prefix=f"PocketBase get_candidate_profile failed for user '{user_id}'",
             )
             if resp.status_code == 404:
                 return self._query_sqlite_profile(user_id)
-            resp.raise_for_status()
             items = resp.json().get("items", [])
             return items[0] if items else self._query_sqlite_profile(user_id)
-        except Exception as e:
-            logger.warning("PocketBase get_candidate_profile failed, fallback to SQLite: %s", e)
-            return self._query_sqlite_profile(user_id)
+        except TransportError as err:
+            logger.warning(
+                "PocketBase get_candidate_profile transport error, trying SQLite: %s", err
+            )
+            fallback = self._query_sqlite_profile(user_id)
+            if fallback is not None:
+                return fallback
+            raise
 
     async def save_candidate_profile(
         self, profile_data: dict[str, Any], user_id: str = "default"
     ) -> dict[str, Any]:
         url = self._collection_url("candidate_profiles")
-        loop = asyncio.get_running_loop()
         try:
-            existing = await self.get_candidate_profile(user_id=user_id)
+            try:
+                existing = await self.get_candidate_profile(user_id=user_id)
+            except TransportError:
+                existing = self._query_sqlite_profile(user_id)
+
             if existing and existing.get("id"):
                 merged_body = dict(existing)
                 for key, value in profile_data.items():
@@ -380,30 +393,33 @@ class PocketBaseCandidateMemoryStore(CandidateMemoryStore):
                 elif existing.get("raw_summary"):
                     merged_body["raw_summary"] = existing["raw_summary"]
                 merged_body["user_id"] = user_id
-                resp = await loop.run_in_executor(
-                    None,
+                resp = await execute_broker_request(
                     lambda: self.session.patch(
                         f"{url}/{existing['id']}", json=merged_body, headers=self._headers()
                     ),
+                    expected_statuses=(200,),
+                    error_prefix=f"PocketBase patch candidate profile failed for user '{user_id}'",
                 )
             else:
                 body = {**profile_data, "user_id": user_id}
-                resp = await loop.run_in_executor(
-                    None,
+                resp = await execute_broker_request(
                     lambda: self.session.post(url, json=body, headers=self._headers()),
+                    expected_statuses=(200, 201),
+                    error_prefix=f"PocketBase post candidate profile failed for user '{user_id}'",
                 )
-            if resp.ok:
-                return resp.json()
-        except Exception as e:
-            logger.warning("PocketBase save_candidate_profile failed, fallback to SQLite: %s", e)
-        return self._save_sqlite_profile(profile_data, user_id)
+            return resp.json()
+        except TransportError as err:
+            logger.warning(
+                "PocketBase save_candidate_profile transport error, trying SQLite: %s", err
+            )
+            if self._resolve_sqlite_db_path() is not None:
+                return self._save_sqlite_profile(profile_data, user_id)
+            raise
 
     async def list_resume_revisions(self, user_id: str = "default") -> list[dict[str, Any]]:
         url = self._collection_url("resume_revisions")
-        loop = asyncio.get_running_loop()
         try:
-            resp = await loop.run_in_executor(
-                None,
+            resp = await execute_broker_request(
                 lambda: self.session.get(
                     url,
                     params={
@@ -413,28 +429,37 @@ class PocketBaseCandidateMemoryStore(CandidateMemoryStore):
                     },
                     headers=self._headers(),
                 ),
+                expected_statuses=(200,),
+                allow_404=True,
+                error_prefix=f"PocketBase list_resume_revisions failed for user '{user_id}'",
             )
             if resp.status_code == 404:
                 return self._query_sqlite_revisions(user_id)
-            resp.raise_for_status()
             return resp.json().get("items", [])
-        except Exception as e:
-            logger.warning("PocketBase list_resume_revisions failed, fallback to SQLite: %s", e)
-            return self._query_sqlite_revisions(user_id)
+        except TransportError as err:
+            logger.warning(
+                "PocketBase list_resume_revisions transport error, trying SQLite: %s", err
+            )
+            if self._resolve_sqlite_db_path() is not None:
+                return self._query_sqlite_revisions(user_id)
+            raise
 
     async def create_resume_revision(
         self, revision_data: dict[str, Any], user_id: str = "default"
     ) -> dict[str, Any]:
         url = self._collection_url("resume_revisions")
-        loop = asyncio.get_running_loop()
         body = {**revision_data, "user_id": user_id}
         try:
-            resp = await loop.run_in_executor(
-                None,
+            resp = await execute_broker_request(
                 lambda: self.session.post(url, json=body, headers=self._headers()),
+                expected_statuses=(200, 201),
+                error_prefix=f"PocketBase create_resume_revision failed for user '{user_id}'",
             )
-            if resp.ok:
-                return resp.json()
-        except Exception as e:
-            logger.warning("PocketBase create_resume_revision failed, fallback to SQLite: %s", e)
-        return self._save_sqlite_revision(body, user_id)
+            return resp.json()
+        except TransportError as err:
+            logger.warning(
+                "PocketBase create_resume_revision transport error, trying SQLite: %s", err
+            )
+            if self._resolve_sqlite_db_path() is not None:
+                return self._save_sqlite_revision(body, user_id)
+            raise

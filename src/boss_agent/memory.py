@@ -501,21 +501,11 @@ class ResumeMemoryManager:
 
         # 1. Primary: load from PocketBase database (HTTP or SQLite fallback)
         try:
-            import asyncio
-
+            from boss_agent.async_bridge import run_sync
             from boss_agent.broker import PocketBaseBroker
 
             broker = PocketBaseBroker()
-            try:
-                asyncio.get_running_loop()
-                import concurrent.futures
-
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                    data = pool.submit(
-                        asyncio.run, broker.candidate_memory.get_candidate_profile()
-                    ).result(timeout=3.0)
-            except RuntimeError:
-                data = asyncio.run(broker.candidate_memory.get_candidate_profile())
+            data = run_sync(broker.candidate_memory.get_candidate_profile(), timeout=3.0)
 
             if data and (
                 data.get("name")
@@ -630,22 +620,14 @@ class ResumeMemoryManager:
         # 1. Primary: Save to PocketBase database (HTTP or SQLite fallback)
         if sync_to_db:
             try:
-                import asyncio
-
+                from boss_agent.async_bridge import run_sync
                 from boss_agent.broker import PocketBaseBroker
 
                 broker = PocketBaseBroker()
-                try:
-                    asyncio.get_running_loop()
-                    import concurrent.futures
-
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                        pool.submit(
-                            asyncio.run,
-                            broker.candidate_memory.save_candidate_profile(profile.to_dict()),
-                        ).result(timeout=5.0)
-                except RuntimeError:
-                    asyncio.run(broker.candidate_memory.save_candidate_profile(profile.to_dict()))
+                run_sync(
+                    broker.candidate_memory.save_candidate_profile(profile.to_dict()),
+                    timeout=5.0,
+                )
                 console.print(
                     "✅ [bold green]Structured candidate profile saved to PocketBase database.[/bold green]"
                 )

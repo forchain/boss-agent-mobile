@@ -15,6 +15,7 @@ from typing import Any
 
 from boss_agent.broker.models import AutomationTask, TaskType
 from boss_agent.broker.pocketbase_adapter import BaseTaskBroker
+from boss_agent.errors import TransportError
 from boss_agent.feed_pipeline import FeedStreamConfig, JobFeedPipeline
 from boss_agent.memory import StructuredCandidateProfile
 from boss_agent.models import JobRecordStatus, TargetAction, is_masked_company_name
@@ -49,7 +50,13 @@ class AutoApplyHandler(BaseTaskHandler):
         payload = task.payload or {}
         store = broker.job_store
         screener = CandidateScreener(llm_client=self.llm_client)
-        profile = await self._resolve_profile(broker, payload)
+        try:
+            profile = await self._resolve_profile(broker, payload, task_id=task.id)
+        except TransportError as err:
+            return HandlerResult(
+                success=False,
+                error_message=f"Persistence degradation: failed to resolve candidate profile ({err})",
+            )
 
         config = FeedStreamConfig.from_payload(payload)
         config.source_task_id = task.id
@@ -78,7 +85,13 @@ class AutoApplyHandler(BaseTaskHandler):
         pipeline = JobFeedPipeline.for_task(
             broker=broker, task_id=task.id, driver=driver, screener=screener
         )
-        result = await pipeline.stream_jobs(config)
+        try:
+            result = await pipeline.stream_jobs(config)
+        except TransportError as err:
+            return HandlerResult(
+                success=False,
+                error_message=f"Persistence degradation: feed stream failed due to transport error ({err})",
+            )
 
         if result.search_failed:
             return HandlerResult(
@@ -104,11 +117,21 @@ class AutoApplyHandler(BaseTaskHandler):
         return HandlerResult(success=True, output=output)
 
     async def _resolve_profile(
-        self, broker: BaseTaskBroker, payload: dict[str, Any]
+        self, broker: BaseTaskBroker, payload: dict[str, Any], task_id: str | None = None
     ) -> StructuredCandidateProfile:
         profile_data = payload.get("candidate_profile")
         if not profile_data:
-            profile_data = await broker.candidate_memory.get_candidate_profile(user_id="default")
+            try:
+                profile_data = await broker.candidate_memory.get_candidate_profile(
+                    user_id="default"
+                )
+            except TransportError as err:
+                if task_id:
+                    await broker.append_log(
+                        task_id,
+                        f"⚠️ [持久化降级] 候选人画像读取遇到持久化异常（{err}），无法读取候选人画像",
+                    )
+                raise
         return (
             StructuredCandidateProfile.from_dict(profile_data)
             if profile_data
@@ -133,7 +156,17 @@ class AutoApplyHandler(BaseTaskHandler):
         direct_job_id = config.direct_job_id
         existing_rec: dict[str, Any] | None = None
         if direct_job_id:
-            existing_rec = await store.get_job_record(direct_job_id)
+            try:
+                existing_rec = await store.get_job_record(direct_job_id)
+            except TransportError as err:
+                await broker.append_log(
+                    task.id,
+                    f"⚠️ [持久化降级] 查询定向岗位记录遇到持久化异常（{err}），已自动取消本次投递以保护沟通额度",
+                )
+                return HandlerResult(
+                    success=False,
+                    error_message=f"Persistence degradation: failed to query job record ({err})",
+                )
             if existing_rec and existing_rec.get("status") == JobRecordStatus.IGNORED.value:
                 reason = existing_rec.get("screened_reason") or "已被标记为初筛淘汰/忽略"
                 await broker.append_log(
@@ -193,9 +226,19 @@ class AutoApplyHandler(BaseTaskHandler):
             and target_is_headhunter is False
             and not is_masked_company_name(target_company.strip())
         ):
-            excluded_companies = await store.get_applied_direct_companies(
-                cooldown_days=config.cooldown_days
-            )
+            try:
+                excluded_companies = await store.get_applied_direct_companies(
+                    cooldown_days=config.cooldown_days
+                )
+            except TransportError as err:
+                await broker.append_log(
+                    task.id,
+                    f"⚠️ [持久化降级] 直招避嫌池读取遇到持久化异常（{err}），已自动取消本次投递以保护沟通额度",
+                )
+                return HandlerResult(
+                    success=False,
+                    error_message=f"Persistence degradation: failed to read exclusion pool ({err})",
+                )
             if target_company.strip() in excluded_companies:
                 await broker.append_log(
                     task.id,

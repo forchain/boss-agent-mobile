@@ -20,6 +20,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
+from .errors import TransportError
 from .feed_records import (
     card_facets_record,
     card_record,
@@ -348,9 +349,15 @@ class JobFeedPipeline:
             )
 
         await self._apply_filters(config)
-        self._excluded_companies = await self.store.get_applied_direct_companies(
-            cooldown_days=config.cooldown_days
-        )
+        try:
+            self._excluded_companies = await self.store.get_applied_direct_companies(
+                cooldown_days=config.cooldown_days
+            )
+        except TransportError as e:
+            await self._log(
+                f"⚠️ [持久化降级] 直招避嫌池读取遇到持久化异常（{e}），中断投递以避免重复沟通"
+            )
+            raise
         if self._excluded_companies:
             await self._log(
                 f"🏢 [避嫌池] 已加载 {len(self._excluded_companies)} 家已沟通直招企业"
@@ -1028,7 +1035,11 @@ class JobFeedPipeline:
         The count is read here once per card and kept on the run so the callers that only
         need it for a log line reuse this read rather than issuing their own.
         """
-        run.applied_today = await self.store.count_today_applied_jobs()
+        try:
+            run.applied_today = await self.store.count_today_applied_jobs()
+        except TransportError as e:
+            await self._log(f"⚠️ [持久化降级] 今日投递额度查询遇到持久化异常（{e}），无法确认配额")
+            raise
         if run.applied_today >= run.config.daily_greeting_limit:
             run.result.quota_exhausted = True
             return True
@@ -1067,7 +1078,11 @@ class JobFeedPipeline:
             "jd_key_requirements": evaluation.jd_key_requirements
             or payload.get("jd_key_requirements", []),
         }
-        saved = await self.store.upsert_job_record(dict(payload)) or {}
+        try:
+            saved = await self.store.upsert_job_record(dict(payload)) or {}
+        except TransportError as e:
+            await self._log(f"⚠️ [持久化降级] 岗位记录写入遇到持久化异常（{e}）")
+            saved = dict(payload)
         run.result.processed += 1
         if run.result.outcome == "no_candidates":
             # The primary outcome is the first job that earned a verdict: the run's
