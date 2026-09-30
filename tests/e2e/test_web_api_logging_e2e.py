@@ -48,9 +48,22 @@ def _is_dashboard_alive(base_url: str) -> bool:
         return False
 
 
+def _is_broker_alive() -> bool:
+    try:
+        from boss_agent.settings import resolve_pocketbase_url
+
+        url = resolve_pocketbase_url()
+        return httpx.get(f"{url.rstrip('/')}/api/health", timeout=1.0).status_code == 200
+    except Exception:
+        return False
+
+
 @pytest.fixture(scope="module")
 def web_dashboard(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Dashboard]:
     """Start a Web Dashboard on an ephemeral port, logging into this test's tmp directory."""
+    if not _is_broker_alive():
+        pytest.skip("Shared PocketBase State Stream Broker is not reachable")
+
     if not (REPO_ROOT / "web" / "node_modules").exists():
         raise AssertionError(
             "web/node_modules is missing, so the dashboard cannot start — "
@@ -136,7 +149,7 @@ def test_web_api_logging_e2e(web_dashboard: Dashboard):
     post_task_resp = client.post(
         "/api/tasks",
         json={
-            "task_type": "search_and_greet",
+            "task_type": "AUTO_APPLY",
             "payload": {"keyword": "E2E_Test_Engineer", "city": "Beijing"},
         },
     )
