@@ -409,6 +409,39 @@ describe('SvelteKit Server Endpoints', () => {
 		expect(getJson.records.some((r: any) => r.fingerprint === postJson.record.fingerprint)).toBe(true);
 	});
 
+	it('GET /api/jobs with search under status=all finds ignored jobs', async () => {
+		const { POST: handleJobsPost, GET: handleJobsGet } = await import('../routes/api/jobs/+server');
+		const ignoredJob = {
+			title: 'Agent Platform Engineer',
+			company_name: '携程集团',
+			recruiter_name: '徐女士·Hr',
+			salary_range: '3-5.5万元·15月',
+			job_description: '初筛淘汰: 命中职位黑名单关键词: Java',
+			status: 'ignored'
+		};
+
+		const postRes = await handleJobsPost({
+			request: { json: async () => ignoredJob }
+		} as any);
+		const postJson = await postRes.json();
+		expect(postJson.success).toBe(true);
+		trackJobRecord(postJson.record);
+
+		// Without search under status=all, ignored jobs are excluded
+		const getBrowseRes = await handleJobsGet({
+			url: new URL('http://localhost/api/jobs?status=all')
+		} as any);
+		const getBrowseJson = await getBrowseRes.json();
+		expect(getBrowseJson.records.some((r: any) => r.id === postJson.record.id)).toBe(false);
+
+		// With search under status=all, ignored jobs ARE found
+		const getSearchRes = await handleJobsGet({
+			url: new URL('http://localhost/api/jobs?status=all&search=Agent%20Platform')
+		} as any);
+		const getSearchJson = await getSearchRes.json();
+		expect(getSearchJson.records.some((r: any) => r.id === postJson.record.id)).toBe(true);
+	});
+
 	it('GET /api/jobs returns empty array when status has no matches and creates no fallback file', async () => {
 		const fs = await import('fs');
 		const path = await import('path');
