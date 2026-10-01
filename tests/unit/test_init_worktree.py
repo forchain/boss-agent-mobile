@@ -211,6 +211,7 @@ def test_worktree_manager_update_existing_worktree_already_ancestor(tmp_path):
 
     manager = GitWorktreeManager(cwd=str(tmp_path))
     with patch.object(manager, "_run_git") as mock_git:
+
         def mock_git_side_effect(args, **kwargs):
             if "branch" in args and "--show-current" in args:
                 return MagicMock(returncode=0, stdout="feat/existing\n", stderr="")
@@ -422,6 +423,7 @@ def test_init_worktree_default_current_worktree(tmp_path):
         ),
         patch("scripts.init_worktree.GitWorktreeManager._run_git") as mock_git,
     ):
+
         def mock_git_side_effect(args, **kwargs):
             if "merge-base" in args and "--is-ancestor" in args:
                 return MagicMock(returncode=1, stdout="", stderr="")
@@ -499,7 +501,9 @@ def test_worktree_manager_sync_main_worktree_clean_ff_merge(tmp_path):
                 # Working tree clean
                 return MagicMock(returncode=0, stdout="", stderr="")
             if "merge" in args and "--ff-only" in args:
-                return MagicMock(returncode=0, stdout="Updating abcdef..target_sha_123\nFast-forward", stderr="")
+                return MagicMock(
+                    returncode=0, stdout="Updating abcdef..target_sha_123\nFast-forward", stderr=""
+                )
             if "rev-parse" in args and "refs/heads/main" in args:
                 return MagicMock(returncode=0, stdout="target_sha_123\n", stderr="")
             return MagicMock(returncode=0, stdout="", stderr="")
@@ -516,8 +520,7 @@ def test_worktree_manager_sync_main_worktree_clean_ff_merge(tmp_path):
 
         # Verify merge was called on main_repo
         merge_called = any(
-            "merge" in args and "--ff-only" in args and cwd == main_repo
-            for args, cwd in calls
+            "merge" in args and "--ff-only" in args and cwd == main_repo for args, cwd in calls
         )
         assert merge_called is True
 
@@ -574,7 +577,9 @@ def test_init_worktree_with_dirty_main_end_to_end(tmp_path):
     (main_repo / "config" / "settings.local.yaml").write_text("k: v")
 
     with (
-        patch("scripts.init_worktree.GitWorktreeManager.get_main_repo_root", return_value=main_repo),
+        patch(
+            "scripts.init_worktree.GitWorktreeManager.get_main_repo_root", return_value=main_repo
+        ),
         patch("scripts.init_worktree.GitWorktreeManager.sync_main_branch") as mock_sync,
         patch("scripts.init_worktree.GitWorktreeManager.create_or_update_worktree") as mock_create,
     ):
@@ -612,3 +617,90 @@ def test_init_worktree_with_dirty_main_end_to_end(tmp_path):
         # Test printing rich report with warning doesn't fail
         print_rich_report(result, dry_run=False)
 
+
+def test_config_symlink_manager_auto_seed_settings_local(tmp_path):
+    """Test that settings.local.yaml is seeded from settings.example.yaml when missing."""
+    main_repo = tmp_path / "main_repo"
+    config_dir = main_repo / "config"
+    config_dir.mkdir(parents=True)
+    (config_dir / "settings.example.yaml").write_text("provider: openai\napi_key: example")
+
+    target_wt = tmp_path / "worktree_seed"
+    target_wt.mkdir(parents=True)
+
+    manager = ConfigSymlinkManager(main_repo_root=main_repo)
+    with patch.object(
+        manager, "get_git_tracked_files", return_value={"config/settings.example.yaml"}
+    ):
+        links = manager.link_shared_configs(target_worktree=target_wt)
+        assert len(links) == 2
+        # Should create .boss_agent and settings.local.yaml
+        assert (main_repo / "config" / "settings.local.yaml").is_file()
+        assert (
+            main_repo / "config" / "settings.local.yaml"
+        ).read_text() == "provider: openai\napi_key: example"
+
+        target_local = target_wt / "config" / "settings.local.yaml"
+        assert target_local.is_symlink()
+        assert target_local.read_text() == "provider: openai\napi_key: example"
+
+
+def test_config_symlink_manager_adopt_settings_from_worktree(tmp_path):
+    """Test adopting settings.local.yaml from worktree into main repo when missing."""
+    main_repo = tmp_path / "main_repo"
+    config_dir = main_repo / "config"
+    config_dir.mkdir(parents=True)
+
+    target_wt = tmp_path / "worktree_adopt"
+    target_config = target_wt / "config"
+    target_config.mkdir(parents=True)
+    (target_config / "settings.local.yaml").write_text("custom: adopted_val")
+
+    manager = ConfigSymlinkManager(main_repo_root=main_repo)
+    with patch.object(manager, "get_git_tracked_files", return_value=set()):
+        links = manager.link_shared_configs(target_worktree=target_wt)
+        assert len(links) == 2
+        assert (main_repo / "config" / "settings.local.yaml").is_file()
+        assert (main_repo / "config" / "settings.local.yaml").read_text() == "custom: adopted_val"
+
+        # The worktree file has identical content to the newly adopted main file, so it becomes a symlink
+        target_local = target_config / "settings.local.yaml"
+        assert target_local.is_symlink()
+        assert target_local.read_text() == "custom: adopted_val"
+
+
+def test_config_symlink_manager_replace_identical_regular_file(tmp_path):
+    """Test that a regular file in worktree identical to main is converted into a symlink."""
+    main_repo = tmp_path / "main_repo"
+    config_dir = main_repo / "config"
+    config_dir.mkdir(parents=True)
+    (config_dir / "settings.local.yaml").write_text("same: content")
+
+    target_wt = tmp_path / "worktree_identical"
+    target_config = target_wt / "config"
+    target_config.mkdir(parents=True)
+    (target_config / "settings.local.yaml").write_text("same: content")
+
+    manager = ConfigSymlinkManager(main_repo_root=main_repo)
+    with patch.object(manager, "get_git_tracked_files", return_value=set()):
+        links = manager.link_shared_configs(target_worktree=target_wt)
+        link_entry = next(
+            link for link in links if link.target == str(target_config / "settings.local.yaml")
+        )
+        assert link_entry.status == "created"
+        assert "identical" in link_entry.details
+        assert (target_config / "settings.local.yaml").is_symlink()
+
+
+def test_config_symlink_manager_discover_settings_yaml(tmp_path):
+    """Test that untracked settings.yaml is recognized as a shared config."""
+    main_repo = tmp_path / "main_repo"
+    config_dir = main_repo / "config"
+    config_dir.mkdir(parents=True)
+    (config_dir / "settings.yaml").write_text("pocketbase_url: http://example:8090")
+
+    manager = ConfigSymlinkManager(main_repo_root=main_repo)
+    with patch.object(manager, "get_git_tracked_files", return_value=set()):
+        discovered = manager.discover_shared_configs()
+        discovered_names = {f.name for f in discovered}
+        assert "settings.yaml" in discovered_names
