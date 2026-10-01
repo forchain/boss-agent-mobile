@@ -159,6 +159,45 @@ describe('job_records query builder', () => {
 		expect(filter).not.toContain("o'brien");
 	});
 
+	it('does not widen the stream for a search that sanitizes away to nothing', () => {
+		// `hasSearch` is judged on the sanitized term, so a query made only of stripped
+		// characters adds no search clause *and* leaves the ignored-exclusion in place.
+		const filter = buildJobFilter({ status: 'all', search: '"\'\\' });
+		expect(filter).toContain("(status != 'ignored')");
+		expect(filter).not.toContain('~');
+	});
+
+	it('searches across all statuses including ignored when searching with all or no status', () => {
+		const filterWithAll = buildJobFilter({ status: 'all', search: 'Agent Platform' });
+		expect(filterWithAll).not.toContain("status != 'ignored'");
+		expect(filterWithAll).toContain("title ~ 'Agent Platform'");
+
+		const filterWithNoStatus = buildJobFilter({ search: 'Agent Platform' });
+		expect(filterWithNoStatus).not.toContain("status != 'ignored'");
+		expect(filterWithNoStatus).toContain("title ~ 'Agent Platform'");
+	});
+
+	it('retains explicit status filter when searching on a specific tab', () => {
+		const filter = buildJobFilter({ status: 'matched', search: 'Agent Platform' });
+		expect(filter).toContain("status = 'matched'");
+		expect(filter).toContain("title ~ 'Agent Platform'");
+
+		const ignoredFilter = buildJobFilter({ status: 'ignored', search: 'Agent Platform' });
+		expect(ignoredFilter).toContain("status = 'ignored'");
+		expect(ignoredFilter).toContain("title ~ 'Agent Platform'");
+	});
+
+	it('searches all advertised fields (title, company, recruiter, digest, industry, scale, tags)', () => {
+		const filter = buildJobFilter({ search: '互联网' });
+		expect(filter).toContain("title ~ '互联网'");
+		expect(filter).toContain("company_name ~ '互联网'");
+		expect(filter).toContain("recruiter_name ~ '互联网'");
+		expect(filter).toContain("digest ~ '互联网'");
+		expect(filter).toContain("industry ~ '互联网'");
+		expect(filter).toContain("company_scale ~ '互联网'");
+		expect(filter).toContain("tags ~ '互联网'");
+	});
+
 	it('clamps the page size like the task builder does', () => {
 		expect(clampJobPageSize('9999')).toBe(100);
 		expect(clampJobPageSize(null)).toBe(30);
