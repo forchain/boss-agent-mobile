@@ -374,7 +374,9 @@ def _widen_remote_text_field_cap(
         resp = session.get(url, timeout=timeout, verify=False)
         if not resp.ok:
             if resp.status_code >= 500:
-                raise TransportError(f"Server error inspecting collection '{collection}': {resp.text}")
+                raise TransportError(
+                    f"Server error inspecting collection '{collection}': {resp.text}"
+                )
             logger.warning(
                 "Cannot inspect collection '%s' for schema upgrade: %s", collection, resp.text
             )
@@ -382,9 +384,13 @@ def _widen_remote_text_field_cap(
             return False
         stored = resp.json()
     except (requests.RequestException, ConnectionError, TimeoutError, OSError) as ex:
-        raise TransportError(f"Network error inspecting collection '{collection}' for schema upgrade: {ex}") from ex
+        raise TransportError(
+            f"Network error inspecting collection '{collection}' for schema upgrade: {ex}"
+        ) from ex
     except json.JSONDecodeError as ex:
-        logger.warning("Error decoding JSON from collection '%s' for schema upgrade: %s", collection, ex)
+        logger.warning(
+            "Error decoding JSON from collection '%s' for schema upgrade: %s", collection, ex
+        )
         return False
 
     fields = stored.get("fields")
@@ -486,10 +492,14 @@ def provision_remote_pocketbase(
 
     if not token:
         if last_auth_error is not None:
-            raise TransportError(f"Failed to connect to PocketBase at {pb_url}: {last_auth_error}") from last_auth_error
+            raise TransportError(
+                f"Failed to connect to PocketBase at {pb_url}: {last_auth_error}"
+            ) from last_auth_error
         logger.error("Failed to authenticate to PocketBase at %s as %s", pb_url, email)
         print(f"❌ Failed to authenticate to PocketBase at {pb_url} with email {email}")
-        raise ValidationError(f"Failed to authenticate to PocketBase at {pb_url} with email {email}")
+        raise ValidationError(
+            f"Failed to authenticate to PocketBase at {pb_url} with email {email}"
+        )
 
     session.headers.update({"Authorization": token})
     print(f"✅ Authenticated successfully as superuser '{email}'")
@@ -501,13 +511,19 @@ def provision_remote_pocketbase(
         )
         if not resp.ok:
             if resp.status_code >= 500:
-                raise TransportError(f"Failed to list collections ({resp.status_code} Server Error): {resp.text}")
+                raise TransportError(
+                    f"Failed to list collections ({resp.status_code} Server Error): {resp.text}"
+                )
             logger.error("Failed to list collections: %s", resp.text)
             print(f"❌ Failed to list collections: {resp.text}")
-            raise ValidationError(f"Failed to list collections (HTTP {resp.status_code}): {resp.text}")
+            raise ValidationError(
+                f"Failed to list collections (HTTP {resp.status_code}): {resp.text}"
+            )
         collections_data = resp.json().get("items", [])
     except (requests.RequestException, ConnectionError, TimeoutError, OSError) as ex:
-        raise TransportError(f"Network error while querying collections from {pb_url}: {ex}") from ex
+        raise TransportError(
+            f"Network error while querying collections from {pb_url}: {ex}"
+        ) from ex
 
     # 3. Create or migrate every collection, from the schema's own description.
     existing_names = {c.get("name") for c in collections_data if isinstance(c, dict)}
@@ -521,7 +537,9 @@ def provision_remote_pocketbase(
                     f"{base_url}/api/collections", json=payload, timeout=timeout, verify=False
                 )
             except (requests.RequestException, ConnectionError, TimeoutError, OSError) as ex:
-                raise TransportError(f"Network error creating collection '{collection.name}': {ex}") from ex
+                raise TransportError(
+                    f"Network error creating collection '{collection.name}': {ex}"
+                ) from ex
             if create_resp.ok:
                 logger.info("Created collection '%s' via REST API", collection.name)
                 print(f"✨ Created collection '{collection.name}' successfully")
@@ -553,7 +571,9 @@ def provision_remote_pocketbase(
                     verify=False,
                 )
             except (requests.RequestException, ConnectionError, TimeoutError, OSError) as ex:
-                raise TransportError(f"Network error migrating collection '{collection.name}': {ex}") from ex
+                raise TransportError(
+                    f"Network error migrating collection '{collection.name}': {ex}"
+                ) from ex
             if patch_resp.ok:
                 added = sorted({f["name"] for f in merged} - _live_field_names(live))
                 logger.info(
@@ -602,9 +622,7 @@ def provision_remote_pocketbase(
     if check_records.ok:
         total_items = check_records.json().get("totalItems", 0)
         if total_items == 0:
-            seeds = (
-                initial_searches if initial_searches is not None else DEFAULT_INITIAL_SEARCHES
-            )
+            seeds = initial_searches if initial_searches is not None else DEFAULT_INITIAL_SEARCHES
             for s_id, s_data in seeds.items():
                 record_payload = wire_payload(SAVED_SEARCHES, s_data)
                 record_payload["id"] = s_id
@@ -616,17 +634,23 @@ def provision_remote_pocketbase(
                         verify=False,
                     )
                 except (requests.RequestException, ConnectionError, TimeoutError, OSError) as ex:
-                    raise TransportError(f"Network error seeding saved search '{s_id}': {ex}") from ex
+                    raise TransportError(
+                        f"Network error seeding saved search '{s_id}': {ex}"
+                    ) from ex
                 if seed_resp.ok:
                     print(f"🌱 Seeded saved search '{s_id}' successfully")
                 elif seed_resp.status_code >= 500:
-                    raise TransportError(f"Failed to seed '{s_id}' ({seed_resp.status_code} Server Error): {seed_resp.text}")
+                    raise TransportError(
+                        f"Failed to seed '{s_id}' ({seed_resp.status_code} Server Error): {seed_resp.text}"
+                    )
                 else:
                     print(f"⚠️ Failed to seed '{s_id}': {seed_resp.text}")
         else:
             print(f"ℹ️ 'saved_searches' already has {total_items} records, skipping seeding.")
     elif check_records.status_code >= 500:
-        raise TransportError(f"Failed to check saved_searches records ({check_records.status_code} Server Error): {check_records.text}")
+        raise TransportError(
+            f"Failed to check saved_searches records ({check_records.status_code} Server Error): {check_records.text}"
+        )
 
     return True
 

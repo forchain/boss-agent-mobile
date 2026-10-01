@@ -115,7 +115,9 @@ def test_identifier_helpers_isolated_ast():
     assert ih.is_masked_company_name("某知名互联网公司") is True
     assert ih.is_masked_company_name("腾讯科技") is False
     assert ih.is_headhunter_agency_name("某某人力资源服务有限公司") is True
-    assert ih.is_substantive_jd("这是一段超过三十个字符的有效职位描述内容，符合最低长度标准。") is True
+    assert (
+        ih.is_substantive_jd("这是一段超过三十个字符的有效职位描述内容，符合最低长度标准。") is True
+    )
 
 
 def test_compatibility_surface_reexports():
@@ -156,7 +158,7 @@ def test_compatibility_surface_reexports():
 
 def test_entities_behavior_preserving():
     """Verify domain entities retain identical construction, post_init, and serialization behavior."""
-    from boss_agent.models import JobCardBrief, JobRecord, SavedSearch, ScreeningPolicy
+    from boss_agent.models import JobCardBrief, SavedSearch, ScreeningPolicy
 
     # JobCardBrief post_init
     card = JobCardBrief(

@@ -27,16 +27,18 @@ import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
-from .models import (
-    KNOWN_CITIES,
-    PLATFORM_BADGE_MARKERS,
-    RECRUITER_SEPARATORS,
-    RECRUITER_TITLE_KEYWORDS,
+from .identifier_helpers import (
     clean_job_title,
     is_invalid_company_name,
     is_likely_location,
     sanitize_tags,
     split_recruiter_name,
+)
+from .keyword_constants import (
+    KNOWN_CITIES,
+    PLATFORM_BADGE_MARKERS,
+    RECRUITER_SEPARATORS,
+    RECRUITER_TITLE_KEYWORDS,
 )
 
 #: Company-scale strings: "100-499人", "10000人以上", "少于50人", "20-99人", "50人".

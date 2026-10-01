@@ -11,9 +11,9 @@ from unittest.mock import MagicMock
 import pytest
 
 from boss_agent.greeting_prompt import load_greeting_prompt
+from boss_agent.job_entities import JobPosting
 from boss_agent.matching import JobMatchGreetingService
 from boss_agent.memory import StructuredCandidateProfile
-from boss_agent.models import JobPosting
 
 SEED_TEXT = "# 默认种子提示词\n严禁模板化套话。"
 LOCAL_TEXT = "# 沉淀后的最终记忆\n第一句直击 JD 痛点，并突出海外留学与英文面试意愿。"

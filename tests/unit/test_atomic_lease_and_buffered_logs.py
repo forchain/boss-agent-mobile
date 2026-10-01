@@ -8,8 +8,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from boss_agent.broker.models import AutomationTask, TaskStatus, TaskType
-from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker, PocketBaseTaskBroker
+from boss_agent.broker.models import TaskStatus, TaskType
+from boss_agent.broker.pocketbase_adapter import PocketBaseTaskBroker
 
 
 @pytest.mark.asyncio

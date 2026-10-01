@@ -11,7 +11,8 @@ from _card_fixtures import located
 
 from boss_agent.broker.models import AutomationTask, TaskType
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
-from boss_agent.models import JobCardBrief, JobPosting, compute_job_fingerprint
+from boss_agent.identifier_helpers import compute_job_fingerprint
+from boss_agent.job_entities import JobCardBrief, JobPosting
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.handlers.scrape_jobs import ScrapeJobsHandler
 

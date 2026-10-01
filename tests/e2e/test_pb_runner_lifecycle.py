@@ -26,7 +26,7 @@ from boss_agent.broker.provisioner import (
     provision_sqlite_database,
 )
 from boss_agent.errors import TransportError, ValidationError
-from boss_agent.models import FilterConfig, SavedSearch, SearchConfig
+from boss_agent.search_entities import FilterConfig, SavedSearch, SearchConfig
 from boss_agent.settings import resolve_git_common_root
 
 pytestmark = pytest.mark.e2e
@@ -474,7 +474,9 @@ async def test_service_integration_atomic_task_lease_and_buffered_logs(tmp_path:
         healthy = False
         for _ in range(30):
             try:
-                with urllib.request.urlopen(f"http://127.0.0.1:{test_port}/api/health", timeout=1.0) as resp:
+                with urllib.request.urlopen(
+                    f"http://127.0.0.1:{test_port}/api/health", timeout=1.0
+                ) as resp:
                     if resp.status == 200:
                         healthy = True
                         break
@@ -500,8 +502,12 @@ async def test_service_integration_atomic_task_lease_and_buffered_logs(tmp_path:
         losers = [r for r in (res1, res2) if r is None]
 
         # Exactly ONE winner
-        assert len(winners) == 1, f"Expected exactly 1 winner from concurrent claims, got {len(winners)}"
-        assert len(losers) == 1, f"Expected exactly 1 loser from concurrent claims, got {len(losers)}"
+        assert len(winners) == 1, (
+            f"Expected exactly 1 winner from concurrent claims, got {len(winners)}"
+        )
+        assert len(losers) == 1, (
+            f"Expected exactly 1 loser from concurrent claims, got {len(losers)}"
+        )
         winner = winners[0]
         assert winner.status == TaskStatus.RUNNING
         assert winner.worker_id in ("worker-node-alpha", "worker-node-beta")
@@ -523,7 +529,9 @@ async def test_service_integration_atomic_task_lease_and_buffered_logs(tmp_path:
         winning_broker = broker1 if winner.worker_id == "worker-node-alpha" else broker2
         winning_broker.log_buffer_bound = 10
 
-        req_count_before = len(winning_broker.session.adapters["http://"].poolmanager.pools)  # baseline
+        _req_count_before = len(
+            winning_broker.session.adapters["http://"].poolmanager.pools
+        )  # baseline
 
         # Append 12 lines
         for i in range(12):
@@ -563,6 +571,3 @@ async def test_service_integration_atomic_task_lease_and_buffered_logs(tmp_path:
     finally:
         proc.terminate()
         proc.wait(timeout=5)
-
-
-

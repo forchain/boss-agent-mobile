@@ -13,8 +13,8 @@ from typing import Any
 
 from boss_agent.broker.models import AutomationTask, TaskType
 from boss_agent.broker.pocketbase_adapter import BaseTaskBroker
+from boss_agent.enums import TargetAction
 from boss_agent.feed_pipeline import FeedStreamConfig, JobFeedPipeline
-from boss_agent.models import TargetAction
 from boss_agent.screening import CandidateScreener
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.handlers.base import BaseTaskHandler, HandlerResult

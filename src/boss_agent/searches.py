@@ -13,7 +13,7 @@ import requests
 
 from .broker.collection_schema import SAVED_SEARCHES, normalize_record
 from .broker.provisioner import DEFAULT_INITIAL_SEARCHES
-from .models import SavedSearch
+from .search_entities import SavedSearch
 from .settings import resolve_pocketbase_url
 
 #: Columns the domain interprets itself when they are absent, by falling back to a

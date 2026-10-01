@@ -18,7 +18,7 @@ from typing import Any
 from rich.console import Console
 from rich.table import Table
 
-from boss_agent.models import FilterConfig, SearchConfig
+from boss_agent.search_entities import FilterConfig, SearchConfig
 from boss_agent.searches import get_global_search_registry
 from boss_agent.settings import load_settings
 from boss_agent.workflows import SmokeHarness, TakeoverHandler

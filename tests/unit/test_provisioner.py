@@ -634,4 +634,3 @@ def test_provision_remote_pocketbase_raises_validation_error_on_bad_credentials(
         provision_remote_pocketbase(
             "http://127.0.0.1:8090", email="admin@example.com", password="wrongpassword"
         )
-

@@ -11,7 +11,7 @@ from _card_fixtures import located
 
 from boss_agent.broker.models import TaskStatus, TaskType
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
-from boss_agent.models import JobCardBrief
+from boss_agent.job_entities import JobCardBrief
 from boss_agent.worker.config import WorkerConfig
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.daemon import AutomationWorker
@@ -84,7 +84,8 @@ async def test_scrape_enrichment_falls_back_to_jd_digest_when_card_has_no_snippe
 ):
     """A popup card without a snippet must not persist an empty digest; the enrichment
     should fall back to the digest derived from the full job description."""
-    from boss_agent.models import ChatButtonState, JobPosting
+    from boss_agent.enums import ChatButtonState
+    from boss_agent.job_entities import JobPosting
 
     card = JobCardBrief(
         title="Senior AI Agent Engineer（英语口语）",

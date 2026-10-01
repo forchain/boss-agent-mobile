@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 
 from boss_agent.broker.models import AutomationTask
 from boss_agent.broker.pocketbase_adapter import BaseTaskBroker
-from boss_agent.models import SavedSearch
+from boss_agent.search_entities import SavedSearch
 from boss_agent.settings import resolve_run_cleanup_on_startup
 from boss_agent.startup_cleanup import StartupCleanupGate
 from boss_agent.task_launch import (

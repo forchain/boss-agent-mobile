@@ -251,7 +251,8 @@ class PocketBaseCandidateMemoryStore(CandidateMemoryStore):
                         json.dumps(resolve_field("target_positions", []), ensure_ascii=False),
                         doc,
                         doc,
-                        profile_data.get("raw_resume_text") or existing_dict.get("raw_resume_text", ""),
+                        profile_data.get("raw_resume_text")
+                        or existing_dict.get("raw_resume_text", ""),
                         now,
                     )
                     cursor.execute(
@@ -291,7 +292,8 @@ class PocketBaseCandidateMemoryStore(CandidateMemoryStore):
                         json.dumps(resolve_field("projects", []), ensure_ascii=False),
                         json.dumps(resolve_field("target_positions", []), ensure_ascii=False),
                         doc,
-                        profile_data.get("raw_resume_text") or existing_dict.get("raw_resume_text", ""),
+                        profile_data.get("raw_resume_text")
+                        or existing_dict.get("raw_resume_text", ""),
                         now,
                     )
                     cursor.execute(
@@ -575,4 +577,3 @@ def migrate_legacy_candidate_profile(
         ),
         timeout=10.0,
     )
-

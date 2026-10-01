@@ -22,16 +22,12 @@ from droid_agent_core.locators import (
 )
 
 from .card_parser import CardFacets, ParsedCard, needs_text_fallback, parse_card
-from .models import (
-    PLATFORM_BADGE_MARKERS,
-    AuthStatus,
-    ChatButtonState,
-    FilterConfig,
-    JobCardBrief,
-    JobPosting,
-    classify_chat_button,
-)
+from .enums import AuthStatus, ChatButtonState
+from .identifier_helpers import classify_chat_button
+from .job_entities import JobCardBrief, JobPosting
+from .keyword_constants import PLATFORM_BADGE_MARKERS
 from .rejection import DISINTEREST_REASON
+from .search_entities import FilterConfig
 
 logger = logging.getLogger("boss_agent.pages")
 ui_logger = logging.getLogger("droid_agent_core.ui")

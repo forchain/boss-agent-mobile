@@ -19,12 +19,12 @@ import requests
 
 from boss_agent.async_bridge import execute_broker_request
 from boss_agent.broker.models import AutomationTask, TaskStatus, TaskType
-from boss_agent.errors import ConflictError, ValidationError
 from boss_agent.candidate_memory_store import (
     CandidateMemoryStore,
     InMemoryCandidateMemoryStore,
     PocketBaseCandidateMemoryStore,
 )
+from boss_agent.errors import ConflictError, ValidationError
 from boss_agent.job_store import (
     InMemoryJobRecordStore,
     JobRecordStore,
@@ -154,7 +154,7 @@ class BaseTaskBroker(ABC):
         """Append a single log line to the task."""
         pass
 
-    async def flush_logs(self, task_id: str | None = None) -> None:
+    async def flush_logs(self, task_id: str | None = None) -> None:  # noqa: B027
         """Flush any buffered log lines to the persistent broker."""
         pass
 
@@ -579,8 +579,8 @@ class PocketBaseTaskBroker(BaseTaskBroker):
             all_logs = self._task_logs.get(tid, [])
             url = f"{self._collection_url()}/{tid}"
             await execute_broker_request(
-                lambda: self.session.patch(
-                    url, json={"logs": all_logs}, headers=self._headers()
+                lambda u=url, logs=all_logs: self.session.patch(
+                    u, json={"logs": logs}, headers=self._headers()
                 ),
                 expected_statuses=(200,),
                 allow_404=True,

@@ -15,7 +15,8 @@ from boss_agent.card_parser import (
     parse_company_scale_industry,
     parse_recruiter_info,
 )
-from boss_agent.models import JobCardBrief, JobPosting, JobRecord, clean_job_title
+from boss_agent.identifier_helpers import clean_job_title
+from boss_agent.job_entities import JobCardBrief, JobPosting, JobRecord
 from boss_agent.pages import JobListPage
 
 
@@ -570,7 +571,7 @@ def test_backfill_purges_unknown_company_records(tmp_path: Path):
 
 def test_sanitize_tags_filters_recruiter_and_location():
     """sanitize_tags must filter out recruiter name, recruiter title, location, scale, and duplicates."""
-    from boss_agent.models import sanitize_tags
+    from boss_agent.identifier_helpers import sanitize_tags
 
     # Scenario 1: Recruiter info and location mixed in tags
     raw_tags = ["3-5年", "硕士", "王琳 · 猎头顾问", "上海"]
@@ -611,7 +612,7 @@ def test_sanitize_tags_filters_recruiter_and_location():
 
 def test_is_invalid_company_name():
     """is_invalid_company_name must detect education, experience, recruiter, location, and scale strings."""
-    from boss_agent.models import is_invalid_company_name
+    from boss_agent.identifier_helpers import is_invalid_company_name
 
     # Education / Experience keywords
     assert is_invalid_company_name("硕士") is True

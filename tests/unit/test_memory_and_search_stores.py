@@ -23,12 +23,12 @@ from boss_agent.candidate_memory_store import (
     PocketBaseCandidateMemoryStore,
 )
 from boss_agent.errors import TransportError
-from boss_agent.models import FilterConfig, SavedSearch, SearchConfig
 from boss_agent.saved_search_store import (
     InMemorySavedSearchStore,
     PocketBaseSavedSearchStore,
     SavedSearchStore,
 )
+from boss_agent.search_entities import FilterConfig, SavedSearch, SearchConfig
 
 
 class FakeResponse:

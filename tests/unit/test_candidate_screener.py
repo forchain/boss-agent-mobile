@@ -9,14 +9,15 @@ with no Appium driver and no database involved.
 
 from unittest.mock import MagicMock
 
+from boss_agent.job_entities import JobCardBrief, JobPosting
 from boss_agent.matching import MatchGreetingResult
 from boss_agent.memory import StructuredCandidateProfile
-from boss_agent.models import JobCardBrief, JobPosting, ScreeningPolicy
 from boss_agent.screening import (
     CandidateScreener,
     CardVerdictStage,
     JobVerdictStage,
 )
+from boss_agent.screening_policy import ScreeningPolicy
 
 GOOD_JD = (
     "岗位职责：主导企业级大模型应用与Agent工作流平台建设，负责推理链编排、"

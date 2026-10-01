@@ -21,7 +21,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from .async_bridge import execute_broker_request
-from .models import SavedSearch
+from .search_entities import SavedSearch
 
 logger = logging.getLogger("boss_agent.saved_search_store")
 

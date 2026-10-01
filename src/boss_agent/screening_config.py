@@ -94,7 +94,6 @@ def load_screening_policy(config_path: str | Path | None = None) -> ScreeningPol
     return policy
 
 
-
 def is_writable_screening_path(path: str | Path) -> bool:
     """Whether `path` may be written to.
 

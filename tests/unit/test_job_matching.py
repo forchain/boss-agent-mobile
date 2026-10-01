@@ -6,9 +6,9 @@ Unit tests for JobMatchGreetingService and MatchGreetingResult.
 
 from unittest.mock import MagicMock
 
+from boss_agent.job_entities import JobPosting
 from boss_agent.matching import JobMatchGreetingService, MatchGreetingResult
 from boss_agent.memory import StructuredCandidateProfile
-from boss_agent.models import JobPosting
 
 
 def test_match_greeting_result_serialization():
@@ -232,8 +232,8 @@ def test_job_match_greeting_service_requires_full_substantive_jd():
 def test_greeting_drafter_in_graph_catches_precondition_failure():
     """Greeting drafter node in LangGraph should record failure state rather than crashing when JD is missing."""
     from boss_agent.graph import run_job_application_graph
-    from boss_agent.models import ScreeningPolicy
     from boss_agent.pages import JobCardBrief
+    from boss_agent.screening_policy import ScreeningPolicy
 
     policy = ScreeningPolicy(title_whitelist=["Agent"])
     card = JobCardBrief(
@@ -272,7 +272,10 @@ def test_job_match_greeting_service_default_client_uses_realm(monkeypatch):
 
 
 def test_parse_recruiter_title_and_format_prefix():
-    from boss_agent.models import format_recruiter_greeting_prefix, parse_recruiter_title
+    from boss_agent.identifier_helpers import (
+        format_recruiter_greeting_prefix,
+        parse_recruiter_title,
+    )
 
     cases = [
         # xx 女士

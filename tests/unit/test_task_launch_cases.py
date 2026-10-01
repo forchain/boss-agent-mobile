@@ -18,8 +18,8 @@ from unittest.mock import patch
 import pytest
 
 from boss_agent import task_launch
-from boss_agent.models import FilterConfig, SavedSearch, SearchConfig
 from boss_agent.rejection import ChatAcknowledgmentSettings
+from boss_agent.search_entities import FilterConfig, SavedSearch, SearchConfig
 
 FIXTURE_PATH = Path(__file__).parents[2] / "config" / "task_launch.cases.json"
 

@@ -14,8 +14,9 @@ from typing import Any, TypedDict
 from langgraph.graph import END, START, StateGraph
 from langsmith import traceable
 
-from .models import JobCardBrief, ScreeningPolicy
+from .job_entities import JobCardBrief
 from .screening import CARD_PASS_REASON, CandidateScreener, CardVerdictStage
+from .screening_policy import ScreeningPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -510,6 +511,7 @@ def make_resume_persister_node(broker: Any | None = None):
             return saved_prof, rev_rec
 
         from .async_bridge import run_sync
+
         saved_prof, rev_rec = run_sync(_save(), timeout=10.0)
 
         return {

@@ -28,9 +28,9 @@ from _chat_triage_harness import (
 from boss_agent.broker.models import TaskStatus, TaskType
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
 from boss_agent.chat_triage import TriagePages
-from boss_agent.models import ScreeningPolicy
 from boss_agent.pages import CommunicationListPage
 from boss_agent.rejection import DEFAULT_REJECTION_REPLY_TEXT, ChatAcknowledgmentSettings
+from boss_agent.screening_policy import ScreeningPolicy
 from boss_agent.worker.config import WorkerConfig
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.handlers.check_chat import CheckChatHandler

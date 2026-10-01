@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from boss_agent.models import compute_job_fingerprint
+from boss_agent.identifier_helpers import compute_job_fingerprint
 
 FIXTURE_PATH = Path(__file__).parents[2] / "config" / "fingerprint.vectors.json"
 

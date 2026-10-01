@@ -17,7 +17,9 @@ from _card_fixtures import located
 
 from boss_agent.broker.models import TaskType
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker, PocketBaseTaskBroker
-from boss_agent.models import ChatButtonState, JobCardBrief, is_communication_expired
+from boss_agent.enums import ChatButtonState
+from boss_agent.identifier_helpers import is_communication_expired
+from boss_agent.job_entities import JobCardBrief
 from boss_agent.worker.config import WorkerConfig
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.daemon import AutomationWorker
@@ -826,4 +828,3 @@ async def test_applied_companies_query_filter_includes_cooldown_cutoff():
     await broker.job_store.get_applied_direct_companies(cooldown_days=0)
     filter_expr_zero = session.get.call_args_list[0].kwargs["params"]["filter"]
     assert filter_expr_zero == "status='applied' && is_headhunter!=true"
-

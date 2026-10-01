@@ -3,7 +3,8 @@ from pathlib import Path
 
 import yaml
 
-from boss_agent.models import JobRecord, ScreeningPolicy
+from boss_agent.job_entities import JobRecord
+from boss_agent.screening_policy import ScreeningPolicy
 
 
 def test_screening_policy_load_from_example():

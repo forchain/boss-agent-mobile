@@ -12,7 +12,7 @@ in that slot — which is what `located()` supplies.
 from typing import Any
 from unittest.mock import MagicMock
 
-from boss_agent.models import JobCardBrief
+from boss_agent.job_entities import JobCardBrief
 from boss_agent.pages import LocatedJobCard
 
 

@@ -6,13 +6,13 @@ import pytest
 
 from boss_agent.broker.models import TaskType
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
-from boss_agent.models import SavedSearch
 from boss_agent.scheduler import (
     AutomationScheduler,
     get_next_cron_run,
     is_cron_match,
     parse_cron_field,
 )
+from boss_agent.search_entities import SavedSearch
 from boss_agent.startup_cleanup import STARTUP_CLEANUP_MARKER, StartupCleanupGate
 
 
@@ -102,7 +102,7 @@ async def test_scheduler_queues_nothing_when_the_startup_cleanup_is_disabled():
 async def test_scheduler_run_once():
     broker = InMemoryTaskBroker()
 
-    from boss_agent.models import FilterConfig, SearchConfig
+    from boss_agent.search_entities import FilterConfig, SearchConfig
 
     # Search 1: Enabled and matches Monday 09:00
     search_active = SavedSearch(

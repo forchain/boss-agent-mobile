@@ -52,6 +52,7 @@ def validate_identifier(name: str) -> str:
         raise ValueError(f"Invalid schema identifier: {name!r}")
     return name
 
+
 # --------------------------------------------------------------------------- #
 # PocketBase field kinds
 # --------------------------------------------------------------------------- #

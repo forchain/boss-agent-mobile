@@ -2,8 +2,8 @@
 
 from unittest.mock import MagicMock, patch
 
-from boss_agent.models import FilterConfig
 from boss_agent.pages import FilterDialogPage
+from boss_agent.search_entities import FilterConfig
 
 
 def test_filter_config_defaults_and_validation():
@@ -209,7 +209,8 @@ def test_apply_filters_resets_first_and_handles_empty_config():
 
 
 def test_smoke_harness_with_filter_config():
-    from boss_agent.models import JobPosting, SearchConfig
+    from boss_agent.job_entities import JobPosting
+    from boss_agent.search_entities import SearchConfig
     from boss_agent.workflows import SmokeHarness, TakeoverHandler
 
     mock_driver = MagicMock()
@@ -243,7 +244,8 @@ def test_smoke_harness_with_filter_config():
 
 
 def test_smoke_harness_clears_filters_when_no_filter_config():
-    from boss_agent.models import FilterConfig, JobPosting, SearchConfig
+    from boss_agent.job_entities import JobPosting
+    from boss_agent.search_entities import FilterConfig, SearchConfig
     from boss_agent.workflows import SmokeHarness, TakeoverHandler
 
     mock_driver = MagicMock()

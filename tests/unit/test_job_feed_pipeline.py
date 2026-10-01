@@ -14,24 +14,28 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from boss_agent.enums import (
+    ChatButtonState,
+    JobRecordStatus,
+    TargetAction,
+)
 from boss_agent.feed_pipeline import (
     FeedStreamConfig,
     JobAction,
     JobFeedPipeline,
     is_task_cancelled,
 )
-from boss_agent.job_store import InMemoryJobRecordStore
-from boss_agent.memory import StructuredCandidateProfile
-from boss_agent.models import (
-    ChatButtonState,
+from boss_agent.job_entities import (
     JobCardBrief,
     JobPosting,
-    JobRecordStatus,
-    ScreeningPolicy,
-    TargetAction,
 )
+from boss_agent.job_store import InMemoryJobRecordStore
+from boss_agent.memory import StructuredCandidateProfile
 from boss_agent.pages import LocatedJobCard
 from boss_agent.screening import CandidateScreener, JobVerdictStage
+from boss_agent.screening_policy import (
+    ScreeningPolicy,
+)
 
 GOOD_JD = (
     "岗位职责：主导企业级大模型应用与Agent工作流平台建设，负责推理链编排、"

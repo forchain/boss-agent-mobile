@@ -37,7 +37,7 @@ from boss_agent.broker.collection_schema import (
     wire_payload,
 )
 from boss_agent.broker.provisioner import provision_remote_pocketbase, provision_sqlite_database
-from boss_agent.models import SavedSearch
+from boss_agent.search_entities import SavedSearch
 from boss_agent.searches import record_to_saved_search
 
 _COLLECTIONS_DDL = """
@@ -397,4 +397,3 @@ def test_validate_identifier_rejects_malformed_or_dangerous_names() -> None:
         validate_identifier("col-dash")
     with pytest.raises(ValueError, match="Invalid schema identifier"):
         validate_identifier("")
-

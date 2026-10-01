@@ -12,13 +12,14 @@ from pathlib import Path
 
 import yaml
 
-from boss_agent.models import ScreeningPolicy, is_headhunter_agency_name
+from boss_agent.identifier_helpers import is_headhunter_agency_name
 from boss_agent.pages import parse_company_from_descriptor
 from boss_agent.screening_config import (
     append_company_blacklist_entry,
     is_writable_screening_path,
     resolve_writable_screening_config_path,
 )
+from boss_agent.screening_policy import ScreeningPolicy
 
 # ---------------------------------------------------------------------------
 # `[Company] | [Position]` card descriptor
@@ -182,7 +183,7 @@ def test_append_is_idempotent_and_appends_to_an_existing_block_list():
 def test_append_creates_the_config_with_a_full_policy_snapshot(monkeypatch):
     """A brand-new file must not become a policy that drops every other rule."""
     monkeypatch.setattr(
-        "boss_agent.models.ScreeningPolicy.load_default",
+        "boss_agent.screening_policy.ScreeningPolicy.load_default",
         classmethod(lambda cls, **kw: ScreeningPolicy()),
     )
     with tempfile.TemporaryDirectory() as tmpdir:

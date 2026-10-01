@@ -4,7 +4,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from boss_agent.models import FilterConfig, JobPosting, SavedSearch, SearchConfig
+from boss_agent.job_entities import JobPosting
+from boss_agent.search_entities import FilterConfig, SavedSearch, SearchConfig
 from boss_agent.searches import (
     SavedSearchRegistry,
 )

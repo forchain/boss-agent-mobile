@@ -25,6 +25,7 @@ import requests
 
 from boss_agent.async_bridge import execute_broker_request
 from boss_agent.broker.collection_schema import JOB_RECORDS, wire_payload
+from boss_agent.enums import STATE_RANK, JobRecordStatus
 from boss_agent.errors import (
     BrokerError,
     ConflictError,
@@ -32,8 +33,7 @@ from boss_agent.errors import (
     TransportError,
     ValidationError,
 )
-from boss_agent.models import (
-    JobRecordStatus,
+from boss_agent.identifier_helpers import (
     compute_job_fingerprint,
     is_communication_expired,
     is_direct_hire_company,
@@ -62,8 +62,6 @@ def _advanced_status(current: str | None, incoming: Any) -> str | None:
     an explicit rejection always wins, and a freshly extracted JD lifts a record out of
     its pre-JD limbo.
     """
-    from boss_agent.models import STATE_RANK
-
     status_val = incoming.value if hasattr(incoming, "value") else incoming
     if not status_val:
         return None

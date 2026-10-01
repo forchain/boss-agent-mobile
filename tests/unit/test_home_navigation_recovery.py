@@ -2,8 +2,9 @@
 
 from unittest.mock import MagicMock
 
-from boss_agent.models import JobPosting, SavedSearch
+from boss_agent.job_entities import JobPosting
 from boss_agent.pages import JobListPage
+from boss_agent.search_entities import SavedSearch
 from boss_agent.workflows import SmokeHarness, TakeoverHandler
 
 

@@ -270,7 +270,7 @@ async def test_pocketbase_broker_claim_task_conflict():
 @pytest.mark.asyncio
 async def test_saved_search_broker_crud():
     """Verify broker supports CRUD for SavedSearch presets."""
-    from boss_agent.models import FilterConfig, SavedSearch, SearchConfig
+    from boss_agent.search_entities import FilterConfig, SavedSearch, SearchConfig
 
     broker = InMemoryTaskBroker()
     search = SavedSearch(

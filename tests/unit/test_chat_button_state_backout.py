@@ -17,7 +17,9 @@ from _card_fixtures import located
 
 from boss_agent.broker.models import TaskStatus, TaskType
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
-from boss_agent.models import ChatButtonState, JobCardBrief, classify_chat_button
+from boss_agent.enums import ChatButtonState
+from boss_agent.identifier_helpers import classify_chat_button
+from boss_agent.job_entities import JobCardBrief
 from boss_agent.pages import JobDetailPage
 from boss_agent.worker.config import WorkerConfig
 from boss_agent.worker.context import WorkerContext

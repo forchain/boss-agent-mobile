@@ -38,13 +38,13 @@ from boss_agent.chat_triage import (
     CommunicationListAdapter,
     StopReason,
 )
-from boss_agent.models import ScreeningPolicy
 from boss_agent.rejection import (
     DEFAULT_REJECTION_REPLY_TEXT,
     DISINTEREST_REASON,
     ChatAcknowledgmentSettings,
     RejectionVerdict,
 )
+from boss_agent.screening_policy import ScreeningPolicy
 
 
 @pytest.fixture

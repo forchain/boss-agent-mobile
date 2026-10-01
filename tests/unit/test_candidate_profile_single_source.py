@@ -34,11 +34,14 @@ def test_in_memory_store_isolated_from_local_file(tmp_path, monkeypatch):
     config_dir = tmp_path / "config"
     config_dir.mkdir()
     fake_file = config_dir / "candidate_memory.json"
-    fake_file.write_text(json.dumps({"name": "历史文件残留", "core_skills": ["C++"]}), encoding="utf-8")
+    fake_file.write_text(
+        json.dumps({"name": "历史文件残留", "core_skills": ["C++"]}), encoding="utf-8"
+    )
 
     store = InMemoryCandidateMemoryStore()
     # It must be purely in-memory and empty, ignoring the file on disk
     import asyncio
+
     profile = asyncio.run(store.get_candidate_profile())
     assert profile is None
 
@@ -74,6 +77,7 @@ def test_legacy_profile_migration_lifts_to_single_source(tmp_path):
 
     # Verify single source now returns the migrated profile
     import asyncio
+
     saved = asyncio.run(broker.candidate_memory.get_candidate_profile())
     assert saved is not None
     assert saved["name"] == "张三"
@@ -110,6 +114,7 @@ def test_profile_document_round_trip_unabbreviated():
     }
 
     import asyncio
+
     asyncio.run(store.save_candidate_profile(profile_data))
     fetched = asyncio.run(store.get_candidate_profile())
 
@@ -165,6 +170,7 @@ def test_incremental_merge_flow_against_single_source():
         "raw_summary": "# 初始画像\n5年经验后端工程师",
     }
     import asyncio
+
     asyncio.run(broker.candidate_memory.save_candidate_profile(initial_profile, user_id="user_123"))
 
     mock_llm = MagicMock()
@@ -200,7 +206,9 @@ def test_incremental_merge_flow_against_single_source():
     assert "升级画像" in final_prof["profile_document"]
 
     # Verify single source is updated
-    updated_in_broker = asyncio.run(broker.candidate_memory.get_candidate_profile(user_id="user_123"))
+    updated_in_broker = asyncio.run(
+        broker.candidate_memory.get_candidate_profile(user_id="user_123")
+    )
     assert updated_in_broker["years_of_experience"] == 6
     assert "Flask" in updated_in_broker["core_skills"]
     assert "升级画像" in updated_in_broker["profile_document"]

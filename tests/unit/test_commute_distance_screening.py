@@ -12,7 +12,7 @@ from pathlib import Path
 
 import yaml
 
-from boss_agent.models import ScreeningPolicy
+from boss_agent.screening_policy import ScreeningPolicy
 
 
 def test_commute_limit_defaults_to_40km():

@@ -1,8 +1,10 @@
 from unittest.mock import MagicMock
 
 from boss_agent.graph import run_job_application_graph
-from boss_agent.models import JobCardBrief, SavedSearch, ScreeningPolicy
+from boss_agent.job_entities import JobCardBrief
 from boss_agent.screening import CandidateScreener, JobVerdictStage
+from boss_agent.screening_policy import ScreeningPolicy
+from boss_agent.search_entities import SavedSearch
 
 
 def test_screening_policy_serialization():

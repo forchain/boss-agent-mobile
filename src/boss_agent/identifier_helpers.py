@@ -11,7 +11,7 @@ import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from boss_agent.enums import ChannelPreference, ChatButtonState
+from boss_agent.enums import ChatButtonState
 from boss_agent.keyword_constants import (
     _JD_HEADER_PREFIX_RE,
     _JD_HEADER_STANDALONE_RE,

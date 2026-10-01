@@ -11,13 +11,11 @@ facets and the enriched record — can be read and tested without a driver or a 
 
 from typing import Any
 
+from .enums import JobRecordStatus
+from .identifier_helpers import is_invalid_company_name
+from .job_entities import JobCardBrief
 from .job_store import INVALID_JOB_TITLES
-from .models import (
-    INVALID_COMPANY_NAMES,
-    JobCardBrief,
-    JobRecordStatus,
-    is_invalid_company_name,
-)
+from .keyword_constants import INVALID_COMPANY_NAMES
 from .screening import CardScreeningVerdict
 
 

@@ -15,14 +15,14 @@ from rich.panel import Panel
 from droid_agent_core.llm import LLMDecisionClient
 
 from .greeting_prompt import load_greeting_prompt
-from .llm_config import create_llm_client
-from .memory import StructuredCandidateProfile
-from .models import (
-    JobPosting,
-    ScreeningPolicy,
+from .identifier_helpers import (
     format_recruiter_greeting_prefix,
     is_substantive_jd,
 )
+from .job_entities import JobPosting
+from .llm_config import create_llm_client
+from .memory import StructuredCandidateProfile
+from .screening_policy import ScreeningPolicy
 
 console = Console(stderr=True)
 

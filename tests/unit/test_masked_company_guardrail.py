@@ -5,7 +5,8 @@ Unit tests verifying the Masked Company Guardrail (is_masked_company_name)
 and direct-only rejection blacklist protection in ScreeningPolicy.
 """
 
-from boss_agent.models import ScreeningPolicy, is_masked_company_name
+from boss_agent.identifier_helpers import is_masked_company_name
+from boss_agent.screening_policy import ScreeningPolicy
 
 
 def test_is_masked_company_name_positive_cases():

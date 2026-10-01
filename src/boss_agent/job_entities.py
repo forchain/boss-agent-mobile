@@ -7,9 +7,7 @@ Job-related domain entities: JobCardBrief, JobRecord, and JobPosting (Issue #311
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
 
-from boss_agent.enums import JobRecordStatus
 from boss_agent.identifier_helpers import (
     clean_job_title,
     compute_job_fingerprint,

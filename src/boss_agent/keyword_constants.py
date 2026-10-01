@@ -297,7 +297,9 @@ EXPIRED_POSTING_REASON: str = "岗位已失效/停止招聘"
 # Telemetry shared by both detail-inspecting handlers when a headhunter posting is
 # spared the bottom commute probe (ticket #255). Kept in one place so the two paths
 # cannot drift into reporting the skip differently.
-HEADHUNTER_COMMUTE_PROBE_SKIP_REASON: str = "猎头岗位（企业信息保密），跳过底部通勤距离探测以节省耗时"
+HEADHUNTER_COMMUTE_PROBE_SKIP_REASON: str = (
+    "猎头岗位（企业信息保密），跳过底部通勤距离探测以节省耗时"
+)
 
 DEFAULT_COMMUNICATION_COOLDOWN_DAYS: int = 30
 
