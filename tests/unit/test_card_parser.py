@@ -289,7 +289,13 @@ def test_the_recruiter_normalizer_is_the_one_the_fingerprint_uses() -> None:
 
 
 PURE_DOMAIN_MODULES = (
-    "src/boss_agent/models.py",
+    "src/boss_agent/enums.py",
+    "src/boss_agent/keyword_constants.py",
+    "src/boss_agent/identifier_helpers.py",
+    "src/boss_agent/job_entities.py",
+    "src/boss_agent/candidate_entities.py",
+    "src/boss_agent/search_entities.py",
+    "src/boss_agent/screening_policy.py",
     "src/boss_agent/screening.py",
     "src/boss_agent/feed_records.py",
     "src/boss_agent/graph.py",

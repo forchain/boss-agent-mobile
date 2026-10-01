@@ -15,6 +15,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 import boss_agent.enums as enums
 import boss_agent.identifier_helpers as ih
 import boss_agent.keyword_constants as kc
@@ -120,45 +122,22 @@ def test_identifier_helpers_isolated_ast():
     )
 
 
-def test_compatibility_surface_reexports():
-    """Verify boss_agent.models re-exports all symbols from the decomposed modules."""
-    import boss_agent.models as models
+def test_retired_monolith_fails_loudly():
+    """Verify boss_agent.models is retired and any attempt to import it fails loudly."""
+    import sys
 
-    # Check enums
-    assert hasattr(models, "AuthStatus")
-    assert hasattr(models, "JobRecordStatus")
-    assert hasattr(models, "TargetAction")
-    assert hasattr(models, "TargetTaskType")
-    assert hasattr(models, "ChatButtonState")
-    assert hasattr(models, "ChannelPreference")
-    assert hasattr(models, "STATE_RANK")
-
-    # Check constants
-    assert hasattr(models, "KNOWN_CITIES")
-    assert hasattr(models, "COMMON_TECH_TAGS")
-    assert hasattr(models, "DEFAULT_COMMUNICATION_COOLDOWN_DAYS")
-
-    # Check helpers
-    assert hasattr(models, "clean_job_title")
-    assert hasattr(models, "split_recruiter_name")
-    assert hasattr(models, "compute_job_fingerprint")
-    assert hasattr(models, "classify_chat_button")
-    assert hasattr(models, "is_masked_company_name")
-
-    # Check entities
-    assert hasattr(models, "JobCardBrief")
-    assert hasattr(models, "JobRecord")
-    assert hasattr(models, "JobPosting")
-    assert hasattr(models, "CandidateProfile")
-    assert hasattr(models, "ScreeningPolicy")
-    assert hasattr(models, "SearchConfig")
-    assert hasattr(models, "FilterConfig")
-    assert hasattr(models, "SavedSearch")
+    sys.modules.pop("boss_agent.models", None)
+    models_file = REPO_ROOT / "src/boss_agent/models.py"
+    assert not models_file.exists(), "src/boss_agent/models.py must be deleted."
+    with pytest.raises(ImportError):
+        import boss_agent.models  # noqa: F401
 
 
 def test_entities_behavior_preserving():
     """Verify domain entities retain identical construction, post_init, and serialization behavior."""
-    from boss_agent.models import JobCardBrief, SavedSearch, ScreeningPolicy
+    from boss_agent.job_entities import JobCardBrief
+    from boss_agent.screening_policy import ScreeningPolicy
+    from boss_agent.search_entities import SavedSearch
 
     # JobCardBrief post_init
     card = JobCardBrief(

@@ -79,7 +79,7 @@ class FilterConfig:
 def _saved_search_max_jobs_default() -> int:
     """The declared ``saved_searches.max_jobs`` default, resolved lazily.
 
-    ``boss_agent.models`` is imported *by* the broker adapter, so importing the
+    The search entities module is imported by the broker adapter, so importing the
     Collection Schema at module scope here would close an import cycle. The default
     itself lives in the schema module so the domain model, the provisioner and the
     Web UI cannot drift apart the way 20-vs-30 once did.
