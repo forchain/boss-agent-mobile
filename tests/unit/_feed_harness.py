@@ -34,7 +34,7 @@ GOOD_JD = (
 )
 
 
-def _card(title: str, company: str, y: int | None = None, digest: str = "") -> LocatedJobCard:
+def _card(title: str, company: str, y: int | None = None, digest: str = "", location: str = "") -> LocatedJobCard:
     """One scripted card: the parsed brief plus the element it would have been read from."""
     element = MagicMock()
     if y is not None:
@@ -46,6 +46,7 @@ def _card(title: str, company: str, y: int | None = None, digest: str = "") -> L
             recruiter_name="王女士",
             salary_range="40-60K",
             digest=digest,
+            location=location,
         ),
         element=element,
     )

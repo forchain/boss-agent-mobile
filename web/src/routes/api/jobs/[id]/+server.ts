@@ -33,6 +33,9 @@ const ALLOWED_JOB_FIELDS = new Set([
 	'applied_source',
 	'commute_distance_km',
 	'commute_distance_text',
+	'location_line',
+	'metro_lines',
+	'metro_station',
 	'first_seen_at',
 	'last_seen_at',
 	'source_task_id'

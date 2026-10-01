@@ -474,3 +474,99 @@ def test_evaluate_job_greeting_formats_compound_and_single_surname_recruiters():
     # 2. Single surname
     res2 = screener.evaluate_job(_card(recruiter_name="张伟"), GOOD_JD, None)
     assert res2.greeting_message.startswith("张总您好,幸会!")
+
+
+def test_evaluate_card_rejects_on_business_district_blacklist_administrative_district():
+    screener = CandidateScreener(llm_client=MagicMock())
+    verdict = screener.evaluate_card(
+        _card(location="上海 崇明区 城桥"),
+        ScreeningPolicy(business_district_blacklist=["崇明区"]),
+    )
+
+    assert verdict.passed is False
+    assert verdict.stage is CardVerdictStage.FILTERED_BY_KEYWORD
+    assert verdict.reason == "【商圈黑名单过滤】岗位所在区域/商圈 '上海 崇明区 城桥' 命中黑名单 '崇明区'"
+
+
+def test_evaluate_card_rejects_on_business_district_blacklist_commercial_quarter():
+    screener = CandidateScreener(llm_client=MagicMock())
+    verdict = screener.evaluate_card(
+        _card(location="上海 浦东新区 临港"),
+        ScreeningPolicy(business_district_blacklist=["临港"]),
+    )
+
+    assert verdict.passed is False
+    assert verdict.stage is CardVerdictStage.FILTERED_BY_KEYWORD
+    assert verdict.reason == "【商圈黑名单过滤】岗位所在区域/商圈 '上海 浦东新区 临港' 命中黑名单 '临港'"
+
+
+def test_evaluate_card_rejects_both_direct_and_headhunter_on_business_district_blacklist():
+    screener = CandidateScreener(llm_client=MagicMock())
+    policy = ScreeningPolicy(business_district_blacklist=["崇明区"])
+
+    direct_card = _card(location="上海 崇明区 城桥", is_headhunter=False)
+    hh_card = _card(
+        location="上海 崇明区 城桥",
+        company_name="某人力资源服务公司",
+        recruiter_name="钟先生 · 猎头顾问",
+        is_headhunter=True,
+    )
+
+    direct_verdict = screener.evaluate_card(direct_card, policy)
+    hh_verdict = screener.evaluate_card(hh_card, policy)
+
+    assert direct_verdict.passed is False
+    assert direct_verdict.reason == "【商圈黑名单过滤】岗位所在区域/商圈 '上海 崇明区 城桥' 命中黑名单 '崇明区'"
+    assert hh_verdict.passed is False
+    assert hh_verdict.reason == "【商圈黑名单过滤】岗位所在区域/商圈 '上海 崇明区 城桥' 命中黑名单 '崇明区'"
+
+
+def test_evaluate_card_business_district_blacklist_not_exempted_by_whitelist():
+    """Whitelist relaxation tokens never rescue a business district blacklist rejection."""
+    screener = CandidateScreener(llm_client=MagicMock())
+    card = _card(
+        title="AI 架构专家",
+        location="上海 浦东新区 临港",
+    )
+    policy = ScreeningPolicy(
+        title_whitelist=["AI"],
+        business_district_blacklist=["临港"],
+    )
+
+    verdict = screener.evaluate_card(card, policy)
+    assert verdict.passed is False
+    assert verdict.relaxed_by_whitelist is False
+    assert verdict.reason == "【商圈黑名单过滤】岗位所在区域/商圈 '上海 浦东新区 临港' 命中黑名单 '临港'"
+
+
+def test_evaluate_card_business_district_blacklist_clean_locations_pass():
+    screener = CandidateScreener(llm_client=MagicMock())
+    policy = ScreeningPolicy(business_district_blacklist=["崇明区", "临港"])
+
+    # Clean location
+    verdict1 = screener.evaluate_card(_card(location="上海 静安区 静安寺"), policy)
+    assert verdict1.passed is True
+
+    # Empty location
+    verdict2 = screener.evaluate_card(_card(location=""), policy)
+    assert verdict2.passed is True
+
+
+def test_evaluate_card_business_district_blacklist_case_insensitive_and_stripped():
+    screener = CandidateScreener(llm_client=MagicMock())
+    policy = ScreeningPolicy(business_district_blacklist=[" Pudong "])
+
+    verdict = screener.evaluate_card(_card(location="Shanghai Pudong Area"), policy)
+    assert verdict.passed is False
+    assert verdict.reason == "【商圈黑名单过滤】岗位所在区域/商圈 'Shanghai Pudong Area' 命中黑名单 'Pudong'"
+
+
+def test_evaluate_card_business_district_blacklist_disabled_when_enable_screening_false():
+    screener = CandidateScreener(llm_client=MagicMock())
+    policy = ScreeningPolicy(
+        business_district_blacklist=["崇明区"],
+        enable_screening=False,
+    )
+
+    verdict = screener.evaluate_card(_card(location="上海 崇明区"), policy)
+    assert verdict.passed is True

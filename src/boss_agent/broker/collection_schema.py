@@ -439,6 +439,13 @@ JOB_RECORDS = Collection(
         Field("applied_source", TEXT, default=""),
         Field("commute_distance_km", NUMBER),
         Field("commute_distance_text", TEXT, default=""),
+        # The detail page's own location line and the metro station it names (issue #332).
+        # Distinct from `location`, which stays the card's district facet: a station is
+        # only ever published here, and the two lists the operator edits both match over
+        # this line so a metro station can be refused or inspected like a 商圈.
+        Field("location_line", TEXT, default=""),
+        Field("metro_lines", TEXT, default=""),
+        Field("metro_station", TEXT, default=""),
         Field("first_seen_at", DATE),
         Field("last_seen_at", DATE),
         Field("source_task_id", TEXT),

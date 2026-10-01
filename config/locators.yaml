@@ -162,6 +162,13 @@ job_detail:
     - "//android.widget.ViewFlipper[@resource-id='com.hpbr.bosszhipin:id/home_tip_vf']/android.widget.TextView[@resource-id='com.hpbr.bosszhipin:id/tv_title']"
     - "//*[@resource-id='com.hpbr.bosszhipin:id/home_tip_vf']//*[@resource-id='com.hpbr.bosszhipin:id/tv_title']"
     - "com.hpbr.bosszhipin:id/home_tip_vf"
+  # Job location line, rendered with the header (issue #332):
+  # "上海·浦东新区·张江(近13/16号线华夏中路地铁站)". The only place a metro station is
+  # ever published — the card's location facet names a district and nothing finer. Like
+  # title/company/salary this is read at the top of the page, so it costs no scroll.
+  location_line:
+    - "com.hpbr.bosszhipin:id/tv_required_location"
+    - "//*[contains(@resource-id, 'tv_required_location') or contains(@resource-id, 'required_location')]"
 
 system_dialog:
   permission_buttons:

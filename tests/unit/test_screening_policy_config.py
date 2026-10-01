@@ -221,3 +221,71 @@ def test_matches_card_keywords_blacklists_still_reject_with_whitelist_configured
     )
     assert passed_digest is False
     assert "外包" in reason_digest
+
+
+def test_matches_card_keywords_business_district_blacklist_rejection():
+    """Business district blacklist enforces deterministic rejection with explicit audit reason."""
+    policy = ScreeningPolicy(
+        business_district_blacklist=["崇明区", "临港"],
+    )
+    passed_clean, reason_clean = policy.matches_card_keywords(
+        title="AI Agent 工程师",
+        location="上海 徐汇区 漕河泾",
+    )
+    assert passed_clean is True
+    assert reason_clean == "通过卡片初筛"
+
+    passed_district, reason_district = policy.matches_card_keywords(
+        title="AI Agent 工程师",
+        location="上海 崇明区 城桥",
+    )
+    assert passed_district is False
+    assert reason_district == "【商圈黑名单过滤】岗位所在区域/商圈 '上海 崇明区 城桥' 命中黑名单 '崇明区'"
+
+    passed_quarter, reason_quarter = policy.matches_card_keywords(
+        title="AI Agent 工程师",
+        location="上海 浦东新区 临港",
+    )
+    assert passed_quarter is False
+    assert reason_quarter == "【商圈黑名单过滤】岗位所在区域/商圈 '上海 浦东新区 临港' 命中黑名单 '临港'"
+
+
+def test_screening_policy_business_district_blacklist_dict_roundtrip():
+    policy = ScreeningPolicy(business_district_blacklist=["崇明区", "临港"])
+    d = policy.to_dict()
+    assert d["business_district_blacklist"] == ["崇明区", "临港"]
+
+    restored = ScreeningPolicy.from_dict(d)
+    assert restored.business_district_blacklist == ["崇明区", "临港"]
+
+
+def test_save_and_load_policy_preserves_business_district_blacklist(tmp_path):
+    target = tmp_path / "settings.local.yaml"
+    policy = ScreeningPolicy(business_district_blacklist=["崇明区", "金山"])
+    policy.save_default(config_path=target)
+
+    loaded = ScreeningPolicy.load_default(config_path=target)
+    assert loaded.business_district_blacklist == ["崇明区", "金山"]
+
+
+def test_screening_policy_business_district_inspect_list_dict_roundtrip():
+    policy = ScreeningPolicy(business_district_inspect_list=["漕河泾", "华夏中路"])
+    d = policy.to_dict()
+    assert d["business_district_inspect_list"] == ["漕河泾", "华夏中路"]
+
+    restored = ScreeningPolicy.from_dict(d)
+    assert restored.business_district_inspect_list == ["漕河泾", "华夏中路"]
+
+
+def test_save_and_load_policy_preserves_business_district_inspect_list(tmp_path):
+    """Both district lists travel together: saving one must not drop the other."""
+    target = tmp_path / "settings.local.yaml"
+    policy = ScreeningPolicy(
+        business_district_blacklist=["崇明区"],
+        business_district_inspect_list=["漕河泾", "13/16号线"],
+    )
+    policy.save_default(config_path=target)
+
+    loaded = ScreeningPolicy.load_default(config_path=target)
+    assert loaded.business_district_inspect_list == ["漕河泾", "13/16号线"]
+    assert loaded.business_district_blacklist == ["崇明区"]

@@ -150,6 +150,7 @@ describe('Settings persistence isolation (issue #185)', () => {
 			title_blacklist: [],
 			company_blacklist: [],
 			jd_blacklist: [],
+			business_district_blacklist: [],
 			max_commute_distance_km: 32.5
 		});
 		expect(readScreeningPolicy().max_commute_distance_km).toBe(32.5);
@@ -160,6 +161,7 @@ describe('Settings persistence isolation (issue #185)', () => {
 			title_blacklist: [],
 			company_blacklist: [],
 			jd_blacklist: [],
+			business_district_blacklist: [],
 			max_commute_distance_km: null
 		});
 		expect(readScreeningPolicy().max_commute_distance_km).toBeNull();
@@ -177,6 +179,41 @@ describe('Settings persistence isolation (issue #185)', () => {
 		// An unrelated partial save must not flip the barrier back on.
 		saveSettingsToLocalYaml({ title_whitelist: ['大模型'] } as any);
 		expect(loadMergedSettings().run_cleanup_on_startup).toBe(false);
+	});
+
+	it('business_district_blacklist survives save round-trips and partial saves', async () => {
+		const { saveSettingsToLocalYaml, loadMergedSettings } = await import('../lib/server/settings');
+
+		saveSettingsToLocalYaml({
+			...loadMergedSettings(),
+			business_district_blacklist: ['崇明区', '临港']
+		} as any);
+		expect(loadMergedSettings().business_district_blacklist).toEqual(['崇明区', '临港']);
+
+		// An unrelated partial save must preserve business_district_blacklist
+		saveSettingsToLocalYaml({ title_whitelist: ['Agent'] } as any);
+		expect(loadMergedSettings().business_district_blacklist).toEqual(['崇明区', '临港']);
+	});
+
+	// Spec #328: the 考察名单 is a second, independent district list. It is written by
+	// the same fixed-template writer, so it needs the same partial-save guard.
+	it('business_district_inspect_list survives save round-trips and partial saves', async () => {
+		const { saveSettingsToLocalYaml, loadMergedSettings } = await import('../lib/server/settings');
+
+		saveSettingsToLocalYaml({
+			...loadMergedSettings(),
+			business_district_blacklist: ['崇明区'],
+			business_district_inspect_list: ['漕河泾', '华夏中路']
+		} as any);
+		const loaded = loadMergedSettings();
+		expect(loaded.business_district_inspect_list).toEqual(['漕河泾', '华夏中路']);
+		expect(loaded.business_district_blacklist).toEqual(['崇明区']);
+
+		// An unrelated partial save must preserve both district lists.
+		saveSettingsToLocalYaml({ title_whitelist: ['Agent'] } as any);
+		const after = loadMergedSettings();
+		expect(after.business_district_inspect_list).toEqual(['漕河泾', '华夏中路']);
+		expect(after.business_district_blacklist).toEqual(['崇明区']);
 	});
 
 	// Byte-guard against issue #185 recurrences: runs after every save above.
