@@ -35,7 +35,7 @@
 			// The same store the jobs page uses, so the badge and the board cannot count
 			// different things — this used to be an SDK call with a BFF fallback, two
 			// answers to one question.
-			const page = await getJobRecords({ status: 'unmatched', page: 1, limit: 1 });
+			const page = await getJobRecords({ status: 'unmatched', page: 1, limit: 1, background: true });
 			if (unmatchedCount !== page.totalItems) {
 				unmatchedCount = page.totalItems;
 			}

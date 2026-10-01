@@ -16,6 +16,8 @@
  * Errors surface. There is no fallback tier to swallow one.
  */
 
+import { apiGet } from '$lib/apiClient';
+
 export {
 	clearJobCommunication,
 	deleteJobRecord,
@@ -86,17 +88,19 @@ export function getPocketBaseUrl(): string {
 	return resolved.replace(/\/+$/, '');
 }
 
-import { apiGet } from '$lib/apiClient';
-
 /**
  * Whether the broker is reachable, asked through the dashboard's own origin.
  *
  * This is the one call that used to go straight to the broker from the browser; the
  * BFF answers it now, so the status light no longer needs a second origin.
+ *
+ * Background-marked: this backs a status light that refreshes on a timer and a realtime
+ * health gate, so it is never a request a person made. It still counts as one read for
+ * the retry gate — only the log hook treats the marker specially.
  */
 export async function checkPocketBaseHealth(): Promise<boolean> {
 	try {
-		const data = await apiGet<{ healthy?: boolean }>('/api/health');
+		const data = await apiGet<{ healthy?: boolean }>('/api/health', { background: true });
 		return data.healthy === true;
 	} catch {
 		return false;

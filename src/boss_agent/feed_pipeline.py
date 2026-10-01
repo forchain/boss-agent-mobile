@@ -1320,11 +1320,15 @@ class JobFeedPipeline:
         # no score and the stored value stands; a never-scored record stays unscored rather
         # than claiming a zero it was never given.
         match_score = evaluation.match_score or payload.get("match_score")
+        screened_reason = payload.get("screened_reason") or (
+            evaluation.reason if status is JobRecordStatus.IGNORED else ""
+        )
         payload = {
             **payload,
             "status": status.value,
             "greeting_message": greeting_message,
             "greeting_source": greeting_source,
+            "screened_reason": screened_reason,
             "jd_key_requirements": evaluation.jd_key_requirements
             or payload.get("jd_key_requirements", []),
         }

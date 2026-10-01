@@ -24,6 +24,7 @@ Usage:
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 from dataclasses import asdict, dataclass, field
@@ -466,7 +467,7 @@ class ConfigSymlinkManager:
                 if (
                     ".local." in item.name
                     or item.name.startswith(".env")
-                    or item.name == "candidate_memory.json"
+                    or item.name in ("candidate_memory.json", "settings.yaml")
                 ):
                     shared_files.append(item)
 
@@ -478,6 +479,38 @@ class ConfigSymlinkManager:
                     shared_files.append(root_item)
 
         return sorted(shared_files, key=lambda p: str(p))
+
+    def ensure_shared_configs(
+        self, target_worktree: Path | None = None, dry_run: bool = False
+    ) -> None:
+        """Ensure canonical shared config files exist in main repo (auto-seed or adopt)."""
+        if dry_run:
+            return
+
+        config_dir = self.main_repo_root / "config"
+        config_dir.mkdir(parents=True, exist_ok=True)
+
+        # 1. settings.local.yaml: seed from worktree or settings.example.yaml
+        main_settings = config_dir / "settings.local.yaml"
+        if not main_settings.exists():
+            target_settings = (
+                target_worktree / "config" / "settings.local.yaml" if target_worktree else None
+            )
+            if target_settings and target_settings.is_file() and not target_settings.is_symlink():
+                shutil.copy2(target_settings, main_settings)
+            else:
+                example_settings = config_dir / "settings.example.yaml"
+                if example_settings.is_file():
+                    shutil.copy2(example_settings, main_settings)
+
+        # 2. greeting_prompt.local.md: adopt from worktree if present
+        main_prompt = config_dir / "greeting_prompt.local.md"
+        if not main_prompt.exists():
+            target_prompt = (
+                target_worktree / "config" / "greeting_prompt.local.md" if target_worktree else None
+            )
+            if target_prompt and target_prompt.is_file() and not target_prompt.is_symlink():
+                shutil.copy2(target_prompt, main_prompt)
 
     def link_boss_agent(self, target_worktree: Path, dry_run: bool = False) -> SymlinkEntry | None:
         """Symlink .boss_agent directory so worktree shares the main branch's database and runtime storage."""
@@ -567,6 +600,9 @@ class ConfigSymlinkManager:
         if target_worktree == self.main_repo_root:
             return results
 
+        # Ensure base configs exist before linking
+        self.ensure_shared_configs(target_worktree=target_worktree, dry_run=dry_run)
+
         boss_agent_entry = self.link_boss_agent(target_worktree=target_worktree, dry_run=dry_run)
         if boss_agent_entry:
             results.append(boss_agent_entry)
@@ -627,6 +663,24 @@ class ConfigSymlinkManager:
                     continue
 
             if target_file.exists():
+                # If target is a regular file with identical content to src_file, safely replace with symlink
+                if target_file.is_file():
+                    try:
+                        if target_file.read_bytes() == src_file.read_bytes():
+                            target_file.unlink()
+                            target_file.symlink_to(rel_symlink_src)
+                            results.append(
+                                SymlinkEntry(
+                                    source=str(src_file),
+                                    target=str(target_file),
+                                    status="created",
+                                    details="Replaced identical regular file with symlink",
+                                )
+                            )
+                            continue
+                    except Exception:
+                        pass
+
                 results.append(
                     SymlinkEntry(
                         source=str(src_file),
@@ -752,7 +806,11 @@ def init_worktree(
         )
         symlinks_data = [asdict(e) for e in symlink_entries]
 
-    msg = "Worktree synchronized and configs linked successfully."
+    configs_count = len([s for s in symlinks_data if not s["target"].endswith(".boss_agent")])
+    if configs_count > 0:
+        msg = f"Worktree synchronized and {configs_count} shared config(s) linked successfully."
+    else:
+        msg = "Worktree synchronized and runtime directory linked successfully."
     if sync_status.warning:
         msg = f"Worktree synchronized based on {base_ref}. (Warning: local main is dirty)."
 

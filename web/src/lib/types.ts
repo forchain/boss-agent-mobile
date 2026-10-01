@@ -229,6 +229,12 @@ export interface GetJobRecordsOptions {
 	search?: string;
 	page?: number;
 	limit?: number;
+	/**
+	 * Set when a timer or a realtime event asked for this list, not a person. It only
+	 * reaches the server log hook (see `BACKGROUND_REQUEST_HEADER`); the records and the
+	 * counts are the same either way.
+	 */
+	background?: boolean;
 }
 
 export interface GetJobRecordsResult {

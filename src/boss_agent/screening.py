@@ -16,6 +16,7 @@ re-implement a slice of the pipeline).
 """
 
 import logging
+import re
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
@@ -231,6 +232,59 @@ class JobEvaluationResult:
     error_message: str = ""
 
 
+def _coerce_screening_verdict(res: dict[str, Any] | Any, reason: str = "") -> bool:
+    """Coerce screening verdict to bool, supporting 'approved', 'qualified', and legacy 'pass' keys."""
+    raw_val = True
+    if isinstance(res, dict):
+        if "approved" in res:
+            raw_val = res["approved"]
+        elif "qualified" in res:
+            raw_val = res["qualified"]
+        elif "pass" in res:
+            raw_val = res["pass"]
+    else:
+        raw_val = res
+
+    if isinstance(raw_val, bool):
+        verdict = raw_val
+    elif isinstance(raw_val, (int, float)):
+        verdict = bool(raw_val)
+    elif isinstance(raw_val, str):
+        val = raw_val.strip().lower()
+        if val in ("false", "0", "fail", "no", "淘汰", "不合格", "被淘汰", "拒绝", "reject"):
+            verdict = False
+        else:
+            verdict = True
+    elif raw_val is None:
+        verdict = False
+    else:
+        verdict = bool(raw_val)
+
+    if not verdict and reason:
+        # Defense-in-depth: if the LLM explicitly concluded the job did not hit the blacklist
+        # or declared it qualified/approved, rescue against boolean inversion.
+        has_negated_blacklist = bool(
+            re.search(r"(?:未|不)(?:涉及|触犯|命中|包含|存在).*?黑名单", reason)
+            or re.search(r"未触犯|未命中|未违规|无违例", reason)
+        )
+        has_positive_verdict = bool(
+            re.search(r"(?:通过|合格|保留|予以放行|approved|qualified)", reason, re.IGNORECASE)
+            or re.search(r"\bpass\b", reason, re.IGNORECASE)
+        )
+        has_unnegated_rejection = bool(
+            re.search(r"(?<!未)(?<!不)(?:命中|触犯|属于|触发).*?黑名单", reason)
+            or re.search(r"不合格|不符合|予以淘汰|应予淘汰|淘汰", reason)
+        )
+        if (has_negated_blacklist or has_positive_verdict) and not has_unnegated_rejection:
+            logger.warning(
+                "LLM screening verdict=False contradicts positive reason ('%s'); overriding to True",
+                reason,
+            )
+            return True
+
+    return verdict
+
+
 class CandidateScreener:
     """Deep module owning every candidate screening rule and greeting decision.
 
@@ -407,22 +461,22 @@ class CandidateScreener:
 
         system_prompt = (
             "你是一名严谨的岗位精筛助手。你的唯一任务是依据【黑名单筛选准则】，深度阅读招聘岗位详情(JD)，"
-            "判断该岗位是否应当被淘汰。\n"
+            "判断该岗位是否【合格保留】。\n"
             "【筛选准则】：\n"
             f"- 黑名单关键词(语义一票否决): {blacklist}\n\n"
             "【判决规则】：\n"
             "1. 黑名单关键词主要用于过滤岗位核心性质与主技术栈（如岗位本质是纯Java开发、微服务业务架构、销售外包或人力驻场等）。"
             "若黑名单关键词仅在长篇JD中作为协作方、技术背景提及、次要了解项或否定句出现（如“配合Java团队”、“了解微服务者优先”但主体是Agent/Python岗位），"
-            "严禁误伤，应判决 pass: true；只有当黑名单主题构成了该岗位的核心职责或主要技术栈时，才判决 pass: false。\n"
-            "2. 判决仅依据上述黑名单语义评估：JD未触犯黑名单即判决 pass: true，无需JD与任何白名单或兴趣方向词相关联。\n"
-            '3. 严格输出标准 JSON 格式：{"pass": true或false, "reason": "50字以内的判定简述"}。'
+            "严禁误伤，属于合格岗位，必须判决 approved: true；只有当黑名单主题构成了该岗位的核心职责或主要技术栈时，才属于淘汰岗位，判决 approved: false。\n"
+            "2. 判决仅依据上述黑名单语义评估：JD未触犯黑名单即判决合格 approved: true，无需JD与任何白名单或兴趣方向词相关联。\n"
+            '3. 严格输出标准 JSON 格式：{"approved": true(合格保留)或false(命中黑名单淘汰), "reason": "50字以内的判定简述，明确写【合格保留】或【淘汰：具体原因】，严禁使用具有中英二义性的 pass 词汇"}。'
         )
 
         user_prompt = (
             f"职位名称: {card_title}\n"
             f"招聘公司: {company_name}\n"
             f"岗位描述(JD):\n{jd_text}\n\n"
-            '请严格输出 JSON: {"pass": true/false, "reason": "判定原因"}'
+            '请严格输出 JSON: {"approved": true(合格保留)/false(命中黑名单淘汰), "reason": "判定简述(请明确标注【合格保留】或【淘汰：原因】，严禁使用 pass)"}'
         )
 
         messages = [
@@ -438,8 +492,8 @@ class CandidateScreener:
 
         try:
             res = client.chat_completion_json(messages)
-            passed = bool(res.get("pass", True))
-            reason = str(res.get("reason", "精筛完成"))
+            reason = str(res.get("reason", "精筛完成")).strip()
+            passed = _coerce_screening_verdict(res, reason)
             return passed, reason
         except Exception as e:
             return True, f"LLM精筛调用异常，降级放行: {e}"

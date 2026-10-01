@@ -1108,3 +1108,37 @@ async def test_a_draft_still_satisfies_a_depth_save_jd_run():
     detail.extract_job_posting.assert_not_called()
     assert result.skipped == 1
     assert any("State Machine" in line for line in logs), logs
+
+
+@pytest.mark.asyncio
+async def test_deep_screener_rejection_persists_screened_reason():
+    """When deep screener rejects a job, its screened_reason must be persisted in the store."""
+    store = InMemoryJobRecordStore()
+    detail = _detail_page()
+    screener = MagicMock()
+    screener.evaluate_card.return_value = MagicMock(
+        passed=True, relaxed_by_whitelist=False, screening_audit=""
+    )
+    screener.evaluate_job.return_value = MagicMock(
+        stage=JobVerdictStage.FILTERED_BY_DEEP_SCREENER,
+        passed=False,
+        reason="JD明确要求掌握Java架构，触犯黑名单",
+        match_score=0,
+        match_reasons=[],
+        jd_key_requirements=[],
+        greeting_message="",
+    )
+    card = _card("Java架构师", "某大厂")
+    pipeline = _pipeline(
+        store,
+        feed=ScriptedFeed([[card]]),
+        detail=detail,
+        screener=screener,
+    )
+
+    await pipeline.stream_jobs(FeedStreamConfig(keyword="Agent", max_jobs=1))
+
+    stored = await store.get_job_record_by_fingerprint(card.card.fingerprint)
+    assert stored is not None
+    assert stored["status"] == JobRecordStatus.IGNORED.value
+    assert stored.get("screened_reason") == "JD明确要求掌握Java架构，触犯黑名单"

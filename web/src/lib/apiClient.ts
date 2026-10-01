@@ -10,6 +10,17 @@
  * own message attached, and the caller decides what the user should see.
  */
 
+/**
+ * Header a client sets on a request it made on its own initiative — a timer tick, a
+ * realtime health gate — as opposed to one a person triggered by clicking something.
+ *
+ * The dashboard asks `/api/health` and the unmatched-job count every ten seconds for the
+ * nav's status light and badge. Logging those buries the lines that matter (what the
+ * operator actually did) under two lines per tick, so `hooks.server.ts` skips them. A
+ * poll that *fails* is still logged: the silence is the point, the breakage is not.
+ */
+export const BACKGROUND_REQUEST_HEADER = 'x-boss-background';
+
 export class ApiError extends Error {
 	constructor(
 		message: string,
@@ -29,13 +40,17 @@ interface ApiEnvelope {
 
 async function request<T>(
 	path: string,
-	init: RequestInit & { json?: unknown } = {}
+	init: RequestInit & { json?: unknown; background?: boolean } = {}
 ): Promise<T> {
-	const { json: body, ...rest } = init;
+	const { json: body, background = false, ...rest } = init;
 	const response = await fetch(path, {
 		...rest,
+		headers: {
+			...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+			...(background ? { [BACKGROUND_REQUEST_HEADER]: '1' } : {})
+		},
 		...(body !== undefined
-			? { method: rest.method ?? 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
+			? { method: rest.method ?? 'POST', body: JSON.stringify(body) }
 			: {})
 	});
 
@@ -51,8 +66,12 @@ async function request<T>(
 	return payload as T;
 }
 
-export function apiGet<T>(path: string): Promise<T> {
-	return request<T>(path, { method: 'GET' });
+/**
+ * `background: true` marks a read the dashboard scheduled for itself. It reaches the
+ * server unchanged, and the log hook uses it to stay quiet about the operator's own doing.
+ */
+export function apiGet<T>(path: string, options: { background?: boolean } = {}): Promise<T> {
+	return request<T>(path, { method: 'GET', background: options.background });
 }
 
 export function apiPost<T>(path: string, json?: unknown): Promise<T> {

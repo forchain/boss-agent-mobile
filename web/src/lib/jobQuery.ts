@@ -37,16 +37,30 @@ function escapeFilterValue(value: string): string {
  *
  * An absent `status` excludes `ignored`; that is the documented, single answer to a
  * question the two previous copies answered differently.
+ *
+ * A non-empty `search` is the one exception: it reaches every status, because a search
+ * is an explicit lookup for a record the operator already knows about, and an ignored
+ * record is exactly the kind that browsing will never surface. Without this, typing a
+ * title you are looking at in the "all" tab answers "no records" while the record sits
+ * one tab over.
  */
 export function buildJobFilter(options: JobQueryOptions = {}): string {
 	const status = options.status;
 	const channel = options.channel;
-	const search = options.search;
+	// `hasSearch` is decided on the *sanitized* term, not the raw one: a query made only
+	// of stripped characters escapes to nothing, and must not silently widen the stream.
+	const sanitizedSearch = escapeFilterValue(options.search ?? '');
+	const hasSearch = sanitizedSearch !== '';
 
 	const clauses: string[] = [...INVALID_COMPANY_CLAUSES];
 
 	if (!status || status === 'all') {
-		clauses.push("status != 'ignored'");
+		// Browsing the "all" tab stays strict — an ignored record was rejected on
+		// purpose — but a search is an explicit lookup, so it reaches every status the
+		// operator could not otherwise find.
+		if (!hasSearch) {
+			clauses.push("status != 'ignored'");
+		}
 	} else if (status === 'jd_saved') {
 		clauses.push(`(${PRE_JD_STATUSES.map((s) => `status = '${s}'`).join(' || ')})`);
 	} else {
@@ -59,13 +73,10 @@ export function buildJobFilter(options: JobQueryOptions = {}): string {
 		clauses.push('is_headhunter = true');
 	}
 
-	if (search && search.trim()) {
-		const sanitized = escapeFilterValue(search);
-		if (sanitized) {
-			clauses.push(
-				`(title ~ '${sanitized}' || company_name ~ '${sanitized}' || recruiter_name ~ '${sanitized}' || digest ~ '${sanitized}')`
-			);
-		}
+	if (hasSearch) {
+		clauses.push(
+			`(title ~ '${sanitizedSearch}' || company_name ~ '${sanitizedSearch}' || recruiter_name ~ '${sanitizedSearch}' || digest ~ '${sanitizedSearch}' || industry ~ '${sanitizedSearch}' || company_scale ~ '${sanitizedSearch}' || tags ~ '${sanitizedSearch}')`
+		);
 	}
 
 	return clauses.map((clause) => `(${clause})`).join(' && ');
