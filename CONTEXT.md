@@ -149,7 +149,7 @@ The LLM-driven structural diffing and human-in-the-loop review workflow that com
 _Avoid_: resume overwrite, profile replacement, auto-parse override
 
 **Screening Policy (`ScreeningPolicy`)**:
-The structured configuration encapsulating candidate negative constraints, title whitelists, title blacklists, company blacklists, and JD-level blacklists declared in `config/screening.local.yaml`. Blacklists enforce one-strike rejection. One-strike rejection is deterministic only over the compact card facets (title, tags, digest); a blacklisted term is never deterministically scanned across the full Job Description, because a passing mention there does not indict the role. The full-JD blacklist verdict is semantic: rejection only when the blacklisted subject matter constitutes the job's core requirement or primary stack, never when merely referenced as background, nice-to-have, or negation. The whitelist is not an inclusion gate and never rejects a job; it exists solely as relaxation tokens for App-Enforced Filters, encoding subject matter the candidate cares deeply about or is strong in, strong enough to widen a condition the app itself imposed.
+The structured configuration encapsulating candidate negative constraints, title whitelists, title blacklists, company blacklists, business district blacklists, and JD-level blacklists declared in `config/settings.local.yaml`. Blacklists enforce one-strike rejection. One-strike rejection is deterministic only over the compact card facets (title, tags, company, digest, location); a blacklisted term is never deterministically scanned across the full Job Description, because a passing mention there does not indict the role. The full-JD blacklist verdict is semantic: rejection only when the blacklisted subject matter constitutes the job's core requirement or primary stack, never when merely referenced as background, nice-to-have, or negation. The whitelist is not an inclusion gate and never rejects a job; it exists solely as relaxation tokens for App-Enforced Filters, encoding subject matter the candidate cares deeply about or is strong in, strong enough to widen a condition the app itself imposed.
 _Avoid_: Filter keywords, blacklist config, keyword rules
 
 **App-Enforced Filter**:
@@ -178,7 +178,7 @@ The LangGraph workflow that runs card screening and JD evaluation as two traced 
 _Avoid_: Screening pipeline, match chain, agent workflow
 
 **Keyword Screener**:
-The zero-token deterministic gatekeeper stage of `CandidateScreener.evaluate_card`, evaluating visible job card metadata (title, tags, company, digest) against the active Screening Policy before triggering expensive mobile navigation. Confined to the compact card facets by design, where collateral over-rejection is tolerated because the short text mirrors the role's core; it never operates on the full Job Description.
+The zero-token deterministic gatekeeper stage of `CandidateScreener.evaluate_card`, evaluating visible job card metadata (title, tags, company, digest, location) against the active Screening Policy before triggering expensive mobile navigation. Confined to the compact card facets by design, where collateral over-rejection is tolerated because the short text mirrors the role's core; it never operates on the full Job Description.
 _Avoid_: Title filter, card checker, fast screener
 
 **JD Semantic Screener Agent**:
@@ -218,7 +218,7 @@ The full, comprehensive job duties, tech stack expectations, and qualifications 
 _Avoid_: digest, snippet, short JD, brief intro
 
 **Card Preliminary Screening**:
-The zero-token deterministic gatekeeper evaluation that examines the three card-level facets (`tv_position_name`, `fl_require_info`, `tv_digest`) against the active `ScreeningPolicy` to eliminate non-viable jobs before incurring expensive mobile navigation.
+The zero-token deterministic gatekeeper evaluation that examines the compact card-level facets (`tv_position_name`, `fl_require_info`, `tv_digest`, `location`) against the active `ScreeningPolicy` to eliminate non-viable jobs before incurring expensive mobile navigation.
 _Avoid_: card filter, quick check, preliminary pass
 
 **Depth Expression**:
