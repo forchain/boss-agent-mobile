@@ -58,6 +58,31 @@ def test_schema_fields_represented_in_generated_task_type():
     # Invariants for optional / nullable fields
     assert "worker_id?: string | null;" in content
     assert "locked_at?: string | null;" in content
+
+
+def test_schema_fields_represented_in_screening_and_saved_search():
+    """Verify ScreeningPolicy, SavedSearch, and JobRecord types appear in generated output (Issue #315)."""
+    content = generate_typescript_content()
+
+    # ScreeningPolicy
+    assert "export interface ScreeningPolicy {" in content
+    assert "title_whitelist: string[];" in content
+    assert "company_blacklist: string[];" in content
+    assert "channel_preference?: 'all' | 'direct_only' | 'headhunter_only';" in content
+    assert "max_commute_distance_km?: number | null;" in content
+
+    # JobRecord (unified score representation and applied_at timestamp)
+    assert "export interface JobRecord {" in content
+    assert "match_score?: number | null;" in content
+    assert "applied_at?: string | null;" in content
+    assert "status: JobRecordStatus;" in content
+
+    # SavedSearch (includes legacy enable flags with ticket #321 deprecation annotation)
+    assert "export interface SavedSearch {" in content
+    assert "enable_search?: boolean;" in content
+    assert "enable_filter?: boolean;" in content
+    assert "filter?: SavedSearchFilter;" in content
+    assert "ticket #321" in content
     assert "last_heartbeat_at?: string | null;" in content
     assert "logs: string[];" in content
     assert "payload: Record<string, any>;" in content

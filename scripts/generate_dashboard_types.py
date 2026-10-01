@@ -1,7 +1,7 @@
 """scripts/generate_dashboard_types.py
 =====================================
 Generates TypeScript declarations for the Web Dashboard from the authoritative
-PocketBase collection schema seam (Issue #314, Spec #303).
+PocketBase collection schema seam and domain entities (Issues #314, #315, Spec #303).
 
 Usage:
     uv run python scripts/generate_dashboard_types.py
@@ -28,16 +28,40 @@ KIND_TO_TS = {
 }
 
 
+def _generate_collection_interface(collection, interface_name: str) -> list[str]:
+    lines = [f"export interface {interface_name} {{"]
+    for field in collection.fields:
+        ts_type = field.ts_type or KIND_TO_TS.get(field.kind, "string")
+        if field.optional is not None:
+            is_optional = field.optional
+        else:
+            is_optional = not field.required and not field.primary_key
+        opt_marker = "?" if is_optional else ""
+        if field.description:
+            lines.append(f"\t/** {field.description} */")
+        lines.append(f"\t{field.name}{opt_marker}: {ts_type};")
+    lines.append("}")
+    return lines
+
+
 def generate_typescript_content() -> str:
-    from boss_agent.broker.collection_schema import AUTOMATION_TASKS
+    from boss_agent.broker.collection_schema import (
+        AUTOMATION_TASKS,
+        JOB_RECORDS,
+        SAVED_SEARCHES,
+    )
 
     lines: list[str] = [
         "/**",
         " * AUTO-GENERATED FILE — DO NOT EDIT DIRECTLY.",
         " *",
-        " * Generated from src/boss_agent/broker/collection_schema.py by scripts/generate_dashboard_types.py.",
+        " * Generated from collection_schema.py and domain entities by scripts/generate_dashboard_types.py.",
         " * Run `npm run generate-types` or `uv run python scripts/generate_dashboard_types.py` to regenerate.",
         " */",
+        "",
+        "// ---------------------------------------------------------------------------",
+        "// Automation Tasks (Issue #314)",
+        "// ---------------------------------------------------------------------------",
         "",
         "export type TaskStatus =",
         "\t| 'pending'",
@@ -58,21 +82,63 @@ def generate_typescript_content() -> str:
         "\t'CHECK_CHAT'",
         "];",
         "",
-        "export interface AutomationTask {",
     ]
 
-    for field in AUTOMATION_TASKS.fields:
-        ts_type = field.ts_type or KIND_TO_TS.get(field.kind, "string")
-        if field.optional is not None:
-            is_optional = field.optional
-        else:
-            is_optional = not field.required and not field.primary_key
-        opt_marker = "?" if is_optional else ""
-        if field.description:
-            lines.append(f"\t/** {field.description} */")
-        lines.append(f"\t{field.name}{opt_marker}: {ts_type};")
-
-    lines.append("}")
+    lines.extend(_generate_collection_interface(AUTOMATION_TASKS, "AutomationTask"))
+    lines.extend(
+        [
+            "",
+            "// ---------------------------------------------------------------------------",
+            "// Screening Policy (Issue #315)",
+            "// ---------------------------------------------------------------------------",
+            "",
+            "export interface ScreeningPolicy {",
+            "\ttitle_whitelist: string[];",
+            "\ttitle_blacklist: string[];",
+            "\tcompany_blacklist: string[];",
+            "\tjd_blacklist: string[];",
+            "\tenable_screening: boolean;",
+            "\tchannel_preference?: 'all' | 'direct_only' | 'headhunter_only';",
+            "\t/** Commute ceiling in km; null, blank or <= 0 disables distance filtering. */",
+            "\tmax_commute_distance_km?: number | null;",
+            "}",
+            "",
+            "// ---------------------------------------------------------------------------",
+            "// Job Records (Issue #315: unified score and applied-timestamp representation)",
+            "// ---------------------------------------------------------------------------",
+            "",
+            "export type TargetAction = 'save_jd' | 'auto_apply';",
+            "",
+            "export type JobRecordStatus =",
+            "\t| 'jd_saved'",
+            "\t| 'unmatched'",
+            "\t| 'matched'",
+            "\t| 'applied'",
+            "\t| 'ignored'",
+            "\t| 'digest_only';",
+            "",
+        ]
+    )
+    lines.extend(_generate_collection_interface(JOB_RECORDS, "JobRecord"))
+    lines.extend(
+        [
+            "",
+            "// ---------------------------------------------------------------------------",
+            "// Saved Searches & Filters (Issue #315)",
+            "// ---------------------------------------------------------------------------",
+            "",
+            "export interface SavedSearchFilter {",
+            "\teducation?: string;",
+            "\tsalary?: string;",
+            "\texperience?: string;",
+            "\tactivity?: string;",
+            "\tcompany_scales?: string[];",
+            "\tindustries?: string[];",
+            "}",
+            "",
+        ]
+    )
+    lines.extend(_generate_collection_interface(SAVED_SEARCHES, "SavedSearch"))
     lines.append("")
     return "\n".join(lines)
 
