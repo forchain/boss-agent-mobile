@@ -69,6 +69,7 @@ export interface ScreeningPolicy {
 	title_blacklist: string[];
 	company_blacklist: string[];
 	jd_blacklist: string[];
+	business_district_blacklist: string[];
 	enable_screening: boolean;
 	channel_preference?: 'all' | 'direct_only' | 'headhunter_only';
 	/** Commute ceiling in km; null, blank or <= 0 disables distance filtering. */
@@ -118,6 +119,7 @@ export interface SystemSettings {
 	title_blacklist?: string[];
 	company_blacklist?: string[];
 	jd_blacklist?: string[];
+	business_district_blacklist?: string[];
 	channel_preference?: 'all' | 'direct_only' | 'headhunter_only';
 	max_commute_distance_km?: number | null;
 

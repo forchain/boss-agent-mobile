@@ -150,6 +150,7 @@ describe('Settings persistence isolation (issue #185)', () => {
 			title_blacklist: [],
 			company_blacklist: [],
 			jd_blacklist: [],
+			business_district_blacklist: [],
 			max_commute_distance_km: 32.5
 		});
 		expect(readScreeningPolicy().max_commute_distance_km).toBe(32.5);
@@ -160,6 +161,7 @@ describe('Settings persistence isolation (issue #185)', () => {
 			title_blacklist: [],
 			company_blacklist: [],
 			jd_blacklist: [],
+			business_district_blacklist: [],
 			max_commute_distance_km: null
 		});
 		expect(readScreeningPolicy().max_commute_distance_km).toBeNull();
@@ -177,6 +179,20 @@ describe('Settings persistence isolation (issue #185)', () => {
 		// An unrelated partial save must not flip the barrier back on.
 		saveSettingsToLocalYaml({ title_whitelist: ['大模型'] } as any);
 		expect(loadMergedSettings().run_cleanup_on_startup).toBe(false);
+	});
+
+	it('business_district_blacklist survives save round-trips and partial saves', async () => {
+		const { saveSettingsToLocalYaml, loadMergedSettings } = await import('../lib/server/settings');
+
+		saveSettingsToLocalYaml({
+			...loadMergedSettings(),
+			business_district_blacklist: ['崇明区', '临港']
+		} as any);
+		expect(loadMergedSettings().business_district_blacklist).toEqual(['崇明区', '临港']);
+
+		// An unrelated partial save must preserve business_district_blacklist
+		saveSettingsToLocalYaml({ title_whitelist: ['Agent'] } as any);
+		expect(loadMergedSettings().business_district_blacklist).toEqual(['崇明区', '临港']);
 	});
 
 	// Byte-guard against issue #185 recurrences: runs after every save above.

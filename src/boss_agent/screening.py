@@ -331,6 +331,7 @@ class CandidateScreener:
             company_name=facets.company_name,
             tags=facets.tags,
             digest=facets.digest,
+            location=facets.location,
         )
         if not passed:
             return CardScreeningVerdict.rejected_by_keywords(reason)

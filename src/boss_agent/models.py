@@ -1210,6 +1210,7 @@ class ScreeningPolicy:
     title_blacklist: list[str] = field(default_factory=list)
     company_blacklist: list[str] = field(default_factory=list)
     jd_blacklist: list[str] = field(default_factory=list)
+    business_district_blacklist: list[str] = field(default_factory=list)
     enable_screening: bool = True
     channel_preference: str = ChannelPreference.ALL
     max_commute_distance_km: float | None = 40.0
@@ -1444,10 +1445,11 @@ class ScreeningPolicy:
         company_name: str = "",
         tags: list[str] | None = None,
         digest: str = "",
+        location: str = "",
     ) -> tuple[bool, str]:
         """Deterministic keyword evaluation for job card.
 
-        Evaluates title, company_name, tags, and digest against screening policy.
+        Evaluates title, company_name, tags, digest, and location against screening policy.
         Returns (passed: bool, reason: str).
         """
         if not self.enable_screening:
@@ -1457,6 +1459,7 @@ class ScreeningPolicy:
         norm_company = (company_name or "").lower()
         norm_tags = [t.lower() for t in (tags or [])]
         norm_digest = (digest or "").lower()
+        norm_location = (location or "").lower()
 
         # 1. Check title blacklist (一票否决: 检查 title 和 tags)
         for black in self.title_blacklist:
@@ -1476,6 +1479,12 @@ class ScreeningPolicy:
             if b and (b in norm_digest or any(b in t for t in norm_tags)):
                 return False, f"命中岗位摘要/标签黑名单关键词: '{black}'"
 
+        # 4. Check business district blacklist (一票否决: 检查 location)
+        for black in self.business_district_blacklist:
+            token = black.strip()
+            if token and token.lower() in norm_location:
+                return False, f"【商圈黑名单过滤】岗位所在区域/商圈 '{location}' 命中黑名单 '{token}'"
+
         # 白名单不再是准入闸门: 未命中白名单不拒绝卡片, 仅在 App 端强制过滤
         # 违例时由 evaluate_whitelist_relaxation 决定是否豁免放宽。
         return True, "通过卡片初筛"
@@ -1486,6 +1495,7 @@ class ScreeningPolicy:
             "title_blacklist": self.title_blacklist,
             "company_blacklist": self.company_blacklist,
             "jd_blacklist": self.jd_blacklist,
+            "business_district_blacklist": self.business_district_blacklist,
             "enable_screening": self.enable_screening,
             "channel_preference": self.channel_preference,
             "max_commute_distance_km": self.max_commute_distance_km,
@@ -1500,6 +1510,7 @@ class ScreeningPolicy:
             title_blacklist=list(data.get("title_blacklist") or []),
             company_blacklist=list(data.get("company_blacklist") or []),
             jd_blacklist=list(data.get("jd_blacklist") or []),
+            business_district_blacklist=list(data.get("business_district_blacklist") or []),
             enable_screening=bool(data.get("enable_screening", True)),
             channel_preference=cls._normalize_channel_preference(
                 data.get("channel_preference", ChannelPreference.ALL.value)
@@ -1575,6 +1586,7 @@ class ScreeningPolicy:
                             "title_whitelist",
                             "jd_blacklist",
                             "company_blacklist",
+                            "business_district_blacklist",
                             "channel_preference",
                             "max_commute_distance_km",
                         )
@@ -1790,13 +1802,20 @@ class SavedSearch:
         # Allow fallback from top-level keys if screening_policy not nested
         if not policy_data and any(
             k in data
-            for k in ("title_whitelist", "title_blacklist", "company_blacklist", "jd_blacklist")
+            for k in (
+                "title_whitelist",
+                "title_blacklist",
+                "company_blacklist",
+                "jd_blacklist",
+                "business_district_blacklist",
+            )
         ):
             policy_data = {
                 "title_whitelist": data.get("title_whitelist"),
                 "title_blacklist": data.get("title_blacklist"),
                 "company_blacklist": data.get("company_blacklist"),
                 "jd_blacklist": data.get("jd_blacklist"),
+                "business_district_blacklist": data.get("business_district_blacklist"),
             }
 
         screening_policy = ScreeningPolicy.from_dict(policy_data)

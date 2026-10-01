@@ -104,6 +104,7 @@
 		title_blacklist: [],
 		company_blacklist: [],
 		jd_blacklist: [],
+		business_district_blacklist: [],
 		max_commute_distance_km: 40
 	});
 
@@ -125,6 +126,7 @@
 	let newTitleBlacklist = $state('');
 	let newCompanyBlacklist = $state('');
 	let newJdBlacklist = $state('');
+	let newBusinessDistrictBlacklist = $state('');
 	let companyValidationError = $state('');
 
 	let isSavingPolicy = $state(false);
@@ -181,13 +183,14 @@
 				isEditingApiKey = !conf.api_key;
 				isEditingLangsmithKey = !conf.langsmith_api_key;
 
-				if (conf.title_blacklist || conf.title_whitelist || conf.company_blacklist || conf.jd_blacklist || conf.enable_screening !== undefined) {
+				if (conf.title_blacklist || conf.title_whitelist || conf.company_blacklist || conf.jd_blacklist || conf.business_district_blacklist || conf.enable_screening !== undefined) {
 					screeningPolicy = {
 						enable_screening: conf.enable_screening !== false,
 						title_whitelist: Array.isArray(conf.title_whitelist) ? conf.title_whitelist : [],
 						title_blacklist: Array.isArray(conf.title_blacklist) ? conf.title_blacklist : [],
 						company_blacklist: Array.isArray(conf.company_blacklist) ? conf.company_blacklist : [],
 						jd_blacklist: Array.isArray(conf.jd_blacklist) ? conf.jd_blacklist : [],
+						business_district_blacklist: Array.isArray(conf.business_district_blacklist) ? conf.business_district_blacklist : [],
 						max_commute_distance_km:
 							conf.max_commute_distance_km === null || conf.max_commute_distance_km === undefined
 								? null
@@ -211,6 +214,7 @@
 						title_blacklist: Array.isArray(pData.policy.title_blacklist) ? pData.policy.title_blacklist : [],
 						company_blacklist: Array.isArray(pData.policy.company_blacklist) ? pData.policy.company_blacklist : [],
 						jd_blacklist: Array.isArray(pData.policy.jd_blacklist) ? pData.policy.jd_blacklist : [],
+						business_district_blacklist: Array.isArray(pData.policy.business_district_blacklist) ? pData.policy.business_district_blacklist : [],
 						max_commute_distance_km:
 							pData.policy.max_commute_distance_km === null ||
 							pData.policy.max_commute_distance_km === undefined
@@ -279,7 +283,7 @@
 		return postGreetingPrompt({ restore_default: true }, '✅ 已恢复为默认提示词并持久化', '恢复默认失败');
 	}
 
-	function addTag(field: 'title_whitelist' | 'title_blacklist' | 'company_blacklist' | 'jd_blacklist', value: string) {
+	function addTag(field: 'title_whitelist' | 'title_blacklist' | 'company_blacklist' | 'jd_blacklist' | 'business_district_blacklist', value: string) {
 		const val = value.trim();
 		if (!val) return;
 
@@ -300,9 +304,10 @@
 		if (field === 'title_blacklist') newTitleBlacklist = '';
 		if (field === 'company_blacklist') newCompanyBlacklist = '';
 		if (field === 'jd_blacklist') newJdBlacklist = '';
+		if (field === 'business_district_blacklist') newBusinessDistrictBlacklist = '';
 	}
 
-	function removeTag(field: 'title_whitelist' | 'title_blacklist' | 'company_blacklist' | 'jd_blacklist', index: number) {
+	function removeTag(field: 'title_whitelist' | 'title_blacklist' | 'company_blacklist' | 'jd_blacklist' | 'business_district_blacklist', index: number) {
 		screeningPolicy[field] = screeningPolicy[field].filter((_, i) => i !== index);
 	}
 
@@ -351,6 +356,7 @@
 		settings.title_blacklist = screeningPolicy.title_blacklist;
 		settings.company_blacklist = screeningPolicy.company_blacklist;
 		settings.jd_blacklist = screeningPolicy.jd_blacklist;
+		settings.business_district_blacklist = screeningPolicy.business_district_blacklist;
 		settings.max_commute_distance_km = readCommuteInput();
 
 		// Sync the rejection acknowledgment block (nested `chat:` config)
@@ -1110,6 +1116,55 @@
 						<button
 							type="button"
 							onclick={() => addTag('jd_blacklist', newJdBlacklist)}
+							class="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs px-3 py-1.5 rounded-lg border border-slate-700 transition"
+						>+ 添加</button>
+					</div>
+				</div>
+
+				<!-- 5. Business District Blacklist -->
+				<div class="bg-slate-950/60 border border-slate-800/80 rounded-xl p-4 space-y-3">
+					<div class="flex items-center justify-between">
+						<div class="flex items-center space-x-1.5">
+							<span class="text-xs font-semibold text-slate-200">商圈/地域黑名单 (Business District Blacklist)</span>
+							<span class="text-[10px] px-1.5 py-0.5 rounded bg-rose-950/60 text-rose-400 border border-rose-800/50">一票否决</span>
+						</div>
+						<span class="text-[11px] text-slate-500">{screeningPolicy.business_district_blacklist.length} 项</span>
+					</div>
+					<p class="text-[11px] text-slate-400 leading-relaxed">
+						卡片初筛匹配岗位所在商圈或行政区，命中即淘汰，绝不点击进入详情页（如：<code class="text-slate-300">崇明区</code>, <code class="text-slate-300">临港</code>, <code class="text-slate-300">金山</code>）。直招与猎头一视同仁。
+					</p>
+
+					<!-- Chips container -->
+					<div class="flex flex-wrap gap-1.5 min-h-[32px] p-2 bg-slate-900/60 border border-slate-800 rounded-lg">
+						{#if screeningPolicy.business_district_blacklist.length === 0}
+							<span class="text-[11px] text-slate-500 italic">（暂无商圈黑名单关键词）</span>
+						{:else}
+							{#each screeningPolicy.business_district_blacklist as item, idx}
+								<span class="inline-flex items-center space-x-1 text-xs px-2 py-0.5 rounded-md bg-rose-950 text-rose-300 border border-rose-800/70">
+									<span>{item}</span>
+									<button
+										type="button"
+										onclick={() => removeTag('business_district_blacklist', idx)}
+										class="text-rose-400 hover:text-white font-bold ml-1 text-xs"
+										title="移除"
+									>×</button>
+								</span>
+							{/each}
+						{/if}
+					</div>
+
+					<!-- Add Input -->
+					<div class="flex items-center space-x-2">
+						<input
+							type="text"
+							placeholder="输入商圈或行政区，如: 崇明区"
+							bind:value={newBusinessDistrictBlacklist}
+							onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addTag('business_district_blacklist', newBusinessDistrictBlacklist); } }}
+							class="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-rose-500 font-mono"
+						/>
+						<button
+							type="button"
+							onclick={() => addTag('business_district_blacklist', newBusinessDistrictBlacklist)}
 							class="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs px-3 py-1.5 rounded-lg border border-slate-700 transition"
 						>+ 添加</button>
 					</div>

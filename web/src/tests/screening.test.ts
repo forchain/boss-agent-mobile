@@ -221,6 +221,35 @@ describe('Masked Company Guardrail & Screening Utilities', () => {
 		expect((await post({ ...cleared, max_commute_distance_km: '' })).max_commute_distance_km).toBeNull();
 	});
 
+	it('round-trips business_district_blacklist through /api/screening/policy', async () => {
+		const { GET: getPolicy, POST: postPolicy } = await import('../routes/api/screening/policy/+server');
+
+		const post = async (body: Record<string, unknown>) => {
+			const req = new Request('http://localhost/api/screening/policy', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ policy: body })
+			});
+			const resp = await postPolicy({ request: req } as any);
+			expect(resp.status).toBe(200);
+			return (await resp.json()).policy;
+		};
+
+		const saved = await post({
+			enable_screening: true,
+			business_district_blacklist: [' 崇明区 ', '临港', '崇明区']
+		});
+		// Should trim and deduplicate
+		expect(saved.business_district_blacklist).toEqual(['崇明区', '临港']);
+
+		const getResp = await getPolicy({} as any);
+		expect((await getResp.json()).policy.business_district_blacklist).toEqual(['崇明区', '临港']);
+
+		// Partial save preserves business_district_blacklist
+		const partial = await post({ title_whitelist: ['Python'] });
+		expect(partial.business_district_blacklist).toEqual(['崇明区', '临港']);
+	});
+
 	// Byte-guard against issue #185 recurrences: runs after every save above.
 	it('left the developer settings file untouched', () => sandbox.assertRealConfigUntouched());
 
