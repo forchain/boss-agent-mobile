@@ -9,6 +9,8 @@ with no Appium driver and no database involved.
 
 from unittest.mock import MagicMock
 
+import pytest
+
 from boss_agent.matching import MatchGreetingResult
 from boss_agent.memory import StructuredCandidateProfile
 from boss_agent.models import JobCardBrief, JobPosting, ScreeningPolicy
@@ -200,6 +202,65 @@ def test_evaluate_job_filters_jd_hitting_the_semantic_blacklist():
     assert result.greeting_message == ""
     # The semantic screen veto is final: no greeting is ever drafted for it.
     assert llm.chat_completion_json.call_count == 1
+
+
+def test_evaluate_job_rescues_hallucinated_pass_false_when_reason_is_clearly_positive():
+    """When LLM hallucinates pass=False but reason explicitly confirms no blacklist hit and pass, rescue it."""
+    llm = MagicMock()
+    llm.chat_completion_json.side_effect = [
+        {
+            "pass": False,
+            "reason": "JD未涉及Java/产品/解决方案/微服务等黑名单关键词，岗位核心为Python+Agent开发，pass",
+        },
+        {
+            "match_score": 90,
+            "jd_key_requirements": ["Python", "AI Agent"],
+            "match_reasons": ["技术匹配"],
+            "greeting_message": "您好，我对该Agent岗位很感兴趣",
+        },
+    ]
+    screener = CandidateScreener(llm_client=llm)
+    result = screener.evaluate_job(
+        card=_card(title="AI Agent 开发工程师（上海）", company_name="途游游戏"),
+        jd_text="岗位职责：1. 负责素材AI智能体应用工程开发与架构设计。职位要求：熟练掌握Python语言，具备Agent智能体开发相关经验。",
+        policy=ScreeningPolicy(jd_blacklist=["Java", "微服务", "产品", "解决方案"]),
+    )
+    assert result.passed is True
+    assert result.stage is JobVerdictStage.PASSED
+    assert result.match_score == 90
+
+
+@pytest.mark.parametrize(
+    "key,raw_val,reason_text,expected_passed",
+    [
+        ("approved", False, "触犯Java黑名单技术栈", False),
+        ("approved", True, "岗位核心为Agent，未触犯黑名单", True),
+        ("approved", "淘汰", "触犯Java黑名单技术栈", False),
+        ("approved", "合格", "未触犯黑名单", True),
+        ("qualified", False, "触犯Java黑名单技术栈", False),
+        ("qualified", True, "未触犯黑名单", True),
+        ("pass", "false", "触犯Java黑名单技术栈", False),
+        ("pass", "0", "触犯Java黑名单技术栈", False),
+        ("pass", "fail", "触犯Java黑名单技术栈", False),
+        ("pass", "淘汰", "触犯Java黑名单技术栈", False),
+        ("pass", "true", "未触犯黑名单", True),
+        ("pass", "pass", "未触犯黑名单", True),
+        ("pass", "通过", "未触犯黑名单", True),
+        ("pass", "合格", "未触犯黑名单", True),
+    ],
+)
+def test_screen_jd_semantics_coerces_string_pass_values(key, raw_val, reason_text, expected_passed):
+    llm = MagicMock()
+    llm.chat_completion_json.return_value = {
+        key: raw_val,
+        "reason": reason_text,
+    }
+    screener = CandidateScreener(llm_client=llm)
+    passed, reason = screener._screen_jd_semantics(
+        jd_text="岗位职责：...",
+        policy=ScreeningPolicy(jd_blacklist=["Java"]),
+    )
+    assert passed is expected_passed
 
 
 def test_evaluate_job_passes_and_drafts_tailored_greeting():
