@@ -276,3 +276,50 @@ def test_saved_search_search_targets_are_unchanged_by_chat_support():
     assert not auto.is_chat_cleanup
     assert not scrape.is_chat_cleanup
     assert not explicit.is_chat_cleanup
+
+
+@pytest.mark.asyncio
+async def test_scheduler_respects_is_enabled_toggle_and_nested_authoritative_flags():
+    """Verify disabled searches are never dispatched, and nested flags govern dispatched payload (Issue #321)."""
+    broker = InMemoryTaskBroker()
+    from boss_agent.search_entities import SearchConfig
+
+    # 1. Disabled strategy -> Must NOT be dispatched
+    disabled_search = SavedSearch(
+        id="search_disabled",
+        name="Disabled Strategy",
+        search=SearchConfig(keyword="AI"),
+        cron_expression="0 9 * * 1-5",
+        is_enabled=False,
+    )
+    await broker.saved_searches.save_saved_search(disabled_search)
+
+    scheduler = AutomationScheduler(broker=broker)
+    monday_9am = datetime(2026, 9, 7, 9, 0, 0, tzinfo=UTC)
+    tasks = await scheduler.run_once(now=monday_9am)
+    assert len(tasks) == 0, "Disabled search must never be dispatched by scheduler"
+
+    # 2. Toggle to enabled, but with conflicting dual shape in store (top-level True, nested False)
+    # Simulate a legacy record in the store where top-level was True but nested was False
+    raw_dual_record = {
+        "id": "search_conflict",
+        "name": "Conflict Strategy",
+        "enable_search": True,
+        "enable_filter": True,
+        "search": {"keyword": "AI", "enable_search": False},
+        "filter": {"education": "硕士", "enable_filter": False},
+        "cron_expression": "0 9 * * 1-5",
+        "is_enabled": True,
+        "target_task_type": "AUTO_APPLY",
+    }
+    migrated_search = SavedSearch.from_dict(raw_dual_record["id"], raw_dual_record)
+    await broker.saved_searches.save_saved_search(migrated_search)
+
+    # Run scheduler now -> Must dispatch the enabled search, with authoritative NESTED False flags
+    tasks = await scheduler.run_once(now=monday_9am)
+    assert len(tasks) == 1
+    dispatched = tasks[0]
+    assert dispatched.payload["saved_search_id"] == "search_conflict"
+    # Nested spelling won:
+    assert dispatched.payload["enable_search"] is False
+    assert dispatched.payload["enable_filter"] is False

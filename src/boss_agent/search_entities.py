@@ -105,15 +105,43 @@ class SavedSearch:
     target_task_type: str = "AUTO_APPLY"
     target_action: str = ""
     max_jobs: int = field(default_factory=_saved_search_max_jobs_default)
-    enable_search: bool = True
-    enable_filter: bool = True
 
-    def __post_init__(self) -> None:
-        # Keep nested configs in sync with top-level flags
-        if hasattr(self, "search") and self.search is not None:
-            self.search.enable_search = self.enable_search
-        if hasattr(self, "filter") and self.filter is not None:
-            self.filter.enable_filter = self.enable_filter
+    def __init__(
+        self,
+        id: str,
+        name: str = "",
+        description: str = "",
+        search: SearchConfig | None = None,
+        filter: FilterConfig | None = None,
+        screening_policy: ScreeningPolicy | None = None,
+        cron_expression: str = "",
+        is_enabled: bool = False,
+        last_run_at: str | None = None,
+        target_task_type: str = "AUTO_APPLY",
+        target_action: str = "",
+        max_jobs: int | None = None,
+        enable_search: bool | None = None,
+        enable_filter: bool | None = None,
+    ) -> None:
+        self.id = id
+        self.name = name
+        self.description = description
+        self.search = search if search is not None else SearchConfig()
+        self.filter = filter if filter is not None else FilterConfig()
+        self.screening_policy = (
+            screening_policy if screening_policy is not None else ScreeningPolicy()
+        )
+        self.cron_expression = cron_expression
+        self.is_enabled = is_enabled
+        self.last_run_at = last_run_at
+        self.target_task_type = target_task_type
+        self.target_action = target_action
+        self.max_jobs = max_jobs if max_jobs is not None else _saved_search_max_jobs_default()
+        if enable_search is not None:
+            self.search.enable_search = bool(enable_search)
+        if enable_filter is not None:
+            self.filter.enable_filter = bool(enable_filter)
+
         # Bidirectional sync between target_action and target_task_type.
         # CHECK_CHAT (inbox rejection cleanup) is keyword-independent, so it is
         # resolved first and never falls through to a search target.
@@ -130,6 +158,22 @@ class SavedSearch:
             self.target_task_type = TargetTaskType.AUTO_APPLY
         else:
             self.target_task_type = TargetTaskType.SCRAPE_JOBS
+
+    @property
+    def enable_search(self) -> bool:
+        return self.search.enable_search
+
+    @enable_search.setter
+    def enable_search(self, val: bool) -> None:
+        self.search.enable_search = bool(val)
+
+    @property
+    def enable_filter(self) -> bool:
+        return self.filter.enable_filter
+
+    @enable_filter.setter
+    def enable_filter(self, val: bool) -> None:
+        self.filter.enable_filter = bool(val)
 
     @property
     def is_chat_cleanup(self) -> bool:
@@ -153,13 +197,11 @@ class SavedSearch:
             "name": self.name,
             "description": self.description,
             "keyword": self.search.keyword,
-            "enable_search": self.enable_search,
-            "enable_filter": self.enable_filter,
             "target_action": self.target_action,
             "max_jobs": self.max_jobs,
             "search": {
                 "keyword": self.search.keyword,
-                "enable_search": self.enable_search,
+                "enable_search": self.search.enable_search,
             },
             "filter": {
                 "education": self.filter.education,
@@ -168,7 +210,7 @@ class SavedSearch:
                 "activity": self.filter.activity,
                 "company_scales": self.filter.company_scales,
                 "industries": self.filter.industries,
-                "enable_filter": self.enable_filter,
+                "enable_filter": self.filter.enable_filter,
             },
             "screening_policy": self.screening_policy.to_dict(),
             "cron_expression": self.cron_expression,
@@ -199,15 +241,20 @@ class SavedSearch:
             except Exception:
                 filter_data = {}
 
-        enable_search = data.get("enable_search")
-        if enable_search is None:
-            enable_search = search_data.get("enable_search", True)
-        enable_search = bool(enable_search)
+        # The nested spelling is authoritative; fall back to legacy top-level only when nested is absent.
+        if "enable_search" in search_data:
+            enable_search = bool(search_data["enable_search"])
+        elif "enable_search" in data:
+            enable_search = bool(data["enable_search"])
+        else:
+            enable_search = True
 
-        enable_filter = data.get("enable_filter")
-        if enable_filter is None:
-            enable_filter = filter_data.get("enable_filter", True)
-        enable_filter = bool(enable_filter)
+        if "enable_filter" in filter_data:
+            enable_filter = bool(filter_data["enable_filter"])
+        elif "enable_filter" in data:
+            enable_filter = bool(data["enable_filter"])
+        else:
+            enable_filter = True
 
         search_cfg = SearchConfig(
             keyword=keyword,
