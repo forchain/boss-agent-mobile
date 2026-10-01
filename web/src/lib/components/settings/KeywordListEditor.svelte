@@ -4,7 +4,7 @@
 		badgeText = '',
 		badgeVariant = 'rose',
 		description = '',
-		items = $bindable([]),
+		items = $bindable(),
 		unit = '项',
 		emptyText = '（暂无关键词）',
 		placeholder = '输入关键词',
@@ -12,9 +12,9 @@
 	}: {
 		title: string;
 		badgeText?: string;
-		badgeVariant?: 'rose' | 'cyan';
+		badgeVariant?: 'rose' | 'cyan' | 'amber';
 		description?: string;
-		items: string[];
+		items?: string[];
 		unit?: string;
 		emptyText?: string;
 		placeholder?: string;
@@ -23,6 +23,7 @@
 
 	let inputVal = $state('');
 	let validationError = $state('');
+	let safeItems = $derived(Array.isArray(items) ? items : []);
 
 	function handleAdd() {
 		const val = inputVal.trim();
@@ -37,14 +38,14 @@
 			}
 		}
 
-		if (!items.includes(val)) {
-			items = [...items, val];
+		if (!safeItems.includes(val)) {
+			items = [...safeItems, val];
 		}
 		inputVal = '';
 	}
 
 	function handleRemove(index: number) {
-		items = items.filter((_, i) => i !== index);
+		items = safeItems.filter((_, i) => i !== index);
 	}
 </script>
 
@@ -56,13 +57,15 @@
 				<span
 					class="text-[10px] px-1.5 py-0.5 rounded {badgeVariant === 'cyan'
 						? 'bg-cyan-950/60 text-cyan-400 border border-cyan-800/50'
-						: 'bg-rose-950/60 text-rose-400 border border-rose-800/50'}"
+						: badgeVariant === 'amber'
+							? 'bg-amber-950/60 text-amber-400 border border-amber-800/50'
+							: 'bg-rose-950/60 text-rose-400 border border-rose-800/50'}"
 				>
 					{badgeText}
 				</span>
 			{/if}
 		</div>
-		<span class="text-[11px] text-slate-500">{items.length} {unit}</span>
+		<span class="text-[11px] text-slate-500">{safeItems.length} {unit}</span>
 	</div>
 
 	{#if description}
@@ -79,20 +82,22 @@
 
 	<!-- Chips container -->
 	<div class="flex flex-wrap gap-1.5 min-h-[32px] p-2 bg-slate-900/60 border border-slate-800 rounded-lg">
-		{#if items.length === 0}
+		{#if safeItems.length === 0}
 			<span class="text-[11px] text-slate-500 italic">{emptyText}</span>
 		{:else}
-			{#each items as item, idx}
+			{#each safeItems as item, idx}
 				<span
 					class="inline-flex items-center space-x-1 text-xs px-2 py-0.5 rounded-md {badgeVariant === 'cyan'
 						? 'bg-cyan-950 text-cyan-300 border border-cyan-800/70'
-						: 'bg-rose-950 text-rose-300 border border-rose-800/70'}"
+						: badgeVariant === 'amber'
+							? 'bg-amber-950 text-amber-300 border border-amber-800/70'
+							: 'bg-rose-950 text-rose-300 border border-rose-800/70'}"
 				>
 					<span>{item}</span>
 					<button
 						type="button"
 						onclick={() => handleRemove(idx)}
-						class="{badgeVariant === 'cyan' ? 'text-cyan-400' : 'text-rose-400'} hover:text-white font-bold ml-1 text-xs"
+						class="{badgeVariant === 'cyan' ? 'text-cyan-400' : badgeVariant === 'amber' ? 'text-amber-400' : 'text-rose-400'} hover:text-white font-bold ml-1 text-xs"
 						title="移除"
 					>×</button>
 				</span>
@@ -112,7 +117,7 @@
 					handleAdd();
 				}
 			}}
-			class="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none {badgeVariant === 'cyan' ? 'focus:border-cyan-500' : 'focus:border-rose-500'} font-mono"
+			class="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none {badgeVariant === 'cyan' ? 'focus:border-cyan-500' : badgeVariant === 'amber' ? 'focus:border-amber-500' : 'focus:border-rose-500'} font-mono"
 		/>
 		<button
 			type="button"

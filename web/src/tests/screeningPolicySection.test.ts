@@ -11,6 +11,8 @@ const SAMPLE_POLICY: ScreeningPolicy = {
 	title_blacklist: ['实习', '销售'],
 	company_blacklist: ['深至科技'],
 	jd_blacklist: ['大小周'],
+	business_district_blacklist: ['崇明区'],
+	business_district_inspect_list: ['张江'],
 	max_commute_distance_km: 30
 };
 

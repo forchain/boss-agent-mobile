@@ -162,7 +162,7 @@ The LLM-driven structural diffing and human-in-the-loop review workflow that com
 _Avoid_: resume overwrite, profile replacement, auto-parse override
 
 **Screening Policy (`ScreeningPolicy`)**:
-The structured configuration encapsulating candidate negative constraints, title whitelists, title blacklists, company blacklists, and JD-level blacklists declared in `config/screening.local.yaml`. Blacklists enforce one-strike rejection. One-strike rejection is deterministic only over the compact card facets (title, tags, digest); a blacklisted term is never deterministically scanned across the full Job Description, because a passing mention there does not indict the role. The full-JD blacklist verdict is semantic: rejection only when the blacklisted subject matter constitutes the job's core requirement or primary stack, never when merely referenced as background, nice-to-have, or negation. The whitelist is not an inclusion gate and never rejects a job; it exists solely as relaxation tokens for App-Enforced Filters, encoding subject matter the candidate cares deeply about or is strong in, strong enough to widen a condition the app itself imposed.
+The structured configuration encapsulating candidate negative constraints, title whitelists, title blacklists, company blacklists, two business district lists, and JD-level blacklists declared in `config/settings.local.yaml`. The district lists are the 商圈黑名单 (`business_district_blacklist`), which refuses a location outright, and the 考察名单 (`business_district_inspect_list`), which names the only locations whose commute distance is worth measuring. Both are matched twice, at the Card Preliminary Screening stage over the card's location facet and again on the Job Location Line once the detail page has been read, which is what lets a 地铁站 be treated as a 商圈; the first match costs nothing, the second cannot precede the detail page because the platform publishes a station nowhere else. Blacklists enforce one-strike rejection. One-strike rejection is deterministic only over the compact card facets (title, tags, company, digest, location); a blacklisted term is never deterministically scanned across the full Job Description, because a passing mention there does not indict the role. The full-JD blacklist verdict is semantic: rejection only when the blacklisted subject matter constitutes the job's core requirement or primary stack, never when merely referenced as background, nice-to-have, or negation. The whitelist is not an inclusion gate and never rejects a job; it exists solely as relaxation tokens for App-Enforced Filters, encoding subject matter the candidate cares deeply about or is strong in, strong enough to widen a condition the app itself imposed.
 _Avoid_: Filter keywords, blacklist config, keyword rules
 
 **App-Enforced Filter**:
@@ -191,7 +191,7 @@ The LangGraph workflow that runs card screening and JD evaluation as two traced 
 _Avoid_: Screening pipeline, match chain, agent workflow
 
 **Keyword Screener**:
-The zero-token deterministic gatekeeper stage of `CandidateScreener.evaluate_card`, evaluating visible job card metadata (title, tags, company, digest) against the active Screening Policy before triggering expensive mobile navigation. Confined to the compact card facets by design, where collateral over-rejection is tolerated because the short text mirrors the role's core; it never operates on the full Job Description.
+The zero-token deterministic gatekeeper stage of `CandidateScreener.evaluate_card`, evaluating visible job card metadata (title, tags, company, digest, location) against the active Screening Policy before triggering expensive mobile navigation. Confined to the compact card facets by design, where collateral over-rejection is tolerated because the short text mirrors the role's core; it never operates on the full Job Description.
 _Avoid_: Title filter, card checker, fast screener
 
 **JD Semantic Screener Agent**:
@@ -231,7 +231,7 @@ The full, comprehensive job duties, tech stack expectations, and qualifications 
 _Avoid_: digest, snippet, short JD, brief intro
 
 **Card Preliminary Screening**:
-The zero-token deterministic gatekeeper evaluation that examines the three card-level facets (`tv_position_name`, `fl_require_info`, `tv_digest`) against the active `ScreeningPolicy` to eliminate non-viable jobs before incurring expensive mobile navigation.
+The zero-token deterministic gatekeeper evaluation that examines the compact card-level facets (`tv_position_name`, `fl_require_info`, `tv_digest`, `location`) against the active `ScreeningPolicy` to eliminate non-viable jobs before incurring expensive mobile navigation. Its `location` facet names a district and no 地铁站; a station entry in the 商圈黑名单 is therefore judged later, on the Job Location Line, which costs no tokens but does cost the detail page the card stage would have skipped — the trade the platform's own rendering forces.
 _Avoid_: card filter, quick check, preliminary pass
 
 **Depth Expression**:
@@ -250,8 +250,12 @@ _Avoid_: search mode, scrape level, crawl stage
 The coordinate targeting mechanism that taps the fixed inline ClickableSpan touch hotspot located in the bottom-right area of the job description text module (`tv_description`) to trigger full description expansion, bypassing Android accessibility node limitations without external coordinate configuration.
 _Avoid_: blind tap, ocr clicker, hardcoded absolute coordinates
 
+**Job Location Line (`tv_required_location`)**:
+The Job Detail Page header row that names where the office is, rendered as `上海·浦东新区·张江(近13/16号线华夏中路地铁站)` and read in the same capture pass as the title, company and salary — before any scroll, because expanding the description can recycle the header out of the accessibility tree. It is the platform's only publication of a metro station: the card's location facet names a district and nothing finer, so a station an operator wants to refuse or to measure is knowable nowhere else. It degrades rather than fails — a line with no parenthesised suffix, or none at all (a headhunter posting may render none, since the platform conceals their client), records no station and rejects nothing. The two district lists match over this line as well as over the card facet, which is why a station name is written into the same 商圈黑名单 an operator already edits.
+_Avoid_: card location, district facet, tv_distance, address
+
 **Commute Distance Probe (`home_tip_vf`)**:
-The bottom-of-page scroll search for the distance widget (`home_tip_vf`) on a Job Detail Page, executed only while the commute ceiling is active and only for direct-hire postings. Headhunter postings conceal the hiring enterprise and its office address, so the platform never renders the tip for them: probing there spends swipe budget and element-discovery timeouts on a widget that cannot exist. A headhunter posting therefore keeps `commute_distance_km` at `None` and passes commute screening fail-open, exactly like any other unknown distance.
+The bottom-of-page scroll search for the distance widget (`home_tip_vf`) on a Job Detail Page, executed only while the commute ceiling is active, only for direct-hire postings, and only for a posting whose district — or 地铁站 — is on the operator's 考察名单 (commute inspection list, spec #328). All three gates must hold: headhunter postings conceal the hiring enterprise and its office address, so the platform never renders the tip for them and probing there spends swipe budget discovering that; a district nobody asked to have measured is not worth 3-5 seconds of swipes, and an empty list therefore skips every posting. The card stage can only see a district, so the decision is taken twice: once on the card facet before the detail page is opened, and once on the Job Location Line, which is already in hand before any swipe. That second look may only turn a probe on, never off. A headhunter posting therefore keeps `commute_distance_km` at `None` and passes commute screening fail-open, exactly like any other unknown distance.
 _Avoid_: distance filter, geolocation check, address lookup
 
 

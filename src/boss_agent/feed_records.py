@@ -108,6 +108,9 @@ def posting_from_record(
         salary_range=str(record.get("salary_range") or "").strip() or card.salary_range,
         job_description=job_description,
         location=str(record.get("location") or "").strip() or card.location or None,
+        location_line=str(record.get("location_line") or ""),
+        metro_lines=str(record.get("metro_lines") or ""),
+        metro_station=str(record.get("metro_station") or ""),
         tags=list(record.get("tags") or []) or list(card.tags or []),
         recruiter_name=str(record.get("recruiter_name") or "").strip() or card.recruiter_name,
         recruiter_title=str(record.get("recruiter_title") or "").strip() or card.recruiter_title,
@@ -151,6 +154,11 @@ def enriched_record(
         "tags": list(card.tags) or list(getattr(posting, "tags", None) or []),
         "salary_range": posting.salary_range or card_record.get("salary_range", ""),
         "location": posting.location or card_record.get("location", ""),
+        "location_line": getattr(posting, "location_line", "")
+        or card_record.get("location_line", ""),
+        "metro_lines": getattr(posting, "metro_lines", "") or card_record.get("metro_lines", ""),
+        "metro_station": getattr(posting, "metro_station", "")
+        or card_record.get("metro_station", ""),
         "digest": card_record.get("digest", "") or getattr(posting, "digest", "") or "",
         "job_description": jd_text or card_record.get("job_description", ""),
         "relaxed_by_whitelist": bool(verdict and verdict.relaxed_by_whitelist),

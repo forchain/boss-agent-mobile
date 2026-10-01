@@ -246,6 +246,36 @@ async def test_card_screening_rejects_before_any_detail_navigation():
 
 
 @pytest.mark.asyncio
+async def test_card_screening_rejects_business_district_blacklist_before_detail_navigation():
+    """A card matching business_district_blacklist is rejected as IGNORED at card stage without opening detail."""
+    store = InMemoryJobRecordStore()
+    detail = _detail_page()
+    llm = MagicMock()
+    pipeline = _pipeline(
+        store,
+        feed=ScriptedFeed([[_card("AI 架构师", "智元创新", location="上海 崇明区 城桥")]]),
+        detail=detail,
+        screener=CandidateScreener(llm_client=llm),
+    )
+
+    result = await pipeline.stream_jobs(
+        FeedStreamConfig(
+            keyword="AI",
+            max_jobs=1,
+            screening_policy=ScreeningPolicy(business_district_blacklist=["崇明区"]),
+        )
+    )
+
+    detail.extract_job_posting.assert_not_called()
+    llm.chat_completion_json.assert_not_called()
+    assert result.skipped == 1
+    ignored = await store.list_job_records(status="ignored")
+    assert len(ignored) == 1
+    assert "【商圈黑名单过滤】" in ignored[0]["screened_reason"]
+    assert "崇明区" in ignored[0]["screened_reason"]
+
+
+@pytest.mark.asyncio
 async def test_evaluate_card_runs_before_detail_and_evaluate_job_after():
     """The pipeline screens the card, then the full JD, through the screener seam."""
     store = InMemoryJobRecordStore()

@@ -38,6 +38,16 @@ export const POST: RequestHandler = async ({ request }) => {
 		const titleBlacklist = rawPolicy.title_blacklist !== undefined ? cleanList(rawPolicy.title_blacklist) : current.title_blacklist;
 		const rawCompanyBlacklist = rawPolicy.company_blacklist !== undefined ? cleanList(rawPolicy.company_blacklist) : current.company_blacklist;
 		const jdBlacklist = rawPolicy.jd_blacklist !== undefined ? cleanList(rawPolicy.jd_blacklist) : current.jd_blacklist;
+		const businessDistrictBlacklist =
+			rawPolicy.business_district_blacklist !== undefined
+				? cleanList(rawPolicy.business_district_blacklist)
+				: (current.business_district_blacklist || []);
+		// 考察名单 (spec #328): an absent key preserves the stored list, so a partial
+		// save that never mentions it cannot silently empty the operator's districts.
+		const businessDistrictInspectList =
+			rawPolicy.business_district_inspect_list !== undefined
+				? cleanList(rawPolicy.business_district_inspect_list)
+				: (current.business_district_inspect_list || []);
 		const enableScreening = rawPolicy.enable_screening !== undefined ? Boolean(rawPolicy.enable_screening) : current.enable_screening;
 		// Commute ceiling (spec #209): absent key preserves the stored value; anything
 		// that coerces to null (null, "", "null") disables distance filtering entirely.
@@ -65,6 +75,8 @@ export const POST: RequestHandler = async ({ request }) => {
 			title_blacklist: titleBlacklist,
 			company_blacklist: validCompanies,
 			jd_blacklist: jdBlacklist,
+			business_district_blacklist: businessDistrictBlacklist,
+			business_district_inspect_list: businessDistrictInspectList,
 			max_commute_distance_km: maxCommuteDistanceKm
 		};
 

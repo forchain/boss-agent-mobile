@@ -101,7 +101,18 @@ def _quote_filter_value(value: Any) -> str:
 def _placeholder_fill(existing: dict[str, Any], record_data: dict[str, Any]) -> dict[str, Any]:
     """Fields that fill a gap in the stored record but never overwrite what is known."""
     filled: dict[str, Any] = {}
-    for key in ("company_scale", "industry", "recruiter_title", "salary_range", "location"):
+    for key in (
+        "company_scale",
+        "industry",
+        "recruiter_title",
+        "salary_range",
+        "location",
+        # The station is read from the detail page and a posting's office does not move,
+        # so a later observation that finds none must never erase one already recorded.
+        "location_line",
+        "metro_lines",
+        "metro_station",
+    ):
         if record_data.get(key) and not existing.get(key):
             filled[key] = record_data[key]
     return filled

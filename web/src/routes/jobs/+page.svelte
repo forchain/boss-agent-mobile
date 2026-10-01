@@ -38,6 +38,13 @@
 	let isModalOpen = $state(false);
 	let windowWidth = $state<number>(typeof window !== 'undefined' ? window.innerWidth : 1200);
 
+	// Statuses that have a matching key in JobRecordsCounts (excludes 'unmatched'/'digest_only').
+	const COUNTED_STATUSES = ['jd_saved', 'matched', 'applied', 'ignored'] as const satisfies ReadonlyArray<keyof JobRecordsCounts>;
+
+	function isCountedStatus(status: JobRecordStatus): status is (typeof COUNTED_STATUSES)[number] {
+		return (COUNTED_STATUSES as ReadonlyArray<JobRecordStatus>).includes(status);
+	}
+
 	function checkIsDesktop(): boolean {
 		if (typeof window === 'undefined') return false;
 		if (typeof window.matchMedia === 'function') {
@@ -147,17 +154,46 @@
 	}
 
 	function handleJobDeleted(deletedId: string) {
+		const targetJob = jobs.find((j) => j.id === deletedId);
 		const currentIdx = filteredJobs.findIndex((j) => j.id === deletedId);
 		const remaining = filteredJobs.filter((j) => j.id !== deletedId);
-		let nextSelectedId: string | null = null;
-		if (remaining.length > 0) {
-			if (currentIdx < remaining.length) {
-				nextSelectedId = remaining[currentIdx].id;
+
+		// If the currently selected job was deleted, or is no longer present in remaining, select a successor
+		if (selectedJobId === deletedId) {
+			if (remaining.length > 0) {
+				if (currentIdx >= 0 && currentIdx < remaining.length) {
+					selectedJobId = remaining[currentIdx].id;
+				} else if (currentIdx >= remaining.length) {
+					selectedJobId = remaining[remaining.length - 1].id;
+				} else {
+					selectedJobId = remaining[0].id;
+				}
 			} else {
-				nextSelectedId = remaining[remaining.length - 1].id;
+				selectedJobId = null;
+			}
+		} else if (selectedJobId && !remaining.some((j) => j.id === selectedJobId)) {
+			selectedJobId = remaining.length > 0 ? remaining[0].id : null;
+		}
+
+		if (!selectedJobId) {
+			isModalOpen = false;
+		}
+
+		if (targetJob) {
+			totalJobs = Math.max(0, totalJobs - 1);
+			if (targetJob.status !== 'ignored') {
+				counts.all = Math.max(0, counts.all - 1);
+			}
+			if (isCountedStatus(targetJob.status)) {
+				counts[targetJob.status] = Math.max(0, counts[targetJob.status] - 1);
+			}
+			if (targetJob.is_headhunter) {
+				counts.headhunter = Math.max(0, counts.headhunter - 1);
+			} else {
+				counts.direct = Math.max(0, counts.direct - 1);
 			}
 		}
-		selectedJobId = nextSelectedId;
+
 		jobs = jobs.filter((j) => j.id !== deletedId);
 	}
 
@@ -491,6 +527,15 @@
 										{#if job.location}
 											<span class="text-slate-600">·</span>
 											<span class="text-slate-500 truncate">{job.location}</span>
+										{/if}
+										{#if job.metro_station}
+											<!-- Nearest station, read from the detail page's location
+											     line; the card facet has no station (issue #332). -->
+											<span class="text-slate-600">·</span>
+											<span
+												class="shrink-0 px-1.5 py-0.5 rounded bg-slate-800/80 text-slate-300 border border-slate-700/60"
+												title={job.location_line || `近${job.metro_station}`}
+											>🚇 近{job.metro_station}</span>
 										{/if}
 										{#if formatCommuteDistance(job)}
 											<span class="text-slate-600">·</span>

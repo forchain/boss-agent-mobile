@@ -55,6 +55,12 @@ export interface ScreeningPolicy {
 	title_blacklist: string[];
 	company_blacklist: string[];
 	jd_blacklist: string[];
+	business_district_blacklist: string[];
+	/**
+	 * Borderline districts whose direct-hire postings are worth measuring against the
+	 * commute ceiling (spec #328). Empty means nothing is probed.
+	 */
+	business_district_inspect_list: string[];
 	enable_screening: boolean;
 	channel_preference?: 'all' | 'direct_only' | 'headhunter_only';
 	/** Commute ceiling in km; null, blank or <= 0 disables distance filtering. */
@@ -105,6 +111,9 @@ export interface JobRecord {
 	commute_distance_km?: number | null;
 	/** Raw widget text, e.g. "距离家庭住址19.5千米". */
 	commute_distance_text?: string;
+	location_line?: string;
+	metro_lines?: string;
+	metro_station?: string;
 	source_task_id?: string;
 	first_seen_at?: string;
 	last_seen_at?: string;

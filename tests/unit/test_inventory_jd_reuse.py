@@ -262,10 +262,11 @@ async def test_an_unknown_distance_is_probed_rather_than_guessed():
     is still fetched — without the expansion and extraction around it.
     """
     store = InMemoryJobRecordStore()
-    card = _card("AI Agent 平台工程师", "智元创新")
+    card = _card("AI Agent 平台工程师", "智元创新", location="上海  浦东新区  张江")
     await store.upsert_job_record(_on_file(card))  # no commute_distance_km
 
-    policy = ScreeningPolicy(max_commute_distance_km=5.0)
+    # The 考察名单 (spec #328) is what makes this posting worth measuring at all.
+    policy = ScreeningPolicy(max_commute_distance_km=5.0, business_district_inspect_list=["张江"])
     detail = _detail_page()
     detail.extract_commute_distance.return_value = (22.0, "距离家庭住址22.0千米")
     chat = _sent_chat()

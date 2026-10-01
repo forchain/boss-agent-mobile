@@ -55,6 +55,7 @@ from .keyword_constants import (
     GREETING_SOURCE_AGENT,
     GREETING_SOURCE_HUMAN,
     HEADHUNTER_COMMUTE_PROBE_SKIP_REASON,
+    NOT_INSPECTED_DISTRICT_SKIP_REASON,
 )
 from .memory import StructuredCandidateProfile
 from .pages import (
@@ -339,6 +340,28 @@ def _element_y(elem: Any) -> float | None:
         return float(location.get("y", 0))
     except (TypeError, ValueError):
         return None
+
+
+def station_probe_upgrade(
+    policy: ScreeningPolicy, is_headhunter: bool | None
+) -> Callable[[str], bool]:
+    """The station-aware re-decision the detail page makes before probing (#333).
+
+    The card stage can only see a district, so it may decline a probe for a posting whose
+    商圈 nobody listed but whose 地铁站 somebody did. The detail page holds the full
+    location line by then, and consulting it there costs nothing — the line is captured in
+    the same pass as the title, before any swipe — while the bottom probe it may authorise
+    is the expensive part. The page treats a True here as an upgrade only, so a
+    station-aware "no" can never overrule a card stage that had already said yes.
+
+    Kept as a named closure rather than a bare lambda because the policy call is the whole
+    point: the page stays ignorant of ScreeningPolicy and the pipeline keeps the decision.
+    """
+
+    def _should_probe_with_station(location_line: str) -> bool:
+        return policy.should_probe_commute_distance(is_headhunter, location=location_line)
+
+    return _should_probe_with_station
 
 
 async def is_task_cancelled(broker: Any, task_id: str) -> bool:
@@ -855,7 +878,8 @@ class JobFeedPipeline:
 
         policy = run.config.screening_policy
         is_headhunter = bool(record.get("is_headhunter") or card.is_headhunter)
-        if not policy.should_probe_commute_distance(is_headhunter):
+        location = str(record.get("location") or card.location or "")
+        if not policy.should_probe_commute_distance(is_headhunter, location=location):
             if policy.is_commute_filter_active and is_headhunter:
                 await self._log(
                     f"📍 [App端强制过滤] '{card.title}' {HEADHUNTER_COMMUTE_PROBE_SKIP_REASON}"
@@ -951,13 +975,18 @@ class JobFeedPipeline:
         the posting, and dropping the enrichment would lose a job we already hold.
         """
         card_is_headhunter = getattr(card, "is_headhunter", False)
+        card_location = str(getattr(card, "location", "") or "")
         resolved_policy = policy or ScreeningPolicy()
-        should_probe = resolved_policy.should_probe_commute_distance(card_is_headhunter)
+        should_probe = resolved_policy.should_probe_commute_distance(
+            card_is_headhunter, location=card_location
+        )
         if resolved_policy.is_commute_filter_active and not should_probe:
-            await self._log(
-                f"📍 [App端强制过滤] '{card.title}' @ '{card.company_name}' "
-                f"{HEADHUNTER_COMMUTE_PROBE_SKIP_REASON}"
+            reason = (
+                HEADHUNTER_COMMUTE_PROBE_SKIP_REASON
+                if card_is_headhunter
+                else NOT_INSPECTED_DISTRICT_SKIP_REASON
             )
+            await self._log(f"📍 [App端强制过滤] '{card.title}' @ '{card.company_name}' {reason}")
 
         try:
             posting = self.detail_page.extract_job_posting(
@@ -966,6 +995,7 @@ class JobFeedPipeline:
                 fallback_title=card.title,
                 probe_commute_distance=should_probe,
                 is_headhunter=card_is_headhunter,
+                commute_probe_upgrade=station_probe_upgrade(resolved_policy, card_is_headhunter),
             )
         except Exception as e:
             logger.error("Failed to extract detail for '%s': %s", card.title, e)
@@ -1000,6 +1030,63 @@ class JobFeedPipeline:
             return str(run.existing_record.get("greeting_message")).strip(), "岗位记录人工稿"
         return "", ""
 
+    async def _reject_detail_posting(
+        self,
+        run: _CardRun,
+        card: JobCardBrief,
+        enriched: dict[str, Any],
+        posting: Any,
+        *,
+        reason: str,
+        audit_note: str,
+        log_prefix: str,
+    ) -> None:
+        """End a run whose detail page has already decided the posting is unacceptable.
+
+        Shared by the two detail-stage App-Enforced Filters — the business district
+        blacklist (issue #333) and the commute ceiling (spec #209) — so they cannot drift
+        in what they leave behind: the optimistic card record is withdrawn rather than left
+        standing as a collected job, the stored record carries the reason and the audit
+        trail, and the outcome is emitted once. Each caller has already decided whether
+        Whitelist Relaxation applies; this only records and reports the verdict.
+        """
+        enriched["relaxed_by_whitelist"] = False
+        enriched["screening_audit"] = "；".join(
+            p for p in (enriched.get("screening_audit", ""), audit_note) if p
+        )
+        enriched["status"] = JobRecordStatus.IGNORED.value
+        enriched["screened_reason"] = reason
+
+        run.result.skipped += 1
+        if run.jobs_index is not None and run.result.jobs:
+            run.result.jobs.pop(run.jobs_index)
+            run.jobs_index = None
+
+        saved = await self.store.upsert_job_record(enriched)
+        title = effective_title(posting, card)
+        company = effective_company(posting, card)
+        await self._log(f"{log_prefix} '{title}' @ '{company}': {reason}，已标记为淘汰并停止采集")
+        await self._emit(
+            run,
+            JobOutcome(
+                fingerprint=card.fingerprint,
+                title=title,
+                company_name=company,
+                status=JobRecordStatus.IGNORED.value,
+                action=JobAction.SKIPPED,
+                reason=reason,
+                record=saved or {},
+            ),
+        )
+        if run.result.outcome == "no_candidates":
+            run.result.outcome = CardVerdictStage.FILTERED_BY_APP_RULE.value
+            run.result.reason = reason
+            run.result.job = {
+                "title": title,
+                "company_name": company,
+                "salary_range": getattr(posting, "salary_range", ""),
+            }
+
     async def _evaluate_and_act(self, run: _CardRun, posting: Any) -> None:
         """Run full-JD evaluation and persist whichever outcome the target action implies."""
         card = run.card
@@ -1018,6 +1105,29 @@ class JobFeedPipeline:
             verdict=run.verdict,
         )
         is_headhunter = enriched["is_headhunter"]
+
+        # Business district blacklist, second look (issue #333). The card stage judged the
+        # district facet and passed this posting; the detail page has since read the full
+        # location line, station included, and a station entry in the same list cannot be
+        # judged any earlier. Deterministic and one-strike like the card stage, so
+        # Whitelist Relaxation is deliberately not consulted: an operator who refuses a
+        # region does not get it back because the title said something they like. Runs
+        # before the LLM is asked anything, so a refused station costs no tokens.
+        location_line = str(getattr(posting, "location_line", "") or "")
+        location_pass, location_violation = config.screening_policy.evaluate_location_blacklist(
+            location_line or str(card.location or "")
+        )
+        if not location_pass:
+            await self._reject_detail_posting(
+                run,
+                card,
+                enriched,
+                posting,
+                reason=location_violation,
+                audit_note=f"App端强制过滤违例: {location_violation}",
+                log_prefix="🛑 [商圈黑名单过滤]",
+            )
+            return
 
         # Commute distance App-Enforced Filter (spec #209). The
         # distance widget only exists at the bottom of the detail page,
@@ -1049,39 +1159,15 @@ class JobFeedPipeline:
                 f"App端强制过滤违例: {commute_violation}",
             ]
             if not commute_relaxed:
-                enriched["relaxed_by_whitelist"] = False
-                enriched["screening_audit"] = "；".join(p for p in audit_parts if p)
-                enriched["status"] = JobRecordStatus.IGNORED.value
-                enriched["screened_reason"] = commute_violation
-                run.result.skipped += 1
-                if run.jobs_index is not None and run.result.jobs:
-                    run.result.jobs.pop(run.jobs_index)
-                    run.jobs_index = None
-                saved = await self.store.upsert_job_record(enriched)
-                await self._log(
-                    f"🛑 [App端强制过滤] '{posting_title}' @ '{posting_company}': "
-                    f"{commute_violation}，已标记为淘汰并停止采集"
-                )
-                await self._emit(
+                await self._reject_detail_posting(
                     run,
-                    JobOutcome(
-                        fingerprint=card.fingerprint,
-                        title=posting_title,
-                        company_name=posting_company,
-                        status=JobRecordStatus.IGNORED.value,
-                        action=JobAction.SKIPPED,
-                        reason=commute_violation,
-                        record=saved or {},
-                    ),
+                    card,
+                    enriched,
+                    posting,
+                    reason=commute_violation,
+                    audit_note="；".join(p for p in audit_parts if p),
+                    log_prefix="🛑 [App端强制过滤]",
                 )
-                if run.result.outcome == "no_candidates":
-                    run.result.outcome = CardVerdictStage.FILTERED_BY_APP_RULE.value
-                    run.result.reason = commute_violation
-                    run.result.job = {
-                        "title": posting_title,
-                        "company_name": posting_company,
-                        "salary_range": getattr(posting, "salary_range", ""),
-                    }
                 return
 
             enriched["relaxed_by_whitelist"] = True
@@ -1447,18 +1533,25 @@ class JobFeedPipeline:
         target_is_headhunter = run.config.is_headhunter
         if target_is_headhunter is None and target_record:
             target_is_headhunter = target_record.get("is_headhunter")
-        probe_commute_distance = policy.should_probe_commute_distance(target_is_headhunter)
+        target_location = str((target_record or {}).get("location") or "")
+        probe_commute_distance = policy.should_probe_commute_distance(
+            target_is_headhunter, location=target_location
+        )
         if policy.is_commute_filter_active and not probe_commute_distance:
             target_desc = (target_record and target_record.get("title")) or "当前岗位"
-            await self._log(
-                f"📍 [App端强制过滤] '{target_desc}' {HEADHUNTER_COMMUTE_PROBE_SKIP_REASON}"
+            reason = (
+                HEADHUNTER_COMMUTE_PROBE_SKIP_REASON
+                if target_is_headhunter
+                else NOT_INSPECTED_DISTRICT_SKIP_REASON
             )
+            await self._log(f"📍 [App端强制过滤] '{target_desc}' {reason}")
 
         try:
             posting = self.detail_page.extract_job_posting(
                 timeout_sec=5.0,
                 probe_commute_distance=probe_commute_distance,
                 is_headhunter=target_is_headhunter,
+                commute_probe_upgrade=station_probe_upgrade(policy, target_is_headhunter),
             )
         except Exception as e:
             run.result.error_message = str(e)

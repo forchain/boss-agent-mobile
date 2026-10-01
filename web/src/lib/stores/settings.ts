@@ -33,7 +33,9 @@ export const DEFAULT_SETTINGS: SystemSettings = {
 	preview_timeout_sec: 3.0,
 	enable_greeting: true,
 	chat: { ...DEFAULT_CHAT_ACKNOWLEDGMENT },
-	communication_cooldown_days: 30
+	communication_cooldown_days: 30,
+	business_district_blacklist: [],
+	business_district_inspect_list: []
 };
 
 export const DEFAULT_SCREENING_POLICY: ScreeningPolicy = {
@@ -42,6 +44,8 @@ export const DEFAULT_SCREENING_POLICY: ScreeningPolicy = {
 	title_blacklist: [],
 	company_blacklist: [],
 	jd_blacklist: [],
+	business_district_blacklist: [],
+	business_district_inspect_list: [],
 	max_commute_distance_km: 40
 };
 
@@ -125,6 +129,8 @@ export async function loadAllSettings(): Promise<void> {
 				conf.title_whitelist ||
 				conf.company_blacklist ||
 				conf.jd_blacklist ||
+				conf.business_district_blacklist ||
+				conf.business_district_inspect_list ||
 				conf.enable_screening !== undefined
 			) {
 				screeningPolicyStore.set({
@@ -133,6 +139,8 @@ export async function loadAllSettings(): Promise<void> {
 					title_blacklist: Array.isArray(conf.title_blacklist) ? conf.title_blacklist : [],
 					company_blacklist: Array.isArray(conf.company_blacklist) ? conf.company_blacklist : [],
 					jd_blacklist: Array.isArray(conf.jd_blacklist) ? conf.jd_blacklist : [],
+					business_district_blacklist: Array.isArray(conf.business_district_blacklist) ? conf.business_district_blacklist : [],
+					business_district_inspect_list: Array.isArray(conf.business_district_inspect_list) ? conf.business_district_inspect_list : [],
 					max_commute_distance_km:
 						conf.max_commute_distance_km === null || conf.max_commute_distance_km === undefined
 							? null
@@ -154,6 +162,8 @@ export async function loadAllSettings(): Promise<void> {
 				title_blacklist: Array.isArray(pData.policy.title_blacklist) ? pData.policy.title_blacklist : [],
 				company_blacklist: Array.isArray(pData.policy.company_blacklist) ? pData.policy.company_blacklist : [],
 				jd_blacklist: Array.isArray(pData.policy.jd_blacklist) ? pData.policy.jd_blacklist : [],
+				business_district_blacklist: Array.isArray(pData.policy.business_district_blacklist) ? pData.policy.business_district_blacklist : [],
+				business_district_inspect_list: Array.isArray(pData.policy.business_district_inspect_list) ? pData.policy.business_district_inspect_list : [],
 				max_commute_distance_km:
 					pData.policy.max_commute_distance_km === null ||
 					pData.policy.max_commute_distance_km === undefined
@@ -196,6 +206,8 @@ export async function saveSystemSettings(): Promise<boolean> {
 		title_blacklist: currentPolicy.title_blacklist,
 		company_blacklist: currentPolicy.company_blacklist,
 		jd_blacklist: currentPolicy.jd_blacklist,
+		business_district_blacklist: currentPolicy.business_district_blacklist,
+		business_district_inspect_list: currentPolicy.business_district_inspect_list,
 		max_commute_distance_km: normalizeCommuteLimit(commuteInput),
 		chat: normalizeChatAcknowledgment(currentChatAck)
 	};

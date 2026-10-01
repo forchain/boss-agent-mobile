@@ -515,6 +515,13 @@ JOB_RECORDS = Collection(
             default="",
             description='Raw widget text, e.g. "距离家庭住址19.5千米".',
         ),
+        # The detail page's own location line and the metro station it names (issue #332).
+        # Distinct from `location`, which stays the card's district facet: a station is
+        # only ever published here, and the two lists the operator edits both match over
+        # this line so a metro station can be refused or inspected like a 商圈.
+        Field("location_line", TEXT, default=""),
+        Field("metro_lines", TEXT, default=""),
+        Field("metro_station", TEXT, default=""),
         Field("source_task_id", TEXT),
         Field("first_seen_at", DATE),
         Field("last_seen_at", DATE),

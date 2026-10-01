@@ -65,6 +65,7 @@ export interface ResumeRevision {
 
 
 
+
 export interface LLMSettings {
 	provider: 'openai' | 'minimax' | 'deepseek' | string;
 	model: string;
@@ -108,6 +109,8 @@ export interface SystemSettings {
 	title_blacklist?: string[];
 	company_blacklist?: string[];
 	jd_blacklist?: string[];
+	business_district_blacklist?: string[];
+	business_district_inspect_list?: string[];
 	channel_preference?: 'all' | 'direct_only' | 'headhunter_only';
 	max_commute_distance_km?: number | null;
 

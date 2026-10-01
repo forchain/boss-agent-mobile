@@ -24,7 +24,7 @@ from droid_agent_core.locators import (
 from .card_parser import CardFacets, ParsedCard, needs_text_fallback, parse_card
 from .enums import AuthStatus, ChatButtonState
 from .identifier_helpers import classify_chat_button, jd_is_truncated
-from .job_entities import JobCardBrief, JobPosting
+from .job_entities import JobCardBrief, JobLocationLine, JobPosting
 from .keyword_constants import PLATFORM_BADGE_MARKERS
 from .rejection import DISINTEREST_REASON
 from .search_entities import FilterConfig
@@ -1458,6 +1458,7 @@ class JobDetailPage(BaseBossPage):
         fallback_title: str = "",
         probe_commute_distance: bool = False,
         is_headhunter: bool | None = None,
+        commute_probe_upgrade: Callable[[str], bool] | None = None,
         commute_max_scrolls: int = COMMUTE_PROBE_MAX_SCROLLS,
     ) -> JobPosting:
         """Extract structured JobPosting from current job detail screen.
@@ -1471,6 +1472,13 @@ class JobDetailPage(BaseBossPage):
         never rendered and the scroll could only burn gesture budget and
         element-discovery timeouts. An unknown channel (``None``) still probes, so an
         unrecognised direct hire is never silently spared distance screening.
+
+        ``commute_probe_upgrade`` is consulted with the full location line once the header
+        has been read, and may only turn the probe on (issue #333). The card's location
+        facet names a district but no station, so a posting whose 商圈 nobody listed may
+        still be one whose 地铁站 somebody did; asking here costs nothing, because the line
+        is captured alongside the title and the swipe budget it can authorise is the
+        expensive part.
 
         ``commute_max_scrolls`` is the probe's swipe budget, relaxed by default for the
         long expanded JDs that push the widget several screens below the fold.
@@ -1492,6 +1500,10 @@ class JobDetailPage(BaseBossPage):
         title_elem = self.find_by_key("job_detail.title")
         company_elem = self.find_by_key("job_detail.company")
         salary_elem = self.find_by_key("job_detail.salary")
+        # The location line shares the header row, so it is read here for the same reason
+        # the other three are: expanding the description can recycle them out of the tree.
+        location_elem = self.find_now("job_detail.location_line")
+        location_line = JobLocationLine.parse(self._read_location_line(location_elem))
 
         title = title_elem.text.strip() if title_elem and getattr(title_elem, "text", None) else ""
         company = (
@@ -1532,6 +1544,11 @@ class JobDetailPage(BaseBossPage):
                 if salary_elem and getattr(salary_elem, "text", None)
                 else ""
             )
+        if not location_line.raw:
+            # The zero-timeout read above covers the normal path; this one pays a real
+            # lookup only for a posting whose line the tree had not built yet.
+            location_elem = self.find_by_key("job_detail.location_line", timeout_sec=0.5)
+            location_line = JobLocationLine.parse(self._read_location_line(location_elem))
 
         if "查看更多" in desc:
             _log_error(
@@ -1554,7 +1571,18 @@ class JobDetailPage(BaseBossPage):
         # a scroll for a widget the platform cannot render.
         commute_distance_km: float | None = None
         commute_distance_text = ""
-        if probe_commute_distance and is_headhunter is not True:
+        probe = probe_commute_distance
+        if not probe and commute_probe_upgrade is not None and is_headhunter is not True:
+            # Only ever an upgrade: the card stage may decline a district it could not
+            # resolve to a station, but it must not be overruled by a line that lists none.
+            probe = bool(commute_probe_upgrade(location_line.match_text))
+            if probe:
+                _log_info(
+                    f"📍 [Commute Probe] '{location_line.match_text or title}' "
+                    f"商圈未列入考察列表，但地铁站 '{location_line.metro_station or '未标注'}' "
+                    f"命中，升级为需要底部探测"
+                )
+        if probe and is_headhunter is not True:
             commute_distance_km, commute_distance_text = self.extract_commute_distance(
                 max_scrolls=commute_max_scrolls
             )
@@ -1566,7 +1594,23 @@ class JobDetailPage(BaseBossPage):
             job_description=desc or "无详细岗位描述",
             commute_distance_km=commute_distance_km,
             commute_distance_text=commute_distance_text,
+            location_line=location_line.raw,
+            metro_lines=location_line.metro_lines,
+            metro_station=location_line.metro_station,
         )
+
+    @staticmethod
+    def _read_location_line(elem: Any) -> str:
+        """The rendered location line, or "" when there is nothing readable to parse.
+
+        The node can be absent, or present without text — a container matched by the
+        fallback XPath, or a row the platform has not populated yet. Both are ordinary
+        states rather than failures, and both must read as "no station", so the location
+        line fails open exactly as the commute widget does rather than raising on a node
+        whose ``text`` is not a string.
+        """
+        raw = getattr(elem, "text", None) if elem is not None else None
+        return raw.strip() if isinstance(raw, str) else ""
 
     def get_chat_button_state(self, timeout_sec: float = 2.0) -> ChatButtonState:
         """Read the engagement state of the detail page call-to-action button (`btn_chat`).

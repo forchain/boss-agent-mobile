@@ -178,6 +178,7 @@ def _commute_posting(
 def _scrape_card(
     title: str = "云原生平台工程师",
     recruiter_name: str = "张先生 · 技术总监",
+    location: str = "上海  浦东新区  张江",
 ) -> tuple[JobCardBrief, MagicMock]:
     card_elem = MagicMock()
     card = JobCardBrief(
@@ -186,6 +187,7 @@ def _scrape_card(
         recruiter_name=recruiter_name,
         tags=["K8s"],
         digest="负责容器平台与云原生基础设施建设",
+        location=location,
     )
     return card, card_elem
 
@@ -335,7 +337,13 @@ async def test_auto_apply_distant_job_is_ignored_before_chat_entry():
             "keyword": "大模型",
             "preview_only": False,
             "auto_send": True,
-            "screening_policy": {"max_commute_distance_km": 40.0, "title_whitelist": ["量子计算"]},
+            "screening_policy": {
+                "max_commute_distance_km": 40.0,
+                "title_whitelist": ["量子计算"],
+                # 考察名单 (spec #328): the bottom probe is bought only for a listed
+                # district, so these distance verdicts are only earned with one.
+                "business_district_inspect_list": ["张江"],
+            },
         },
     )
 
@@ -419,7 +427,13 @@ async def test_auto_apply_distant_job_rescued_by_whitelist_still_drafts():
 
 @pytest.mark.asyncio
 async def test_auto_apply_nearby_job_proceeds_and_probes_distance():
-    """A job inside the ceiling proceeds, and the detail probe is enabled."""
+    """A job inside the ceiling in a 考察名单 district is measured against it.
+
+    Spec #328 moved the probe behind the 考察名单, so "the ceiling is active" is no longer
+    by itself a reason to spend the bottom-swipe budget: the operator has to have named
+    the district. (A station-only match is a second, later chance at that decision, and is
+    exercised at the page seam in ``test_commute_distance_extraction``.)
+    """
     broker = InMemoryTaskBroker()
     context = WorkerContext(config=WorkerConfig(worker_id="w-distance-near"), driver=_mock_driver())
     handler = AutoApplyHandler(llm_client=_drafting_llm())
@@ -428,23 +442,32 @@ async def test_auto_apply_nearby_job_proceeds_and_probes_distance():
         task_type=TaskType.AUTO_APPLY,
         payload={
             "keyword": "大模型",
-            "screening_policy": {"max_commute_distance_km": 40.0},
+            "screening_policy": {
+                "max_commute_distance_km": 40.0,
+                "business_district_inspect_list": ["张江"],
+            },
         },
     )
 
     with (
         patch("boss_agent.feed_pipeline.StartupDialogPage") as startup_cls,
-        patch("boss_agent.feed_pipeline.JobListPage"),
+        patch("boss_agent.feed_pipeline.JobListPage") as list_cls,
         patch("boss_agent.feed_pipeline.SearchPage") as search_cls,
         patch("boss_agent.feed_pipeline.JobDetailPage") as detail_cls,
         patch("boss_agent.feed_pipeline.ChatPage"),
     ):
         startup_cls.return_value.is_dialog_present.return_value = False
+        listed_card, card_elem = _scrape_card(title="大模型 Agent 平台架构师")
+        listing = _commute_posting(18.5, "距离家庭住址18.5千米")
+        listing.location_line = "上海·浦东新区·张江(近13/16号线华夏中路地铁站)"
+        listing.metro_station = "华夏中路地铁站"
+        listing.metro_lines = "13/16号线"
+        detail_cls.return_value.extract_job_posting.return_value = listing
+        list_cls.return_value.extract_visible_job_cards.return_value = [
+            located(listed_card, card_elem)
+        ]
         search_cls.return_value.is_search_page.return_value = True
         search_cls.return_value.search.return_value = True
-        detail_cls.return_value.extract_job_posting.return_value = _commute_posting(
-            18.5, "距离家庭住址18.5千米"
-        )
 
         result = await handler.handle(task, broker, context)
 
@@ -459,6 +482,61 @@ async def test_auto_apply_nearby_job_proceeds_and_probes_distance():
     rec = next(r for r in records if r.get("title") == "大模型 Agent 平台架构师")
     assert rec["status"] == "matched"
     assert rec["commute_distance_km"] == pytest.approx(18.5)
+    # Issue #332: the station the detail page read is recorded next to the 商圈.
+    assert rec["metro_station"] == "华夏中路地铁站"
+    assert rec["location_line"] == "上海·浦东新区·张江(近13/16号线华夏中路地铁站)"
+
+
+@pytest.mark.asyncio
+async def test_auto_apply_in_an_unlisted_district_skips_the_probe_and_defaults_satisfied():
+    """The fully accelerated scan (spec #328): nobody asked for this district to be measured.
+
+    The distance the detail page happened to carry is still screened when it is present —
+    the gate buys no swipe, it never discards a measurement that was made.
+    """
+    broker = InMemoryTaskBroker()
+    context = WorkerContext(config=WorkerConfig(worker_id="w-distance-near"), driver=_mock_driver())
+    handler = AutoApplyHandler(llm_client=_drafting_llm())
+
+    task = await broker.create_task(
+        task_type=TaskType.AUTO_APPLY,
+        payload={
+            "keyword": "大模型",
+            "screening_policy": {
+                "max_commute_distance_km": 40.0,
+                "business_district_inspect_list": ["崇明区"],
+            },
+        },
+    )
+
+    with (
+        patch("boss_agent.feed_pipeline.StartupDialogPage") as startup_cls,
+        patch("boss_agent.feed_pipeline.JobListPage") as list_cls,
+        patch("boss_agent.feed_pipeline.SearchPage") as search_cls,
+        patch("boss_agent.feed_pipeline.JobDetailPage") as detail_cls,
+        patch("boss_agent.feed_pipeline.ChatPage"),
+    ):
+        startup_cls.return_value.is_dialog_present.return_value = False
+        card, card_elem = _scrape_card(
+            title="大模型 Agent 平台架构师", location="上海  浦东新区  张江"
+        )
+        detail_cls.return_value.extract_job_posting.return_value = _commute_posting(
+            18.5, "距离家庭住址18.5千米"
+        )
+        list_cls.return_value.extract_visible_job_cards.return_value = [located(card, card_elem)]
+        search_cls.return_value.is_search_page.return_value = True
+        search_cls.return_value.search.return_value = True
+
+        result = await handler.handle(task, broker, context)
+
+    assert result.success is True
+    assert (
+        detail_cls.return_value.extract_job_posting.call_args.kwargs["probe_commute_distance"]
+        is False
+    )
+    records = await broker.job_store.list_job_records()
+    rec = next(r for r in records if r.get("title") == "大模型 Agent 平台架构师")
+    assert rec["status"] == "matched"
 
 
 @pytest.mark.asyncio
@@ -612,7 +690,13 @@ async def test_scrape_jobs_distant_job_is_ingested_as_ignored():
         payload={
             "keyword": "平台",
             "max_jobs": 5,
-            "screening_policy": {"max_commute_distance_km": 40.0, "title_whitelist": ["量子计算"]},
+            "screening_policy": {
+                "max_commute_distance_km": 40.0,
+                "title_whitelist": ["量子计算"],
+                # 考察名单 (spec #328): the bottom probe is bought only for a listed
+                # district, so these distance verdicts are only earned with one.
+                "business_district_inspect_list": ["张江"],
+            },
         },
     )
 

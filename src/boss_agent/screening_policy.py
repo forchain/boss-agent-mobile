@@ -31,6 +31,11 @@ class ScreeningPolicy:
     title_blacklist: list[str] = field(default_factory=list)
     company_blacklist: list[str] = field(default_factory=list)
     jd_blacklist: list[str] = field(default_factory=list)
+    business_district_blacklist: list[str] = field(default_factory=list)
+    #: Borderline business districts whose direct-hire postings are worth measuring
+    #: the exact commute distance for (spec #328). Empty = measure nothing (distance
+    #: screening skipped, zero swipe overhead).
+    business_district_inspect_list: list[str] = field(default_factory=list)
     enable_screening: bool = True
     channel_preference: str = ChannelPreference.ALL
     max_commute_distance_km: float | None = 40.0
@@ -72,6 +77,21 @@ class ScreeningPolicy:
         except (TypeError, ValueError):
             return None
 
+    @staticmethod
+    def _match_location_token(tokens: list[str], location: str) -> str | None:
+        """The first token contained in the location string (case-insensitive), or None.
+
+        Iterates in list order, so an operator can sort longer or more specific names first.
+        Returns the original token as typed in the policy rather than the normalized hit:
+        the audit reason quotes their own entry rather than a normalized copy of it.
+        """
+        norm = (location or "").lower()
+        for raw in tokens:
+            token = (raw or "").strip()
+            if token and token.lower() in norm:
+                return token
+        return None
+
     @property
     def is_commute_filter_active(self) -> bool:
         """True when the commute ceiling can actually reject something.
@@ -85,17 +105,49 @@ class ScreeningPolicy:
             and self.max_commute_distance_km > 0
         )
 
-    def should_probe_commute_distance(self, is_headhunter: bool | None) -> bool:
+    def should_probe_commute_distance(self, is_headhunter: bool | None, location: str = "") -> bool:
         """Whether this posting's detail page is worth probing for the distance widget.
 
-        Narrower than ``is_commute_filter_active`` because the probe only buys anything
-        for direct-hire postings: the platform conceals the hiring enterprise and its
-        office address for headhunter roles, so ``home_tip_vf`` is never rendered for
-        them and the scroll budget would be spent discovering that. An unknown channel
-        (``None``) still probes — an unrecognised direct hire must not be silently
-        spared distance screening.
+        Three gates, all of which must hold. A disabled commute ceiling can reject
+        nothing, so scrolling to find the distance widget would cost latency for nothing.
+        The probe only buys anything for direct-hire postings: the platform conceals the
+        hiring enterprise and its office address for headhunter roles, so ``home_tip_vf``
+        is never rendered for them and the scroll budget would be spent discovering that.
+        And the posting must sit in a district the operator asked to have measured — an
+        empty list means nothing is probed at all, so a scan that only cares about the
+        blacklist pays no swipe latency whatsoever. An unknown channel (``None``) still
+        probes: an unrecognised direct hire must not be silently spared distance screening.
         """
-        return self.is_commute_filter_active and is_headhunter is not True
+        if not self.is_commute_filter_active or is_headhunter is True:
+            return False
+        return self._match_location_token(self.business_district_inspect_list, location) is not None
+
+    def evaluate_location_blacklist(self, location: str) -> tuple[bool, str]:
+        """Evaluate the business district blacklist against a location the card did not carry.
+
+        The card's location facet names a district but no station, so a station entry in
+        ``business_district_blacklist`` can only be judged once the detail page has been
+        read and its location line is in hand (issue #333). Split out from
+        ``matches_card_keywords`` so the detail stage reuses one list and one reason
+        string without also re-running the title, company and JD blacklists against
+        detail-page text, which those lists were never written for.
+
+        Deterministic and one-strike, exactly as at the card stage: Whitelist Relaxation
+        does not exempt a region the operator refused, and an absent or unreadable
+        location fails open, because a posting the platform describes only as "上海"
+        must not be discarded over missing data.
+        """
+        if not self.enable_screening:
+            return True, ""
+
+        token = self._match_location_token(self.business_district_blacklist, location)
+        if token is None:
+            return True, ""
+
+        return (
+            False,
+            f"【商圈黑名单过滤】岗位所在区域/商圈 '{location}' 命中黑名单 '{token}'",
+        )
 
     def evaluate_commute_distance(self, commute_distance_km: float | None) -> tuple[bool, str]:
         """Evaluate the commute distance App-Enforced Filter on its own.
@@ -265,10 +317,11 @@ class ScreeningPolicy:
         company_name: str = "",
         tags: list[str] | None = None,
         digest: str = "",
+        location: str = "",
     ) -> tuple[bool, str]:
         """Deterministic keyword evaluation for job card.
 
-        Evaluates title, company_name, tags, and digest against screening policy.
+        Evaluates title, company_name, tags, digest, and location against screening policy.
         Returns (passed: bool, reason: str).
         """
         if not self.enable_screening:
@@ -297,6 +350,12 @@ class ScreeningPolicy:
             if b and (b in norm_digest or any(b in t for t in norm_tags)):
                 return False, f"命中岗位摘要/标签黑名单关键词: '{black}'"
 
+        # 4. Business district blacklist (一票否决: 检查 location). The detail stage
+        # re-evaluates this same list against the fuller location line (#333).
+        location_pass, location_reason = self.evaluate_location_blacklist(location)
+        if not location_pass:
+            return False, location_reason
+
         # 白名单不再是准入闸门: 未命中白名单不拒绝卡片, 仅在 App 端强制过滤
         # 违例时由 evaluate_whitelist_relaxation 决定是否豁免放宽。
         return True, "通过卡片初筛"
@@ -310,6 +369,8 @@ class ScreeningPolicy:
             "title_blacklist": self.title_blacklist,
             "company_blacklist": self.company_blacklist,
             "jd_blacklist": self.jd_blacklist,
+            "business_district_blacklist": self.business_district_blacklist,
+            "business_district_inspect_list": self.business_district_inspect_list,
             "enable_screening": self.enable_screening,
             "channel_preference": self.channel_preference,
             "max_commute_distance_km": self.max_commute_distance_km,
@@ -324,6 +385,8 @@ class ScreeningPolicy:
             title_blacklist=list(data.get("title_blacklist") or []),
             company_blacklist=list(data.get("company_blacklist") or []),
             jd_blacklist=list(data.get("jd_blacklist") or []),
+            business_district_blacklist=list(data.get("business_district_blacklist") or []),
+            business_district_inspect_list=list(data.get("business_district_inspect_list") or []),
             enable_screening=bool(data.get("enable_screening", True)),
             channel_preference=cls._normalize_channel_preference(
                 data.get("channel_preference", ChannelPreference.ALL.value)

@@ -108,6 +108,8 @@ DEFAULTS: dict[str, Any] = {
     ],
     "company_blacklist": [],
     "jd_blacklist": ["驻场", "外包", "电销", "无底薪", "纯提成"],
+    "business_district_blacklist": [],
+    "business_district_inspect_list": [],
     "max_commute_distance_km": 40.0,
 }
 
@@ -468,7 +470,14 @@ def _coerce_scalar_types(merged: dict[str, Any]) -> None:
         if bool_key in merged and merged[bool_key] is not None:
             merged[bool_key] = _coerce_bool(merged[bool_key])
 
-    for list_key in ("title_whitelist", "title_blacklist", "company_blacklist", "jd_blacklist"):
+    for list_key in (
+        "title_whitelist",
+        "title_blacklist",
+        "company_blacklist",
+        "jd_blacklist",
+        "business_district_blacklist",
+        "business_district_inspect_list",
+    ):
         if list_key in merged:
             val = merged[list_key]
             if isinstance(val, str):

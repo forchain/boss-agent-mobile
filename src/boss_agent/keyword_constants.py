@@ -312,6 +312,12 @@ HEADHUNTER_COMMUTE_PROBE_SKIP_REASON: str = (
     "猎头岗位（企业信息保密），跳过底部通勤距离探测以节省耗时"
 )
 
+# The other way a probe is declined: the posting is in no 考察名单 district, so its exact
+# distance was never something the operator asked to have measured (spec #328). Reporting
+# the headhunter reason here would blame the channel for a decision the district list made.
+NOT_INSPECTED_DISTRICT_SKIP_REASON: str = "商圈不在考察名单，默认距离满足并跳过底部通勤距离探测"
+
+
 DEFAULT_COMMUNICATION_COOLDOWN_DAYS: int = 30
 
 # A JD shorter than this carries no evaluable signal: screening or greeting from it would

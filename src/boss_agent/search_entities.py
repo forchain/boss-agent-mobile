@@ -290,13 +290,22 @@ class SavedSearch:
         # Allow fallback from top-level keys if screening_policy not nested
         if not policy_data and any(
             k in data
-            for k in ("title_whitelist", "title_blacklist", "company_blacklist", "jd_blacklist")
+            for k in (
+                "title_whitelist",
+                "title_blacklist",
+                "company_blacklist",
+                "jd_blacklist",
+                "business_district_blacklist",
+                "business_district_inspect_list",
+            )
         ):
             policy_data = {
                 "title_whitelist": data.get("title_whitelist"),
                 "title_blacklist": data.get("title_blacklist"),
                 "company_blacklist": data.get("company_blacklist"),
                 "jd_blacklist": data.get("jd_blacklist"),
+                "business_district_blacklist": data.get("business_district_blacklist"),
+                "business_district_inspect_list": data.get("business_district_inspect_list"),
             }
 
         screening_policy = ScreeningPolicy.from_dict(policy_data)

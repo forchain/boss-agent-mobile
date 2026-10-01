@@ -6,6 +6,7 @@ Job-related domain entities: JobCardBrief, JobRecord, and JobPosting (Issue #311
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 from boss_agent.identifier_helpers import (
@@ -17,6 +18,84 @@ from boss_agent.identifier_helpers import (
     sanitize_tags,
     split_recruiter_name,
 )
+
+#: The Job Detail Page location line, e.g. ``上海·浦东新区·张江(近13/16号线华夏中路地铁站)``
+#: (issue #332). The platform is the only source of a metro station: the card's location
+#: facet (``tv_distance``) names a district and nothing finer.
+LOCATION_LINE_METRO_PATTERN = re.compile(r"[（(]([^)）]*)[)）]")
+#: ``近13/16号线华夏中路地铁站`` → lines ``13/16号线``, station ``华夏中路地铁站``. The line
+#: spec is optional, because a station quoted without one (``近张江高科``) is still a place
+#: an operator can refuse.
+LOCATION_LINE_TRANSIT_PATTERN = re.compile(
+    r"^近?\s*(?P<lines>[0-9０-９][0-9０-９/、,，\-—\s]*号线)?\s*(?P<station>.+)$"
+)
+
+
+@dataclass(frozen=True)
+class JobLocationLine:
+    """The Job Detail Page location line, split into the parts a filter can use (#332).
+
+    The card stage sees a district and the detail stage sees a station, so this is the
+    richest location the platform ever renders and the only place a station is known.
+    Every part is optional: the line degrades to a bare district, or to nothing at all
+    when the platform renders none, and neither is an error.
+    """
+
+    raw: str = ""
+    city: str = ""
+    district: str = ""
+    business_district: str = ""
+    metro_lines: str = ""
+    metro_station: str = ""
+
+    @property
+    def match_text(self) -> str:
+        """The text the screening policy's location lists are matched against.
+
+        The platform's own rendering, verbatim. Quoting it in an audit reason gives the
+        operator the exact string on their own screen, and because the district tokens and
+        the ``近13/16号线华夏中路地铁站`` suffix both live in it, one string serves a
+        district entry and a station entry of the same list.
+        """
+        return self.raw
+
+    @classmethod
+    def parse(cls, raw: str) -> JobLocationLine:
+        """Split a rendered location line, tolerating every shape it degrades into."""
+        text = (raw or "").strip()
+        if not text:
+            return cls()
+
+        prefix, metro = text, ""
+        found = LOCATION_LINE_METRO_PATTERN.search(text)
+        if found:
+            prefix = text[: found.start()].strip()
+            metro = found.group(1).strip()
+
+        parts = [p.strip() for p in re.split(r"[·•]", prefix) if p.strip()]
+        city = parts[0] if parts else ""
+        district = parts[1] if len(parts) > 1 else ""
+        business_district = parts[2] if len(parts) > 2 else ""
+
+        metro_lines = ""
+        metro_station = ""
+        if metro:
+            transit = LOCATION_LINE_TRANSIT_PATTERN.match(metro)
+            if transit:
+                metro_lines = (transit.group("lines") or "").strip()
+                metro_station = (transit.group("station") or "").strip()
+            else:
+                # No line spec to split off: the whole parenthetical names the place.
+                metro_station = metro
+
+        return cls(
+            raw=text,
+            city=city,
+            district=district,
+            business_district=business_district,
+            metro_lines=metro_lines,
+            metro_station=metro_station,
+        )
 
 
 @dataclass
@@ -82,6 +161,11 @@ class JobRecord:
     id: str | None = None
     salary_range: str = ""
     location: str | None = None
+    #: The detail page's location line and the metro station it names (issue #332).
+    #: Filled from the detail page, never from the card, which carries no station.
+    location_line: str = ""
+    metro_lines: str = ""
+    metro_station: str = ""
     digest: str = ""
     job_description: str = ""
     company_scale: str = ""
@@ -152,6 +236,13 @@ class JobPosting:
     job_description: str
     digest: str = ""
     location: str | None = None
+    #: The detail page's own location line and the metro station it names (issue #332).
+    #: Kept apart from ``location``, which stays the card's district facet: a station is
+    #: only ever known here, and overwriting the facet with the line would change what the
+    #: card-stage filters have always been matching against.
+    location_line: str = ""
+    metro_lines: str = ""
+    metro_station: str = ""
     tags: list[str] = field(default_factory=list)
     recruiter_name: str | None = None
     recruiter_title: str | None = None

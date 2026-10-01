@@ -207,5 +207,29 @@
 			emptyText="（暂无 JD 语义黑名单）"
 			placeholder="输入 JD 违背痛点，如: 销售性质"
 		/>
+
+		<!-- 5. Business District Blacklist -->
+		<KeywordListEditor
+			title="商圈/地域黑名单 (Business District Blacklist)"
+			badgeText="一票否决"
+			badgeVariant="rose"
+			description="卡片初筛匹配岗位所在商圈或行政区，命中即淘汰，绝不点击进入详情页（如：崇明区, 临港, 金山）。直招与猎头一视同仁。详情页位置行会再匹配一次同一个列表，所以地铁站名（如 华夏中路）写在这里同样生效——卡片上只有商圈，地铁站只在详情页出现。匹配是包含关系，线路请按平台原文填写（如 13/16号线，而 13号线 匹配不上换乘站）。"
+			bind:items={$screeningPolicyStore.business_district_blacklist}
+			unit="项"
+			emptyText="（暂无商圈黑名单关键词）"
+			placeholder="输入商圈或行政区，如: 崇明区"
+		/>
+
+		<!-- 6. Commute Inspection Districts -->
+		<KeywordListEditor
+			title="待考察商圈列表 (Commute Inspection Districts)"
+			badgeText="按需探测"
+			badgeVariant="amber"
+			description="只有命中该列表的直招岗位才值得滚动到详情页底部读取通勤距离；其余岗位（猎头、未列入的商圈、只有城市名的岗位）默认距离满足，直接跳过探测，扫描更快（如：漕河泾, 张江）。留空表示全部跳过。详情页位置行同样参与匹配，所以只写地铁站（如 华夏中路）也能触发探测。"
+			bind:items={$screeningPolicyStore.business_district_inspect_list}
+			unit="项"
+			emptyText="（暂无待考察商圈，全部跳过通勤探测）"
+			placeholder="输入待考察商圈或地铁站，如: 漕河泾"
+		/>
 	</div>
 </div>
