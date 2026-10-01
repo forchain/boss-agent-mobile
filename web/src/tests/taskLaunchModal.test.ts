@@ -19,6 +19,18 @@ vi.mock('$lib/pocketbase', () => ({
 	getCandidateProfile: mocks.getCandidateProfile
 }));
 
+vi.mock('$lib/stores/tasks', () => ({
+	createAutomationTask: mocks.createAutomationTask
+}));
+
+vi.mock('$lib/stores/savedSearches', () => ({
+	listSavedSearches: mocks.listSavedSearches
+}));
+
+vi.mock('$lib/stores/candidateMemory', () => ({
+	getCandidateProfile: mocks.getCandidateProfile
+}));
+
 import TaskLaunchModal from '$lib/components/TaskLaunchModal.svelte';
 
 const AUTO_APPLY_SEARCH = {
