@@ -15,7 +15,7 @@ from typing import Any
 
 from boss_agent.broker.models import AutomationTask, TaskType
 from boss_agent.broker.pocketbase_adapter import BaseTaskBroker
-from boss_agent.errors import TransportError
+from boss_agent.errors import BrokerError, TransportError
 from boss_agent.feed_pipeline import FeedStreamConfig, JobFeedPipeline
 from boss_agent.memory import StructuredCandidateProfile
 from boss_agent.models import JobRecordStatus, TargetAction, is_masked_company_name
@@ -230,7 +230,7 @@ class AutoApplyHandler(BaseTaskHandler):
                 excluded_companies = await store.get_applied_direct_companies(
                     cooldown_days=config.cooldown_days
                 )
-            except TransportError as err:
+            except (BrokerError, TransportError) as err:
                 await broker.append_log(
                     task.id,
                     f"⚠️ [持久化降级] 直招避嫌池读取遇到持久化异常（{err}），已自动取消本次投递以保护沟通额度",

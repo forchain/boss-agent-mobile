@@ -20,7 +20,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
-from .errors import TransportError
+from .errors import BrokerError, TransportError
 from .feed_records import (
     card_facets_record,
     card_record,
@@ -353,7 +353,7 @@ class JobFeedPipeline:
             self._excluded_companies = await self.store.get_applied_direct_companies(
                 cooldown_days=config.cooldown_days
             )
-        except TransportError as e:
+        except (BrokerError, TransportError) as e:
             await self._log(
                 f"⚠️ [持久化降级] 直招避嫌池读取遇到持久化异常（{e}），中断投递以避免重复沟通"
             )

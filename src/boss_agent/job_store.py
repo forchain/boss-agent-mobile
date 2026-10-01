@@ -48,10 +48,10 @@ INVALID_JOB_TITLES: frozenset[str] = frozenset(
 )
 INVALID_COMPANY_NAMES: frozenset[str] = frozenset({"", "未注明公司", "未知公司"})
 
-# Same trade-off as the web dashboard's MAX_PAGES walk: enough pages for any realistic
-# contact history, bounded so a runaway collection cannot stall the worker.
+#: Page size when walking applied direct-hire records from PocketBase.
+#: The query is bounded by the cooldown time window rather than an arbitrary
+#: record count, and the walk continues until the relevant records are exhausted.
 APPLIED_POOL_PAGE_SIZE = 200
-APPLIED_POOL_MAX_PAGES = 25
 
 
 def _advanced_status(current: str | None, incoming: Any) -> str | None:
@@ -771,15 +771,29 @@ class PocketBaseJobRecordStore(JobRecordStore):
     async def get_applied_direct_companies(self, cooldown_days: int = 0) -> set[str]:
         """Collect every direct-hire company with an unexpired communication.
 
-        The pool is walked page by page: a candidate with more than one page of lifetime
-        contacts would otherwise lose the older anchors and be re-contacted at a company
-        they have already approached.
+        The cooldown bound is expressed directly in the broker query so the walk is
+        bounded by the relevant communication window rather than by an arbitrary record
+        count cap. The collection is walked page by page until exhausted (removing the
+        previous 5,000-record ceiling), ensuring long-lived candidates never lose their
+        oldest relevant contacts.
         """
         url = self._jobs_collection_url()
+        base_filter = "status='applied' && is_headhunter!=true"
+        if cooldown_days > 0:
+            cutoff = datetime.now(UTC) - timedelta(days=cooldown_days)
+            cutoff_str = cutoff.strftime("%Y-%m-%d %H:%M:%S.000Z")
+            filter_expr = (
+                f"{base_filter} && (applied_at >= '{cutoff_str}' || "
+                f"((applied_at = '' || applied_at = null) && created >= '{cutoff_str}'))"
+            )
+        else:
+            filter_expr = base_filter
+
         items: list[dict[str, Any]] = []
-        for page in range(1, APPLIED_POOL_MAX_PAGES + 1):
+        page = 1
+        while True:
             params = {
-                "filter": "status='applied' && is_headhunter!=true",
+                "filter": filter_expr,
                 "page": str(page),
                 "perPage": str(APPLIED_POOL_PAGE_SIZE),
                 # is_headhunter has to be projected: the guard below reads it per record.
@@ -790,10 +804,13 @@ class PocketBaseJobRecordStore(JobRecordStore):
                 expected_statuses=(200,),
                 error_prefix=f"PocketBase get_applied_direct_companies failed at page {page}",
             )
-            batch = resp.json().get("items", [])
+            data = resp.json()
+            batch = data.get("items", [])
             items.extend(batch)
-            if len(batch) < APPLIED_POOL_PAGE_SIZE:
+            total_pages = data.get("totalPages", 1)
+            if page >= total_pages or len(batch) < APPLIED_POOL_PAGE_SIZE:
                 break
+            page += 1
 
         companies: set[str] = set()
         for item in items:

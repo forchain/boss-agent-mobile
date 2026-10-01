@@ -283,3 +283,162 @@ async def test_service_integration_persistence_and_provisioning_failures_reporte
     with pytest.raises(TransportError):
         await broker.saved_searches.save_saved_search(search)
 
+
+@pytest.mark.asyncio
+async def test_service_integration_exclusion_pool_complete_beyond_previous_cap(
+    tmp_path: Path, pb_bin: str
+):
+    """Service Integration test (Ticket #310, Acceptance Criterion 1 & 2).
+
+    Seeds > 5,000 applied direct-hire records into a real PocketBase database,
+    along with expired records and headhunter records.
+    Verifies that:
+    1. The exclusion pool returns ALL 5,050 active direct-hire companies, proving
+       the previous 5,000-record pagination ceiling is eliminated.
+    2. Cooldown cutoff pushed to the query filter excludes all expired records.
+    3. Headhunter records are excluded from the direct-hire enterprise pool.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    pb_dir = tmp_path / "pb_data_pool_cap"
+    pb_dir.mkdir(parents=True, exist_ok=True)
+    db_file = pb_dir / "data.db"
+
+    # Initialize PB database and schema
+    subprocess.run(
+        [pb_bin, "migrate", "up", "--dir", str(pb_dir)],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert provision_sqlite_database(db_file) is True
+
+    # Seed 5,050 active direct-hire records + 100 expired + 50 headhunter + 50 unmatched
+    now = datetime.now(UTC)
+    active_ts = (now - timedelta(days=5)).strftime("%Y-%m-%d %H:%M:%S.000Z")
+    expired_ts = (now - timedelta(days=60)).strftime("%Y-%m-%d %H:%M:%S.000Z")
+
+    records_to_insert = []
+    # 5,050 active direct-hire records
+    for i in range(5050):
+        records_to_insert.append(
+            (
+                f"act_{i}",
+                f"fp_act_{i}",
+                "AI Engineer",
+                f"Company_{i}",
+                "HR",
+                "applied",
+                0,
+                active_ts,
+                active_ts,
+                active_ts,
+            )
+        )
+    # 100 expired records (60 days ago, cooldown=30)
+    for i in range(100):
+        records_to_insert.append(
+            (
+                f"exp_{i}",
+                f"fp_exp_{i}",
+                "AI Engineer",
+                f"ExpiredComp_{i}",
+                "HR",
+                "applied",
+                0,
+                expired_ts,
+                expired_ts,
+                expired_ts,
+            )
+        )
+    # 50 headhunter records
+    for i in range(50):
+        records_to_insert.append(
+            (
+                f"hh_{i}",
+                f"fp_hh_{i}",
+                "AI Engineer",
+                f"HeadhunterComp_{i}",
+                "HR",
+                "applied",
+                1,
+                active_ts,
+                active_ts,
+                active_ts,
+            )
+        )
+    # 50 unmatched records
+    for i in range(50):
+        records_to_insert.append(
+            (
+                f"unm_{i}",
+                f"fp_unm_{i}",
+                "AI Engineer",
+                f"UnmatchedComp_{i}",
+                "HR",
+                "unmatched",
+                0,
+                None,
+                active_ts,
+                active_ts,
+            )
+        )
+
+    conn = sqlite3.connect(str(db_file))
+    conn.executemany(
+        """
+        INSERT INTO job_records (
+            id, fingerprint, title, company_name, recruiter_name,
+            status, is_headhunter, applied_at, created, updated
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        records_to_insert,
+    )
+    conn.commit()
+    conn.close()
+
+    # Boot PocketBase server
+    test_port = str(free_port())
+    proc = subprocess.Popen(
+        [pb_bin, "serve", "--dir", str(pb_dir), "--http", f"127.0.0.1:{test_port}"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+    try:
+        healthy = False
+        for _ in range(30):
+            try:
+                with urllib.request.urlopen(
+                    f"http://127.0.0.1:{test_port}/api/health", timeout=1.0
+                ) as resp:
+                    if resp.status == 200:
+                        healthy = True
+                        break
+            except Exception:
+                time.sleep(0.1)
+        assert healthy, "PocketBase failed to become healthy within 3s"
+
+        broker = PocketBaseTaskBroker(base_url=f"http://127.0.0.1:{test_port}")
+        pool = await broker.job_store.get_applied_direct_companies(cooldown_days=30)
+
+        # 1. Cap is gone: ALL 5,050 active companies returned
+        assert len(pool) == 5050
+        assert "Company_0" in pool
+        assert "Company_5049" in pool
+
+        # 2. Cooldown filter in broker query excluded all 100 expired records
+        assert "ExpiredComp_0" not in pool
+        assert "ExpiredComp_99" not in pool
+
+        # 3. Headhunter records excluded
+        assert "HeadhunterComp_0" not in pool
+
+        # 4. Unmatched records excluded
+        assert "UnmatchedComp_0" not in pool
+
+    finally:
+        proc.terminate()
+        proc.wait(timeout=5)
+
+

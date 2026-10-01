@@ -804,3 +804,26 @@ async def test_applied_companies_request_projects_is_headhunter():
     fields = session.get.call_args_list[0].kwargs["params"]["fields"]
     assert "is_headhunter" in fields
     assert companies == {"深至科技"}
+
+
+@pytest.mark.asyncio
+async def test_applied_companies_query_filter_includes_cooldown_cutoff():
+    """Verify that cooldown bound is pushed directly into the broker query filter."""
+    session = _paged_session([[_applied("深至科技")]])
+    broker = PocketBaseTaskBroker(base_url="http://mock-pb:8090", session=session)
+
+    # Cooldown > 0 pushes cutoff timestamp into broker query filter
+    await broker.job_store.get_applied_direct_companies(cooldown_days=30)
+    filter_expr = session.get.call_args_list[0].kwargs["params"]["filter"]
+    assert "status='applied'" in filter_expr
+    assert "is_headhunter!=true" in filter_expr
+    assert "applied_at >=" in filter_expr
+    assert "created >=" in filter_expr
+
+    session.get.reset_mock()
+
+    # Cooldown == 0 uses unconstrained permanent suppression filter
+    await broker.job_store.get_applied_direct_companies(cooldown_days=0)
+    filter_expr_zero = session.get.call_args_list[0].kwargs["params"]["filter"]
+    assert filter_expr_zero == "status='applied' && is_headhunter!=true"
+
