@@ -398,7 +398,8 @@ CANDIDATE_PROFILES = Collection(
         Field("projects", JSON, default=[]),
         Field("target_positions", JSON, default=[]),
         Field("raw_summary", TEXT, default=""),
-        Field("raw_resume_text", TEXT, default=""),
+        Field("profile_document", TEXT, max_chars=LONG_TEXT_MAX_CHARS, default=""),
+        Field("raw_resume_text", TEXT, max_chars=LONG_TEXT_MAX_CHARS, default=""),
         *_autodate(),
     ),
     indexes=(
@@ -536,6 +537,17 @@ _BACKFILLS: Mapping[str, tuple[Backfill, ...]] = {
                 "AND COALESCE(assigned_worker, '') != ''"
             ),
             requires_columns=("assigned_worker", LEASE_FIELD),
+        ),
+    ),
+    CANDIDATE_PROFILES_NAME: (
+        Backfill(
+            label="backfill-profile-document-from-raw-summary",
+            sql=(
+                f"UPDATE {CANDIDATE_PROFILES_NAME} SET profile_document = raw_summary "
+                "WHERE (profile_document IS NULL OR profile_document = '') "
+                "AND (raw_summary IS NOT NULL AND raw_summary != '')"
+            ),
+            requires_columns=("profile_document", "raw_summary"),
         ),
     ),
 }

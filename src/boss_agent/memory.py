@@ -450,11 +450,21 @@ class ResumeMemoryManager:
         # Load candidate config if available
         self.candidate_config = self._load_candidate_config(candidate_config_path)
 
-        self.explicit_memory_file = memory_file_path is not None or bool(
-            self.candidate_config.get("memory_path")
+        custom_cfg_mem = self.candidate_config.get("memory_path")
+        is_custom_file = (
+            bool(custom_cfg_mem)
+            and str(custom_cfg_mem) != str(self.DEFAULT_MEMORY_PATH)
+            and str(custom_cfg_mem) != "config/candidate_memory.json"
+        )
+        self.explicit_memory_file = (
+            memory_file_path is not None
+            or (candidate_config_path is not None and bool(custom_cfg_mem))
+            or is_custom_file
         )
         configured_memory = (
-            memory_file_path or self.candidate_config.get("memory_path") or self.DEFAULT_MEMORY_PATH
+            memory_file_path
+            or (custom_cfg_mem if (candidate_config_path is not None or is_custom_file) else None)
+            or self.DEFAULT_MEMORY_PATH
         )
         self.memory_path = Path(configured_memory)
         self.configured_resume_path = self.candidate_config.get("resume_path")
@@ -487,7 +497,7 @@ class ResumeMemoryManager:
         return self.memory_path.is_file() and self.memory_path.stat().st_size > 0
 
     def load_cached_memory(self) -> StructuredCandidateProfile | None:
-        """Load memory profile from PocketBase database (single source of truth) with file fallback."""
+        """Load memory profile from the candidate profile database collection (single source of truth)."""
         # 0. If caller explicitly passed a memory file path and it exists, load it directly
         if self.explicit_memory_file and self.has_memory_file():
             try:
@@ -499,34 +509,21 @@ class ResumeMemoryManager:
                     f"[yellow]⚠️  Failed to read explicit memory from {self.memory_path}: {e}[/yellow]"
                 )
 
-        # 1. Primary: load from PocketBase database (HTTP or SQLite fallback)
-        try:
-            from boss_agent.async_bridge import run_sync
-            from boss_agent.broker import PocketBaseBroker
+        # 1. Primary and single source of truth: load from database broker
+        from boss_agent.async_bridge import run_sync
+        from boss_agent.broker import PocketBaseBroker
 
-            broker = PocketBaseBroker()
-            data = run_sync(broker.candidate_memory.get_candidate_profile(), timeout=3.0)
+        broker = PocketBaseBroker()
+        data = run_sync(broker.candidate_memory.get_candidate_profile(), timeout=5.0)
 
-            if data and (
-                data.get("name")
-                or data.get("core_skills")
-                or data.get("work_experiences")
-                or data.get("projects")
-            ):
-                return StructuredCandidateProfile.from_dict(data)
-        except Exception as e:
-            console.print(f"[dim]Note: Database candidate profile check: {e}[/dim]")
-
-        # 2. File fallback if memory_path exists
-        if self.has_memory_file():
-            try:
-                content = self.memory_path.read_text(encoding="utf-8")
-                data = json.loads(content)
-                return StructuredCandidateProfile.from_dict(data)
-            except Exception as e:
-                console.print(
-                    f"[yellow]⚠️  Failed to read cached memory from {self.memory_path}: {e}[/yellow]"
-                )
+        if data and (
+            data.get("name")
+            or data.get("core_skills")
+            or data.get("work_experiences")
+            or data.get("projects")
+            or data.get("profile_document")
+        ):
+            return StructuredCandidateProfile.from_dict(data)
         return None
 
     @traceable(name="ResumeMemoryManager.generate_and_save_memory", run_type="chain")
@@ -619,30 +616,28 @@ class ResumeMemoryManager:
 
         # 1. Primary: Save to PocketBase database (HTTP or SQLite fallback)
         if sync_to_db:
-            try:
-                from boss_agent.async_bridge import run_sync
-                from boss_agent.broker import PocketBaseBroker
+            from boss_agent.async_bridge import run_sync
+            from boss_agent.broker import PocketBaseBroker
 
-                broker = PocketBaseBroker()
-                run_sync(
-                    broker.candidate_memory.save_candidate_profile(profile.to_dict()),
-                    timeout=5.0,
-                )
-                console.print(
-                    "✅ [bold green]Structured candidate profile saved to PocketBase database.[/bold green]"
-                )
-            except Exception as e:
-                console.print(f"[yellow]⚠️  Failed to save profile to database: {e}[/yellow]")
-
-        # 2. Save to local file if path is specified
-        try:
-            self.memory_path.parent.mkdir(parents=True, exist_ok=True)
-            self.memory_path.write_text(
-                json.dumps(profile.to_dict(), ensure_ascii=False, indent=2),
-                encoding="utf-8",
+            broker = PocketBaseBroker()
+            run_sync(
+                broker.candidate_memory.save_candidate_profile(profile.to_dict()),
+                timeout=5.0,
             )
-        except Exception:
-            pass
+            console.print(
+                "✅ [bold green]Structured candidate profile saved to PocketBase database.[/bold green]"
+            )
+
+        # 2. Save to local file ONLY if explicit custom memory path is specified
+        if self.explicit_memory_file:
+            try:
+                self.memory_path.parent.mkdir(parents=True, exist_ok=True)
+                self.memory_path.write_text(
+                    json.dumps(profile.to_dict(), ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+            except Exception:
+                pass
 
     @traceable(name="ResumeMemoryManager.load_memory", run_type="tool")
     def load_memory(

@@ -75,17 +75,13 @@ class CandidateMemoryStore(ABC):
 class InMemoryCandidateMemoryStore(CandidateMemoryStore):
     """Volatile candidate memory for tests and local development."""
 
-    def __init__(self, load_local_profile: bool = True) -> None:
-        self._profiles: dict[str, dict[str, Any]] = {}
+    def __init__(
+        self,
+        load_local_profile: bool = False,
+        initial_profiles: dict[str, dict[str, Any]] | None = None,
+    ) -> None:
+        self._profiles: dict[str, dict[str, Any]] = dict(initial_profiles or {})
         self._revisions: dict[str, list[dict[str, Any]]] = {}
-        if load_local_profile:
-            self._load_local_profile()
-
-    def _load_local_profile(self) -> None:
-        config_path = Path("config/candidate_memory.json")
-        if config_path.exists():
-            with contextlib.suppress(Exception):
-                self._profiles["default"] = json.loads(config_path.read_text(encoding="utf-8"))
 
     async def get_candidate_profile(self, user_id: str = "default") -> dict[str, Any] | None:
         profile = self._profiles.get(user_id)
@@ -230,46 +226,97 @@ class PocketBaseCandidateMemoryStore(CandidateMemoryStore):
                         return existing_val
                     return default_val
 
-                values = (
-                    profile_id,
-                    user_id,
-                    resolve_field("name", ""),
-                    resolve_field("years_of_experience", 0),
-                    json.dumps(resolve_field("education", []), ensure_ascii=False),
-                    json.dumps(resolve_field("core_skills", []), ensure_ascii=False),
-                    json.dumps(resolve_field("project_highlights", []), ensure_ascii=False),
-                    json.dumps(resolve_field("work_experiences", []), ensure_ascii=False),
-                    json.dumps(resolve_field("projects", []), ensure_ascii=False),
-                    json.dumps(resolve_field("target_positions", []), ensure_ascii=False),
+                has_profile_doc = any(
+                    col[1] == "profile_document"
+                    for col in cursor.execute("PRAGMA table_info(candidate_profiles)").fetchall()
+                )
+                doc = (
                     profile_data.get("profile_document")
                     or profile_data.get("raw_summary")
-                    or existing_dict.get("raw_summary", ""),
-                    profile_data.get("raw_resume_text") or existing_dict.get("raw_resume_text", ""),
-                    now,
+                    or existing_dict.get("profile_document")
+                    or existing_dict.get("raw_summary", "")
                 )
-                cursor.execute(
-                    """
-                    INSERT INTO candidate_profiles (
-                        id, user_id, name, years_of_experience, education, core_skills,
-                        project_highlights, work_experiences, projects, target_positions,
-                        raw_summary, raw_resume_text, updated
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(id) DO UPDATE SET
-                        user_id=excluded.user_id,
-                        name=excluded.name,
-                        years_of_experience=excluded.years_of_experience,
-                        education=excluded.education,
-                        core_skills=excluded.core_skills,
-                        project_highlights=excluded.project_highlights,
-                        work_experiences=excluded.work_experiences,
-                        projects=excluded.projects,
-                        target_positions=excluded.target_positions,
-                        raw_summary=excluded.raw_summary,
-                        raw_resume_text=excluded.raw_resume_text,
-                        updated=excluded.updated
-                    """,
-                    values,
-                )
+
+                if has_profile_doc:
+                    values = (
+                        profile_id,
+                        user_id,
+                        resolve_field("name", ""),
+                        resolve_field("years_of_experience", 0),
+                        json.dumps(resolve_field("education", []), ensure_ascii=False),
+                        json.dumps(resolve_field("core_skills", []), ensure_ascii=False),
+                        json.dumps(resolve_field("project_highlights", []), ensure_ascii=False),
+                        json.dumps(resolve_field("work_experiences", []), ensure_ascii=False),
+                        json.dumps(resolve_field("projects", []), ensure_ascii=False),
+                        json.dumps(resolve_field("target_positions", []), ensure_ascii=False),
+                        doc,
+                        doc,
+                        profile_data.get("raw_resume_text") or existing_dict.get("raw_resume_text", ""),
+                        now,
+                    )
+                    cursor.execute(
+                        """
+                        INSERT INTO candidate_profiles (
+                            id, user_id, name, years_of_experience, education, core_skills,
+                            project_highlights, work_experiences, projects, target_positions,
+                            raw_summary, profile_document, raw_resume_text, updated
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(id) DO UPDATE SET
+                            user_id=excluded.user_id,
+                            name=excluded.name,
+                            years_of_experience=excluded.years_of_experience,
+                            education=excluded.education,
+                            core_skills=excluded.core_skills,
+                            project_highlights=excluded.project_highlights,
+                            work_experiences=excluded.work_experiences,
+                            projects=excluded.projects,
+                            target_positions=excluded.target_positions,
+                            raw_summary=excluded.raw_summary,
+                            profile_document=excluded.profile_document,
+                            raw_resume_text=excluded.raw_resume_text,
+                            updated=excluded.updated
+                        """,
+                        values,
+                    )
+                else:
+                    values = (
+                        profile_id,
+                        user_id,
+                        resolve_field("name", ""),
+                        resolve_field("years_of_experience", 0),
+                        json.dumps(resolve_field("education", []), ensure_ascii=False),
+                        json.dumps(resolve_field("core_skills", []), ensure_ascii=False),
+                        json.dumps(resolve_field("project_highlights", []), ensure_ascii=False),
+                        json.dumps(resolve_field("work_experiences", []), ensure_ascii=False),
+                        json.dumps(resolve_field("projects", []), ensure_ascii=False),
+                        json.dumps(resolve_field("target_positions", []), ensure_ascii=False),
+                        doc,
+                        profile_data.get("raw_resume_text") or existing_dict.get("raw_resume_text", ""),
+                        now,
+                    )
+                    cursor.execute(
+                        """
+                        INSERT INTO candidate_profiles (
+                            id, user_id, name, years_of_experience, education, core_skills,
+                            project_highlights, work_experiences, projects, target_positions,
+                            raw_summary, raw_resume_text, updated
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(id) DO UPDATE SET
+                            user_id=excluded.user_id,
+                            name=excluded.name,
+                            years_of_experience=excluded.years_of_experience,
+                            education=excluded.education,
+                            core_skills=excluded.core_skills,
+                            project_highlights=excluded.project_highlights,
+                            work_experiences=excluded.work_experiences,
+                            projects=excluded.projects,
+                            target_positions=excluded.target_positions,
+                            raw_summary=excluded.raw_summary,
+                            raw_resume_text=excluded.raw_resume_text,
+                            updated=excluded.updated
+                        """,
+                        values,
+                    )
                 conn.commit()
         except Exception as e:
             logger.warning("Failed to save candidate profile to SQLite fallback: %s", e)
@@ -390,8 +437,11 @@ class PocketBaseCandidateMemoryStore(CandidateMemoryStore):
                 )
                 if incoming_doc:
                     merged_body["raw_summary"] = incoming_doc
-                elif existing.get("raw_summary"):
-                    merged_body["raw_summary"] = existing["raw_summary"]
+                    merged_body["profile_document"] = incoming_doc
+                elif existing.get("profile_document") or existing.get("raw_summary"):
+                    doc = existing.get("profile_document") or existing.get("raw_summary", "")
+                    merged_body["raw_summary"] = doc
+                    merged_body["profile_document"] = doc
                 merged_body["user_id"] = user_id
                 resp = await execute_broker_request(
                     lambda: self.session.patch(
@@ -402,6 +452,12 @@ class PocketBaseCandidateMemoryStore(CandidateMemoryStore):
                 )
             else:
                 body = {**profile_data, "user_id": user_id}
+                incoming_doc = profile_data.get("profile_document") or profile_data.get(
+                    "raw_summary"
+                )
+                if incoming_doc:
+                    body["raw_summary"] = incoming_doc
+                    body["profile_document"] = incoming_doc
                 resp = await execute_broker_request(
                     lambda: self.session.post(url, json=body, headers=self._headers()),
                     expected_statuses=(200, 201),
@@ -463,3 +519,60 @@ class PocketBaseCandidateMemoryStore(CandidateMemoryStore):
             if self._resolve_sqlite_db_path() is not None:
                 return self._save_sqlite_revision(body, user_id)
             raise
+
+
+async def async_migrate_legacy_candidate_profile(
+    local_path: Path | str | None = None,
+    broker: Any = None,
+    user_id: str = "default",
+) -> dict[str, Any] | None:
+    """Lift an existing local candidate profile JSON file into the broker's Candidate Profile collection.
+
+    Converts legacy profile formats (such as dictionary-shaped core_skills, raw_summary-only
+    profile documents, or legacy project structures) into the canonical StructuredCandidateProfile
+    schema and persists it to the Candidate Profile database collection.
+    """
+    path = Path(local_path or "config/candidate_memory.json")
+    if not path.is_file():
+        return None
+
+    try:
+        raw_text = path.read_text(encoding="utf-8")
+        if not raw_text.strip():
+            return None
+        raw_data = json.loads(raw_text)
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError, ValueError) as e:
+        logger.warning("Failed to parse legacy profile at %s: %s", path, e)
+        return None
+
+    if not isinstance(raw_data, dict):
+        return None
+
+    from boss_agent.memory import StructuredCandidateProfile
+
+    profile = StructuredCandidateProfile.from_dict(raw_data)
+    profile_dict = profile.to_dict()
+
+    if broker is None:
+        from boss_agent.broker.pocketbase_adapter import PocketBaseTaskBroker
+
+        broker = PocketBaseTaskBroker()
+
+    return await broker.candidate_memory.save_candidate_profile(profile_dict, user_id=user_id)
+
+
+def migrate_legacy_candidate_profile(
+    local_path: Path | str | None = None,
+    broker: Any = None,
+    user_id: str = "default",
+) -> dict[str, Any] | None:
+    """Synchronous entry point for async_migrate_legacy_candidate_profile."""
+    from boss_agent.async_bridge import run_sync
+
+    return run_sync(
+        async_migrate_legacy_candidate_profile(
+            local_path=local_path, broker=broker, user_id=user_id
+        ),
+        timeout=10.0,
+    )
+

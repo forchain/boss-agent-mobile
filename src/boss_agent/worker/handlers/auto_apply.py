@@ -125,7 +125,7 @@ class AutoApplyHandler(BaseTaskHandler):
                 profile_data = await broker.candidate_memory.get_candidate_profile(
                     user_id="default"
                 )
-            except TransportError as err:
+            except (TransportError, BrokerError) as err:
                 if task_id:
                     await broker.append_log(
                         task_id,

@@ -374,12 +374,9 @@ def make_resume_diff_analyzer_node(broker: Any | None = None):
 
         from .async_bridge import run_sync
 
-        try:
-            existing = run_sync(
-                broker.candidate_memory.get_candidate_profile(user_id=user_id), timeout=3.0
-            )
-        except Exception:
-            existing = None
+        existing = run_sync(
+            broker.candidate_memory.get_candidate_profile(user_id=user_id), timeout=5.0
+        )
 
         new_prof = state.get("normalized_profile") or {}
         if not existing or (not existing.get("name") and not existing.get("raw_summary")):
@@ -513,13 +510,7 @@ def make_resume_persister_node(broker: Any | None = None):
             return saved_prof, rev_rec
 
         from .async_bridge import run_sync
-
-        try:
-            saved_prof, rev_rec = run_sync(_save(), timeout=10.0)
-        except Exception as e:
-            logger.warning("Resume persister save fallback: %s", e)
-            saved_prof = final
-            rev_rec = None
+        saved_prof, rev_rec = run_sync(_save(), timeout=10.0)
 
         return {
             "final_profile": saved_prof,

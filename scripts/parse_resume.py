@@ -55,8 +55,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--memory-path",
         type=str,
-        default="config/candidate_memory.json",
-        help="Path to save candidate memory JSON",
+        default="",
+        help="Optional path to save candidate memory JSON",
     )
     parser.add_argument(
         "--user-id",
