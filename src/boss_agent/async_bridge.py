@@ -36,14 +36,14 @@ def run_sync(coro: Coroutine[Any, Any, T], timeout: float | None = None) -> T:
         return pool.submit(asyncio.run, coro).result(timeout=timeout)
 
 
-async def execute_broker_request(
+def execute_sync_broker_request(
     send_fn: Callable[[], requests.Response],
     *,
     expected_statuses: tuple[int, ...] = (200, 201),
     allow_404: bool = False,
     error_prefix: str = "Broker request failed",
 ) -> requests.Response:
-    """Execute a synchronous broker HTTP call in an executor thread with typed exception handling.
+    """Execute a synchronous broker HTTP call with typed exception handling.
 
     Maps:
     - requests.RequestException, ConnectionError, TimeoutError, OSError -> TransportError
@@ -53,10 +53,9 @@ async def execute_broker_request(
     - 5xx Server Error -> TransportError
     - Other unexpected statuses -> BrokerError
     """
-    loop = asyncio.get_running_loop()
     try:
-        resp = await loop.run_in_executor(None, send_fn)
-    except (requests.RequestException, ConnectionError, TimeoutError, OSError) as e:
+        resp = send_fn()
+    except (requests.RequestException, ConnectionError, TimeoutError, OSError, RuntimeError) as e:
         raise TransportError(f"{error_prefix}: {e}") from e
 
     if resp.status_code in expected_statuses:
@@ -74,3 +73,24 @@ async def execute_broker_request(
         raise TransportError(f"{error_prefix} ({resp.status_code} Server Error): {resp.text}")
 
     raise BrokerError(f"{error_prefix} (HTTP {resp.status_code}): {resp.text}")
+
+
+async def execute_broker_request(
+    send_fn: Callable[[], requests.Response],
+    *,
+    expected_statuses: tuple[int, ...] = (200, 201),
+    allow_404: bool = False,
+    error_prefix: str = "Broker request failed",
+) -> requests.Response:
+    """Execute a synchronous broker HTTP call in an executor thread with typed exception handling."""
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        None,
+        lambda: execute_sync_broker_request(
+            send_fn,
+            expected_statuses=expected_statuses,
+            allow_404=allow_404,
+            error_prefix=error_prefix,
+        ),
+    )
+

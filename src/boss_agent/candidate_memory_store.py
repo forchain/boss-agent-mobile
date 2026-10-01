@@ -189,7 +189,7 @@ class PocketBaseCandidateMemoryStore(CandidateMemoryStore):
                         with contextlib.suppress(Exception):
                             data[json_col] = json.loads(data[json_col])
                 return data
-        except Exception as e:
+        except (sqlite3.Error, OSError) as e:
             logger.warning("Failed to read candidate profile from SQLite fallback: %s", e)
             return None
 
@@ -291,7 +291,7 @@ class PocketBaseCandidateMemoryStore(CandidateMemoryStore):
                     (user_id,),
                 )
                 return [dict(r) for r in cursor.fetchall()]
-        except Exception as e:
+        except (sqlite3.Error, OSError) as e:
             logger.warning("Failed to query resume revisions from SQLite: %s", e)
             return []
 

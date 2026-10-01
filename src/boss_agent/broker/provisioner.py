@@ -21,6 +21,8 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
+import requests
+
 # Ensure src/ is in sys.path when executed directly
 _src_root = str(Path(__file__).resolve().parent.parent.parent)
 if _src_root not in sys.path:
@@ -39,8 +41,10 @@ from boss_agent.broker.collection_schema import (  # noqa: E402
     sqlite_ddl,
     sqlite_index_ddl,
     sqlite_metadata_fields,
+    validate_identifier,
     wire_payload,
 )
+from boss_agent.errors import TransportError, ValidationError  # noqa: E402
 from boss_agent.settings import resolve_pocketbase_db_path  # noqa: E402
 
 # requests and urllib3 are lazily imported in provision_remote_pocketbase
@@ -152,6 +156,8 @@ def _provision_sqlite_collection(
     cursor: sqlite3.Cursor, collection: Collection, *, exists: bool
 ) -> None:
     """Create or upgrade one collection, both paths rendered from the schema."""
+    table_name = validate_identifier(collection.name)
+    col_id = validate_identifier(collection.collection_id)
     fields_json = _collection_fields_json(collection)
 
     if not exists:
@@ -161,7 +167,7 @@ def _provision_sqlite_collection(
                 (id, system, type, name, fields, listRule, viewRule, createRule, updateRule, deleteRule)
             VALUES (?, 0, 'base', ?, ?, '', '', '', '', '')
             """,
-            (collection.collection_id, collection.name, fields_json),
+            (col_id, table_name, fields_json),
         )
         cursor.execute(sqlite_ddl(collection))
     else:
@@ -171,20 +177,18 @@ def _provision_sqlite_collection(
             SET fields = ?, listRule = '', viewRule = '', createRule = '', updateRule = '', deleteRule = ''
             WHERE name = ?
             """,
-            (fields_json, collection.name),
+            (fields_json, table_name),
         )
-        cursor.execute(f"PRAGMA table_info({collection.name})")  # noqa: S608 - name is schema-owned
+        cursor.execute(f"PRAGMA table_info({table_name})")  # noqa: S608 - validated identifier
         present = {row[1] for row in cursor.fetchall()}
-        for _column, fragment in column_migrations(collection, present):
+        for column_name, fragment in column_migrations(collection, present):
+            validate_identifier(column_name)
             cursor.execute(
-                f"ALTER TABLE {collection.name} ADD COLUMN {fragment}"  # noqa: S608
+                f"ALTER TABLE {table_name} ADD COLUMN {fragment}"  # noqa: S608
             )
         for backfill in backfills(collection, present):
-            logger.info("Applying backfill %s on %s", backfill.label, collection.name)
+            logger.info("Applying backfill %s on %s", backfill.label, table_name)
             cursor.execute(backfill.sql)
-        repair = _COLLECTION_REPAIRS.get(collection.name)
-        if repair is not None:
-            repair(cursor)
 
     for statement in sqlite_index_ddl(collection):
         # An index can fail on legacy data (e.g. a unique index over duplicates that
@@ -192,7 +196,7 @@ def _provision_sqlite_collection(
         try:
             cursor.execute(statement)
         except sqlite3.Error as ex:
-            logger.warning("Could not create index on %s: %s", collection.name, ex)
+            logger.warning("Could not create index on %s: %s", table_name, ex)
 
 
 def _seed_saved_searches(
@@ -205,7 +209,9 @@ def _seed_saved_searches(
 
     seeds = initial_searches if initial_searches is not None else DEFAULT_INITIAL_SEARCHES
     columns = [
-        spec.name for spec in SAVED_SEARCHES.fields if spec.name not in ("created", "updated")
+        validate_identifier(spec.name)
+        for spec in SAVED_SEARCHES.fields
+        if spec.name not in ("created", "updated")
     ]
     placeholders = ", ".join("?" for _ in columns)
     statement = (
@@ -350,14 +356,18 @@ def _widen_remote_text_field_cap(
     try:
         resp = session.get(url, timeout=timeout, verify=False)
         if not resp.ok:
+            if resp.status_code >= 500:
+                raise TransportError(f"Server error inspecting collection '{collection}': {resp.text}")
             logger.warning(
                 "Cannot inspect collection '%s' for schema upgrade: %s", collection, resp.text
             )
             print(f"⚠️ Cannot inspect collection '{collection}': {resp.text}")
             return False
         stored = resp.json()
-    except Exception as ex:
-        logger.warning("Error inspecting collection '%s' for schema upgrade: %s", collection, ex)
+    except (requests.RequestException, ConnectionError, TimeoutError, OSError) as ex:
+        raise TransportError(f"Network error inspecting collection '{collection}' for schema upgrade: {ex}") from ex
+    except json.JSONDecodeError as ex:
+        logger.warning("Error decoding JSON from collection '%s' for schema upgrade: %s", collection, ex)
         return False
 
     fields = stored.get("fields")
@@ -390,9 +400,8 @@ def _widen_remote_text_field_cap(
 
     try:
         patch_resp = session.patch(url, json={"fields": fields}, timeout=timeout, verify=False)
-    except Exception as ex:
-        logger.warning("Failed to widen '%s.%s' text cap: %s", collection, field_name, ex)
-        return False
+    except (requests.RequestException, ConnectionError, TimeoutError, OSError) as ex:
+        raise TransportError(f"Failed to widen '{collection}.{field_name}' text cap: {ex}") from ex
 
     if patch_resp.ok:
         logger.info("Widened %s.%s text cap to %d chars", collection, field_name, max_chars)
@@ -436,6 +445,7 @@ def provision_remote_pocketbase(
         f"{base_url}/api/admins/auth-with-password",
     ]
     token = None
+    last_auth_error: Exception | None = None
     for endpoint in auth_endpoints:
         try:
             resp = session.post(
@@ -449,13 +459,20 @@ def provision_remote_pocketbase(
                 token = data.get("token")
                 if token:
                     break
-        except Exception as ex:
+            elif resp.status_code >= 500:
+                raise TransportError(
+                    f"PocketBase auth endpoint {endpoint} failed ({resp.status_code} Server Error): {resp.text}"
+                )
+        except (requests.RequestException, ConnectionError, TimeoutError, OSError) as ex:
+            last_auth_error = ex
             logger.debug("Auth endpoint %s failed: %s", endpoint, ex)
 
     if not token:
+        if last_auth_error is not None:
+            raise TransportError(f"Failed to connect to PocketBase at {pb_url}: {last_auth_error}") from last_auth_error
         logger.error("Failed to authenticate to PocketBase at %s as %s", pb_url, email)
         print(f"❌ Failed to authenticate to PocketBase at {pb_url} with email {email}")
-        return False
+        raise ValidationError(f"Failed to authenticate to PocketBase at {pb_url} with email {email}")
 
     session.headers.update({"Authorization": token})
     print(f"✅ Authenticated successfully as superuser '{email}'")
@@ -466,14 +483,14 @@ def provision_remote_pocketbase(
             f"{base_url}/api/collections", params={"perPage": 200}, timeout=timeout, verify=False
         )
         if not resp.ok:
+            if resp.status_code >= 500:
+                raise TransportError(f"Failed to list collections ({resp.status_code} Server Error): {resp.text}")
             logger.error("Failed to list collections: %s", resp.text)
             print(f"❌ Failed to list collections: {resp.text}")
-            return False
+            raise ValidationError(f"Failed to list collections (HTTP {resp.status_code}): {resp.text}")
         collections_data = resp.json().get("items", [])
-    except Exception as ex:
-        logger.error("Error fetching collections from %s: %s", pb_url, ex)
-        print(f"❌ Network error while querying collections: {ex}")
-        return False
+    except (requests.RequestException, ConnectionError, TimeoutError, OSError) as ex:
+        raise TransportError(f"Network error while querying collections from {pb_url}: {ex}") from ex
 
     # 3. Create or migrate every collection, from the schema's own description.
     existing_names = {c.get("name") for c in collections_data if isinstance(c, dict)}
@@ -482,17 +499,27 @@ def provision_remote_pocketbase(
         payload = pocketbase_collection_payload(collection)
         live = live_by_name.get(collection.name)
         if live is None:
-            create_resp = session.post(
-                f"{base_url}/api/collections", json=payload, timeout=timeout, verify=False
-            )
+            try:
+                create_resp = session.post(
+                    f"{base_url}/api/collections", json=payload, timeout=timeout, verify=False
+                )
+            except (requests.RequestException, ConnectionError, TimeoutError, OSError) as ex:
+                raise TransportError(f"Network error creating collection '{collection.name}': {ex}") from ex
             if create_resp.ok:
                 logger.info("Created collection '%s' via REST API", collection.name)
                 print(f"✨ Created collection '{collection.name}' successfully")
+            elif create_resp.status_code >= 500:
+                raise TransportError(
+                    f"Failed to create collection '{collection.name}' ({create_resp.status_code} Server Error): {create_resp.text}"
+                )
             else:
                 logger.error(
                     "Failed to create collection '%s': %s", collection.name, create_resp.text
                 )
                 print(f"❌ Failed to create collection '{collection.name}': {create_resp.text}")
+                raise ValidationError(
+                    f"Failed to create collection '{collection.name}' (HTTP {create_resp.status_code}): {create_resp.text}"
+                )
             continue
 
         if "fields" in live:
@@ -501,23 +528,33 @@ def provision_remote_pocketbase(
                 print(f"ℹ️ Collection '{collection.name}' already exists")
                 continue
             target = live.get("id") or collection.name
-            patch_resp = session.patch(
-                f"{base_url}/api/collections/{target}",
-                json={**live, "fields": merged},
-                timeout=timeout,
-                verify=False,
-            )
+            try:
+                patch_resp = session.patch(
+                    f"{base_url}/api/collections/{target}",
+                    json={**live, "fields": merged},
+                    timeout=timeout,
+                    verify=False,
+                )
+            except (requests.RequestException, ConnectionError, TimeoutError, OSError) as ex:
+                raise TransportError(f"Network error migrating collection '{collection.name}': {ex}") from ex
             if patch_resp.ok:
                 added = sorted({f["name"] for f in merged} - _live_field_names(live))
                 logger.info(
                     "Migrated collection '%s' (+%s)", collection.name, ", ".join(added) or "none"
                 )
                 print(f"🔄 Migrated collection '{collection.name}' (+{', '.join(added) or 'none'})")
+            elif patch_resp.status_code >= 500:
+                raise TransportError(
+                    f"Failed to migrate collection '{collection.name}' ({patch_resp.status_code} Server Error): {patch_resp.text}"
+                )
             else:
                 logger.error(
                     "Failed to migrate collection '%s': %s", collection.name, patch_resp.text
                 )
                 print(f"❌ Failed to migrate collection '{collection.name}': {patch_resp.text}")
+                raise ValidationError(
+                    f"Failed to migrate collection '{collection.name}' (HTTP {patch_resp.status_code}): {patch_resp.text}"
+                )
         else:
             print(f"ℹ️ Collection '{collection.name}' already exists")
 
@@ -542,30 +579,37 @@ def provision_remote_pocketbase(
             timeout=timeout,
             verify=False,
         )
-        if check_records.ok:
-            total_items = check_records.json().get("totalItems", 0)
-            if total_items == 0:
-                seeds = (
-                    initial_searches if initial_searches is not None else DEFAULT_INITIAL_SEARCHES
-                )
-                for s_id, s_data in seeds.items():
-                    record_payload = wire_payload(SAVED_SEARCHES, s_data)
-                    record_payload["id"] = s_id
+    except (requests.RequestException, ConnectionError, TimeoutError, OSError) as ex:
+        raise TransportError(f"Network error checking saved_searches records: {ex}") from ex
+
+    if check_records.ok:
+        total_items = check_records.json().get("totalItems", 0)
+        if total_items == 0:
+            seeds = (
+                initial_searches if initial_searches is not None else DEFAULT_INITIAL_SEARCHES
+            )
+            for s_id, s_data in seeds.items():
+                record_payload = wire_payload(SAVED_SEARCHES, s_data)
+                record_payload["id"] = s_id
+                try:
                     seed_resp = session.post(
                         f"{base_url}/api/collections/saved_searches/records",
                         json=record_payload,
                         timeout=timeout,
                         verify=False,
                     )
-                    if seed_resp.ok:
-                        print(f"🌱 Seeded saved search '{s_id}' successfully")
-                    else:
-                        print(f"⚠️ Failed to seed '{s_id}': {seed_resp.text}")
-            else:
-                print(f"ℹ️ 'saved_searches' already has {total_items} records, skipping seeding.")
-    except Exception as ex:
-        logger.warning("Error checking/seeding saved_searches records: %s", ex)
-        print(f"⚠️ Error checking/seeding records: {ex}")
+                except (requests.RequestException, ConnectionError, TimeoutError, OSError) as ex:
+                    raise TransportError(f"Network error seeding saved search '{s_id}': {ex}") from ex
+                if seed_resp.ok:
+                    print(f"🌱 Seeded saved search '{s_id}' successfully")
+                elif seed_resp.status_code >= 500:
+                    raise TransportError(f"Failed to seed '{s_id}' ({seed_resp.status_code} Server Error): {seed_resp.text}")
+                else:
+                    print(f"⚠️ Failed to seed '{s_id}': {seed_resp.text}")
+        else:
+            print(f"ℹ️ 'saved_searches' already has {total_items} records, skipping seeding.")
+    elif check_records.status_code >= 500:
+        raise TransportError(f"Failed to check saved_searches records ({check_records.status_code} Server Error): {check_records.text}")
 
     return True
 
@@ -760,11 +804,33 @@ def _backfill_legacy_job_records(cursor: sqlite3.Cursor) -> None:
         logger.warning("Error during _backfill_legacy_job_records: %s", ex)
 
 
-#: Row-level repairs that run after a collection's columns are in place, keyed by
-#: collection name. Schema backfills are SQL; these need per-row interpretation.
+#: Row-level repairs that run as an explicit migration, decoupled from declarative provisioning.
 _COLLECTION_REPAIRS: Mapping[str, Callable[[sqlite3.Cursor], None]] = {
     JOB_RECORDS_NAME: _backfill_legacy_job_records,
 }
+
+
+def run_legacy_record_migration(db_path: str | Path | None = None) -> bool:
+    """Run one-off data repair on legacy job records in SQLite database.
+
+    Decoupled from ordinary provisioning (ticket #308): row-level data repair
+    is an explicit migration operation rather than declarative schema definition.
+    Ordinary provisioning remains idempotent and pure.
+    """
+    resolved_path = resolve_pocketbase_db_path(db_path, resolve_common_root=True)
+    db_file = Path(resolved_path)
+    if not db_file.exists():
+        logger.warning("Database file %s does not exist, cannot run migration", db_file)
+        return False
+
+    conn = sqlite3.connect(str(db_file))
+    cursor = conn.cursor()
+    try:
+        _backfill_legacy_job_records(cursor)
+        conn.commit()
+        return True
+    finally:
+        conn.close()
 
 
 provision_pocketbase_sqlite = provision_sqlite_database
@@ -783,10 +849,21 @@ if __name__ == "__main__":
     )
     parser.add_argument("--email", help="Superuser / Admin email")
     parser.add_argument("--password", help="Superuser / Admin password")
+    parser.add_argument(
+        "--migrate-records",
+        action="store_true",
+        help="Run one-off data repair on legacy job records in SQLite database",
+    )
 
     args = parser.parse_args()
 
-    if args.url and args.email and args.password:
+    if args.migrate_records:
+        target_db = resolve_pocketbase_db_path(args.db_path, resolve_common_root=True)
+        print(f"🚀 Running legacy record migration on SQLite database at {target_db} ...")
+        res = run_legacy_record_migration(target_db)
+        print(f"Migration status: {res}")
+        sys.exit(0 if res else 1)
+    elif args.url and args.email and args.password:
         print(f"🚀 Provisioning remote PocketBase at {args.url} ...")
         res = provision_remote_pocketbase(args.url, args.email, args.password)
         print(f"Provisioning result: {res}")

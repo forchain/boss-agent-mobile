@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
+from boss_agent.errors import TransportError
 from boss_agent.models import compute_job_fingerprint
 
 
@@ -390,10 +391,10 @@ async def test_pocketbase_broker_delete_job_record():
     not_found = await broker.job_store.delete_job_record("rec_404")
     assert not_found is False
 
-    # 3. Network / RequestException
+    # 3. Network / RequestException raises TransportError (distinguishable from 404 absence)
     mock_session.delete.side_effect = requests.RequestException("Connection error")
-    err_res = await broker.job_store.delete_job_record("rec_err")
-    assert err_res is False
+    with pytest.raises(TransportError):
+        await broker.job_store.delete_job_record("rec_err")
 
 
 def test_extract_digest_and_tags_from_jd():

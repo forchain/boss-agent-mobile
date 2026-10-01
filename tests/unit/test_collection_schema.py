@@ -33,6 +33,7 @@ from boss_agent.broker.collection_schema import (
     pocketbase_fields,
     sqlite_ddl,
     sqlite_metadata_fields,
+    validate_identifier,
     wire_payload,
 )
 from boss_agent.broker.provisioner import provision_remote_pocketbase, provision_sqlite_database
@@ -379,3 +380,21 @@ def test_the_registry_mapper_derives_target_action_from_the_task_type() -> None:
     )
     assert search.target_action == "auto_apply"
     assert search.target_task_type == "AUTO_APPLY"
+
+
+def test_validate_identifier_permits_safe_schema_names() -> None:
+    assert validate_identifier("job_records") == "job_records"
+    assert validate_identifier("col_123") == "col_123"
+    assert validate_identifier("_private_name") == "_private_name"
+
+
+def test_validate_identifier_rejects_malformed_or_dangerous_names() -> None:
+    with pytest.raises(ValueError, match="Invalid schema identifier"):
+        validate_identifier("table; DROP TABLE users;")
+    with pytest.raises(ValueError, match="Invalid schema identifier"):
+        validate_identifier("123column")
+    with pytest.raises(ValueError, match="Invalid schema identifier"):
+        validate_identifier("col-dash")
+    with pytest.raises(ValueError, match="Invalid schema identifier"):
+        validate_identifier("")
+

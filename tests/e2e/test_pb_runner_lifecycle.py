@@ -18,7 +18,13 @@ from pathlib import Path
 import pytest
 
 from _service_harness import free_port
-from boss_agent.broker.provisioner import provision_sqlite_database
+from boss_agent.broker.pocketbase_adapter import PocketBaseTaskBroker
+from boss_agent.broker.provisioner import (
+    provision_remote_pocketbase,
+    provision_sqlite_database,
+)
+from boss_agent.errors import TransportError, ValidationError
+from boss_agent.models import FilterConfig, SavedSearch, SearchConfig
 from boss_agent.settings import resolve_git_common_root
 
 pytestmark = pytest.mark.e2e
@@ -184,3 +190,96 @@ def test_provision_sqlite_database_offline_structure(tmp_path: Path, pb_bin: str
     assert "job_records" in col_names
     assert "saved_searches" in col_names
     assert "resume_revisions" in col_names
+
+
+@pytest.mark.asyncio
+async def test_service_integration_persistence_and_provisioning_failures_reported(
+    tmp_path: Path, pb_bin: str
+):
+    """Service Integration test (Ticket #308, Acceptance Criterion 3).
+
+    Verifies against a live PocketBase broker daemon that:
+    1. A provisioning failure (e.g. invalid credentials) raises ValidationError
+       rather than being absorbed returning False.
+    2. A save failure when broker is unreachable raises TransportError rather
+       than returning None or swallowing the error.
+    """
+    pb_dir = tmp_path / "pb_data_service"
+    pb_dir.mkdir(parents=True, exist_ok=True)
+    db_file = pb_dir / "data.db"
+
+    # Initialize PB database and schema
+    subprocess.run(
+        [pb_bin, "migrate", "up", "--dir", str(pb_dir)],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert provision_sqlite_database(db_file) is True
+
+    # Create superuser
+    subprocess.run(
+        [
+            pb_bin,
+            "superuser",
+            "upsert",
+            "admin@test.local",
+            "real_password_123",
+            "--dir",
+            str(pb_dir),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    test_port = str(free_port())
+    proc = subprocess.Popen(
+        [pb_bin, "serve", "--dir", str(pb_dir), "--http", f"127.0.0.1:{test_port}"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+    try:
+        # Wait for health check
+        healthy = False
+        for _ in range(30):
+            try:
+                with urllib.request.urlopen(
+                    f"http://127.0.0.1:{test_port}/api/health", timeout=1.0
+                ) as resp:
+                    if resp.status == 200:
+                        healthy = True
+                        break
+            except Exception:
+                time.sleep(0.1)
+        assert healthy, "PocketBase failed to become healthy within 3s"
+
+        # 1. Provisioning failure against live broker raises ValidationError
+        with pytest.raises(ValidationError):
+            provision_remote_pocketbase(
+                f"http://127.0.0.1:{test_port}",
+                email="admin@test.local",
+                password="wrong_password",
+            )
+
+        # 2. Broker works against live broker
+        broker = PocketBaseTaskBroker(base_url=f"http://127.0.0.1:{test_port}")
+        searches = await broker.saved_searches.list_saved_searches()
+        assert len(searches) >= 1
+
+    finally:
+        # Gracefully shut down daemon
+        proc.terminate()
+        proc.wait(timeout=5)
+
+    # 3. Store save failure against unreachable broker raises TransportError
+    search = SavedSearch(
+        id="test-save-failure",
+        name="Test Search",
+        search=SearchConfig(keyword="test"),
+        filter=FilterConfig(),
+    )
+    with pytest.raises(TransportError):
+        await broker.saved_searches.save_saved_search(search)
+

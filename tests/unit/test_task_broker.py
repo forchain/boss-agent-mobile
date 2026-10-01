@@ -323,15 +323,17 @@ async def test_list_pending_tasks_handles_404_gracefully():
 
 @pytest.mark.asyncio
 async def test_list_pending_tasks_handles_request_exception():
-    """Verify PocketBaseTaskBroker handles network/connection error gracefully."""
+    """Verify PocketBaseTaskBroker raises TransportError on network/connection error."""
     import requests
+
+    from boss_agent.errors import TransportError
 
     mock_session = MagicMock()
     mock_session.get.side_effect = requests.exceptions.ConnectionError("Connection refused")
 
     broker = PocketBaseTaskBroker(session=mock_session)
-    tasks = await broker.list_pending_tasks()
-    assert tasks == []
+    with pytest.raises(TransportError):
+        await broker.list_pending_tasks()
 
 
 @pytest.mark.asyncio

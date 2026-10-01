@@ -32,9 +32,25 @@ lacks — :func:`dialect_field_names` is what the equality test asserts against.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
+
+_IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+
+
+def validate_identifier(name: str) -> str:
+    """Validate that a schema-derived name is a safe, valid SQL/schema identifier.
+
+    This is defense-in-depth: collection and field names originate from our own declared
+    collection schema rather than user data, but validating identifiers before
+    interpolating them into DDL / PRAGMA ensures structural integrity and catches
+    typographical anomalies early.
+    """
+    if not isinstance(name, str) or not _IDENTIFIER_RE.match(name):
+        raise ValueError(f"Invalid schema identifier: {name!r}")
+    return name
 
 # --------------------------------------------------------------------------- #
 # PocketBase field kinds
@@ -102,7 +118,7 @@ class Field:
 
     def sqlite_column(self) -> str:
         """The ``name TYPE ...`` fragment used inside ``CREATE TABLE``."""
-        parts = [self.name, self.sqlite_type()]
+        parts = [validate_identifier(self.name), self.sqlite_type()]
         if self.primary_key:
             parts.append("PRIMARY KEY")
         if self.unique:
@@ -117,7 +133,7 @@ class Field:
         non-constant default (the ``strftime`` expression on autodate columns) is
         likewise rejected, so both are dropped here and the column lands nullable.
         """
-        parts = [self.name, self.sqlite_type()]
+        parts = [validate_identifier(self.name), self.sqlite_type()]
         if self.sql_default is not None:
             parts.append(f"DEFAULT {self.sql_default}")
         return " ".join(parts)
@@ -190,8 +206,9 @@ class Collection:
 
 def sqlite_ddl(collection: Collection) -> str:
     """The ``CREATE TABLE IF NOT EXISTS`` statement for ``collection``."""
+    table_name = validate_identifier(collection.name)
     columns = ",\n    ".join(spec.sqlite_column() for spec in collection.fields)
-    return f"CREATE TABLE IF NOT EXISTS {collection.name} (\n    {columns}\n)"
+    return f"CREATE TABLE IF NOT EXISTS {table_name} (\n    {columns}\n)"
 
 
 def sqlite_index_ddl(collection: Collection) -> tuple[str, ...]:
@@ -207,7 +224,7 @@ def column_migrations(collection: Collection, existing: Iterable[str]) -> list[t
     """
     present = set(existing)
     return [
-        (spec.name, spec.sqlite_alter_column())
+        (validate_identifier(spec.name), spec.sqlite_alter_column())
         for spec in collection.fields
         if not spec.primary_key and spec.name not in present
     ]

@@ -15,12 +15,12 @@ in-memory adapter has no scheduler to notify.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from .async_bridge import execute_broker_request
 from .models import SavedSearch
 
 logger = logging.getLogger("boss_agent.saved_search_store")
@@ -119,77 +119,62 @@ class PocketBaseSavedSearchStore(SavedSearchStore):
 
     async def list_saved_searches(self) -> list[SavedSearch]:
         url = self._collection_url()
-        loop = asyncio.get_running_loop()
-        try:
-            resp = await loop.run_in_executor(
-                None,
-                lambda: self.session.get(
-                    url, params={"perPage": "200", "sort": "-created"}, headers=self._headers()
-                ),
-            )
-            resp.raise_for_status()
-            items = resp.json().get("items", [])
-            return [SavedSearch.from_dict(item["id"], item) for item in items]
-        except Exception as e:
-            logger.warning("PocketBase list_saved_searches failed: %s", e)
+        resp = await execute_broker_request(
+            lambda: self.session.get(
+                url, params={"perPage": "200", "sort": "-created"}, headers=self._headers()
+            ),
+            expected_statuses=(200,),
+            allow_404=True,
+            error_prefix="PocketBase list_saved_searches failed",
+        )
+        if resp.status_code == 404:
             return []
+        items = resp.json().get("items", [])
+        return [SavedSearch.from_dict(item["id"], item) for item in items]
 
     async def get_saved_search(self, search_id: str) -> SavedSearch | None:
         url = f"{self._collection_url()}/{search_id}"
-        loop = asyncio.get_running_loop()
-        try:
-            resp = await loop.run_in_executor(
-                None, lambda: self.session.get(url, headers=self._headers())
-            )
-            if resp.status_code == 404:
-                return None
-            resp.raise_for_status()
-            data = resp.json()
-            return SavedSearch.from_dict(data["id"], data)
-        except Exception as e:
-            logger.warning("PocketBase get_saved_search for %s failed: %s", search_id, e)
+        resp = await execute_broker_request(
+            lambda: self.session.get(url, headers=self._headers()),
+            expected_statuses=(200,),
+            allow_404=True,
+            error_prefix=f"PocketBase get_saved_search for {search_id} failed",
+        )
+        if resp.status_code == 404:
             return None
+        data = resp.json()
+        return SavedSearch.from_dict(data["id"], data)
 
     async def save_saved_search(self, saved_search: SavedSearch) -> SavedSearch | None:
         url = self._collection_url()
-        loop = asyncio.get_running_loop()
         body = _wire_body(saved_search)
-        try:
-            existing = await self.get_saved_search(saved_search.id)
-            if existing:
-                resp = await loop.run_in_executor(
-                    None,
-                    lambda: self.session.patch(
-                        f"{url}/{saved_search.id}", json=body, headers=self._headers()
-                    ),
-                )
-            else:
-                resp = await loop.run_in_executor(
-                    None, lambda: self.session.post(url, json=body, headers=self._headers())
-                )
-            if resp.ok:
-                data = resp.json()
-                return SavedSearch.from_dict(data["id"], data)
-            logger.warning(
-                "PocketBase save_saved_search for %s failed: HTTP %s",
-                saved_search.id,
-                resp.status_code,
+        existing = await self.get_saved_search(saved_search.id)
+        if existing:
+            resp = await execute_broker_request(
+                lambda: self.session.patch(
+                    f"{url}/{saved_search.id}", json=body, headers=self._headers()
+                ),
+                expected_statuses=(200,),
+                error_prefix=f"PocketBase save_saved_search for {saved_search.id} failed",
             )
-        except Exception as e:
-            logger.warning("PocketBase save_saved_search failed: %s", e)
-        return None
+        else:
+            resp = await execute_broker_request(
+                lambda: self.session.post(url, json=body, headers=self._headers()),
+                expected_statuses=(200, 201),
+                error_prefix=f"PocketBase save_saved_search for {saved_search.id} failed",
+            )
+        data = resp.json()
+        return SavedSearch.from_dict(data["id"], data)
 
     async def delete_saved_search(self, search_id: str) -> bool:
         url = f"{self._collection_url()}/{search_id}"
-        loop = asyncio.get_running_loop()
-        try:
-            resp = await loop.run_in_executor(
-                None, lambda: self.session.delete(url, headers=self._headers())
-            )
-            deleted = resp.status_code in (200, 204)
-        except Exception as e:
-            logger.warning("PocketBase delete_saved_search failed: %s", e)
-            return False
+        resp = await execute_broker_request(
+            lambda: self.session.delete(url, headers=self._headers()),
+            expected_statuses=(200, 204),
+            allow_404=True,
+            error_prefix=f"PocketBase delete_saved_search for {search_id} failed",
+        )
+        deleted = resp.status_code in (200, 204)
         if deleted and self._on_delete is not None:
             await self._on_delete(search_id)
         return deleted

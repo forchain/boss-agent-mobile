@@ -758,19 +758,15 @@ class PocketBaseJobRecordStore(JobRecordStore):
         return resp.json()
 
     async def delete_job_record(self, record_id: str) -> bool:
-        try:
-            resp = await execute_broker_request(
-                lambda: self.session.delete(
-                    f"{self._jobs_collection_url()}/{record_id}", headers=self._headers()
-                ),
-                expected_statuses=(200, 204),
-                allow_404=True,
-                error_prefix=f"PocketBase delete_job_record {record_id} failed",
-            )
-            return resp.status_code in (200, 204)
-        except Exception as e:
-            logger.warning("PocketBase delete_job_record failed: %s", e)
-            return False
+        resp = await execute_broker_request(
+            lambda: self.session.delete(
+                f"{self._jobs_collection_url()}/{record_id}", headers=self._headers()
+            ),
+            expected_statuses=(200, 204),
+            allow_404=True,
+            error_prefix=f"PocketBase delete_job_record {record_id} failed",
+        )
+        return resp.status_code in (200, 204)
 
     async def get_applied_direct_companies(self, cooldown_days: int = 0) -> set[str]:
         """Collect every direct-hire company with an unexpired communication.

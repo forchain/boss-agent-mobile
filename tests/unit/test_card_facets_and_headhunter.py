@@ -542,7 +542,20 @@ def test_backfill_purges_unknown_company_records(tmp_path: Path):
     conn.commit()
     conn.close()
 
+    # Ordinary provisioning is declarative and does not mutate/backfill legacy records
     assert provision_sqlite_database(db_file) is True
+
+    conn = sqlite3.connect(str(db_file))
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, title, company_name FROM job_records")
+    remaining_before_migration = cursor.fetchall()
+    conn.close()
+    assert len(remaining_before_migration) == 4
+
+    # Dedicated migration purges invalid records
+    from boss_agent.broker.provisioner import run_legacy_record_migration
+
+    assert run_legacy_record_migration(db_file) is True
 
     conn = sqlite3.connect(str(db_file))
     cursor = conn.cursor()

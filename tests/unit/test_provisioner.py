@@ -10,7 +10,11 @@ from pathlib import Path
 
 import pytest
 
-from boss_agent.broker.provisioner import provision_sqlite_database
+from boss_agent.broker.provisioner import (
+    provision_remote_pocketbase,
+    provision_sqlite_database,
+)
+from boss_agent.errors import TransportError, ValidationError
 
 _COLLECTIONS_DDL = """
     CREATE TABLE _collections (
@@ -598,3 +602,36 @@ def test_provision_remote_pocketbase_skips_upgrade_when_collection_is_new():
         for call in session.post.call_args_list
         if "api/collections" in str(call.args)
     )
+
+
+def test_provision_remote_pocketbase_raises_transport_error_on_connection_failure():
+    from unittest.mock import MagicMock
+    from unittest.mock import patch as mock_patch
+
+    import requests
+
+    mock_sess = MagicMock()
+    mock_sess.post.side_effect = requests.RequestException("connection refused")
+
+    with mock_patch("requests.Session", return_value=mock_sess), pytest.raises(TransportError):
+        provision_remote_pocketbase(
+            "http://127.0.0.1:8090", email="admin@example.com", password="password123"
+        )
+
+
+def test_provision_remote_pocketbase_raises_validation_error_on_bad_credentials():
+    from unittest.mock import MagicMock
+    from unittest.mock import patch as mock_patch
+
+    mock_sess = MagicMock()
+    mock_resp = MagicMock()
+    mock_resp.ok = False
+    mock_resp.status_code = 400
+    mock_resp.text = '{"message": "Invalid admin credentials"}'
+    mock_sess.post.return_value = mock_resp
+
+    with mock_patch("requests.Session", return_value=mock_sess), pytest.raises(ValidationError):
+        provision_remote_pocketbase(
+            "http://127.0.0.1:8090", email="admin@example.com", password="wrongpassword"
+        )
+
