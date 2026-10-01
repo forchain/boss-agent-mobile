@@ -160,39 +160,10 @@ export interface MatchEvaluateResponse {
 	greeting_message: string;
 }
 
-export type TaskStatus =
-	| 'pending'
-	| 'running'
-	| 'paused_for_takeover'
-	| 'resuming'
-	| 'success'
-	| 'failed'
-	| 'cancelled';
-
-export type TaskType = 'AUTO_APPLY' | 'SCRAPE_JOBS' | 'CHECK_LOGIN' | 'CHECK_CHAT';
-
-/** The task types the worker's handler strategy accepts, in one place. */
-export const TASK_TYPES: readonly TaskType[] = [
-	'AUTO_APPLY',
-	'SCRAPE_JOBS',
-	'CHECK_LOGIN',
-	'CHECK_CHAT'
-];
-
-export interface AutomationTask {
-	id: string;
-	task_type: TaskType;
-	status: TaskStatus;
-	payload: Record<string, any>;
-	/** Task Provenance (CONTEXT.md): manual | test | scheduler. */
-	source?: 'manual' | 'test' | 'scheduler' | string;
-	logs: string[];
-	error_message?: string;
-	/** The Automation Worker holding this task's lease — the column the worker writes. */
-	worker_id?: string | null;
-	created?: string;
-	updated?: string;
-}
+// Import & re-export generated task types from collection schema seam (Issue #314)
+import type { AutomationTask, TaskStatus, TaskType } from './types.generated';
+export type { AutomationTask, TaskStatus, TaskType };
+export { TASK_TYPES } from './types.generated';
 
 export type TargetAction = 'save_jd' | 'auto_apply';
 

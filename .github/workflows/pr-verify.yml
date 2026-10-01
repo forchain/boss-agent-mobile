@@ -45,6 +45,9 @@ jobs:
       - name: Formatting Check (Ruff format)
         run: uv run --extra dev ruff format --check
 
+      - name: Generated Types Drift Guard
+        run: uv run python scripts/generate_dashboard_types.py --check
+
       - name: Fast Unit Tier
         run: uv run --extra dev pytest
 

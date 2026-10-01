@@ -113,6 +113,9 @@ class Field:
     #: ``_collections.fields`` JSON (which must repeat ``id`` with ``primaryKey``,
     #: or PocketBase stops exposing the record id entirely).
     remote: bool = True
+    ts_type: str | None = None
+    optional: bool | None = None
+    description: str | None = None
 
     def sqlite_type(self) -> str:
         return _SQLITE_TYPES[self.kind]
@@ -367,21 +370,33 @@ AUTOMATION_TASKS = Collection(
     update_rule=TASK_UPDATE_RULE,
     fields=(
         Field("id", TEXT, primary_key=True, default=None, remote=False),
-        Field("task_type", TEXT, required=True),
-        Field("status", TEXT, required=True, default="pending"),
-        Field("payload", JSON, default={}),
-        Field(LEASE_FIELD, TEXT),
-        Field("locked_at", DATE),
-        Field("last_heartbeat_at", DATE),
+        Field("task_type", TEXT, required=True, ts_type="TaskType"),
+        Field("status", TEXT, required=True, default="pending", ts_type="TaskStatus"),
+        Field("payload", JSON, default={}, ts_type="Record<string, any>", optional=False),
+        Field(
+            LEASE_FIELD,
+            TEXT,
+            ts_type="string | null",
+            description="The Automation Worker holding this task's lease — the column the worker writes.",
+        ),
+        Field("locked_at", DATE, ts_type="string | null"),
+        Field("last_heartbeat_at", DATE, ts_type="string | null"),
         Field("retry_count", NUMBER, default=0, sql_default="0"),
-        Field("logs", JSON, default=[]),
+        Field("logs", JSON, default=[], ts_type="string[]", optional=False),
         Field("error_message", TEXT),
         # Task Provenance (CONTEXT.md): manual | test | scheduler. A real column rather
         # than a payload marker, so startup reclamation can cancel test-sourced tasks
         # without reading five different marker keys, and the dashboard can show the
         # rest. Legacy rows default to manual — the sweep must not reclaim a task whose
         # origin it cannot prove.
-        Field("source", TEXT, default="manual", sql_default="'manual'"),
+        Field(
+            "source",
+            TEXT,
+            default="manual",
+            sql_default="'manual'",
+            ts_type="'manual' | 'test' | 'scheduler' | string",
+            description="Task Provenance (CONTEXT.md): manual | test | scheduler.",
+        ),
         *_autodate(),
     ),
     indexes=(
