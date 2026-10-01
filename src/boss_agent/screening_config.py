@@ -22,9 +22,8 @@ from pathlib import Path
 from typing import Any
 
 # Runtime, not a `TYPE_CHECKING` guard: the appenders fall back to
-# `ScreeningPolicy.load_default()` when a caller supplies no policy. `models` imports
-# this module lazily, inside its own methods, so the cycle is closed at call time.
-from .models import ScreeningPolicy
+# `ScreeningPolicy.load_default()` when a caller supplies no policy.
+from boss_agent.screening_policy import ScreeningPolicy
 
 SCREENING_CONFIG_HEADER = """\
 # ==============================================================================
@@ -32,6 +31,68 @@ SCREENING_CONFIG_HEADER = """\
 # Auto-generated & updated by Boss Agent Mobile; manual edits are preserved
 # ==============================================================================
 """
+
+
+def load_screening_policy(config_path: str | Path | None = None) -> ScreeningPolicy:
+    """Load ScreeningPolicy through the Configuration Realm chain (Issue #311, #312)."""
+    from boss_agent import config_realm
+
+    if config_path:
+        target = Path(config_path)
+        if target.is_file():
+            data = config_realm._parse_file(target) or {}
+            policy = ScreeningPolicy.from_dict(data)
+            policy.source_path = str(target)
+            return policy
+        return ScreeningPolicy()
+
+    chain = config_realm.resolve_chain()
+    screening_keys = (
+        "enable_screening",
+        "title_blacklist",
+        "title_whitelist",
+        "jd_blacklist",
+        "company_blacklist",
+        "channel_preference",
+        "max_commute_distance_km",
+    )
+    source_path = None
+    for p in chain:
+        if p.is_file():
+            data = config_realm._parse_file(p)
+            if data and any(k in data for k in screening_keys):
+                source_path = str(p)
+                break
+
+    # If no file in chain had screening keys, check legacy screening files as fallback
+    if source_path is None:
+        try:
+            from boss_agent.settings import resolve_git_common_root
+
+            root = resolve_git_common_root()
+        except Exception:
+            root = Path.cwd()
+        for candidate_rel in (
+            Path("config/screening.local.yaml"),
+            Path("config/screening.local.yml"),
+            Path("config/screening.local.json"),
+            Path("config/screening.yaml"),
+            Path("config/screening.example.yaml"),
+        ):
+            cand = root / candidate_rel
+            if cand.is_file():
+                data = config_realm._parse_file(cand)
+                if data and any(k in data for k in screening_keys):
+                    policy = ScreeningPolicy.from_dict(data)
+                    policy.source_path = str(cand)
+                    return policy
+
+    merged = config_realm.load_settings()
+    policy = ScreeningPolicy.from_dict(merged)
+    if source_path:
+        policy.source_path = source_path
+    return policy
+
 
 
 def is_writable_screening_path(path: str | Path) -> bool:
