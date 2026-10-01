@@ -30,7 +30,7 @@ export async function getJobRecords(options: GetJobRecordsOptions = {}): Promise
 		page: number;
 		perPage: number;
 		counts: JobRecordsCounts;
-	}>(`/api/jobs?${query.toString()}`);
+	}>(`/api/jobs?${query.toString()}`, { background: options.background });
 
 	return {
 		items: data.records ?? [],

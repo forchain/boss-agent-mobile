@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { RequestEvent } from '@sveltejs/kit';
 import { handle, handleError } from '../hooks.server';
+import { BACKGROUND_REQUEST_HEADER } from '../lib/apiClient';
 
 describe('SvelteKit Server Hooks (hooks.server.ts)', () => {
 	let consoleLogSpy: ReturnType<typeof vi.spyOn>;
@@ -16,9 +17,14 @@ describe('SvelteKit Server Hooks (hooks.server.ts)', () => {
 		consoleErrorSpy.mockRestore();
 	});
 
-	function createMockEvent(pathname: string, method = 'GET', search = ''): RequestEvent {
+	function createMockEvent(
+		pathname: string,
+		method = 'GET',
+		search = '',
+		headers: Record<string, string> = {}
+	): RequestEvent {
 		const url = new URL(`http://localhost:5173${pathname}${search}`);
-		const request = new Request(url.toString(), { method });
+		const request = new Request(url.toString(), { method, headers });
 		return {
 			request,
 			url,
@@ -109,6 +115,64 @@ describe('SvelteKit Server Hooks (hooks.server.ts)', () => {
 		expect(logOutput).toContain('POST');
 		expect(logOutput).toContain('/api/crash');
 		expect(logOutput).toContain('\x1b[31m500\x1b[0m');
+	});
+
+	it('stays quiet about a successful background poll so timer traffic cannot bury real actions', async () => {
+		// The nav's status light and badge refresh every ten seconds. Those two lines per
+		// tick are what pushed operator actions off the screen.
+		const health = createMockEvent('/api/health', 'GET', '', {
+			[BACKGROUND_REQUEST_HEADER]: '1'
+		});
+		await handle({
+			event: health,
+			resolve: vi.fn().mockResolvedValue(new Response('{}', { status: 200 }))
+		});
+
+		const badge = createMockEvent('/api/jobs', 'GET', '?page=1&limit=1&status=unmatched', {
+			[BACKGROUND_REQUEST_HEADER]: '1'
+		});
+		await handle({
+			event: badge,
+			resolve: vi.fn().mockResolvedValue(new Response('{}', { status: 200 }))
+		});
+
+		expect(consoleLogSpy).not.toHaveBeenCalled();
+	});
+
+	it('still logs a background poll that failed, because a broken broker is not noise', async () => {
+		const event = createMockEvent('/api/health', 'GET', '', {
+			[BACKGROUND_REQUEST_HEADER]: '1'
+		});
+		const resolve = vi.fn().mockResolvedValue(new Response('{}', { status: 503 }));
+
+		const res = await handle({ event, resolve });
+
+		expect(res.status).toBe(503);
+		expect(consoleLogSpy).toHaveBeenCalledTimes(1);
+		expect(consoleLogSpy.mock.calls[0][0]).toContain('\x1b[31m503\x1b[0m');
+	});
+
+	it('still logs a background poll that threw', async () => {
+		const event = createMockEvent('/api/health', 'GET', '', {
+			[BACKGROUND_REQUEST_HEADER]: '1'
+		});
+		const resolve = vi.fn().mockRejectedValue(new Error('boom'));
+
+		await expect(handle({ event, resolve })).rejects.toThrow('boom');
+		expect(consoleLogSpy).toHaveBeenCalledTimes(1);
+	});
+
+	it('logs the same poll-shaped request when the operator asked for it', async () => {
+		// The marker decides silence, not the path: a person opening the jobs board asks
+		// for the same query and deserves a line.
+		const event = createMockEvent('/api/jobs', 'GET', '?page=1&limit=1&status=unmatched');
+		await handle({
+			event,
+			resolve: vi.fn().mockResolvedValue(new Response('{}', { status: 200 }))
+		});
+
+		expect(consoleLogSpy).toHaveBeenCalledTimes(1);
+		expect(consoleLogSpy.mock.calls[0][0]).toContain('/api/jobs?page=1&limit=1&status=unmatched');
 	});
 
 	it('captures unhandled server errors via handleError hook including query string', async () => {
