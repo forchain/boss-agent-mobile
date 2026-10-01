@@ -20,6 +20,7 @@ export function parseScreeningPolicyYaml(content: string): ScreeningPolicy {
 		company_blacklist: Array.isArray(parsed.company_blacklist) ? parsed.company_blacklist : [],
 		jd_blacklist: Array.isArray(parsed.jd_blacklist) ? parsed.jd_blacklist : [],
 		business_district_blacklist: Array.isArray(parsed.business_district_blacklist) ? parsed.business_district_blacklist : [],
+		business_district_inspect_list: Array.isArray(parsed.business_district_inspect_list) ? parsed.business_district_inspect_list : [],
 		max_commute_distance_km: normalizeCommuteLimit(parsed.max_commute_distance_km)
 	};
 }
@@ -37,6 +38,7 @@ export function serializeScreeningPolicyYaml(policy: ScreeningPolicy): string {
 		`company_blacklist: ${JSON.stringify(policy.company_blacklist || [])}`,
 		`jd_blacklist: ${JSON.stringify(policy.jd_blacklist || [])}`,
 		`business_district_blacklist: ${JSON.stringify(policy.business_district_blacklist || [])}`,
+		`business_district_inspect_list: ${JSON.stringify(policy.business_district_inspect_list || [])}`,
 		`max_commute_distance_km: ${normalizeCommuteLimit(policy.max_commute_distance_km) ?? 'null'}`,
 		''
 	];
@@ -53,6 +55,7 @@ export function readScreeningPolicy(): ScreeningPolicy {
 		settings.company_blacklist ||
 		settings.jd_blacklist ||
 		settings.business_district_blacklist ||
+		settings.business_district_inspect_list ||
 		settings.enable_screening !== undefined
 	) {
 		return {
@@ -62,6 +65,7 @@ export function readScreeningPolicy(): ScreeningPolicy {
 			company_blacklist: settings.company_blacklist || [],
 			jd_blacklist: settings.jd_blacklist || [],
 			business_district_blacklist: settings.business_district_blacklist || [],
+			business_district_inspect_list: settings.business_district_inspect_list || [],
 			max_commute_distance_km: normalizeCommuteLimit(settings.max_commute_distance_km)
 		};
 	}
@@ -85,6 +89,7 @@ export function readScreeningPolicy(): ScreeningPolicy {
 		company_blacklist: [],
 		jd_blacklist: ['驻场', '外包', '电销', '无底薪', '纯提成'],
 		business_district_blacklist: [],
+		business_district_inspect_list: [],
 		max_commute_distance_km: 40.0
 	};
 }
@@ -97,6 +102,7 @@ export function writeScreeningPolicy(policy: Partial<ScreeningPolicy>): void {
 		company_blacklist: policy.company_blacklist,
 		jd_blacklist: policy.jd_blacklist,
 		business_district_blacklist: policy.business_district_blacklist,
+		business_district_inspect_list: policy.business_district_inspect_list,
 		max_commute_distance_km: normalizeCommuteLimit(policy.max_commute_distance_km)
 	});
 

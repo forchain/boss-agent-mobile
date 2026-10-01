@@ -250,6 +250,43 @@ describe('Masked Company Guardrail & Screening Utilities', () => {
 		expect(partial.business_district_blacklist).toEqual(['崇明区', '临港']);
 	});
 
+	// Spec #328: the 考察名单 travels through the same endpoint and must survive a
+	// partial save, or an operator's borderline districts would silently empty the
+	// next time something unrelated was saved from the settings page.
+	it('round-trips business_district_inspect_list through /api/screening/policy', async () => {
+		const { GET: getPolicy, POST: postPolicy } = await import('../routes/api/screening/policy/+server');
+
+		const post = async (body: Record<string, unknown>) => {
+			const req = new Request('http://localhost/api/screening/policy', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ policy: body })
+			});
+			const resp = await postPolicy({ request: req } as any);
+			expect(resp.status).toBe(200);
+			return (await resp.json()).policy;
+		};
+
+		const saved = await post({
+			enable_screening: true,
+			business_district_blacklist: ['崇明区'],
+			business_district_inspect_list: [' 漕河泾 ', '华夏中路', '漕河泾']
+		});
+		expect(saved.business_district_inspect_list).toEqual(['漕河泾', '华夏中路']);
+		// The two lists are independent entries in the same policy, not one list.
+		expect(saved.business_district_blacklist).toEqual(['崇明区']);
+
+		const getResp = await getPolicy({} as any);
+		expect((await getResp.json()).policy.business_district_inspect_list).toEqual([
+			'漕河泾',
+			'华夏中路'
+		]);
+
+		const partial = await post({ title_whitelist: ['Python'] });
+		expect(partial.business_district_inspect_list).toEqual(['漕河泾', '华夏中路']);
+		expect(partial.business_district_blacklist).toEqual(['崇明区']);
+	});
+
 	// Byte-guard against issue #185 recurrences: runs after every save above.
 	it('left the developer settings file untouched', () => sandbox.assertRealConfigUntouched());
 

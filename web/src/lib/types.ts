@@ -70,6 +70,11 @@ export interface ScreeningPolicy {
 	company_blacklist: string[];
 	jd_blacklist: string[];
 	business_district_blacklist: string[];
+	/**
+	 * Borderline districts whose direct-hire postings are worth measuring against the
+	 * commute ceiling (spec #328). Empty means nothing is probed.
+	 */
+	business_district_inspect_list: string[];
 	enable_screening: boolean;
 	channel_preference?: 'all' | 'direct_only' | 'headhunter_only';
 	/** Commute ceiling in km; null, blank or <= 0 disables distance filtering. */
@@ -120,6 +125,7 @@ export interface SystemSettings {
 	company_blacklist?: string[];
 	jd_blacklist?: string[];
 	business_district_blacklist?: string[];
+	business_district_inspect_list?: string[];
 	channel_preference?: 'all' | 'direct_only' | 'headhunter_only';
 	max_commute_distance_km?: number | null;
 
@@ -231,6 +237,17 @@ export interface JobRecord {
 	commute_distance_km?: number | null;
 	/** Raw widget text, e.g. "距离家庭住址19.5千米". */
 	commute_distance_text?: string;
+	/**
+	 * The detail page's own location line, e.g.
+	 * "上海·浦东新区·张江(近13/16号线华夏中路地铁站)" (issue #332). The card facet
+	 * `location` carries a district only, so this is the full string both screening
+	 * lists match over.
+	 */
+	location_line?: string;
+	/** Metro lines naming the station, e.g. "13/16号线". */
+	metro_lines?: string;
+	/** Nearest metro station, e.g. "华夏中路地铁站". */
+	metro_station?: string;
 	source_task_id?: string;
 	first_seen_at?: string;
 	last_seen_at?: string;

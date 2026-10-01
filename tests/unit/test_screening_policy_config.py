@@ -266,3 +266,26 @@ def test_save_and_load_policy_preserves_business_district_blacklist(tmp_path):
 
     loaded = ScreeningPolicy.load_default(config_path=target)
     assert loaded.business_district_blacklist == ["崇明区", "金山"]
+
+
+def test_screening_policy_business_district_inspect_list_dict_roundtrip():
+    policy = ScreeningPolicy(business_district_inspect_list=["漕河泾", "华夏中路"])
+    d = policy.to_dict()
+    assert d["business_district_inspect_list"] == ["漕河泾", "华夏中路"]
+
+    restored = ScreeningPolicy.from_dict(d)
+    assert restored.business_district_inspect_list == ["漕河泾", "华夏中路"]
+
+
+def test_save_and_load_policy_preserves_business_district_inspect_list(tmp_path):
+    """Both district lists travel together: saving one must not drop the other."""
+    target = tmp_path / "settings.local.yaml"
+    policy = ScreeningPolicy(
+        business_district_blacklist=["崇明区"],
+        business_district_inspect_list=["漕河泾", "13/16号线"],
+    )
+    policy.save_default(config_path=target)
+
+    loaded = ScreeningPolicy.load_default(config_path=target)
+    assert loaded.business_district_inspect_list == ["漕河泾", "13/16号线"]
+    assert loaded.business_district_blacklist == ["崇明区"]

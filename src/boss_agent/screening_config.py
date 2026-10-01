@@ -285,6 +285,11 @@ def save_policy(policy: ScreeningPolicy, config_path: str | Path | None = None) 
             *[f"  - {json.dumps(j, ensure_ascii=False)}" for j in policy.jd_blacklist],
             "business_district_blacklist:",
             *[f"  - {json.dumps(d, ensure_ascii=False)}" for d in policy.business_district_blacklist],
+            "business_district_inspect_list:",
+            *[
+                f"  - {json.dumps(d, ensure_ascii=False)}"
+                for d in policy.business_district_inspect_list
+            ],
         ]
         content = "\n".join(lines) + "\n"
 

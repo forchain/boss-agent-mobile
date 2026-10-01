@@ -673,6 +673,11 @@ EXPIRED_POSTING_REASON = "岗位已失效/停止招聘"
 # cannot drift into reporting the skip differently.
 HEADHUNTER_COMMUTE_PROBE_SKIP_REASON = "猎头岗位（企业信息保密），跳过底部通勤距离探测以节省耗时"
 
+# The other way a probe is declined: the posting is in no 考察名单 district, so its exact
+# distance was never something the operator asked to have measured (spec #328). Reporting
+# the headhunter reason here would blame the channel for a decision the district list made.
+NOT_INSPECTED_DISTRICT_SKIP_REASON = "商圈不在考察名单，默认距离满足并跳过底部通勤距离探测"
+
 DEFAULT_COMMUNICATION_COOLDOWN_DAYS = 30
 
 
@@ -883,6 +888,11 @@ class JobRecord:
     id: str | None = None
     salary_range: str = ""
     location: str | None = None
+    #: The detail page's location line and the metro station it names (issue #332).
+    #: Filled from the detail page, never from the card, which carries no station.
+    location_line: str = ""
+    metro_lines: str = ""
+    metro_station: str = ""
     digest: str = ""
     job_description: str = ""
     company_scale: str = ""
@@ -945,6 +955,85 @@ class JobRecord:
             )
 
 
+#: The Job Detail Page location line, e.g. ``上海·浦东新区·张江(近13/16号线华夏中路地铁站)``
+#: (issue #332). The platform is the only source of a metro station: the card's location
+#: facet (``tv_distance``) names a district and nothing finer.
+LOCATION_LINE_METRO_PATTERN = re.compile(r"[（(]([^)）]*)[)）]")
+#: ``近13/16号线华夏中路地铁站`` → lines ``13/16号线``, station ``华夏中路地铁站``. The line
+#: spec is optional, because a station quoted without one (``近张江高科``) is still a place
+#: an operator can refuse.
+LOCATION_LINE_TRANSIT_PATTERN = re.compile(
+    r"^近?\s*(?P<lines>[0-9０-９][0-9０-９/、,，\-—\s]*号线)?\s*(?P<station>.+)$"
+)
+
+
+@dataclass(frozen=True)
+class JobLocationLine:
+    """The Job Detail Page location line, split into the parts a filter can use (#332).
+
+    The card stage sees a district and the detail stage sees a station, so this is the
+    richest location the platform ever renders and the only place a station is known.
+    Every part is optional: the line degrades to a bare district, or to nothing at all
+    when the platform renders none, and neither is an error.
+    """
+
+    raw: str = ""
+    city: str = ""
+    district: str = ""
+    business_district: str = ""
+    metro_lines: str = ""
+    metro_station: str = ""
+
+    @property
+    def match_text(self) -> str:
+        """The text the screening policy's location lists are matched against.
+
+        The platform's own rendering, verbatim. Quoting it in an audit reason gives the
+        operator the exact string on their own screen, and because the district tokens and
+        the ``近13/16号线华夏中路地铁站`` suffix both live in it, one string serves a
+        district entry and a station entry of the same list.
+        """
+        return self.raw
+
+    @classmethod
+    def parse(cls, raw: str) -> "JobLocationLine":
+        """Split a rendered location line, tolerating every shape it degrades into."""
+        text = (raw or "").strip()
+        if not text:
+            return cls()
+
+        prefix, metro = text, ""
+        found = LOCATION_LINE_METRO_PATTERN.search(text)
+        if found:
+            prefix = text[: found.start()].strip()
+            metro = found.group(1).strip()
+
+        parts = [p.strip() for p in re.split(r"[·•]", prefix) if p.strip()]
+        city = parts[0] if parts else ""
+        district = parts[1] if len(parts) > 1 else ""
+        business_district = parts[2] if len(parts) > 2 else ""
+
+        metro_lines = ""
+        metro_station = ""
+        if metro:
+            transit = LOCATION_LINE_TRANSIT_PATTERN.match(metro)
+            if transit:
+                metro_lines = (transit.group("lines") or "").strip()
+                metro_station = (transit.group("station") or "").strip()
+            else:
+                # No line spec to split off: the whole parenthetical names the place.
+                metro_station = metro
+
+        return cls(
+            raw=text,
+            city=city,
+            district=district,
+            business_district=business_district,
+            metro_lines=metro_lines,
+            metro_station=metro_station,
+        )
+
+
 @dataclass
 class JobPosting:
     title: str
@@ -953,6 +1042,13 @@ class JobPosting:
     job_description: str
     digest: str = ""
     location: str | None = None
+    #: The detail page's own location line and the metro station it names (issue #332).
+    #: Kept apart from ``location``, which stays the card's district facet: a station is
+    #: only ever known here, and overwriting the facet with the line would change what the
+    #: card-stage filters have always been matching against.
+    location_line: str = ""
+    metro_lines: str = ""
+    metro_station: str = ""
     tags: list[str] = field(default_factory=list)
     recruiter_name: str | None = None
     recruiter_title: str | None = None
@@ -1211,6 +1307,10 @@ class ScreeningPolicy:
     company_blacklist: list[str] = field(default_factory=list)
     jd_blacklist: list[str] = field(default_factory=list)
     business_district_blacklist: list[str] = field(default_factory=list)
+    #: Borderline business districts whose direct-hire postings are worth measuring
+    #: against the commute ceiling (spec #328). Empty means nothing is probed, which is
+    #: the fully accelerated scan: every other posting defaults to 距离满足.
+    business_district_inspect_list: list[str] = field(default_factory=list)
     enable_screening: bool = True
     channel_preference: str = ChannelPreference.ALL
     max_commute_distance_km: float | None = 40.0
@@ -1265,17 +1365,41 @@ class ScreeningPolicy:
             and self.max_commute_distance_km > 0
         )
 
-    def should_probe_commute_distance(self, is_headhunter: bool | None) -> bool:
+    @staticmethod
+    def _match_location_token(tokens: list[str], location: str) -> str | None:
+        """The first token of ``tokens`` that ``location`` contains, case-insensitively.
+
+        One rule covers an administrative district ("崇明区"), a commercial quarter
+        ("临港") and a metro station ("华夏中路"), because every location the platform
+        renders — the card's district facet and the detail page's location line — is a
+        plain string of those same names. Returns the token as the operator typed it, so
+        the audit reason quotes their own entry rather than a normalized copy of it.
+        """
+        norm = (location or "").lower()
+        for raw in tokens:
+            token = (raw or "").strip()
+            if token and token.lower() in norm:
+                return token
+        return None
+
+    def should_probe_commute_distance(
+        self, is_headhunter: bool | None, location: str = ""
+    ) -> bool:
         """Whether this posting's detail page is worth probing for the distance widget.
 
-        Narrower than ``is_commute_filter_active`` because the probe only buys anything
-        for direct-hire postings: the platform conceals the hiring enterprise and its
-        office address for headhunter roles, so ``home_tip_vf`` is never rendered for
-        them and the scroll budget would be spent discovering that. An unknown channel
-        (``None``) still probes — an unrecognised direct hire must not be silently
-        spared distance screening.
+        Three gates, all of which must hold. A disabled commute ceiling can reject
+        nothing, so scrolling to find the distance widget would cost latency for nothing.
+        The probe only buys anything for direct-hire postings: the platform conceals the
+        hiring enterprise and its office address for headhunter roles, so ``home_tip_vf``
+        is never rendered for them and the scroll budget would be spent discovering that.
+        And the posting must sit in a district the operator asked to have measured — an
+        empty list means nothing is probed at all, so a scan that only cares about the
+        blacklist pays no swipe latency whatsoever. An unknown channel (``None``) still
+        probes: an unrecognised direct hire must not be silently spared distance screening.
         """
-        return self.is_commute_filter_active and is_headhunter is not True
+        if not self.is_commute_filter_active or is_headhunter is True:
+            return False
+        return self._match_location_token(self.business_district_inspect_list, location) is not None
 
     def evaluate_commute_distance(self, commute_distance_km: float | None) -> tuple[bool, str]:
         """Evaluate the commute distance App-Enforced Filter on its own.
@@ -1297,6 +1421,33 @@ class ScreeningPolicy:
         return (
             False,
             f"【App端强制过滤】距离家庭住址 {commute_distance_km:.1f}km 超过通勤上限 {limit:.1f}km",
+        )
+
+    def evaluate_location_blacklist(self, location: str) -> tuple[bool, str]:
+        """Evaluate the business district blacklist against a location the card did not carry.
+
+        The card's location facet names a district but no station, so a station entry in
+        ``business_district_blacklist`` can only be judged once the detail page has been
+        read and its location line is in hand (issue #333). Split out from
+        ``matches_card_keywords`` so the detail stage reuses one list and one reason
+        string without also re-running the title, company and JD blacklists against
+        detail-page text, which those lists were never written for.
+
+        Deterministic and one-strike, exactly as at the card stage: Whitelist Relaxation
+        does not exempt a region the operator refused, and an absent or unreadable
+        location fails open, because a posting the platform describes only as "上海"
+        must not be discarded over missing data.
+        """
+        if not self.enable_screening:
+            return True, ""
+
+        token = self._match_location_token(self.business_district_blacklist, location)
+        if token is None:
+            return True, ""
+
+        return (
+            False,
+            f"【商圈黑名单过滤】岗位所在区域/商圈 '{location}' 命中黑名单 '{token}'",
         )
 
     def evaluate_app_enforced_filters(
@@ -1459,7 +1610,6 @@ class ScreeningPolicy:
         norm_company = (company_name or "").lower()
         norm_tags = [t.lower() for t in (tags or [])]
         norm_digest = (digest or "").lower()
-        norm_location = (location or "").lower()
 
         # 1. Check title blacklist (一票否决: 检查 title 和 tags)
         for black in self.title_blacklist:
@@ -1479,11 +1629,11 @@ class ScreeningPolicy:
             if b and (b in norm_digest or any(b in t for t in norm_tags)):
                 return False, f"命中岗位摘要/标签黑名单关键词: '{black}'"
 
-        # 4. Check business district blacklist (一票否决: 检查 location)
-        for black in self.business_district_blacklist:
-            token = black.strip()
-            if token and token.lower() in norm_location:
-                return False, f"【商圈黑名单过滤】岗位所在区域/商圈 '{location}' 命中黑名单 '{token}'"
+        # 4. Business district blacklist (一票否决: 检查 location). The detail stage
+        # re-evaluates this same list against the fuller location line (#333).
+        location_pass, location_reason = self.evaluate_location_blacklist(location)
+        if not location_pass:
+            return False, location_reason
 
         # 白名单不再是准入闸门: 未命中白名单不拒绝卡片, 仅在 App 端强制过滤
         # 违例时由 evaluate_whitelist_relaxation 决定是否豁免放宽。
@@ -1496,6 +1646,7 @@ class ScreeningPolicy:
             "company_blacklist": self.company_blacklist,
             "jd_blacklist": self.jd_blacklist,
             "business_district_blacklist": self.business_district_blacklist,
+            "business_district_inspect_list": self.business_district_inspect_list,
             "enable_screening": self.enable_screening,
             "channel_preference": self.channel_preference,
             "max_commute_distance_km": self.max_commute_distance_km,
@@ -1511,6 +1662,7 @@ class ScreeningPolicy:
             company_blacklist=list(data.get("company_blacklist") or []),
             jd_blacklist=list(data.get("jd_blacklist") or []),
             business_district_blacklist=list(data.get("business_district_blacklist") or []),
+            business_district_inspect_list=list(data.get("business_district_inspect_list") or []),
             enable_screening=bool(data.get("enable_screening", True)),
             channel_preference=cls._normalize_channel_preference(
                 data.get("channel_preference", ChannelPreference.ALL.value)
@@ -1587,6 +1739,7 @@ class ScreeningPolicy:
                             "jd_blacklist",
                             "company_blacklist",
                             "business_district_blacklist",
+                            "business_district_inspect_list",
                             "channel_preference",
                             "max_commute_distance_km",
                         )
@@ -1808,6 +1961,7 @@ class SavedSearch:
                 "company_blacklist",
                 "jd_blacklist",
                 "business_district_blacklist",
+                "business_district_inspect_list",
             )
         ):
             policy_data = {
@@ -1816,6 +1970,7 @@ class SavedSearch:
                 "company_blacklist": data.get("company_blacklist"),
                 "jd_blacklist": data.get("jd_blacklist"),
                 "business_district_blacklist": data.get("business_district_blacklist"),
+                "business_district_inspect_list": data.get("business_district_inspect_list"),
             }
 
         screening_policy = ScreeningPolicy.from_dict(policy_data)

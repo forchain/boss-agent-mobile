@@ -108,16 +108,49 @@ def test_commute_filter_active_only_with_positive_ceiling():
 def test_commute_probe_gated_on_channel_with_fail_open_unknown():
     """Ticket #255: only a posting positively known to be a headhunter is spared the
     probe — the platform renders no distance widget for those. An unknown channel must
-    still probe, so an unrecognised direct hire is never silently spared screening."""
-    active = ScreeningPolicy(max_commute_distance_km=40.0)
-    assert active.should_probe_commute_distance(is_headhunter=False) is True
-    assert active.should_probe_commute_distance(is_headhunter=None) is True
-    assert active.should_probe_commute_distance(is_headhunter=True) is False
+    still probe, so an unrecognised direct hire is never silently spared screening.
+
+    Spec #328 added a second gate: the posting must also sit in a 考察名单 district, since
+    that is the only set of postings whose distance the operator asked to have measured.
+    """
+    active = ScreeningPolicy(
+        max_commute_distance_km=40.0, business_district_inspect_list=["张江"]
+    )
+    listed = "上海  浦东新区  张江"
+    assert active.should_probe_commute_distance(is_headhunter=False, location=listed) is True
+    assert active.should_probe_commute_distance(is_headhunter=None, location=listed) is True
+    assert active.should_probe_commute_distance(is_headhunter=True, location=listed) is False
 
     # With no ceiling to enforce, nothing is probed whatever the channel.
-    inactive = ScreeningPolicy(max_commute_distance_km=None)
-    assert inactive.should_probe_commute_distance(is_headhunter=False) is False
-    assert inactive.should_probe_commute_distance(is_headhunter=True) is False
+    inactive = ScreeningPolicy(
+        max_commute_distance_km=None, business_district_inspect_list=["张江"]
+    )
+    assert inactive.should_probe_commute_distance(is_headhunter=False, location=listed) is False
+    assert inactive.should_probe_commute_distance(is_headhunter=True, location=listed) is False
+
+
+def test_commute_probe_gated_on_the_inspection_list():
+    """Spec #328: an empty 考察名单 means nothing is probed, and only a listed location is."""
+    unlisted = ScreeningPolicy(max_commute_distance_km=40.0)
+    assert unlisted.should_probe_commute_distance(is_headhunter=False, location="上海  浦东新区  张江") is False
+
+    listed = ScreeningPolicy(max_commute_distance_km=40.0, business_district_inspect_list=["漕河泾"])
+    assert listed.should_probe_commute_distance(is_headhunter=False, location="上海  徐汇区  漕河泾") is True
+    assert listed.should_probe_commute_distance(is_headhunter=False, location="上海  浦东新区  张江") is False
+    # A city-only location names no district, so it cannot be in the list and defaults
+    # to 距离满足 rather than being measured on a guess.
+    assert listed.should_probe_commute_distance(is_headhunter=False, location="上海") is False
+    assert listed.should_probe_commute_distance(is_headhunter=False, location="") is False
+
+
+def test_a_metro_station_alone_can_put_a_posting_on_the_inspection_list():
+    """Spec #333: the detail page's location line carries a station the card facet cannot."""
+    policy = ScreeningPolicy(max_commute_distance_km=40.0, business_district_inspect_list=["华夏中路"])
+    line = "上海·浦东新区·张江(近13/16号线华夏中路地铁站)"
+    assert policy.should_probe_commute_distance(is_headhunter=False, location=line) is True
+    # The card facet alone would not have matched, which is the whole reason the detail
+    # stage re-asks: 张江 was never listed, only the station is.
+    assert policy.should_probe_commute_distance(is_headhunter=False, location="上海  浦东新区  张江") is False
 
 
 def test_commute_violation_still_relaxable_by_whitelist():

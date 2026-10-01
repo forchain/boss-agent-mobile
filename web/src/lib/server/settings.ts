@@ -257,6 +257,7 @@ export function loadMergedSettings(): SystemSettings {
 		company_blacklist: [],
 		jd_blacklist: ['驻场', '外包', '电销', '无底薪', '纯提成'],
 		business_district_blacklist: [],
+		business_district_inspect_list: [],
 		run_cleanup_on_startup: true,
 		chat: { ...DEFAULT_CHAT_ACKNOWLEDGMENT }
 	};
@@ -484,6 +485,7 @@ export function saveSettingsToLocalYaml(
 		`company_blacklist: ${JSON.stringify(merged.company_blacklist || [])}`,
 		`jd_blacklist: ${JSON.stringify(merged.jd_blacklist || [])}`,
 		`business_district_blacklist: ${JSON.stringify(merged.business_district_blacklist || [])}`,
+		`business_district_inspect_list: ${JSON.stringify(merged.business_district_inspect_list || [])}`,
 		``,
 		`# ------------------------------------------------------------------------------`,
 		`# 7. 「仅沟通」列表 · 拒信清扫与公司拉黑 (Rejection Triage & Company Blacklisting)`,

@@ -657,6 +657,15 @@
 							<span class="text-slate-600">·</span>
 							<span class="text-slate-400">📍 {currentJob.location}</span>
 						{/if}
+						{#if currentJob.metro_station}
+							<!-- The card facet carries a district only, so this is the one
+							     place the nearest station is known (issue #332). -->
+							<span class="text-slate-600">·</span>
+							<span
+								class="text-slate-300"
+								title={currentJob.location_line || `近${currentJob.metro_station}`}
+							>🚇 近{currentJob.metro_station}</span>
+						{/if}
 						{#if formatCommuteDistance(currentJob)}
 							<span class="text-slate-600">·</span>
 							<span
