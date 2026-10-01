@@ -343,9 +343,9 @@ async def test_in_memory_store_rejects_incomplete_records():
     """宁可不录入: a card without a real title or company never becomes a record."""
     store = InMemoryJobRecordStore()
 
-    assert await store.upsert_job_record({"title": "", "company_name": "某公司"}) == {}
-    assert await store.upsert_job_record({"title": "未注明职位", "company_name": "某公司"}) == {}
-    assert await store.upsert_job_record({"title": "工程师", "company_name": "未知公司"}) == {}
+    assert await store.upsert_job_record({"title": "", "company_name": "某公司"}) is None
+    assert await store.upsert_job_record({"title": "未注明职位", "company_name": "某公司"}) is None
+    assert await store.upsert_job_record({"title": "工程师", "company_name": "未知公司"}) is None
     assert await store.list_job_records() == []
 
 

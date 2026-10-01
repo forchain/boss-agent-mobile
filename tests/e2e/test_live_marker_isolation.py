@@ -1,6 +1,6 @@
 """
-tests/unit/test_live_marker_isolation.py
-========================================
+tests/e2e/test_live_marker_isolation.py
+=======================================
 Verifies the default test-tier seam (spec #247, ticket #248): an unadorned `pytest` run
 collects the fast unit suite only — never the `e2e` or `live` tiers, and never even loads
 `tests/e2e/conftest.py` — while explicit invocations still reach the tiers they name.
@@ -8,6 +8,10 @@ collects the fast unit suite only — never the `e2e` or `live` tiers, and never
 Every scenario drives a real collection-only subprocess against the repository's own
 `pyproject.toml` and root `conftest.py`, so what is asserted here is the configuration
 developers and agents actually run into.
+
+This file lives in the E2E tier, not the fast unit tier: spawning subprocesses is dispatch,
+which the tier contract assigns to Service Integration. Keeping it here is also what lets
+`tests/unit/conftest.py` forbid *all* subprocess execution with no exemption to slip through.
 """
 
 import json
@@ -18,6 +22,8 @@ import tomllib
 from pathlib import Path
 
 import pytest
+
+pytestmark = pytest.mark.e2e
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 E2E_CONFTEST = REPO_ROOT / "tests" / "e2e" / "conftest.py"

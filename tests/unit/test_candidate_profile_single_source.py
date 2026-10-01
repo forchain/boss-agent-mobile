@@ -147,12 +147,17 @@ def test_storage_failure_propagates_without_degrading():
             manager.save_memory_profile(sample_profile)
 
     # 3. Resume lifecycle graph must raise when storage fails during diff analyzer
+    # A stub client, not the real one: without it the graph builds a live LLM client and the
+    # fail-open screener spends seconds on the network before the broker error can surface.
+    stub_llm = MagicMock()
+    stub_llm.chat_completion_json.return_value = {}
     with pytest.raises(TransportError):
         run_resume_lifecycle_graph(
             raw_resume_text="王五，5年经验",
             file_name="wangwu.txt",
             user_id="user_err",
             broker=faulty_broker,
+            llm_client=stub_llm,
         )
 
 

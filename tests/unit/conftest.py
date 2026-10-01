@@ -40,19 +40,6 @@ from _job_store_harness import FakePocketBaseSession
 
 from droid_agent_core import gestures, locators
 
-_ORIG_POPEN = subprocess.Popen
-_ORIG_SOCKET_BIND = socket.socket.bind
-
-
-def _is_collection_only_invocation(args) -> bool:
-    if isinstance(args, (list, tuple)):
-        flat = " ".join(str(a) for a in args)
-    elif isinstance(args, str):
-        flat = args
-    else:
-        return False
-    return "--collect-only" in flat
-
 
 class _InstantPacingTime:
     """`time` proxy: every attribute forwards to the real module, `sleep` does nothing."""
@@ -102,15 +89,16 @@ def instant_ui_pacing(monkeypatch: pytest.MonkeyPatch) -> None:
 def fast_unit_boundary_guard(
     monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
 ) -> None:
-    """Enforce Fast Unit tier boundary (ticket #306):
-    No test in tests/unit/ may spawn processes or bind ports.
-    Sanctioned exception: collection-only invocations (test_live_marker_isolation.py).
+    """Enforce the Fast Unit tier boundary (ticket #306, Spec #303).
+
+    No test in ``tests/unit/`` may spawn a process or bind a port. There is deliberately no
+    exemption: the subprocess-driven tier-selection suite now lives in ``tests/e2e``, so a
+    unit test that reaches for a process or a socket is always a tier violation. This is what
+    keeps the fast tier's "< 60 seconds, no side effects" claim honest.
     """
 
     def _guarded_popen(*args, **kwargs):
         cmd_args = args[0] if args else kwargs.get("args")
-        if _is_collection_only_invocation(cmd_args):
-            return _ORIG_POPEN(*args, **kwargs)
         raise RuntimeError(
             f"Fast Unit tier boundary violation in {request.node.nodeid}: "
             f"subprocess execution is forbidden in the fast tier: {cmd_args!r}"

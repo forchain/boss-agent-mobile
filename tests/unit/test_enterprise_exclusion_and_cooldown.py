@@ -828,3 +828,27 @@ async def test_applied_companies_query_filter_includes_cooldown_cutoff():
     await broker.job_store.get_applied_direct_companies(cooldown_days=0)
     filter_expr_zero = session.get.call_args_list[0].kwargs["params"]["filter"]
     assert filter_expr_zero == "status='applied' && is_headhunter!=true"
+
+
+@pytest.mark.asyncio
+async def test_applied_companies_walk_stops_at_the_availability_backstop(monkeypatch, caplog):
+    """A permanent cool-down carries no time bound, so the walk is still bounded — loudly.
+
+    Removing the old 5,000-record ceiling must not turn the hot path into an unbounded walk.
+    The backstop is an availability guard, not a semantic cap: it protects a run from a
+    pathological collection and says so in the log rather than silently truncating.
+    """
+    from boss_agent import job_store as job_store_module
+
+    monkeypatch.setattr(job_store_module, "APPLIED_POOL_PAGE_SIZE", 1)
+    monkeypatch.setattr(job_store_module, "APPLIED_POOL_MAX_PAGES", 2)
+    session = _paged_session(
+        [[_applied("甲企业")], [_applied("乙企业")], [_applied("丙企业")]], per_page=1
+    )
+    broker = PocketBaseTaskBroker(base_url="http://mock-pb:8090", session=session)
+
+    companies = await broker.job_store.get_applied_direct_companies(cooldown_days=0)
+
+    assert session.get.call_count == 2, "The walk must stop at the backstop, not page forever."
+    assert companies == {"甲企业", "乙企业"}
+    assert "availability backstop" in caplog.text

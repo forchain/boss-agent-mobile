@@ -387,7 +387,7 @@ def _widen_remote_text_field_cap(
         raise TransportError(
             f"Network error inspecting collection '{collection}' for schema upgrade: {ex}"
         ) from ex
-    except json.JSONDecodeError as ex:
+    except json.JSONDecodeError as ex:  # persistence-guard: allow
         logger.warning(
             "Error decoding JSON from collection '%s' for schema upgrade: %s", collection, ex
         )
@@ -452,7 +452,7 @@ def provision_remote_pocketbase(
         import urllib3
 
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-    except ImportError:
+    except ImportError:  # persistence-guard: allow
         logger.error("The 'requests' package is required for remote PocketBase provisioning.")
         print(
             "❌ Error: 'requests' package is required for remote provisioning. Install via: pip install requests"

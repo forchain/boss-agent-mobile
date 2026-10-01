@@ -32,6 +32,7 @@
 	let channelFilter = $state<'all' | 'direct' | 'headhunter'>('all');
 	let searchQuery = $state('');
 	let isLoading = $state(true);
+	let loadError = $state<string | null>(null);
 
 	// Responsive Modal State (Issue #290)
 	let isModalOpen = $state(false);
@@ -103,6 +104,7 @@
 				limit: pageSize
 			});
 			jobs = res.items;
+			loadError = null;
 			totalJobs = res.totalItems;
 			totalPages = res.totalPages;
 			if (res.counts) {
@@ -114,6 +116,8 @@
 				selectedJobId = jobs[0].id;
 			}
 		} catch (e) {
+			// A broker outage must read as an error, not as an empty workbench (Spec #303, story #8).
+			loadError = e instanceof Error ? e.message : String(e);
 			console.error('Failed to load jobs', e);
 		} finally {
 			isLoading = false;
@@ -253,6 +257,16 @@
 </svelte:head>
 
 <div class="space-y-6">
+	{#if loadError}
+		<div
+			class="bg-rose-950/60 border border-rose-800 text-rose-200 rounded-2xl px-4 py-3 text-sm flex items-center space-x-2"
+			data-testid="jobs-load-error"
+		>
+			<span>⚠️</span>
+			<span>加载职位失败：{loadError}。当前显示的可能不是最新数据。</span>
+		</div>
+	{/if}
+
 	<!-- Top Summary Banner -->
 	<div class="bg-gradient-to-r from-slate-900 via-slate-900/90 to-cyan-950/40 border border-slate-800 rounded-2xl p-6 shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-4">
 		<div>

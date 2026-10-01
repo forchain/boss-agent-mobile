@@ -6,7 +6,12 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/svelte';
 import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
-import { confirmAction, alertAction, confirmDialogState } from '$lib/stores/confirm';
+import {
+	confirmAction,
+	alertAction,
+	confirmDialogState,
+	isConfirmDialogMounted
+} from '$lib/stores/confirm';
 
 describe('ConfirmDialog', () => {
 	afterEach(() => {
@@ -135,5 +140,36 @@ describe('ConfirmDialog', () => {
 		await fireEvent.click(okBtn);
 		await promise;
 		expect(alertDismissed).toBe(true);
+	});
+
+	it('fails closed when no dialog is mounted', async () => {
+		// Nobody can ask, so a destructive action must be denied, never waved through.
+		expect(isConfirmDialogMounted()).toBe(false);
+
+		const result = await confirmAction({ message: '确定要删除吗？', danger: true });
+
+		expect(result).toBe(false);
+	});
+
+	it('queues a second request instead of orphaning the first', async () => {
+		render(ConfirmDialog);
+
+		const first = confirmAction('第一个确认');
+		const second = confirmAction('第二个确认');
+
+		await waitFor(() => {
+			expect(screen.getByText('第一个确认')).toBeTruthy();
+		});
+		// The second is queued behind the first, not overwriting its resolve.
+		expect(screen.queryByText('第二个确认')).toBeNull();
+
+		await fireEvent.click(screen.getByTestId('confirm-dialog-confirm'));
+		await waitFor(() => {
+			expect(screen.getByText('第二个确认')).toBeTruthy();
+		});
+		await fireEvent.click(screen.getByTestId('confirm-dialog-cancel'));
+
+		expect(await first).toBe(true);
+		expect(await second).toBe(false);
 	});
 });

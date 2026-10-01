@@ -53,6 +53,14 @@ INVALID_COMPANY_NAMES: frozenset[str] = frozenset({"", "未注明公司", "未�
 #: record count, and the walk continues until the relevant records are exhausted.
 APPLIED_POOL_PAGE_SIZE = 200
 
+#: Availability backstop for the exclusion-pool walk — not a semantic cap.
+#: With a permanent cool-down (``cooldown_days <= 0``) the query carries no time bound, so a
+#: pathological ``status='applied'`` collection could otherwise page forever on the hot path.
+#: 200 pages × 200 rows = 40,000 records is far past any realistic history; tripping it is
+#: logged loudly rather than silently truncating the pool, so a real 40k-record history is a
+#: signal to raise this (or stop suppressing permanently), not a quiet under-count.
+APPLIED_POOL_MAX_PAGES = 200
+
 
 def _advanced_status(current: str | None, incoming: Any) -> str | None:
     """The status to write when a new observation meets a stored one, or None to keep it.
@@ -167,8 +175,16 @@ class JobRecordStore(ABC):
     """Repository interface for Job Records, exclusion pools and quota accounting."""
 
     @abstractmethod
-    async def upsert_job_record(self, record_data: dict[str, Any]) -> dict[str, Any]:
-        """Insert a new job record or merge new information into the existing one."""
+    async def upsert_job_record(self, record_data: dict[str, Any]) -> dict[str, Any] | None:
+        """Insert a new job record or merge new information into the existing one.
+
+        Returns the stored record, or ``None`` when the input is incomplete or placeholder
+        junk that is deliberately skipped ("宁可不录入"). A *rejected write* is never absorbed
+        into an empty value: the persistence seam raises its typed broker error
+        (``ValidationError`` for a 400, ``TransportError`` for a transport fault) so an
+        under-counted quota or exclusion pool surfaces instead of looking like a saved record
+        (Spec #303, story #8).
+        """
 
     @abstractmethod
     async def get_job_record_by_fingerprint(self, fingerprint: str) -> dict[str, Any] | None:
@@ -293,7 +309,7 @@ class InMemoryJobRecordStore(JobRecordStore):
                     return cand_id
         return None
 
-    async def upsert_job_record(self, record_data: dict[str, Any]) -> dict[str, Any]:
+    async def upsert_job_record(self, record_data: dict[str, Any]) -> dict[str, Any] | None:
         title = (record_data.get("title") or "").strip()
         comp_name = (record_data.get("company_name") or "").strip()
         fingerprint = record_data.get("fingerprint") or (
@@ -319,7 +335,7 @@ class InMemoryJobRecordStore(JobRecordStore):
                 title,
                 comp_name,
             )
-            return {}
+            return None
 
         r_name = record_data.get("recruiter_name", "")
         r_title = record_data.get("recruiter_title", "")
@@ -625,7 +641,7 @@ class PocketBaseJobRecordStore(JobRecordStore):
             raise TransportError(f"PocketBase server error ({resp.status_code}): {resp.text}")
         raise BrokerError(f"PocketBase write failed (HTTP {resp.status_code}): {resp.text}")
 
-    async def upsert_job_record(self, record_data: dict[str, Any]) -> dict[str, Any]:
+    async def upsert_job_record(self, record_data: dict[str, Any]) -> dict[str, Any] | None:
         title = (record_data.get("title") or "").strip()
         comp_name = (record_data.get("company_name") or "").strip()
         fingerprint = record_data.get("fingerprint") or (
@@ -649,7 +665,7 @@ class PocketBaseJobRecordStore(JobRecordStore):
                 title,
                 comp_name,
             )
-            return {}
+            return None
 
         self._normalize(record_data, title, comp_name)
 
@@ -659,15 +675,16 @@ class PocketBaseJobRecordStore(JobRecordStore):
         existing = await self._get_existing(fingerprint, record_data)
         if existing:
             patch_body = self._patch_body(existing, record_data, now)
-            try:
-                patch_resp = await self._write_job_record(
-                    self.session.patch,
-                    f"{url}/{existing['id']}",
-                    patch_body,
-                )
-                return patch_resp.json()
-            except ValidationError:
-                return {}
+            # A rejected write raises its typed broker error out of ``_write_job_record``
+            # rather than being absorbed here: swallowing a 400 would let a record that was
+            # never written pass for a saved one, under-counting the daily greeting quota and
+            # the direct-hire exclusion pool (Spec #303, story #8).
+            patch_resp = await self._write_job_record(
+                self.session.patch,
+                f"{url}/{existing['id']}",
+                patch_body,
+            )
+            return patch_resp.json()
 
         body: dict[str, Any] = {
             **_record_fields(record_data, fingerprint, now),
@@ -675,11 +692,8 @@ class PocketBaseJobRecordStore(JobRecordStore):
             "id": record_data.get("id") or uuid.uuid4().hex[:15],
         }
 
-        try:
-            resp = await self._write_job_record(self.session.post, url, body)
-            return resp.json()
-        except ValidationError:
-            return {}
+        resp = await self._write_job_record(self.session.post, url, body)
+        return resp.json()
 
     async def get_job_record_by_fingerprint(self, fingerprint: str) -> dict[str, Any] | None:
         url = self._jobs_collection_url()
@@ -780,6 +794,11 @@ class PocketBaseJobRecordStore(JobRecordStore):
         count cap. The collection is walked page by page until exhausted (removing the
         previous 5,000-record ceiling), ensuring long-lived candidates never lose their
         oldest relevant contacts.
+
+        Removing that ceiling does not mean "unbounded": a permanent cool-down
+        (``cooldown_days <= 0``) leaves the filter with no time bound at all, so the walk is
+        still protected by ``APPLIED_POOL_MAX_PAGES`` — an availability backstop, not a
+        semantic cap, that logs loudly when it trips.
         """
         url = self._jobs_collection_url()
         base_filter = "status='applied' && is_headhunter!=true"
@@ -796,6 +815,16 @@ class PocketBaseJobRecordStore(JobRecordStore):
         items: list[dict[str, Any]] = []
         page = 1
         while True:
+            if page > APPLIED_POOL_MAX_PAGES:
+                logger.error(
+                    "Exclusion-pool walk hit the %d-page availability backstop after %d rows "
+                    "for %s; the pool may be truncated. This is not a semantic cap — raise "
+                    "APPLIED_POOL_MAX_PAGES or the cooldown if this history is genuine.",
+                    APPLIED_POOL_MAX_PAGES,
+                    len(items),
+                    url,
+                )
+                break
             params = {
                 "filter": filter_expr,
                 "page": str(page),

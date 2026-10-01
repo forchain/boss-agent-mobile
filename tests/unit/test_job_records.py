@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
-from boss_agent.errors import TransportError
+from boss_agent.errors import TransportError, ValidationError
 from boss_agent.identifier_helpers import compute_job_fingerprint
 
 
@@ -473,7 +473,7 @@ async def test_broker_rejects_unspecified_or_empty_title_or_company():
                 "recruiter_name": "招聘者",
             }
         )
-        assert res == {}, f"Should have rejected bad title '{bad_title}'"
+        assert res is None, f"Should have rejected bad title '{bad_title}'"
 
     # Rejected companies
     for bad_company in ["", "   ", "未注明公司", "未知公司"]:
@@ -484,7 +484,7 @@ async def test_broker_rejects_unspecified_or_empty_title_or_company():
                 "recruiter_name": "招聘者",
             }
         )
-        assert res == {}, f"Should have rejected bad company '{bad_company}'"
+        assert res is None, f"Should have rejected bad company '{bad_company}'"
 
     assert len(await broker.job_store.list_job_records()) == 0
 
@@ -688,17 +688,17 @@ async def test_pocketbase_upsert_does_not_retry_or_truncate_unrelated_rejections
 
     long_jd = _long_expanded_jd()
 
-    rec = await broker.job_store.upsert_job_record(
-        {
-            "title": "算法工程师",
-            "company_name": "某科技公司",
-            "recruiter_name": "王招聘",
-            "fingerprint": "fp_dup",
-            "job_description": long_jd,
-        }
-    )
+    with pytest.raises(ValidationError, match="400 Bad Request"):
+        await broker.job_store.upsert_job_record(
+            {
+                "title": "算法工程师",
+                "company_name": "某科技公司",
+                "recruiter_name": "王招聘",
+                "fingerprint": "fp_dup",
+                "job_description": long_jd,
+            }
+        )
 
-    assert rec == {}
     assert mock_session.post.call_count == 1
     assert mock_session.post.call_args.kwargs["json"]["job_description"] == long_jd
 
@@ -718,15 +718,15 @@ async def test_pocketbase_upsert_does_not_truncate_when_another_field_is_rejecte
     mock_session.post.return_value = rejected
 
     jd = "岗位职责：负责模型训练与评测。"
-    rec = await broker.job_store.upsert_job_record(
-        {
-            "title": "算法工程师",
-            "company_name": "某科技公司",
-            "recruiter_name": "王招聘",
-            "fingerprint": "fp_other_field",
-            "job_description": jd,
-        }
-    )
+    with pytest.raises(ValidationError, match="400 Bad Request"):
+        await broker.job_store.upsert_job_record(
+            {
+                "title": "算法工程师",
+                "company_name": "某科技公司",
+                "recruiter_name": "王招聘",
+                "fingerprint": "fp_other_field",
+                "job_description": jd,
+            }
+        )
 
-    assert rec == {}
     assert mock_session.post.call_count == 1

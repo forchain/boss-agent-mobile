@@ -26,11 +26,11 @@ uv run --extra dev pytest        # == pytest tests/unit
 ```
 
 This is the pre-completion gate for every change, human or agent. It collects
-`tests/unit` only, finishes in tens of seconds (< 60 seconds budget) rather than minutes, and has zero side
-effects on the machine: no processes are signalled, no ports are bound, no shared runtime
-state is written, and no live LLM call is made. Use
-`uv run --extra dev pytest --collect-only -q` when you want to see exactly what a run
-would execute.
+`tests/unit` only, finishes in under 60 seconds, and has zero side effects on the machine:
+no processes are signalled, no ports are bound, no shared runtime state is written, and no
+live LLM call is made. The budget is not a slogan — CI fails the build when the tier crosses
+it (see [CI](#ci)). Use `uv run --extra dev pytest --collect-only -q` when you want to see
+exactly what a run would execute.
 
 The tier stays that fast because `tests/unit/conftest.py` removes the waiting that a mocked
 driver can never resolve: the sleep between UI polls and the humanized pauses between
@@ -82,19 +82,19 @@ markers). The root `conftest.py` keeps the deliberate invocations working on top
 Live device tests never carry the `e2e` marker, so no marker-based selection can reach the
 AVD by accident.
 
-`tests/unit/test_live_marker_isolation.py` asserts all of this against real
-collection-only subprocesses — if you change the defaults, that suite is what tells you
-what broke.
+`tests/e2e/test_live_marker_isolation.py` asserts all of this against real collection-only
+subprocesses — it lives in the E2E tier because spawning a process is dispatch, which the
+fast tier does not do. If you change the defaults, that suite is what tells you what broke.
 
 ## Where does my new test go?
 
 - **Everything mocked** (driver, broker, LLM client) → `tests/unit/`. It must stay
-  memory-safe: no real daemon, no fixed host port, no live LLM endpoint. A handler built
-  without a client calls the configured LLM — the screener fails open, so the only symptom is
-  latency and a token bill — so pass a stub client (`llm_client=MagicMock()` with a
-  `chat_completion_json` verdict). The tier-boundary suite `test_live_marker_isolation.py` is
-  the one sanctioned exception to "no subprocesses": it spawns `--collect-only` pytest runs to
-  verify the defaults, and collection executes nothing.
+  memory-safe: no real daemon, no fixed host port, no live LLM endpoint, and no subprocess.
+  A handler built without a client calls the configured LLM — the screener fails open, so the
+  only symptom is latency and a token bill — so pass a stub client (`llm_client=MagicMock()`
+  with a `chat_completion_json` verdict). There is no sanctioned exception: an autouse guard
+  in `tests/unit/conftest.py` rejects every `subprocess.Popen` and socket bind, and the
+  tier-selection suite that needs subprocesses lives in `tests/e2e`.
 - **Needs a real service, process, or port** → `tests/e2e/` with `@pytest.mark.e2e`. Use
   `free_port()` / `tmp_path` from `tests/_service_harness.py`, never port 5173 or the shared
   `.boss_agent/` directory.
@@ -103,5 +103,7 @@ what broke.
 
 ## CI
 
-`uv run --extra dev pytest` is the immediate PR check (tens of seconds, no infrastructure);
+`uv run --extra dev python scripts/check_fast_tier_budget.py` is the immediate PR check: it
+runs the fast unit tier (no infrastructure, no subprocesses) and fails the build when the
+tier exceeds its 60-second budget, so the claim above cannot quietly become false again.
 `uv run --extra dev pytest tests/e2e` belongs in a downstream job with PocketBase running.

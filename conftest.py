@@ -20,7 +20,7 @@ from that configuration alone:
 An explicit path always wins — nothing here widens a run the developer has already narrowed.
 Everything else keeps the default: an unadorned `pytest` runs the unit tier, and a broad
 path such as `pytest tests` still deselects E2E. See docs/agents/testing.md; the tests that
-pin all of it live in `tests/unit/test_live_marker_isolation.py`.
+pin all of it live in `tests/e2e/test_live_marker_isolation.py`.
 """
 
 import re
@@ -91,7 +91,7 @@ def _without_e2e_deselection(markexpr: str) -> str:
     """Drop the `not e2e` clause from the configured default marker expression.
 
     This assumes the clause is one top-level `and` term — the shape `pyproject.toml` writes,
-    which a real collection run in `tests/unit/test_live_marker_isolation.py` re-checks.
+    which a real collection run in `tests/e2e/test_live_marker_isolation.py` re-checks.
     """
     terms = [term.strip() for term in markexpr.split(" and ")]
     if E2E_DESELECT_CLAUSE not in terms:

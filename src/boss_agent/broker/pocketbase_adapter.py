@@ -456,7 +456,9 @@ class PocketBaseTaskBroker(BaseTaskBroker):
                 allow_404=True,
                 error_prefix=f"PocketBase claim_task patch({task_id}) failed",
             )
-        except (ValidationError, ConflictError):
+        except (ValidationError, ConflictError):  # persistence-guard: allow
+            # Losing the conditional-update race is the expected outcome of a CAS claim, not a
+            # failure: another worker won, so this one reports "nothing claimed" and moves on.
             return None
 
         if patch_resp.status_code == 404:
@@ -699,7 +701,7 @@ class PocketBaseTaskBroker(BaseTaskBroker):
             return val
         try:
             return datetime.fromisoformat(str(val).replace("Z", "+00:00"))
-        except (ValueError, TypeError):
+        except (ValueError, TypeError):  # persistence-guard: allow
             return None
 
 

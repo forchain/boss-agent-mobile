@@ -17,11 +17,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import requests
+from _job_store_harness import FakePocketBaseSession, pocketbase_job_store
 
 from boss_agent.broker.models import TaskType
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
 from boss_agent.candidate_memory_store import PocketBaseCandidateMemoryStore
-from boss_agent.errors import TransportError
+from boss_agent.errors import TransportError, ValidationError
 from boss_agent.feed_pipeline import FeedStreamConfig, JobFeedPipeline
 from boss_agent.job_store import PocketBaseJobRecordStore
 from boss_agent.worker.context import WorkerContext
@@ -88,6 +89,70 @@ async def test_job_record_store_raises_transport_error_on_network_failure():
 
     with pytest.raises(TransportError, match="get_job_record rec-123 failed"):
         await store.get_job_record("rec-123")
+
+
+@pytest.mark.asyncio
+async def test_upsert_job_record_propagates_rejected_patch_instead_of_empty():
+    """A 400 on an existing-record write must raise, never be absorbed into {} (story #8).
+
+    Before Spec #303 ``except ValidationError: return {}`` turned a rejected PATCH into an
+    empty record, so a write that never happened passed for a saved one and under-counted
+    the daily greeting quota and the direct-hire exclusion pool.
+    """
+    session = FakePocketBaseSession()
+    session.seed(
+        [
+            {
+                "fingerprint": "fp-reject",
+                "company_name": "深至科技",
+                "title": "工程师",
+                "recruiter_name": "招聘者",
+                "status": "jd_saved",
+            }
+        ]
+    )
+    store = pocketbase_job_store(session)
+
+    session.patch_failure = MagicMock(status_code=400, text="Broker rejected the write: 400")
+    with pytest.raises(ValidationError, match="400 Bad Request"):
+        await store.upsert_job_record(
+            {
+                "fingerprint": "fp-reject",
+                "company_name": "深至科技",
+                "title": "工程师",
+                "recruiter_name": "招聘者",
+            }
+        )
+
+
+@pytest.mark.asyncio
+async def test_upsert_job_record_propagates_rejected_insert_instead_of_empty():
+    """A 400 on a new-record insert must raise, never be absorbed into {} (story #8)."""
+    session = FakePocketBaseSession()
+    session.post_failure = MagicMock(status_code=400, text="Broker rejected the insert: 400")
+    store = pocketbase_job_store(session)
+
+    with pytest.raises(ValidationError, match="400 Bad Request"):
+        await store.upsert_job_record(
+            {
+                "fingerprint": "fp-new",
+                "company_name": "某新公司",
+                "title": "新岗位",
+                "recruiter_name": "招聘者",
+            }
+        )
+
+
+@pytest.mark.asyncio
+async def test_upsert_job_record_returns_none_for_incomplete_input_without_writing():
+    """The deliberate skip stays a clean, distinguishable ``None`` — not a phantom record."""
+    session = FakePocketBaseSession()
+    store = pocketbase_job_store(session)
+
+    result = await store.upsert_job_record({"title": "", "company_name": "某公司"})
+
+    assert result is None
+    assert session.records == {}
 
 
 @pytest.mark.asyncio

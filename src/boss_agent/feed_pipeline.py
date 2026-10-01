@@ -675,6 +675,11 @@ class JobFeedPipeline:
             existing_record=existing_record,
         )
         persisted = await self.store.upsert_job_record(dict(run.card_record))
+        if persisted is None:
+            # Incomplete/placeholder card: nothing was written, so there is no record to
+            # inspect, index, or count. Appending the empty result would inflate the run's
+            # job list and hand ``_inspect_detail`` a record with no id (Spec #303, story #8).
+            return
         # The card itself is already a result: a detail-page failure must not lose it.
         run.result.jobs.append(persisted)
         run.jobs_index = len(run.result.jobs) - 1

@@ -1,13 +1,22 @@
 """
 tests/unit/test_typed_persistence_guard.py
 ==========================================
-Guard test preventing broad-exception swallowing across persistence and broker seams
+Guard test preventing silent failure absorption across persistence and broker seams
 (Spec #303 / #308, ADR 0013).
 
-Fails if any repository store, broker adapter, or provisioner seam reintroduces
-a bare broad-exception handler (`except Exception:`, `except:`, `except BaseException:`)
-that absorbs errors and returns an empty sentinel (`None`, `[]`, `{}`, `False`, `0`)
-instead of propagating a typed failure (`TransportError`, `ValidationError`, etc.).
+Fails if any repository store, broker adapter, or provisioner seam has an ``except`` handler
+that absorbs a failure into an empty sentinel (``None``, ``[]``, ``{}``, ``False``, ``0``)
+without re-raising.
+
+The defect class is *"a failure absorbed into an empty value"*, not *"the handler was spelled
+``except Exception``"*. A typed ``except ValidationError: return {}`` is the same bug with
+better branding — it once let a rejected job-record write pass for a saved one, under-counting
+the daily greeting quota and the direct-hire exclusion pool. So the guard no longer looks at
+the *type* the handler catches; it looks at whether the handler swallows.
+
+An intentional degradation — a cache read that legitimately yields "nothing cached" — is
+allowed, but only when it says so out loud with a ``# persistence-guard: allow`` marker on the
+handler, so the exception is a recorded decision rather than an accident.
 """
 
 from __future__ import annotations
@@ -25,19 +34,9 @@ SEAM_FILES = [
     REPO_ROOT / "src/boss_agent/broker/provisioner.py",
 ]
 
-
-def is_broad_exception(node: ast.ExceptHandler) -> bool:
-    """Whether an ExceptHandler catches Exception, BaseException, or is a bare except."""
-    if node.type is None:
-        return True
-    if isinstance(node.type, ast.Name) and node.type.id in ("Exception", "BaseException"):
-        return True
-    if isinstance(node.type, ast.Tuple):
-        return any(
-            isinstance(elt, ast.Name) and elt.id in ("Exception", "BaseException")
-            for elt in node.type.elts
-        )
-    return False
+# Put this on an `except` handler that deliberately degrades to an empty value instead of
+# re-raising, so the intent is recorded and the guard stays meaningful for new handlers.
+ALLOW_MARKER = "# persistence-guard: allow"
 
 
 def is_empty_return(node: ast.AST) -> bool:
@@ -52,38 +51,60 @@ def is_empty_return(node: ast.AST) -> bool:
         return True
     if isinstance(node.value, ast.Dict) and len(node.value.keys) == 0:
         return True
-    return bool(isinstance(node.value, ast.Set) and len(node.value.elts) == 0)
+    if isinstance(node.value, ast.Set) and len(node.value.elts) == 0:
+        return True
+    # ``return dict()`` is the same empty sentinel spelled differently.
+    value = node.value
+    return (
+        isinstance(value, ast.Call)
+        and isinstance(value.func, ast.Name)
+        and value.func.id in ("dict", "list", "set")
+        and not value.args
+    )
 
 
-def find_swallowed_broad_exceptions(tree: ast.AST, file_path: str = "") -> list[str]:
-    """Find ExceptHandler blocks that catch broad exceptions and return empty values without raising."""
+def find_swallowed_empty_returns(tree: ast.AST, file_path: str = "", source: str = "") -> list[str]:
+    """Find ``except`` handlers that return an empty sentinel without re-raising.
+
+    Every handler is examined, whatever it catches: the swallowed-value defect does not
+    care about the handler's spelling. A handler is exempt only when its source carries
+    the ``ALLOW_MARKER``.
+    """
+    lines = source.splitlines()
     violations: list[str] = []
 
     for node in ast.walk(tree):
         if not isinstance(node, ast.ExceptHandler):
             continue
 
-        if not is_broad_exception(node):
+        # A handler that re-raises somewhere is propagating, not swallowing.
+        if any(isinstance(stmt, ast.Raise) for stmt in ast.walk(node)):
             continue
 
-        # Check if handler raises an exception
-        has_raise = any(isinstance(stmt, ast.Raise) for stmt in ast.walk(node))
-        if has_raise:
-            continue
-
-        # Check if handler contains an empty return
         empty_returns = [stmt for stmt in ast.walk(node) if is_empty_return(stmt)]
-        if empty_returns:
-            return_exprs = [ast.unparse(r) for r in empty_returns]
-            violations.append(
-                f"{file_path}:{node.lineno}: broad exception caught without re-raise, returning empty: {return_exprs}"
-            )
+        if not empty_returns:
+            continue
+
+        span = lines[node.lineno - 1 : (node.end_lineno or node.lineno)]
+        if any(ALLOW_MARKER in line for line in span):
+            continue
+
+        caught = ast.unparse(node.type) if node.type is not None else "bare except"
+        return_exprs = [ast.unparse(r) for r in empty_returns]
+        violations.append(
+            f"{file_path}:{node.lineno}: `except {caught}` absorbs failure into {return_exprs} "
+            f"without re-raising; add `{ALLOW_MARKER}` if this degradation is intentional"
+        )
 
     return violations
 
 
-def test_guard_catches_synthetic_swallow_patterns():
-    """Verify that the AST guard correctly flags broad-exception swallow patterns."""
+def _check(code: str) -> list[str]:
+    return find_swallowed_empty_returns(ast.parse(code), "synthetic.py", code)
+
+
+def test_guard_catches_broad_swallow_patterns():
+    """A broad handler that returns an empty sentinel is flagged."""
     bad_code_none = """
 def get_thing():
     try:
@@ -92,9 +113,9 @@ def get_thing():
         logger.warning(e)
         return None
 """
-    violations = find_swallowed_broad_exceptions(ast.parse(bad_code_none), "synthetic.py")
+    violations = _check(bad_code_none)
     assert len(violations) == 1
-    assert "returning empty: ['return None']" in violations[0]
+    assert "returning ['return None']" in violations[0] or "into ['return None']" in violations[0]
 
     bad_code_list = """
 def list_things():
@@ -103,9 +124,7 @@ def list_things():
     except:
         return []
 """
-    violations = find_swallowed_broad_exceptions(ast.parse(bad_code_list), "synthetic.py")
-    assert len(violations) == 1
-    assert "returning empty: ['return []']" in violations[0]
+    assert len(_check(bad_code_list)) == 1
 
     bad_code_false = """
 def delete_thing():
@@ -114,43 +133,70 @@ def delete_thing():
     except (Exception,):
         return False
 """
-    violations = find_swallowed_broad_exceptions(ast.parse(bad_code_false), "synthetic.py")
-    assert len(violations) == 1
-    assert "returning empty: ['return False']" in violations[0]
+    assert len(_check(bad_code_false)) == 1
 
 
-def test_guard_permits_proper_typed_and_reraising_patterns():
-    """Verify that specific exceptions and re-raising handlers are permitted."""
-    good_typed_raise = """
-def get_thing():
+def test_guard_catches_typed_swallow_patterns():
+    """A *typed* handler that returns an empty sentinel is the same bug, and is flagged too.
+
+    This is the regression Spec #303 exists to remove: ``except ValidationError: return {}``
+    in ``upsert_job_record`` let a rejected write pass for a saved record.
+    """
+    typed_swallow = """
+async def upsert(record):
     try:
-        do_io()
-    except Exception as e:
-        raise TransportError(str(e)) from e
+        return await self._write(record)
+    except ValidationError:
+        return {}
 """
-    assert find_swallowed_broad_exceptions(ast.parse(good_typed_raise)) == []
+    violations = _check(typed_swallow)
+    assert len(violations) == 1
+    assert "ValidationError" in violations[0]
 
-    good_specific_catch = """
+    typed_none = """
 def parse_date(val):
     try:
         return datetime.fromisoformat(val)
     except (ValueError, TypeError):
         return None
 """
-    assert find_swallowed_broad_exceptions(ast.parse(good_specific_catch)) == []
+    assert len(_check(typed_none)) == 1
 
 
-def test_repository_and_provisioner_seams_have_no_broad_swallows():
-    """Ensure no repository store, broker adapter, or provisioner seam swallows broad exceptions."""
+def test_guard_permits_reraising_and_marked_degradation():
+    """Re-raising handlers pass; an intentional degradation passes only with the marker."""
+    typed_raise = """
+def get_thing():
+    try:
+        do_io()
+    except Exception as e:
+        raise TransportError(str(e)) from e
+"""
+    assert _check(typed_raise) == []
+
+    marked = """
+def read_cache(path):
+    try:
+        return load(path)
+    except (json.JSONDecodeError, OSError):  # persistence-guard: allow
+        return None
+"""
+    assert _check(marked) == []
+
+
+def test_repository_and_provisioner_seams_have_no_swallowed_empty_returns():
+    """No repository store, broker adapter, or provisioner seam may swallow a failure away."""
     all_violations: list[str] = []
 
     for file_path in SEAM_FILES:
         assert file_path.exists(), f"Expected seam file to exist: {file_path}"
-        tree = ast.parse(file_path.read_text(encoding="utf-8"))
-        violations = find_swallowed_broad_exceptions(tree, str(file_path.relative_to(REPO_ROOT)))
+        source = file_path.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        violations = find_swallowed_empty_returns(
+            tree, str(file_path.relative_to(REPO_ROOT)), source
+        )
         all_violations.extend(violations)
 
     assert not all_violations, (
-        "Found broad-exception swallow patterns in repository/broker seams:\n"
-        + "\n".join(all_violations)
+        "Found failure-absorbing handlers in repository/broker seams:\n" + "\n".join(all_violations)
     )

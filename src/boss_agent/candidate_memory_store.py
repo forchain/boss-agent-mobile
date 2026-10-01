@@ -185,7 +185,9 @@ class PocketBaseCandidateMemoryStore(CandidateMemoryStore):
                         with contextlib.suppress(Exception):
                             data[json_col] = json.loads(data[json_col])
                 return data
-        except (sqlite3.Error, OSError) as e:
+        except (sqlite3.Error, OSError) as e:  # persistence-guard: allow
+            # The SQLite file is a local read-through cache, not the source of truth: a miss
+            # or a corrupt cache means "no cached profile", and the PocketBase read follows.
             logger.warning("Failed to read candidate profile from SQLite fallback: %s", e)
             return None
 
@@ -340,7 +342,9 @@ class PocketBaseCandidateMemoryStore(CandidateMemoryStore):
                     (user_id,),
                 )
                 return [dict(r) for r in cursor.fetchall()]
-        except (sqlite3.Error, OSError) as e:
+        except (sqlite3.Error, OSError) as e:  # persistence-guard: allow
+            # Local cache read: an empty revision list is the honest answer for an
+            # unreadable cache, not a fabricated failure to be propagated.
             logger.warning("Failed to query resume revisions from SQLite: %s", e)
             return []
 
@@ -543,7 +547,14 @@ async def async_migrate_legacy_candidate_profile(
         if not raw_text.strip():
             return None
         raw_data = json.loads(raw_text)
-    except (json.JSONDecodeError, OSError, UnicodeDecodeError, ValueError) as e:
+    except (
+        json.JSONDecodeError,
+        OSError,
+        UnicodeDecodeError,
+        ValueError,
+    ) as e:  # persistence-guard: allow
+        # Best-effort migration of a legacy on-disk profile: an unparseable file is treated
+        # as "no legacy profile to migrate", not as a failure worth aborting startup for.
         logger.warning("Failed to parse legacy profile at %s: %s", path, e)
         return None
 

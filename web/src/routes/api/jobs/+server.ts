@@ -23,10 +23,8 @@ export const GET: RequestHandler = async ({ url }) => {
 	const finalFilter = buildJobFilter({ status, channel, search });
 
 	let items: any[] = [];
-	let totalItems = 0;
-	let totalPages = 0;
 
-	const fetchCount = async (filterCond: string) => {
+	const fetchCount = async (filterCond: string): Promise<number | null> => {
 		try {
 			const countFilter = `(company_name != '' && company_name != '未知公司') && (${filterCond})`;
 			const r = await listRecords(COLLECTIONS.jobs, {
@@ -35,19 +33,22 @@ export const GET: RequestHandler = async ({ url }) => {
 			});
 			return r.totalItems ?? 0;
 		} catch {
-			return 0;
+			// A failed count is *unknown*, not zero: reporting 0 would render as "no jobs here".
+			return null;
 		}
 	};
 
 	try {
 		const [dataPage, allCount, jdSavedCount, matchedCount, appliedCount, ignoredCount, directCount, headhunterCount] =
 			await Promise.all([
+				// The list itself is the gate. An unreachable broker here is a failed read, not an
+				// empty workbench: let the BrokerError reach the handler below and answer 502.
 				listRecords(COLLECTIONS.jobs, {
 					sort: '-created',
 					page,
 					perPage: limit,
 					filter: finalFilter || undefined
-				}).catch(() => null),
+				}),
 				fetchCount("status != 'ignored'"),
 				fetchCount("status = 'jd_saved' || status = 'unmatched' || status = 'digest_only'"),
 				fetchCount("status = 'matched'"),
@@ -57,11 +58,9 @@ export const GET: RequestHandler = async ({ url }) => {
 				fetchCount('is_headhunter = true')
 			]);
 
-		if (dataPage) {
-			items = dataPage.items || [];
-			totalItems = dataPage.totalItems ?? items.length;
-			totalPages = dataPage.totalPages ?? (items.length > 0 ? 1 : 0);
-		}
+		items = dataPage.items || [];
+		const totalItems = dataPage.totalItems ?? items.length;
+		const totalPages = dataPage.totalPages ?? (items.length > 0 ? 1 : 0);
 
 		items = items.filter(
 			(it: any) => it.company_name && it.company_name.trim() !== '' && it.company_name.trim() !== '未知公司'
@@ -78,15 +77,29 @@ export const GET: RequestHandler = async ({ url }) => {
 			title: cleanJobTitle(it.title)
 		}));
 
-		const counts: JobRecordsCounts = {
-			all: allCount,
-			jd_saved: jdSavedCount,
-			matched: matchedCount,
-			applied: appliedCount,
-			ignored: ignoredCount,
-			direct: directCount,
-			headhunter: headhunterCount
-		};
+		const countsKnown = [
+			allCount,
+			jdSavedCount,
+			matchedCount,
+			appliedCount,
+			ignoredCount,
+			directCount,
+			headhunterCount
+		].every((c) => c !== null);
+
+		// Only report counts when every one of them was read; a partial set would be a
+		// smaller lie. Omitting `counts` leaves the client showing its last known values.
+		const counts: JobRecordsCounts | undefined = countsKnown
+			? {
+					all: allCount as number,
+					jd_saved: jdSavedCount as number,
+					matched: matchedCount as number,
+					applied: appliedCount as number,
+					ignored: ignoredCount as number,
+					direct: directCount as number,
+					headhunter: headhunterCount as number
+				}
+			: undefined;
 
 		return json({
 			success: true,
@@ -95,26 +108,14 @@ export const GET: RequestHandler = async ({ url }) => {
 			totalPages: totalPages === 0 && items.length > 0 ? 1 : totalPages,
 			page,
 			perPage: limit,
-			counts
+			...(counts ? { counts } : {})
 		});
-	} catch {
-		return json({
-			success: true,
-			records: [],
-			total: 0,
-			totalPages: 0,
-			page,
-			perPage: limit,
-			counts: {
-				all: 0,
-				jd_saved: 0,
-				matched: 0,
-				applied: 0,
-				ignored: 0,
-				direct: 0,
-				headhunter: 0
-			}
-		});
+	} catch (err: any) {
+		// Same mapping the write handlers use: a broker outage is a failed read, answered 502,
+		// not a successful "no jobs" (Spec #303, story #8).
+		const httpStatus = err instanceof BrokerError ? err.status : 502;
+		const message = err?.message || 'Failed to load job records';
+		return json({ success: false, message, error: message }, { status: httpStatus });
 	}
 };
 

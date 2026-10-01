@@ -29,7 +29,7 @@ export async function getJobRecords(options: GetJobRecordsOptions = {}): Promise
 		totalPages: number;
 		page: number;
 		perPage: number;
-		counts: JobRecordsCounts;
+		counts?: JobRecordsCounts;
 	}>(`/api/jobs?${query.toString()}`);
 
 	return {

@@ -409,6 +409,25 @@ describe('SvelteKit Server Endpoints', () => {
 		expect(getJson.records.some((r: any) => r.fingerprint === postJson.record.fingerprint)).toBe(true);
 	});
 
+	it('GET /api/jobs answers 502 with success:false when the broker is unreachable', async () => {
+		// A broker outage must read as an error, not as a successful "no jobs" workbench
+		// (Spec #303, story #8). The sibling write handlers already map BrokerError this way.
+		const { GET: handleJobsGet } = await import('../routes/api/jobs/+server');
+
+		const outage = vi.fn().mockRejectedValue(new Error('ECONNREFUSED'));
+		vi.stubGlobal('fetch', outage);
+		try {
+			const res = await handleJobsGet({ url: new URL('http://localhost/api/jobs') } as any);
+
+			expect(res.status).toBe(502);
+			const body = await res.json();
+			expect(body.success).toBe(false);
+			expect(body.records).toBeUndefined();
+		} finally {
+			vi.stubGlobal('fetch', fakeBrokerFetch);
+		}
+	});
+
 	it('GET /api/jobs returns empty array when status has no matches and creates no fallback file', async () => {
 		const fs = await import('fs');
 		const path = await import('path');

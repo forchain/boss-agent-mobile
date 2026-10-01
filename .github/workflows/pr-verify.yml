@@ -48,8 +48,8 @@ jobs:
       - name: Generated Types Drift Guard
         run: uv run python scripts/generate_dashboard_types.py --check
 
-      - name: Fast Unit Tier
-        run: uv run --extra dev pytest
+      - name: Fast Unit Tier (with budget gate)
+        run: uv run --extra dev python scripts/check_fast_tier_budget.py
 
       - name: Web Dashboard Typecheck
         run: npm --prefix web run check
