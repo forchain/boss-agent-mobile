@@ -3,6 +3,8 @@
 		customGreeting = $bindable(''),
 		isSavingGreeting = false,
 		saveGreetingNotice = '',
+		greetingProvenanceKind = 'unknown',
+		greetingProvenanceText = '',
 		showManualEditSuggestion = false,
 		critiqueInput = $bindable(''),
 		isRefining = false,
@@ -25,6 +27,8 @@
 		customGreeting: string;
 		isSavingGreeting?: boolean;
 		saveGreetingNotice?: string;
+		greetingProvenanceKind?: string;
+		greetingProvenanceText?: string;
 		showManualEditSuggestion?: boolean;
 		critiqueInput: string;
 		isRefining?: boolean;
@@ -53,6 +57,19 @@
 			<label for="custom-greeting-textarea" class="block text-xs font-semibold text-slate-400">
 				💬 定制破冰打招呼语 (已结合痛点，支持在线微调)
 			</label>
+			{#if greetingProvenanceText}
+				<span
+					id="greeting-provenance-badge"
+					class={[
+						'text-[10px] px-2 py-0.5 rounded-full border font-medium whitespace-nowrap',
+						greetingProvenanceKind === 'human'
+							? 'text-emerald-300 border-emerald-700/70 bg-emerald-950/40'
+							: 'text-slate-400 border-slate-700 bg-slate-900/60'
+					].join(' ')}
+				>
+					{greetingProvenanceText}
+				</span>
+			{/if}
 			{#if saveGreetingNotice}
 				<span class="text-xs text-emerald-400 font-medium">{saveGreetingNotice}</span>
 			{/if}

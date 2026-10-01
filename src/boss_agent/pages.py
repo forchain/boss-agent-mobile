@@ -23,7 +23,7 @@ from droid_agent_core.locators import (
 
 from .card_parser import CardFacets, ParsedCard, needs_text_fallback, parse_card
 from .enums import AuthStatus, ChatButtonState
-from .identifier_helpers import classify_chat_button
+from .identifier_helpers import classify_chat_button, jd_is_truncated
 from .job_entities import JobCardBrief, JobPosting
 from .keyword_constants import PLATFORM_BADGE_MARKERS
 from .rejection import DISINTEREST_REASON
@@ -1325,9 +1325,8 @@ class JobDetailPage(BaseBossPage):
         initial_text = getattr(desc_elem, "text", "") or ""
         self._current_description = initial_text.strip()
 
-        is_truncated = (
-            "查看更多" in initial_text or "展开" in initial_text or initial_text.endswith("...")
-        )
+        # One rule, owned by the domain model, and read by the stored-JD check too (#301).
+        is_truncated = jd_is_truncated(initial_text)
         if not is_truncated:
             _log_info(
                 f"✅ Job description is already fully expanded (length: {len(initial_text)} chars, no '查看更多' found)."

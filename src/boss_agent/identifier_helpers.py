@@ -24,6 +24,7 @@ from boss_agent.keyword_constants import (
     EDUCATION_KEYWORDS,
     EXPERIENCE_KEYWORDS,
     GENERIC_ROLE_TOKENS,
+    GREETING_SOURCE_HUMAN,
     HEADHUNTER_AGENCY_KEYWORDS,
     INVALID_COMPANY_NAMES,
     KNOWN_CITIES,
@@ -31,6 +32,7 @@ from boss_agent.keyword_constants import (
     PLATFORM_BADGE_MARKERS,
     RECRUITER_SEPARATORS,
     RECRUITER_TITLE_KEYWORDS,
+    TRUNCATED_JD_MARKERS,
     UNCONTACTED_BUTTON_TEXTS,
     UNUSABLE_JD_MARKERS,
 )
@@ -413,6 +415,36 @@ def is_substantive_jd(jd: str | None) -> bool:
     """Whether an extracted JD carries enough signal to screen or greet from."""
     text = jd or ""
     return len(text) >= MIN_JD_CHARS and text not in UNUSABLE_JD_MARKERS
+
+
+def jd_is_truncated(jd: str | None) -> bool:
+    """Whether a job description stops short of the full text on screen."""
+    text = (jd or "").strip()
+    return any(marker in text for marker in TRUNCATED_JD_MARKERS) or text.endswith("...")
+
+
+def jd_is_usable_on_file(jd: str | None) -> bool:
+    """Whether a JD a record already holds is as good as reading the page again (#301).
+
+    The two judgements a freshly extracted JD is put through, applied to the stored text:
+    enough signal to work from, and not truncated. Not a third rule.
+    """
+    text = (jd or "").strip()
+    return bool(text) and is_substantive_jd(text) and not jd_is_truncated(text)
+
+
+def greeting_is_human(record: dict | None) -> bool:
+    """Whether a Job Record's greeting was written by a human rather than drafted by the agent.
+
+    Unknown provenance is not human provenance. A legacy record — and a record whose
+    ``greeting_source`` arrived as something else entirely — keeps today's behaviour of
+    being drafted for, so shipping the field cannot silently freeze an old agent draft in
+    place as if somebody had approved it.
+    """
+    if not record:
+        return False
+    text = (record.get("greeting_message") or "").strip()
+    return bool(text) and str(record.get("greeting_source") or "") == GREETING_SOURCE_HUMAN
 
 
 def is_headhunter_agency_name(name: str | None) -> bool:

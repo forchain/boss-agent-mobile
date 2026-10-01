@@ -17,6 +17,8 @@
 	import { validateCanBlacklistCompany, isMaskedCompanyName } from '$lib/screening';
 	import { apiGet, apiPost } from '$lib/apiClient';
 	import { confirmAction, alertAction } from '$lib/stores/confirm';
+	import { buildDirectApplyLaunch } from '$lib/taskLaunch';
+	import { greetingProvenance, greetingProvenanceLabel, humanGreetingPatch } from '$lib/greetingProvenance';
 
 	import JobIgnoredBanner from './studio/JobIgnoredBanner.svelte';
 	import JobHeaderCard from './studio/JobHeaderCard.svelte';
@@ -84,6 +86,11 @@
 	let isClearingCompany = $state(false);
 	let communicationNotice = $state('');
 
+	// Derived: whose words the greeting box is holding (issue #300). The panel has to say it,
+	// because "save this and the agent sends it verbatim" is the whole preview story once the
+	// run-level preview tier is gone.
+	let greetingProvenanceKind = $derived(greetingProvenance(currentJob));
+	let greetingProvenanceText = $derived(greetingProvenanceLabel(greetingProvenanceKind));
 	// Derived: Blacklist guardrail status for selected job
 	let blacklistGuardrail = $derived(
 		currentJob
@@ -132,12 +139,15 @@
 				llmSettings: llmSettings
 			});
 
-			// Update record status to matched and persist evaluation details
+			// Update record status to matched and persist evaluation details. A copy the
+			// operator asked the dashboard to generate is theirs to approve: it is saved as a
+			// human greeting, so the next run sends this text verbatim instead of drafting a
+			// new one over it (#300).
 			const updatePayload: Partial<JobRecord> = {
 				status: 'matched',
 				match_score: result.match_score,
 				jd_key_requirements: result.jd_key_requirements,
-				greeting_message: result.greeting_message
+				...humanGreetingPatch(result.greeting_message)
 			};
 
 			const updated = await updateJobRecord(currentJob.id, updatePayload);
@@ -158,8 +168,8 @@
 		const hadChanged = customGreeting.trim() !== (currentJob.greeting_message || '').trim();
 		isSavingGreeting = true;
 		try {
-			await updateJobRecord(currentJob.id, { greeting_message: customGreeting });
-			localOverride = { ...currentJob, greeting_message: customGreeting };
+			await updateJobRecord(currentJob.id, humanGreetingPatch(customGreeting));
+			localOverride = { ...currentJob, ...humanGreetingPatch(customGreeting) };
 			onJobUpdated?.({ ...localOverride });
 			saveGreetingNotice = '✅ 打招呼语已保存';
 			if (hadChanged) {
@@ -221,8 +231,8 @@
 		refinementDiff = null;
 
 		try {
-			await updateJobRecord(currentJob.id, { greeting_message: newGreeting });
-			localOverride = { ...currentJob, greeting_message: newGreeting };
+			await updateJobRecord(currentJob.id, humanGreetingPatch(newGreeting));
+			localOverride = { ...currentJob, ...humanGreetingPatch(newGreeting) };
 			onJobUpdated?.({ ...localOverride });
 			saveGreetingNotice = '✅ 已采纳优化文案并保存';
 			setTimeout(() => {
@@ -471,14 +481,21 @@
 		applyNotice = '正在下发定向投递任务至模拟器...';
 
 		try {
-			const task = await createAutomationTask('AUTO_APPLY', {
-				keyword: currentJob.title,
-				direct_job_id: currentJob.id,
-				greeting_message: customGreeting || currentJob.greeting_message,
-				company_name: currentJob.company_name,
-				job_title: currentJob.title,
-				candidate_profile: profile
-			});
+			// Through the launch contract: this payload used to state no `target_action`, no
+			// preview pair and no threshold, so the worker's draft-only defaults decided and
+			// the app promised a communication it never sent — and the score gate could veto
+			// a posting the human had just picked.
+			const launch = buildDirectApplyLaunch(
+				{
+					job_id: currentJob.id,
+					title: currentJob.title,
+					company_name: currentJob.company_name,
+					greeting_message: customGreeting || currentJob.greeting_message,
+					candidate_profile: profile
+				},
+				{ source: 'manual' }
+			);
+			const task = await createAutomationTask(launch.task_type, launch.payload, launch.source);
 
 			applyNotice = `🚀 投递任务已成功派发 (Task ID: ${task.id})，模拟器将自动执行沟通！`;
 			onActionCompleted?.('apply');
@@ -563,6 +580,8 @@
 					bind:customGreeting
 					{isSavingGreeting}
 					{saveGreetingNotice}
+					{greetingProvenanceKind}
+					{greetingProvenanceText}
 					{showManualEditSuggestion}
 					bind:critiqueInput
 					{isRefining}

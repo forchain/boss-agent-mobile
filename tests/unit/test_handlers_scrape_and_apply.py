@@ -146,8 +146,16 @@ async def test_scrape_enrichment_falls_back_to_jd_digest_when_card_has_no_snippe
 
 
 @pytest.mark.asyncio
-async def test_auto_apply_handler_preview_mode_drafts_greeting(broker, mock_driver):
-    """Verify AutoApplyHandler in preview_only mode types greeting draft and pauses without sending."""
+async def test_auto_apply_handler_reads_a_legacy_preview_payload_and_never_sends(
+    broker, mock_driver
+):
+    """A task queued before #302 keeps the depth its writer stated.
+
+    The payload carries the full legacy pair — both keys, as older builders always wrote
+    them — and the worker honours it instead of re-deriving depth from the task type, so an
+    in-flight draft is never promoted into a message nobody approved. The log names the
+    shape it read, which is how the pair can be deleted once nothing writes it.
+    """
     mock_title = MagicMock(text="Senior Python Agent Engineer")
     mock_company = MagicMock(text="Future Robotics")
     mock_salary = MagicMock(text="45-70K")
@@ -192,7 +200,9 @@ async def test_auto_apply_handler_preview_mode_drafts_greeting(broker, mock_driv
         payload={
             "keyword": "Python",
             "min_score": 75,
+            "target_action": "auto_apply",
             "preview_only": True,
+            "auto_send": False,
             "preview_timeout_sec": 0.01,
             "candidate_profile": {
                 "name": "Candidate",
@@ -210,6 +220,10 @@ async def test_auto_apply_handler_preview_mode_drafts_greeting(broker, mock_driv
     assert finished_task.status == TaskStatus.SUCCESS
     assert any("preview" in log.lower() or "greeting" in log.lower() for log in finished_task.logs)
     assert finished_task.payload.get("preview_only") is True
+    # The log says which shape produced this depth, so a legacy task stays visible.
+    assert any(
+        "draft only" in log.lower() and "legacy" in log.lower() for log in finished_task.logs
+    ), finished_task.logs
 
 
 @pytest.mark.asyncio
@@ -800,3 +814,91 @@ async def test_auto_apply_handler_clears_filters_when_no_filter(broker, mock_dri
     finished_task = await broker.get_task(task.id)
     assert finished_task is not None
     assert any("clearing" in log.lower() for log in finished_task.logs)
+
+
+@pytest.mark.asyncio
+async def test_auto_apply_handler_runs_a_contract_built_launch_as_auto_send(broker, mock_driver):
+    """#298's promise, mechanised: the payload the launch contract builds actually sends.
+
+    The reported bug was a strategy whose Target Action said 自动打招呼 producing a run that
+    drafted and stopped. Depth is no longer something a caller states, so the honest test is
+    the real artifact — `build_search_launch` over an `auto_apply` SavedSearch, read by the
+    worker's own parser — and the log line an operator actually reads.
+    """
+    from boss_agent import task_launch
+    from boss_agent.search_entities import SavedSearch, SearchConfig
+
+    mock_title = MagicMock(text="Agent 平台工程师")
+    mock_company = MagicMock(text="智元创新")
+    mock_salary = MagicMock(text="45-70K")
+    mock_desc = MagicMock(text="Expertise in Python, LLM agents, and Android automation.")
+    mock_elem = MagicMock()
+
+    def mock_find(by, value):
+        if "job_name" in value:
+            return [mock_title]
+        if "company_name" in value:
+            return [mock_company]
+        if "salary" in value:
+            return [mock_salary]
+        if "desc" in value:
+            return [mock_desc]
+        return [mock_elem]
+
+    mock_driver.find_elements.side_effect = mock_find
+
+    config = WorkerConfig(worker_id="test-worker-contract", poll_interval_sec=0.01)
+    context = WorkerContext(config=config, driver=mock_driver)
+
+    mock_llm_client = MagicMock()
+    mock_llm_client.chat_completion_json.return_value = {
+        "match_score": 92,
+        "jd_key_requirements": ["Agent 编排"],
+        "match_reasons": ["契合"],
+        "greeting_message": "您好，我在 Agent 编排上有完整实战经验！",
+    }
+
+    worker = AutomationWorker(
+        config=config,
+        broker=broker,
+        context=context,
+        handlers=[AutoApplyHandler(llm_client=mock_llm_client)],
+    )
+
+    search = SavedSearch(
+        id="s-contract",
+        name="[测试]打招呼",
+        search=SearchConfig(keyword="Agent"),
+        target_action="auto_apply",
+        max_jobs=1,
+    )
+    # Exactly what the modal, the strategies page, the dashboard and the cron all build.
+    launch = task_launch.build_launch(
+        task_launch.TaskKind.SEARCH,
+        source=task_launch.LaunchSource.MANUAL,
+        search=search,
+        min_score=70,
+    )
+    assert set(launch.payload) & {"preview_only", "auto_send"} == set()
+
+    task = await broker.create_task(
+        task_type=launch.task_type,
+        payload=dict(launch.payload),
+        source=launch.source.value,
+    )
+
+    executed = await worker.run_once()
+    assert executed is True
+
+    finished_task = await broker.get_task(task.id)
+    assert finished_task is not None
+    assert finished_task.status == TaskStatus.SUCCESS
+    # The depth the operator configured, stated once, and honoured by the log line.
+    assert any("mode='Auto-Send'" in log for log in finished_task.logs), finished_task.logs
+    assert any("Dispatched greeting" in log for log in finished_task.logs), finished_task.logs
+    assert not any("Legacy" in log for log in finished_task.logs), finished_task.logs
+
+    records = await broker.job_store.list_job_records()
+    applied = [r for r in records if r.get("status") == "applied"]
+    assert applied, "an 自动打招呼 run advances a qualified posting to applied"
+    assert applied[0]["applied_source"] == "agent_auto_send"

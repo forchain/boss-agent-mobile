@@ -20,12 +20,16 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
+from .broker.models import TaskType
 from .enums import (
-    STATE_RANK,
-    TARGET_ACTION_RANK,
+    DEPTH_DECLARED,
+    DEPTH_LEGACY_HALF_PAIR,
+    DEPTH_LEGACY_PAIR,
+    DEPTH_UNSTATED,
     ChatButtonState,
     JobRecordStatus,
     TargetAction,
+    depth_already_reached,
 )
 from .errors import BrokerError, TransportError
 from .feed_records import (
@@ -34,14 +38,22 @@ from .feed_records import (
     effective_company,
     effective_title,
     enriched_record,
+    posting_from_record,
 )
-from .identifier_helpers import is_communication_expired, is_direct_hire_company
+from .identifier_helpers import (
+    greeting_is_human,
+    is_communication_expired,
+    is_direct_hire_company,
+    jd_is_usable_on_file,
+)
 from .job_entities import JobCardBrief
 from .job_store import INVALID_JOB_TITLES, JobRecordStore
 from .keyword_constants import (
     APPLIED_SOURCE_AGENT,
     APPLIED_SOURCE_PLATFORM_HISTORICAL,
     EXPIRED_POSTING_REASON,
+    GREETING_SOURCE_AGENT,
+    GREETING_SOURCE_HUMAN,
     HEADHUNTER_COMMUTE_PROBE_SKIP_REASON,
 )
 from .memory import StructuredCandidateProfile
@@ -86,7 +98,10 @@ class JobAction(StrEnum):
 
     SAVED = "saved"
     APPLIED = "applied"
-    OFFLINE_DRAFT = "offline_draft"
+    # Drafted, persisted, deliberately not sent this round — the record stays
+    # re-sendable. Issue #298 renamed this from `offline_draft`: "offline draft" read
+    # like a terminal product tier, when the intent is "not delivered yet".
+    PENDING_SEND = "pending_send"
     SKIPPED = "skipped"
 
 
@@ -142,18 +157,43 @@ class FeedStreamConfig:
     cooldown_days: int = 0
     daily_greeting_limit: int = 20
     min_score: float = 70.0
-    preview_only: bool = True
-    auto_send: bool = False
+    # The one gate the dispatch path reads: does this run put a greeting on the wire?
+    # ``depth_expression`` records how the payload answered that, so a log line can say
+    # whether it was read from the single declared intent or from the legacy pair an older
+    # builder left in the queue (issue #302).
+    send_greeting: bool = False
+    depth_expression: str = DEPTH_UNSTATED
+    # True when the payload itself stated a Target Action rather than being inferred from
+    # the task type. A payload that states no depth at all keeps the default it always had:
+    # nothing goes out.
+    states_target_action: bool = False
+    # Set when the payload was read through a shape producers are no longer allowed to
+    # write. The run says so in its own log instead of failing the queued task.
+    depth_warning: str = ""
     candidate_profile: StructuredCandidateProfile | None = None
     source_task_id: str | None = None
     # A targeted application acts on the posting already on screen instead of scanning.
     single_screen: bool = False
     direct_job_id: str | None = None
     is_headhunter: bool | None = None
+    # The greeting a human edited in the 定向投递 modal. It outranks whatever the record
+    # already holds (issue #300) — and until then it travelled in the payload unread, so
+    # the button that promises to send *this* text sent a regenerated draft instead.
+    direct_greeting: str = ""
 
     @classmethod
-    def from_payload(cls, payload: dict[str, Any] | None) -> "FeedStreamConfig":
-        """Parse the worker task payload this pipeline and both handlers share."""
+    def from_payload(
+        cls, payload: dict[str, Any] | None, *, task_type: TaskType | str | None = None
+    ) -> "FeedStreamConfig":
+        """Parse the worker task payload this pipeline and both handlers share.
+
+        ``task_type`` names the handler the task was routed to. Passing it here is what
+        keeps depth answered once, in one place: the handlers used to overwrite
+        ``target_action`` *after* parsing, so the config could hold a Target Action that
+        disagreed with the ``send_greeting`` derived from the payload — the same "two
+        answers to one question" shape #302 removes from the wire, reintroduced as mutable
+        state one layer up.
+        """
         from .settings import load_settings
 
         data = payload or {}
@@ -164,6 +204,13 @@ class FeedStreamConfig:
                 target_action = TargetAction(str(target_action_val).lower())
             except ValueError:
                 target_action = TargetAction.SAVE_JD
+        elif task_type is not None:
+            # The task type names the action when the payload does not. Only an *absent*
+            # Target Action is inferred this way: a payload that states one keeps it, so
+            # this can never promote a save-only run into an outreach run.
+            resolved_type = task_type if isinstance(task_type, TaskType) else TaskType(task_type)
+            if resolved_type == TaskType.AUTO_APPLY:
+                target_action = TargetAction.AUTO_APPLY
 
         raw_filter = data.get("filter")
         filter_config = (
@@ -179,6 +226,44 @@ class FeedStreamConfig:
             if isinstance(raw_filter, dict)
             else None
         )
+
+        # ---- the one depth question, answered once -------------------------------
+        # A new payload states depth only as ``target_action``. Anything that still carries
+        # the legacy keys is read the way the worker that received it read it, because a
+        # task sitting in somebody's queue must not change meaning — or fail outright —
+        # because the code underneath it was upgraded. What is refused is the *producer*
+        # side (task_launch._refuse_hand_authored_depth): writing the pair, or half of it, is
+        # no longer something a caller can do at all.
+        legacy_preview = data.get("preview_only")
+        legacy_auto_send = data.get("auto_send")
+        legacy_half_warning = ""
+        states_target_action = bool(data.get("target_action") or data.get("action"))
+        if (legacy_preview is None) != (legacy_auto_send is None):
+            # A documented historical shape: PR #297's own table shows the dashboard's
+            # "run scheduled now" hand-building `preview_only: true` with no `auto_send`.
+            # Read with the defaults that worker applied — `preview_only` defaulted True,
+            # `auto_send` False, so a half-written pair was always a draft — and say so,
+            # loudly, instead of letting it pass as an ordinary run.
+            stated = "preview_only" if legacy_preview is not None else "auto_send"
+            missing = "auto_send" if legacy_preview is not None else "preview_only"
+            legacy_preview = True
+            legacy_auto_send = False
+            send_greeting = False
+            depth_expression = DEPTH_LEGACY_HALF_PAIR
+            legacy_half_warning = (
+                f"task payload states `{stated}` without `{missing}` — read as a draft with "
+                f"the defaults an older worker applied. Depth is one expression now: state "
+                f"`target_action` (issue #302)."
+            )
+        elif legacy_preview is None and legacy_auto_send is None:
+            # Single-expression shape (or a payload that states no depth at all, in which
+            # case the Target Action default of save_jd keeps it a non-sending run — the
+            # behaviour such a payload always had).
+            send_greeting = target_action == TargetAction.AUTO_APPLY and states_target_action
+            depth_expression = DEPTH_DECLARED if states_target_action else DEPTH_UNSTATED
+        else:
+            send_greeting = bool(legacy_auto_send) and not bool(legacy_preview)
+            depth_expression = DEPTH_LEGACY_PAIR
 
         raw_policy = data.get("screening_policy")
         daily_limit = int(
@@ -199,9 +284,17 @@ class FeedStreamConfig:
             cooldown_days=resolve_communication_cooldown_days(data),
             daily_greeting_limit=daily_limit,
             min_score=float(data.get("min_score", 70)),
-            preview_only=bool(data.get("preview_only", True)),
-            auto_send=bool(data.get("auto_send", False)),
             source_task_id=data.get("source_task_id"),
+            send_greeting=send_greeting,
+            states_target_action=states_target_action,
+            depth_expression=depth_expression,
+            depth_warning=legacy_half_warning,
+            # Only a targeted application carries the human's own copy in its payload, and
+            # only that payload shape may override what the record holds. A search dispatch
+            # that happened to include the key must not send one text to every card.
+            direct_greeting=(
+                str(data.get("greeting_message") or "") if data.get("direct_job_id") else ""
+            ),
             single_screen=bool(data.get("direct_job_id")),
             direct_job_id=data.get("direct_job_id"),
             is_headhunter=data.get("is_headhunter"),
@@ -227,6 +320,12 @@ class _CardRun:
     # Greetings already dispatched today, as read by this card's quota check. The read is
     # reused by the log lines instead of paying a second round trip per card.
     applied_today: int = 0
+    # The record this card already has on file, before anything in this run rewrote it.
+    existing_record: dict[str, Any] | None = None
+    # Whose words this run must send, when the answer is not "the agent's": a human's copy,
+    # plus where it came from, so the log can say it. See `_resolve_human_greeting`.
+    human_greeting: str = ""
+    human_greeting_origin: str = ""
 
 
 def _element_y(elem: Any) -> float | None:
@@ -579,6 +678,7 @@ class JobFeedPipeline:
         # The card itself is already a result: a detail-page failure must not lose it.
         run.result.jobs.append(persisted)
         run.jobs_index = len(run.result.jobs) - 1
+        run.existing_record = existing_record
         await self._inspect_detail(run, persisted, existing_record)
 
     async def _passes_state_machine(
@@ -624,21 +724,13 @@ class JobFeedPipeline:
                 f"{config.cooldown_days} 天，已释放回待评估流"
             )
 
-        required_rank = TARGET_ACTION_RANK.get(config.target_action, 1)
-        cur_rank = STATE_RANK.get(existing_status, 1)
-        has_full_jd = bool((existing_record.get("job_description") or "").strip())
-        is_already_progressed = cur_rank > TARGET_ACTION_RANK.get(TargetAction.SAVE_JD, 1)
-        if (
-            not is_released
-            and cur_rank >= required_rank
-            and (
-                is_already_progressed or config.target_action != TargetAction.SAVE_JD or has_full_jd
-            )
+        if not is_released and depth_already_reached(
+            config.target_action, existing_status, existing_record
         ):
             result.skipped += 1
             await self._log(
                 f"⏭️ [State Machine] '{card.title}' already at '{existing_status}' "
-                f"(>= target '{config.target_action.value}'). Skipping detail opening."
+                f"(target '{config.target_action.value}' reached). Skipping detail opening."
             )
             await self.store.upsert_job_record(card_record_identity)
             return False
@@ -690,12 +782,89 @@ class JobFeedPipeline:
         try:
             if await self._back_out_if_contacted(run, card.fingerprint):
                 return
-            posting = await self._extract_posting(card, run.config.screening_policy)
+            posting = await self._read_posting(run, card, existing_record)
             if posting is None:
                 return
             await self._evaluate_and_act(run, posting)
         finally:
             self.detail_page.navigate_back()
+
+    async def _read_posting(
+        self,
+        run: _CardRun,
+        card: JobCardBrief,
+        existing_record: dict[str, Any] | None,
+    ) -> Any | None:
+        """The posting behind this card — from the record's JD when it can be, else from the device.
+
+        Issue #301. A card that comes back for a second look has usually been read already,
+        and the detail-page work that costs real time — scrolling to the `查看更多` hotspot,
+        tapping it, re-reading the body, hunting the distance widget below the fold — buys
+        nothing when the Job Record already holds a usable JD. So that is asked first.
+
+        The contact-control probe is deliberately *not* skipped: a posting the platform has
+        already communicated with, or that has stopped hiring, is worth no evaluation work at
+        all and must still be recorded as such. That check costs one read of the button.
+        """
+        stored_jd = str((existing_record or {}).get("job_description") or "").strip()
+        inventory_jd = stored_jd if jd_is_usable_on_file(stored_jd) else ""
+        if not inventory_jd:
+            return await self._extract_posting(card, run.config.screening_policy)
+
+        record = existing_record or {}
+        commute_km, commute_text = await self._commute_for_inventory(run, card, record)
+        # The mapping is owned by feed_records, beside its inverse: a card judged from the
+        # stored record must be judged from the same facets a live read would have supplied,
+        # including the placeholder guards on title and company (#301).
+        posting = posting_from_record(
+            record,
+            card,
+            inventory_jd,
+            commute_distance_km=commute_km,
+            commute_distance_text=commute_text,
+        )
+        skipped = "「查看更多」展开与正文重复抽取"
+        if commute_km is not None:
+            skipped += "、底部通勤距离探测"
+        await self._log(
+            f"♻️ [复用库存 JD] '{posting.title}' 使用岗位记录中的 JD（{len(inventory_jd)} 字），"
+            f"跳过{skipped}"
+        )
+        return posting
+
+    async def _commute_for_inventory(
+        self, run: _CardRun, card: JobCardBrief, record: dict[str, Any]
+    ) -> tuple[float | None, str]:
+        """The commute distance for an inventory visit: reuse it, probe it, or call it unknown.
+
+        Only the text is reusable wholesale. With the ceiling active and no distance ever
+        measured for this posting, skipping the probe would turn a real rejection into a
+        fail-open pass — so the widget is still fetched, just without the expansion and the
+        re-read wrapped around it, which is where the time actually goes. A headhunter
+        posting is spared exactly as a fresh visit spares it, and an unknown distance stays
+        fail-open.
+        """
+        stored = record.get("commute_distance_km")
+        if stored is not None:
+            return float(stored), str(record.get("commute_distance_text") or "")
+
+        policy = run.config.screening_policy
+        is_headhunter = bool(record.get("is_headhunter") or card.is_headhunter)
+        if not policy.should_probe_commute_distance(is_headhunter):
+            if policy.is_commute_filter_active and is_headhunter:
+                await self._log(
+                    f"📍 [App端强制过滤] '{card.title}' {HEADHUNTER_COMMUTE_PROBE_SKIP_REASON}"
+                )
+            return None, ""
+
+        try:
+            # The page object owns its own swipe budget; this path only declines to re-read
+            # the description around the probe.
+            distance_km, distance_text = self.detail_page.extract_commute_distance()
+        except Exception as e:
+            logger.warning("Commute probe failed for '%s': %s", card.title, e)
+            return None, ""
+        return distance_km, str(distance_text or "")
 
     async def _open_detail(self, located: LocatedJobCard | None) -> bool:
         """Tap the card (or fall back to the first list item) to reach its detail page.
@@ -806,6 +975,26 @@ class JobFeedPipeline:
             return None
         return posting
 
+    def _resolve_human_greeting(self, run: _CardRun) -> tuple[str, str]:
+        """The human-authored greeting this run must send verbatim, and where it came from.
+
+        Two sources outrank the agent (issue #300):
+
+        1. the copy in a 定向投递 payload — the operator edited it in the modal for *this*
+           send, so it outranks even the text the record already holds;
+        2. the record's own greeting, when its provenance says a human wrote it.
+
+        Anything else — an agent draft, a record predating provenance, a marker whose text
+        is empty — returns ``("", "")`` and the run drafts as it always did. The origin
+        comes back with the text so the log can name the source instead of guessing.
+        """
+        direct = (run.config.direct_greeting or "").strip()
+        if direct:
+            return direct, "定向投递编辑稿"
+        if greeting_is_human(run.existing_record):
+            return str(run.existing_record.get("greeting_message")).strip(), "岗位记录人工稿"
+        return "", ""
+
     async def _evaluate_and_act(self, run: _CardRun, posting: Any) -> None:
         """Run full-JD evaluation and persist whichever outcome the target action implies."""
         card = run.card
@@ -898,12 +1087,17 @@ class JobFeedPipeline:
                 f"豁免通勤距离限制，继续采集"
             )
 
+        # Resolution happens before the screener, not after: a human copy means there is
+        # nothing to draft, and "nothing to draft" means no token is spent drafting it.
+        run.human_greeting, run.human_greeting_origin = self._resolve_human_greeting(run)
+
         evaluation = self.screener.evaluate_job(
             card=card,
             jd_text=jd_text,
             profile=config.candidate_profile,
             policy=config.screening_policy,
-            draft_greeting=config.target_action == TargetAction.AUTO_APPLY,
+            draft_greeting=config.target_action == TargetAction.AUTO_APPLY
+            and not run.human_greeting,
         )
 
         if "查看更多" in jd_text:
@@ -963,21 +1157,44 @@ class JobFeedPipeline:
         """Draft and, when allowed, dispatch the tailored greeting for one job."""
         config = run.config
         title, company = enriched["title"], enriched["company_name"]
-        greeting = evaluation.greeting_message
-        await self._log(
-            f"Evaluated '{title}' @ '{company}': Score {evaluation.match_score}/100 | "
-            f"Match Reasons: [{'; '.join(evaluation.match_reasons) or '无'}]"
-        )
-        await self._log(f'Tailored Greeting Draft: "{greeting}"')
-
-        if not (config.auto_send and not config.preview_only):
+        # A human copy is the text; the screener's draft is the fallback. Neither one is
+        # rewritten here — `ensure_greeting_prefix` belongs to the drafting path, and
+        # applying it to approved words would send something the human never signed off on.
+        greeting = run.human_greeting or evaluation.greeting_message
+        if run.human_greeting:
             await self._log(
-                f"💾 [OFFLINE DRAFT] Saved JD and drafted greeting for '{title}' (status: matched)."
+                f"📖 [复用人工招呼语] '{title}' @ '{company}': 来源 "
+                f"{run.human_greeting_origin}，跳过匹配起草，原文逐字发送。"
+            )
+            await self._log(f'Greeting To Send (verbatim): "{greeting}"')
+        else:
+            await self._log(
+                f"Evaluated '{title}' @ '{company}': Score {evaluation.match_score}/100 | "
+                f"Match Reasons: [{'; '.join(evaluation.match_reasons) or '无'}]"
+            )
+            await self._log(f'Tailored Greeting Draft: "{greeting}"')
+
+        # What this run persists as its verdict, whoever wrote the words.
+        enriched["greeting_message"] = greeting
+        enriched["greeting_source"] = (
+            GREETING_SOURCE_HUMAN if run.human_greeting else GREETING_SOURCE_AGENT
+        )
+
+        # Only a task queued before issue #298 can still arrive here: the contract's own
+        # payloads state one depth expression and dispatch on it. The branch stays because an
+        # in-flight payload that asked for the old draft-only shape is still honoured.
+        if config.depth_warning:
+            await self._log(f"⚠️ [Legacy Depth] {config.depth_warning}")
+
+        if not config.send_greeting:
+            await self._log(
+                f"⏸️ [NOT SENT] '{title}' @ '{company}' was drafted but this task's depth "
+                f"does not dispatch it; the record stays re-sendable (status: matched)."
             )
             await self._finalize_verdict(run, enriched, JobRecordStatus.MATCHED, evaluation)
             return
 
-        if evaluation.match_score < config.min_score:
+        if not run.human_greeting and evaluation.match_score < config.min_score:
             await self._log(
                 f"⏭️ [AUTO_SEND] Skipped: Match score {evaluation.match_score} < "
                 f"threshold {config.min_score}"
@@ -985,12 +1202,19 @@ class JobFeedPipeline:
             await self._finalize_verdict(run, enriched, JobRecordStatus.JD_SAVED, evaluation)
             return
 
+        # The score gate above is a feed-sweep rule. A human-approved copy is not score
+        # gated (issue #300): there is no score, because nothing was drafted to be scored.
+        # The quota, the cancellation probe and the company guard apply to it unchanged.
         if await self._quota_exhausted(run):
             applied_today = run.applied_today
+            # Running out of quota is not a depth a task chose. The JD and the draft are
+            # saved, the record stays in the re-sendable `matched` state, and the next run
+            # owes it a real dispatch — which is what issue #299 makes happen instead of
+            # letting `matched` read as "already done".
             await self._log(
                 f"⚠️ [LIMIT REACHED] Daily greeting limit reached "
-                f"({applied_today}/{config.daily_greeting_limit}). Degrading to offline draft "
-                f"for '{title}' @ '{company}' (status: matched)."
+                f"({applied_today}/{config.daily_greeting_limit}). '{title}' @ '{company}' is "
+                f"not sent this round and stays re-sendable (status: matched)."
             )
             await self._finalize_verdict(run, enriched, JobRecordStatus.MATCHED, evaluation)
             return
@@ -1014,7 +1238,8 @@ class JobFeedPipeline:
             else:
                 await self._log(
                     f"⚠️ [AUTO_SEND] Could not send greeting to {title} @ {company}: "
-                    "send control unavailable. Kept as a matched draft for manual sending."
+                    "send control unavailable. Not counted as communicated; the record "
+                    "stays re-sendable (status: matched)."
                 )
             self.chat_page.navigate_back()
 
@@ -1071,19 +1296,45 @@ class JobFeedPipeline:
         evaluation: JobEvaluationResult,
     ) -> dict[str, Any]:
         """Persist one terminal verdict and report it to the observer."""
+        # An explicit greeting on the payload is the text this run decided to send. Only
+        # the agent's own draft comes from the evaluation, so a reused human copy is stored
+        # as what was actually sent rather than as an empty field (#300).
+        greeting_message = payload.get("greeting_message") or evaluation.greeting_message
+        greeting_source = payload.get("greeting_source") or (
+            GREETING_SOURCE_AGENT if evaluation.greeting_message else ""
+        )
+        # A run that reused a human copy asked no model to score the posting, so
+        # ``evaluation.match_score`` is the dataclass default — 0. And 0 is not "unknown",
+        # it is "the worst score possible": writing it deletes the very number the operator
+        # used to approve that copy in the panel. The stored score survives unless this run
+        # actually produced a new one.
+        # A run that reused a human copy asked no model to score the posting, so
+        # ``evaluation.match_score`` is the dataclass default - 0. And 0 is not "unknown",
+        # it is "the worst score possible": writing it deletes the number the operator used
+        # to approve that copy in the panel. So the key is left out when this run computed
+        # no score and the stored value stands; a never-scored record stays unscored rather
+        # than claiming a zero it was never given.
+        match_score = evaluation.match_score or payload.get("match_score")
         payload = {
             **payload,
             "status": status.value,
-            "match_score": evaluation.match_score,
-            "greeting_message": evaluation.greeting_message,
+            "greeting_message": greeting_message,
+            "greeting_source": greeting_source,
             "jd_key_requirements": evaluation.jd_key_requirements
             or payload.get("jd_key_requirements", []),
         }
+        if match_score is not None:
+            payload["match_score"] = match_score
         try:
             saved = await self.store.upsert_job_record(dict(payload)) or {}
         except TransportError as e:
             await self._log(f"⚠️ [持久化降级] 岗位记录写入遇到持久化异常（{e}）")
             saved = dict(payload)
+        if match_score is None:
+            # Nothing was scored this run, so the run reports what the record says rather
+            # than a 0 that would read as judged-and-rejected.
+            match_score = saved.get("match_score")
+        match_score = match_score or 0
         run.result.processed += 1
         if run.result.outcome == "no_candidates":
             # The primary outcome is the first job that earned a verdict: the run's
@@ -1094,11 +1345,11 @@ class JobFeedPipeline:
                 "company_name": payload.get("company_name", ""),
                 "salary_range": payload.get("salary_range", ""),
             }
-            run.result.score = evaluation.match_score
-            run.result.greeting_message = evaluation.greeting_message
+            run.result.score = match_score
+            run.result.greeting_message = greeting_message
             run.result.jd_key_requirements = evaluation.jd_key_requirements
-        # The action follows from the verdict alone: a matched record is a draft awaiting a
-        # manual send, whether or not this run already dispatched an earlier greeting.
+        # The action follows from the verdict alone: a matched record is a greeting that has
+        # not left the device yet, whether or not this run already dispatched an earlier one.
         if status is JobRecordStatus.MATCHED:
             await self._emit(
                 run,
@@ -1107,9 +1358,9 @@ class JobFeedPipeline:
                     title=payload.get("title", ""),
                     company_name=payload.get("company_name", ""),
                     status=status.value,
-                    action=JobAction.OFFLINE_DRAFT,
-                    score=evaluation.match_score,
-                    greeting_message=evaluation.greeting_message,
+                    action=JobAction.PENDING_SEND,
+                    score=match_score,
+                    greeting_message=greeting_message,
                     record=saved,
                 ),
             )
@@ -1124,8 +1375,8 @@ class JobFeedPipeline:
                     company_name=payload.get("company_name", ""),
                     status=status.value,
                     action=JobAction.APPLIED,
-                    score=evaluation.match_score,
-                    greeting_message=evaluation.greeting_message,
+                    score=match_score,
+                    greeting_message=greeting_message,
                     record=saved,
                 ),
             )
@@ -1140,8 +1391,8 @@ class JobFeedPipeline:
                     action=JobAction.SAVED
                     if status is JobRecordStatus.JD_SAVED
                     else JobAction.SKIPPED,
-                    score=evaluation.match_score,
-                    greeting_message=evaluation.greeting_message,
+                    score=match_score,
+                    greeting_message=greeting_message,
                     record=saved,
                 ),
             )
@@ -1158,6 +1409,7 @@ class JobFeedPipeline:
 
         run.result.scanned = max(run.result.scanned, 1)
         target_record = await self._target_record(run.config)
+        run.existing_record = target_record
 
         chat_state = self.detail_page.get_chat_button_state()
         if chat_state in (ChatButtonState.COMMUNICATED, ChatButtonState.CLOSED):

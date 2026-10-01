@@ -94,6 +94,7 @@ export interface JobRecord {
 	match_score?: number | null;
 	jd_key_requirements?: string[];
 	greeting_message?: string;
+	greeting_source?: string;
 	search_keywords?: string[];
 	screened_reason?: string;
 	relaxed_by_whitelist?: boolean;

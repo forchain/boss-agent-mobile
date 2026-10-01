@@ -146,11 +146,18 @@ def test_web_api_logging_e2e(web_dashboard: Dashboard):
     client = httpx.Client(base_url=base_url, timeout=10.0)
 
     # 1. POST /api/tasks
+    #
+    # The task type has to be one the broker actually accepts — the endpoint validates it
+    # against the worker's four handler types and answers 400 for anything else, which is
+    # what `search_and_greet` used to be. CHECK_LOGIN is the one that reads no payload and
+    # dispatches no greeting, and `source: test` marks it as an Automated Test Task
+    # (CONTEXT.md) rather than a run somebody asked for.
     post_task_resp = client.post(
         "/api/tasks",
         json={
-            "task_type": "AUTO_APPLY",
-            "payload": {"keyword": "E2E_Test_Engineer", "city": "Beijing"},
+            "task_type": "CHECK_LOGIN",
+            "source": "test",
+            "payload": {},
         },
     )
     assert post_task_resp.status_code in (200, 201)

@@ -1,4 +1,4 @@
-# 0018. Decomposed Domain Entity Modules and Retired Monolith
+# 0019. Decomposed Domain Entity Modules and Retired Monolith
 
 We decided to retire the monolithic `boss_agent.models` module and decompose it into eight focused, single-responsibility modules with strict dependency hierarchy and zero cycles.
 

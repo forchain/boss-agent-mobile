@@ -50,7 +50,7 @@ def test_enums_isolated_ast():
     assert enums.ChatButtonState.COMMUNICATED == "communicated"
     assert enums.ChannelPreference.DIRECT_ONLY == "direct_only"
     assert enums.STATE_RANK[enums.JobRecordStatus.APPLIED] == 3
-    assert enums.TARGET_ACTION_RANK[enums.TargetAction.AUTO_APPLY] == 2
+    assert enums.TARGET_ACTION_RANK[enums.TargetAction.AUTO_APPLY] == 3
 
 
 def test_keyword_constants_isolated_ast():

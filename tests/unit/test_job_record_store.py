@@ -8,12 +8,15 @@ are driven with the same fixture data so their deduplication, cool-down and quot
 semantics are proven identical rather than merely similar.
 """
 
-import re
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from _job_store_harness import LONG_AGO, TODAY, YESTERDAY
+from _job_store_harness import (
+    pocketbase_job_store as _pocketbase_store,
+)
 
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker, PocketBaseTaskBroker
 from boss_agent.job_store import (
@@ -21,10 +24,6 @@ from boss_agent.job_store import (
     JobRecordStore,
     PocketBaseJobRecordStore,
 )
-
-TODAY = datetime.now(UTC)
-YESTERDAY = TODAY - timedelta(days=1)
-LONG_AGO = TODAY - timedelta(days=90)
 
 
 def _record(
@@ -44,164 +43,6 @@ def _record(
         "applied_at": applied_at,
         "is_headhunter": is_headhunter,
     }
-
-
-# ---------------------------------------------------------------------------
-# Minimal PocketBase collection endpoint, enough to run the store's real queries
-# ---------------------------------------------------------------------------
-
-
-def _split_top(expr: str, operator: str) -> list[str]:
-    """Split on a top-level operator, ignoring operator text nested in parentheses."""
-    parts, depth, current = [], 0, ""
-    i = 0
-    while i < len(expr):
-        char = expr[i]
-        if char == "(":
-            depth += 1
-        elif char == ")":
-            depth -= 1
-        if depth == 0 and expr.startswith(operator, i):
-            parts.append(current)
-            current = ""
-            i += len(operator)
-            continue
-        current += char
-        i += 1
-    parts.append(current)
-    return [p.strip() for p in parts]
-
-
-def _decode_literal(raw: str) -> str | None:
-    """Decode a PocketBase filter literal, or None when its quoting is malformed.
-
-    PocketBase requires a quote inside a quoted value to be backslash-escaped; a raw
-    quote is a syntax error that makes the whole query fail. Emulating that here is what
-    lets a test prove that an unescaped company name silently breaks the dedup lookup.
-    """
-    if raw[:1] not in ("'", '"'):
-        return raw
-    quote = raw[0]
-    if raw[-1:] != quote:
-        return None
-    decoded, i = "", 1
-    while i < len(raw) - 1:
-        char = raw[i]
-        if char == "\\" and i + 1 < len(raw) - 1:
-            decoded += raw[i + 1]
-            i += 2
-            continue
-        if char == quote:
-            return None
-        decoded += char
-        i += 1
-    return decoded
-
-
-def _matches(expr: str, item: dict[str, Any]) -> bool:
-    expr = expr.strip()
-    while expr.startswith("(") and expr.endswith(")") and _split_top(expr[1:-1], "&&"):
-        expr = expr[1:-1].strip()
-
-    for operator in ("||", "&&"):
-        parts = _split_top(expr, operator)
-        if len(parts) > 1:
-            results = [_matches(part, item) for part in parts]
-            return any(results) if operator == "||" else all(results)
-
-    match = re.match(r"^(\w+)\s*(>=|<=|!=|=|<|>)\s*(.+)$", expr)
-    assert match, f"unsupported filter expression: {expr!r}"
-    field, op, raw = match.group(1), match.group(2), match.group(3).strip()
-    expected = _decode_literal(raw)
-    if expected is None:
-        # A malformed literal is a syntax error server-side: the query returns nothing.
-        return False
-    actual = str(item.get(field) or "")
-    if op == "=":
-        return actual == expected
-    if op == "!=":
-        return actual != expected
-    if op == ">=":
-        return actual >= expected
-    if op == "<=":
-        return actual <= expected
-    if op == "<":
-        return actual < expected
-    return actual > expected
-
-
-class FakePocketBaseSession:
-    """Dict-backed stand-in for a PocketBase ``requests.Session``."""
-
-    def __init__(self) -> None:
-        self.records: dict[str, dict[str, Any]] = {}
-        self._counter = 0
-        # When set, the next patch returns this response instead, so failure paths can be
-        # exercised without pretending a write succeeded.
-        self.patch_failure: MagicMock | None = None
-
-    def seed(self, items: list[dict[str, Any]]) -> None:
-        for item in items:
-            self._counter += 1
-            record = dict(item)
-            record.setdefault("id", f"rec{self._counter}")
-            record.setdefault("created", TODAY.isoformat())
-            self.records[record["id"]] = record
-
-    def _query(self, params: dict[str, Any]) -> dict[str, Any]:
-        items = list(self.records.values())
-        if params.get("filter"):
-            items = [i for i in items if _matches(params["filter"], i)]
-        if params.get("sort", "").lstrip("-") == "created" and params["sort"].startswith("-"):
-            items.sort(key=lambda x: str(x.get("created", "")), reverse=True)
-        page = int(params.get("page", 1))
-        per_page = int(params.get("perPage", 30))
-        window = items[(page - 1) * per_page : page * per_page]
-        if params.get("fields"):
-            wanted = [f.strip() for f in params["fields"].split(",")]
-            window = [{k: v for k, v in i.items() if k in wanted} for i in window]
-        return {"items": window, "totalItems": len(items)}
-
-    def get(self, url: str, params: dict[str, Any] | None = None, headers=None):
-        resp = MagicMock(status_code=200)
-        if url.rsplit("/", 1)[-1] in self.records:
-            resp.json.return_value = self.records[url.rsplit("/", 1)[-1]]
-        else:
-            resp.json.return_value = self._query(params or {})
-        return resp
-
-    def post(self, url: str, json: dict[str, Any], headers=None):
-        self._counter += 1
-        record = {"id": json.pop("id", None) or f"rec{self._counter}", **json}
-        self.records[record["id"]] = record
-        return MagicMock(status_code=200, json=MagicMock(return_value=record))
-
-    def patch(self, url: str, json: dict[str, Any], headers=None):
-        record_id = url.rsplit("/", 1)[-1]
-        if self.patch_failure is not None:
-            failure, self.patch_failure = self.patch_failure, None
-            return failure
-        if record_id not in self.records:
-            return MagicMock(status_code=404, text="Not found")
-        self.records[record_id].update(json)
-        return MagicMock(status_code=200, json=MagicMock(return_value=self.records[record_id]))
-
-    def delete(self, url: str, headers=None):
-        self.records.pop(url.rsplit("/", 1)[-1], None)
-        return MagicMock(status_code=204)
-
-
-def _pocketbase_store(session: FakePocketBaseSession) -> PocketBaseJobRecordStore:
-    return PocketBaseJobRecordStore(
-        base_url="http://mock-pb:8090",
-        session=session,  # type: ignore[arg-type]
-        headers=lambda: {"Content-Type": "application/json"},
-    )
-
-
-@pytest.fixture
-def pb_session() -> FakePocketBaseSession:
-    return FakePocketBaseSession()
 
 
 # ---------------------------------------------------------------------------
@@ -562,3 +403,83 @@ async def test_in_memory_store_delete_releases_the_fingerprint():
     assert await store.delete_job_record(saved["id"]) is True
     assert await store.has_job_fingerprint("fp-delete") is False
     assert await store.delete_job_record("non-existent") is False
+
+
+@pytest.mark.asyncio
+async def test_both_adapters_carry_the_greeting_source_with_the_greeting(any_job_store):
+    """Provenance is a column, not a convention (issue #300).
+
+    The whole human-copy rule rests on the store round-tripping `greeting_source` next to
+    `greeting_message` — and on a later card-level re-scrape, which writes neither, not
+    quietly erasing a human's mark and handing the record back to the drafter.
+    """
+    store = any_job_store
+    rec = await store.upsert_job_record(
+        {
+            "fingerprint": "fp-prov-1",
+            "title": "AI Agent 平台工程师",
+            "company_name": "智元创新",
+            "recruiter_name": "王女士",
+            "status": "matched",
+            "greeting_message": "李工您好，这版是我改过的。",
+            "greeting_source": "human",
+        }
+    )
+    key = rec["fingerprint"]
+    stored = await store.get_job_record_by_fingerprint(key)
+    assert stored["greeting_source"] == "human"
+    assert stored["greeting_message"] == "李工您好，这版是我改过的。"
+
+    # A card-facet re-scrape carries no greeting at all: both fields survive it.
+    await store.upsert_job_record(
+        {
+            "fingerprint": key,
+            "title": "AI Agent 平台工程师",
+            "company_name": "智元创新",
+            "recruiter_name": "王女士",
+            "status": "matched",
+        }
+    )
+    stored = await store.get_job_record_by_fingerprint(key)
+    assert stored["greeting_source"] == "human"
+    assert stored["greeting_message"] == "李工您好，这版是我改过的。"
+
+    # A new draft arrives with its own provenance, and the pair moves together. The rest of
+    # the record travels with it: a payload without a title is an incomplete record, and the
+    # PocketBase adapter turns that away.
+    await store.upsert_job_record(
+        {
+            "fingerprint": key,
+            "title": "AI Agent 平台工程师",
+            "company_name": "智元创新",
+            "recruiter_name": "王女士",
+            "status": "matched",
+            "greeting_message": "新的机器草稿",
+            "greeting_source": "agent_draft",
+        }
+    )
+    stored = await store.get_job_record_by_fingerprint(key)
+    assert stored["greeting_source"] == "agent_draft"
+    assert stored["greeting_message"] == "新的机器草稿"
+
+
+@pytest.mark.asyncio
+async def test_a_record_written_before_provenance_exists_reads_as_unknown(any_job_store):
+    """Legacy rows have no source, and `""` is the honest answer — not `agent_draft`.
+
+    The pipeline treats anything but `human` as "not approved by a person", so a blank
+    column must stay blank instead of being substituted into a claim about authorship.
+    """
+    store = any_job_store
+    await store.upsert_job_record(
+        {
+            "fingerprint": "fp-prov-2",
+            "title": "大模型应用工程师",
+            "company_name": "煦象科技",
+            "recruiter_name": "刘女士",
+            "status": "jd_saved",
+            "greeting_message": "",
+        }
+    )
+    stored = await store.get_job_record_by_fingerprint("fp-prov-2")
+    assert stored.get("greeting_source") in ("", None)

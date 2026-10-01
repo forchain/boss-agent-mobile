@@ -33,8 +33,10 @@ into the handler under test — and to audit the tier, run it against a poisoned
 import socket
 import subprocess
 import time
+from typing import Any
 
 import pytest
+from _job_store_harness import FakePocketBaseSession
 
 from droid_agent_core import gestures, locators
 
@@ -63,6 +65,30 @@ class _InstantPacingTime:
 
     def __getattr__(self, name: str):
         return getattr(self._real_time, name)
+
+
+@pytest.fixture
+def pb_session() -> FakePocketBaseSession:
+    """A fresh scripted PocketBase collection for one Job Record Store test."""
+    return FakePocketBaseSession()
+
+
+@pytest.fixture(params=["in_memory", "pocketbase"])
+def any_job_store(request) -> Any:
+    """Every Job Record Store adapter, over the same scripted collection.
+
+    A lifecycle rule asserted through this fixture has been proven for both adapters —
+    the worker's and the dashboard's — which is what stops "they agree" from becoming an
+    assumption. Declared here rather than in the harness module because a pytest fixture
+    that depends on another module's fixture cannot be imported into a test module.
+    """
+    from _job_store_harness import pocketbase_job_store
+
+    from boss_agent.job_store import InMemoryJobRecordStore
+
+    if request.param == "in_memory":
+        return InMemoryJobRecordStore()
+    return pocketbase_job_store(FakePocketBaseSession())
 
 
 @pytest.fixture(autouse=True)

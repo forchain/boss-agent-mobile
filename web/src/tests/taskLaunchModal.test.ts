@@ -55,6 +55,18 @@ function jsonResponse(body: unknown): Response {
 	});
 }
 
+/**
+ * Open the modal and wait until the selected strategy's execution parameters are on
+ * screen. The searches load asynchronously, and a launch clicked before they land just
+ * returns early — which would fail as "the spy was never called" rather than as a
+ * depth problem.
+ */
+async function openStrategyForm(): Promise<HTMLSelectElement> {
+	openModal();
+	await waitFor(() => expect(screen.getByLabelText(/目标操作级别/)).toBeTruthy());
+	return screen.getByLabelText(/目标操作级别/) as HTMLSelectElement;
+}
+
 function openModal() {
 	return render(TaskLaunchModal, {
 		props: { isOpen: true, onClose: () => {}, onTaskCreated: () => {} }
@@ -135,5 +147,59 @@ describe('Task launch modal category tabs (issue #229)', () => {
 
 		await fireEvent.click(screen.getByText(/检查登录状态/));
 		await waitFor(() => expect(mocks.createAutomationTask).toHaveBeenCalledWith('CHECK_LOGIN', expect.anything()));
+	});
+});
+
+describe('Task launch modal execution depth (issue #298)', () => {
+	it('offers exactly the two operator depths and no second send switch', async () => {
+		const depth = await openStrategyForm();
+
+		expect(Array.from(depth.options).map((o) => o.value)).toEqual(['save_jd', 'auto_apply']);
+
+		// The 安全预览 / 自动发送 dropdown is gone. "Do not send it" was a second switch on
+		// the intent the depth already states, and PR #297 was one caller forgetting it —
+		// so the whole option was removed rather than made easier to set correctly.
+		expect(screen.queryByText('发送模式')).toBeNull();
+		expect(screen.queryByText(/安全预览模式/)).toBeNull();
+		expect(screen.queryByText(/自动发送模式/)).toBeNull();
+	});
+
+	it('launches an 自动打招呼 strategy so the greeting actually goes out', async () => {
+		await openStrategyForm();
+		await fireEvent.click(screen.getByText('🚀 按此策略发起任务'));
+
+		await waitFor(() => expect(mocks.createAutomationTask).toHaveBeenCalledTimes(1));
+		const [taskType, payload] = mocks.createAutomationTask.mock.calls[0];
+		expect(taskType).toBe('AUTO_APPLY');
+		// Depth is one expression — the Target Action the form selected. No mode, and no
+		// legacy pair a caller could get half right (#298 then #302).
+		expect(payload.target_action).toBe('auto_apply');
+		expect(payload.auto_send).toBeUndefined();
+		expect(payload.preview_only).toBeUndefined();
+	});
+
+	it('derives the depth from the chosen depth rather than a hidden mode', async () => {
+		const depth = await openStrategyForm();
+		await fireEvent.change(depth, { target: { value: 'save_jd' } });
+		await fireEvent.click(screen.getByText('🚀 按此策略发起任务'));
+
+		await waitFor(() => expect(mocks.createAutomationTask).toHaveBeenCalledTimes(1));
+		const [taskType, payload] = mocks.createAutomationTask.mock.calls[0];
+		expect(taskType).toBe('SCRAPE_JOBS');
+		expect(payload.target_action).toBe('save_jd');
+		expect(payload.auto_send).toBeUndefined();
+		expect(payload.preview_only).toBeUndefined();
+	});
+
+	it('still lets the 拒信清扫 drill keep its own dry_run switch', async () => {
+		// Issue #298 cancels the preview *depth*, not the cleanup's standing drill: that is
+		// a different intent on a different surface and stays exactly as configured.
+		openModal();
+		await waitFor(() => expect(mocks.listSavedSearches).toHaveBeenCalled());
+		await fireEvent.click(screen.getByText('🧹 拒信清扫'));
+		await waitFor(() => expect(screen.getByText('🧪 下发演练扫描')).toBeTruthy());
+		await fireEvent.click(screen.getByText('🧪 下发演练扫描'));
+		await waitFor(() => expect(mocks.createAutomationTask).toHaveBeenCalledTimes(1));
+		expect(mocks.createAutomationTask.mock.calls[0][1].dry_run).toBe(true);
 	});
 });

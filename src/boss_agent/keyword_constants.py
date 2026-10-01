@@ -292,6 +292,17 @@ UNCONTACTED_BUTTON_TEXTS: tuple[str, ...] = ("立即沟通", "聊一聊", "去�
 APPLIED_SOURCE_AGENT: str = "agent_auto_send"
 APPLIED_SOURCE_PLATFORM_HISTORICAL: str = "platform_historical"
 
+#: Provenance of the greeting text on a Job Record (issue #300). This is what decides
+#: whether a run may spend tokens re-drafting it: an operator who previews a greeting does
+#: so by generating or editing it in the Web Dashboard, and once that copy exists the
+#: agent sends it verbatim instead of writing a new one over it on every sweep.
+#:
+#: A record written before this field existed carries neither value, and
+#: :func:`greeting_is_human` reads that as "not human" — the safe direction, because the
+#: cost of guessing wrong is a regenerated draft, not a message nobody approved.
+GREETING_SOURCE_AGENT: str = "agent_draft"
+GREETING_SOURCE_HUMAN: str = "human"
+
 EXPIRED_POSTING_REASON: str = "岗位已失效/停止招聘"
 
 # Telemetry shared by both detail-inspecting handlers when a headhunter posting is
@@ -308,6 +319,13 @@ DEFAULT_COMMUNICATION_COOLDOWN_DAYS: int = 30
 # service gate on the same precondition, so it is stated once here.
 MIN_JD_CHARS: int = 30
 UNUSABLE_JD_MARKERS: tuple[str, ...] = ("无详细岗位描述", "暂无详细描述", "未注明职位")
+
+#: The markers that mean a job description was never fully expanded. One declaration,
+#: read by the detail page before it spends scrolls and taps on `查看更多`
+#: (`pages.JobDetailPage.expand_description_if_collapsed`) and by the feed pipeline before
+#: it decides a stored JD is as good as a fresh read (issue #301). Two owners for this rule
+#: is how a stored body and a live body could stop meaning the same thing.
+TRUNCATED_JD_MARKERS: tuple[str, ...] = ("查看更多", "展开")
 
 #: Unambiguous staffing/agency markers. Deliberately excludes broad industry
 #: words such as 咨询 or 科技, which real employers also carry (e.g. 埃森哲咨询).

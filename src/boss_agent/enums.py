@@ -61,6 +61,13 @@ class ChannelPreference(StrEnum):
     HEADHUNTER_ONLY = "headhunter_only"
 
 
+#: How a task payload answered the one depth question (issue #302), recorded so a run can
+#: say which shape it read. Once nothing reports `legacy_*`, the legacy reading goes away.
+DEPTH_DECLARED = "declared_target_action"
+DEPTH_LEGACY_PAIR = "legacy_preview_pair"
+DEPTH_LEGACY_HALF_PAIR = "legacy_preview_half_pair"
+DEPTH_UNSTATED = "unstated_default"
+
 STATE_RANK: dict[str, int] = {
     JobRecordStatus.IGNORED: -1,
     JobRecordStatus.DIGEST_ONLY: 1,
@@ -70,7 +77,35 @@ STATE_RANK: dict[str, int] = {
     JobRecordStatus.APPLIED: 3,
 }
 
+#: The state rank each Target Action requires. This is the Depth Visit Rule's table:
+#: 深度存JD is satisfied by a record that has reached the enrichment rung, while
+#: 自动打招呼 is satisfied only at `applied` — a greeting that actually left the app.
+#: `matched` used to sit at this action's rank, which is how an undelivered draft read as
+#: finished work and was never revisited (issue #299).
 TARGET_ACTION_RANK: dict[str, int] = {
     TargetAction.SAVE_JD: 1,
-    TargetAction.AUTO_APPLY: 2,
+    TargetAction.AUTO_APPLY: STATE_RANK[JobRecordStatus.APPLIED],
 }
+
+
+def depth_already_reached(
+    target_action: TargetAction, existing_status: str, existing_record: dict | None
+) -> bool:
+    """Whether a stored record has already met the depth this run is configured for.
+
+    The two depths ask different questions, and the Job Lifecycle ladder answers only one of
+    them. `STATE_RANK` orders a record by how much is *known* about it, which is the right
+    guard for writes and for a 深度存JD sweep. It is the wrong guard for 自动打招呼, whose
+    requirement is a delivered message: comparing ranks there counted a draft — `matched` —
+    as finished work, and every undelivered greeting the backend or a spent quota produced
+    was skipped forever after (issue #299).
+    """
+    rank = STATE_RANK.get(existing_status, 0)
+    required = TARGET_ACTION_RANK.get(target_action, STATE_RANK[JobRecordStatus.JD_SAVED])
+    if rank < required:
+        return False
+    if target_action != TargetAction.SAVE_JD:
+        return True
+    # A save-only pass is satisfied by enrichment itself, so a record that got as far as a
+    # draft has plainly been read; one that never produced a JD is not done yet.
+    return rank > required or bool(((existing_record or {}).get("job_description") or "").strip())

@@ -21,6 +21,9 @@ const ALLOWED_JOB_FIELDS = new Set([
 	'match_score',
 	'jd_key_requirements',
 	'greeting_message',
+	// Provenance of the greeting text (#300). It has to be patchable for the same reason
+	// the text is: the dashboard marks its own copy as the human's when it saves it.
+	'greeting_source',
 	'search_keywords',
 	'screened_reason',
 	'relaxed_by_whitelist',
