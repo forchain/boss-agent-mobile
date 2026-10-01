@@ -86,6 +86,8 @@ export function getPocketBaseUrl(): string {
 	return resolved.replace(/\/+$/, '');
 }
 
+import { apiGet } from '$lib/apiClient';
+
 /**
  * Whether the broker is reachable, asked through the dashboard's own origin.
  *
@@ -94,9 +96,7 @@ export function getPocketBaseUrl(): string {
  */
 export async function checkPocketBaseHealth(): Promise<boolean> {
 	try {
-		const res = await fetch('/api/health', { signal: AbortSignal.timeout(6000) });
-		if (!res.ok) return false;
-		const data = await res.json().catch(() => ({}));
+		const data = await apiGet<{ healthy?: boolean }>('/api/health');
 		return data.healthy === true;
 	} catch {
 		return false;

@@ -4,6 +4,7 @@
 	import { listSavedSearches, createAutomationTask, getCandidateProfile } from '$lib/pocketbase';
 	import { DEFAULT_CHAT_ACKNOWLEDGMENT, DEFAULT_LAUNCH_CHAT_DRY_RUN, normalizeChatAcknowledgment } from '$lib/chatAcknowledgment';
 	import { buildChatCleanupLaunch, buildLoginDiagnosticLaunch, buildSearchLaunch } from '$lib/taskLaunch';
+	import { apiGet } from '$lib/apiClient';
 
 	let {
 		isOpen = false,
@@ -40,9 +41,7 @@
 
 	async function loadChatAcknowledgmentDefaults() {
 		try {
-			const res = await fetch('/api/settings');
-			if (!res.ok) return;
-			const conf = await res.json();
+			const conf = await apiGet<{ chat?: unknown }>('/api/settings');
 			chat = normalizeChatAcknowledgment(conf.chat);
 		} catch (e) {}
 	}

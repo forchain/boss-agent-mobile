@@ -1,11 +1,15 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { getPocketBaseUrl } from '$lib/pocketbase';
 import { cleanJobTitle } from '$lib/screening';
 import { buildJobFilter, clampJobLimit, clampJobPage } from '$lib/jobQuery';
 import { computeFingerprint } from '$lib/server/jobFingerprint';
-import { brokerMessage } from '$lib/server/broker';
-
+import {
+	COLLECTIONS,
+	BrokerError,
+	createRecord,
+	listRecords,
+	updateRecord
+} from '$lib/server/broker';
 import type { JobRecordsCounts } from '$lib/types';
 
 export const GET: RequestHandler = async ({ url }) => {
@@ -14,13 +18,9 @@ export const GET: RequestHandler = async ({ url }) => {
 	const search = url.searchParams.get('search');
 	const page = clampJobPage(url.searchParams.get('page'));
 	const limit = clampJobLimit(url.searchParams.get('limit'));
-	const pbBase = getPocketBaseUrl();
 
-	// One builder, shared with the client lib. The two copies disagreed on what an
-	// absent `status` means — the route excluded `ignored`, the lib included it — so the
-	// same list differed between the SSR fetch and the browser fetch.
+	// One builder, shared with the client lib.
 	const finalFilter = buildJobFilter({ status, channel, search });
-
 
 	let items: any[] = [];
 	let totalItems = 0;
@@ -29,32 +29,24 @@ export const GET: RequestHandler = async ({ url }) => {
 	const fetchCount = async (filterCond: string) => {
 		try {
 			const countFilter = `(company_name != '' && company_name != '未知公司') && (${filterCond})`;
-			const r = await fetch(
-				`${pbBase}/api/collections/job_records/records?filter=${encodeURIComponent(countFilter)}&perPage=1`,
-				{ signal: AbortSignal.timeout(3000) }
-			);
-			if (r.ok) {
-				const d = await r.json();
-				return d.totalItems ?? 0;
-			}
-		} catch {}
-		return 0;
+			const r = await listRecords(COLLECTIONS.jobs, {
+				filter: countFilter,
+				perPage: 1
+			});
+			return r.totalItems ?? 0;
+		} catch {
+			return 0;
+		}
 	};
 
 	try {
-		const query = new URLSearchParams({
-			sort: '-created',
-			page: String(page),
-			perPage: String(limit)
-		});
-		if (finalFilter) {
-			query.set('filter', finalFilter);
-		}
-
-		const [dataResp, allCount, jdSavedCount, matchedCount, appliedCount, ignoredCount, directCount, headhunterCount] =
+		const [dataPage, allCount, jdSavedCount, matchedCount, appliedCount, ignoredCount, directCount, headhunterCount] =
 			await Promise.all([
-				fetch(`${pbBase}/api/collections/job_records/records?${query.toString()}`, {
-					signal: AbortSignal.timeout(3000)
+				listRecords(COLLECTIONS.jobs, {
+					sort: '-created',
+					page,
+					perPage: limit,
+					filter: finalFilter || undefined
 				}).catch(() => null),
 				fetchCount("status != 'ignored'"),
 				fetchCount("status = 'jd_saved' || status = 'unmatched' || status = 'digest_only'"),
@@ -65,13 +57,10 @@ export const GET: RequestHandler = async ({ url }) => {
 				fetchCount('is_headhunter = true')
 			]);
 
-		if (dataResp && dataResp.ok) {
-			const data = await dataResp.json();
-			if (data.items) {
-				items = data.items;
-			}
-			totalItems = data.totalItems ?? items.length;
-			totalPages = data.totalPages ?? (items.length > 0 ? 1 : 0);
+		if (dataPage) {
+			items = dataPage.items || [];
+			totalItems = dataPage.totalItems ?? items.length;
+			totalPages = dataPage.totalPages ?? (items.length > 0 ? 1 : 0);
 		}
 
 		items = items.filter(
@@ -108,7 +97,7 @@ export const GET: RequestHandler = async ({ url }) => {
 			perPage: limit,
 			counts
 		});
-	} catch (e) {
+	} catch {
 		return json({
 			success: true,
 			records: [],
@@ -142,56 +131,44 @@ export const POST: RequestHandler = async ({ request }) => {
 		const title = cleanJobTitle(body.title || '');
 		const recruiterName = body.recruiter_name || '';
 		const fingerprint = body.fingerprint || computeFingerprint(companyName, title, recruiterName);
-		const pbBase = getPocketBaseUrl();
 
 		const now = new Date().toISOString();
 
 		// Check if fingerprint already exists
 		try {
-			const checkResp = await fetch(
-				`${pbBase}/api/collections/job_records/records?filter=${encodeURIComponent(`fingerprint='${fingerprint}'`)}&perPage=1`,
-				{ signal: AbortSignal.timeout(3000) }
-			);
-			if (checkResp.ok) {
-				const checkData = await checkResp.json();
-				if (checkData.items?.length > 0) {
-					const existing = checkData.items[0];
-					const newKw = body.search_keywords || [];
-					const mergedKw = Array.from(new Set([...(existing.search_keywords || []), ...newKw]));
-					const targetStatus = body.status || existing.status || 'unmatched';
-					const patchPayload: Record<string, any> = {
-						status: targetStatus,
-						last_seen_at: now,
-						search_keywords: mergedKw
-					};
-					if (body.company_scale !== undefined) patchPayload.company_scale = body.company_scale;
-					if (body.industry !== undefined) patchPayload.industry = body.industry;
-					if (body.tags !== undefined) patchPayload.tags = body.tags;
-					if (body.recruiter_title !== undefined) patchPayload.recruiter_title = body.recruiter_title;
-					if (body.is_headhunter !== undefined) patchPayload.is_headhunter = body.is_headhunter;
-					if (body.digest !== undefined) patchPayload.digest = body.digest;
+			const checkPage = await listRecords(COLLECTIONS.jobs, {
+				filter: `fingerprint='${fingerprint}'`,
+				perPage: 1
+			});
+			if (checkPage.items.length > 0) {
+				const existing = checkPage.items[0];
+				const newKw = body.search_keywords || [];
+				const mergedKw = Array.from(new Set([...(existing.search_keywords || []), ...newKw]));
+				const targetStatus = body.status || existing.status || 'unmatched';
+				const patchPayload: Record<string, any> = {
+					status: targetStatus,
+					last_seen_at: now,
+					search_keywords: mergedKw
+				};
+				if (body.company_scale !== undefined) patchPayload.company_scale = body.company_scale;
+				if (body.industry !== undefined) patchPayload.industry = body.industry;
+				if (body.tags !== undefined) patchPayload.tags = body.tags;
+				if (body.recruiter_title !== undefined) patchPayload.recruiter_title = body.recruiter_title;
+				if (body.is_headhunter !== undefined) patchPayload.is_headhunter = body.is_headhunter;
+				if (body.digest !== undefined) patchPayload.digest = body.digest;
 
-					const patchResp = await fetch(`${pbBase}/api/collections/job_records/records/${existing.id}`, {
-						method: 'PATCH',
-						headers: { 'Content-Type': 'application/json' },
-						body: JSON.stringify(patchPayload)
-					});
-					if (patchResp.ok) {
-						const updated = await patchResp.json();
-						return json({ success: true, record: updated, is_new: false });
-					}
-					const message = await brokerMessage(patchResp);
-					return json(
-						{ success: false, message, error: message },
-						{ status: patchResp.status || 500 }
-					);
-				}
+				const updated = await updateRecord(COLLECTIONS.jobs, existing.id, patchPayload);
+				return json({ success: true, record: updated, is_new: false });
 			}
-		} catch (e) {}
+		} catch (e: any) {
+			if (e instanceof BrokerError && e.status !== 404) {
+				return json({ success: false, message: e.message, error: e.message }, { status: e.status });
+			}
+		}
 
 		// Insert new job record
-		const newRecord = {
-			id: body.id || 'job_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+		const newRecord: Record<string, unknown> = {
+			...(body.id ? { id: body.id } : {}),
 			fingerprint,
 			title,
 			company_name: companyName,
@@ -217,25 +194,11 @@ export const POST: RequestHandler = async ({ request }) => {
 			updated: now
 		};
 
-		const createResp = await fetch(`${pbBase}/api/collections/job_records/records`, {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify(newRecord),
-			signal: AbortSignal.timeout(3000)
-		});
-
-		if (createResp.ok) {
-			const created = await createResp.json();
-			return json({ success: true, record: created, is_new: true });
-		}
-
-		const message = await brokerMessage(createResp);
-		return json(
-			{ success: false, message, error: message },
-			{ status: createResp.status || 500 }
-		);
+		const created = await createRecord(COLLECTIONS.jobs, newRecord);
+		return json({ success: true, record: created, is_new: true });
 	} catch (err: any) {
+		const status = err instanceof BrokerError ? err.status : 500;
 		const message = err?.message || 'Failed to upsert job';
-		return json({ success: false, message, error: message }, { status: 500 });
+		return json({ success: false, message, error: message }, { status });
 	}
 };

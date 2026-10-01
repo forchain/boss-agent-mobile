@@ -55,12 +55,22 @@ export async function listRecords<T = any>(
 	const resp = await brokerRequest(`${collectionUrl(collection)}?${query.toString()}`);
 	if (!resp.ok) throw new BrokerError(`Failed to list ${collection} (${resp.status})`, resp.status);
 	const data = await resp.json();
+	const perPage = Number(data.perPage ?? params.perPage ?? 30);
+	const totalItems = Number(data.totalItems ?? 0);
+	const totalPages =
+		typeof data.totalPages === 'number'
+			? data.totalPages
+			: totalItems > 0 && perPage > 0
+				? Math.ceil(totalItems / perPage)
+				: data.items?.length
+					? 1
+					: 0;
 	return {
 		items: data.items ?? [],
-		totalItems: data.totalItems ?? 0,
-		totalPages: data.totalPages ?? 0,
-		page: data.page ?? 1,
-		perPage: data.perPage ?? (data.items?.length || 0)
+		totalItems,
+		totalPages,
+		page: Number(data.page ?? params.page ?? 1),
+		perPage
 	};
 }
 

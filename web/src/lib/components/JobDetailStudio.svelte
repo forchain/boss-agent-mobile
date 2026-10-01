@@ -22,6 +22,8 @@
 		getJobDigest
 	} from '$lib/screening';
 	import { formatCommuteDistance } from '$lib/commute';
+	import { apiGet, apiPost } from '$lib/apiClient';
+	import { confirmAction, alertAction } from '$lib/stores/confirm';
 
 	let {
 		job = null,
@@ -111,12 +113,9 @@
 
 	onMount(async () => {
 		try {
-			const gpRes = await fetch('/api/greeting/prompt');
-			if (gpRes.ok) {
-				const gpData = await gpRes.json();
-				if (typeof gpData.prompt === 'string') {
-					greetingPromptText = gpData.prompt;
-				}
+			const gpData = await apiGet<{ prompt?: string }>('/api/greeting/prompt');
+			if (typeof gpData.prompt === 'string') {
+				greetingPromptText = gpData.prompt;
 			}
 		} catch (e) {}
 	});
@@ -127,27 +126,16 @@
 		evaluationError = '';
 
 		try {
-			const res = await fetch('/api/match/evaluate', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					job_title: currentJob.title,
-					company_name: currentJob.company_name,
-					salary_range: currentJob.salary_range,
-					job_description: currentJob.job_description,
-					recruiter_name: currentJob.recruiter_name,
-					recruiter_title: currentJob.recruiter_title,
-					candidate_profile: profile,
-					llmSettings: llmSettings
-				})
+			const result = await apiPost<MatchEvaluateResponse>('/api/match/evaluate', {
+				job_title: currentJob.title,
+				company_name: currentJob.company_name,
+				salary_range: currentJob.salary_range,
+				job_description: currentJob.job_description,
+				recruiter_name: currentJob.recruiter_name,
+				recruiter_title: currentJob.recruiter_title,
+				candidate_profile: profile,
+				llmSettings: llmSettings
 			});
-
-			if (!res.ok) {
-				const err = await res.json();
-				throw new Error(err.error || err.message || '评估请求失败');
-			}
-
-			const result: MatchEvaluateResponse = await res.json();
 
 			// Update record status to matched and persist evaluation details
 			const updatePayload: Partial<JobRecord> = {
@@ -197,28 +185,23 @@
 		isRefining = true;
 		refineError = '';
 		try {
-			const res = await fetch('/api/match/critique', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					action: 'refine',
-					job: {
-						title: currentJob.title,
-						company_name: currentJob.company_name,
-						salary_range: currentJob.salary_range,
-						job_description: currentJob.job_description,
-						recruiter_name: currentJob.recruiter_name,
-						recruiter_title: currentJob.recruiter_title
-					},
-					current_greeting: customGreeting,
-					critique: critiqueInput.trim(),
-					candidate_profile: profile,
-					llmSettings: llmSettings
-				})
+			const data = await apiPost<{ success: boolean; revised_greeting: string; error?: string }>('/api/match/critique', {
+				action: 'refine',
+				job: {
+					title: currentJob.title,
+					company_name: currentJob.company_name,
+					salary_range: currentJob.salary_range,
+					job_description: currentJob.job_description,
+					recruiter_name: currentJob.recruiter_name,
+					recruiter_title: currentJob.recruiter_title
+				},
+				current_greeting: customGreeting,
+				critique: critiqueInput.trim(),
+				candidate_profile: profile,
+				llmSettings: llmSettings
 			});
 
-			const data = await res.json();
-			if (!res.ok || !data.success) {
+			if (!data.success) {
 				throw new Error(data.error || '微调优化失败');
 			}
 
@@ -265,29 +248,24 @@
 		isRefiningPrompt = true;
 		promptSaveNotice = '';
 		try {
-			const res = await fetch('/api/match/critique', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					action: 'prompt-refine',
-					job: {
-						title: currentJob.title,
-						company_name: currentJob.company_name,
-						salary_range: currentJob.salary_range,
-						job_description: currentJob.job_description,
-						recruiter_name: currentJob.recruiter_name,
-						recruiter_title: currentJob.recruiter_title
-					},
-					original_greeting: orig,
-					revised_greeting: rev,
-					critique: crit,
-					current_prompt: greetingPromptText,
-					llmSettings: llmSettings
-				})
+			const data = await apiPost<{ success: boolean; refined_prompt?: string; error?: string }>('/api/match/critique', {
+				action: 'prompt-refine',
+				job: {
+					title: currentJob.title,
+					company_name: currentJob.company_name,
+					salary_range: currentJob.salary_range,
+					job_description: currentJob.job_description,
+					recruiter_name: currentJob.recruiter_name,
+					recruiter_title: currentJob.recruiter_title
+				},
+				original_greeting: orig,
+				revised_greeting: rev,
+				critique: crit,
+				current_prompt: greetingPromptText,
+				llmSettings: llmSettings
 			});
 
-			const data = await res.json();
-			if (res.ok && data.success && typeof data.refined_prompt === 'string' && data.refined_prompt.trim()) {
+			if (data.success && typeof data.refined_prompt === 'string' && data.refined_prompt.trim()) {
 				promptRefinement = {
 					before: greetingPromptText,
 					after: data.refined_prompt
@@ -307,13 +285,10 @@
 		isSavingPrompt = true;
 		promptSaveNotice = '';
 		try {
-			const res = await fetch('/api/greeting/prompt', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ prompt: promptRefinement.after })
+			const data = await apiPost<{ success: boolean; prompt?: string; error?: string }>('/api/greeting/prompt', {
+				prompt: promptRefinement.after
 			});
-			const data = await res.json();
-			if (res.ok && data.success) {
+			if (data.success) {
 				greetingPromptText = typeof data.prompt === 'string' ? data.prompt : promptRefinement.after;
 				promptRefinement = null;
 				promptSaveNotice = '✅ Greeting Prompt 已更新，后续所有岗位的打招呼将立即生效！';
@@ -418,11 +393,13 @@
 			communicationNotice = 'ℹ️ 猎头代招与保密公司不参与同企避嫌，无需解除';
 			return;
 		}
-		if (
-			!confirm(
-				`确定解除直招企业「${compName}」的全部沟通避嫌吗？\n该公司所有已沟通岗位将回到待评估流（JD 保留），后续可重新投递。`
-			)
-		) {
+		const ok = await confirmAction({
+			title: '解除企业沟通避嫌',
+			message: `确定解除直招企业「${compName}」的全部沟通避嫌吗？\n该公司所有已沟通岗位将回到待评估流（JD 保留），后续可重新投递。`,
+			confirmText: '确定解除',
+			danger: false
+		});
+		if (!ok) {
 			return;
 		}
 
@@ -456,23 +433,24 @@
 			return;
 		}
 
-		if (!confirm(`确定将直招企业「${compName}」加入公司黑名单吗？后续该公司的所有岗位将自动被初筛过滤，节省每日沟通额度。`)) {
+		const ok = await confirmAction({
+			title: '加入公司黑名单',
+			message: `确定将直招企业「${compName}」加入公司黑名单吗？后续该公司的所有岗位将自动被初筛过滤，节省每日沟通额度。`,
+			confirmText: '加入黑名单',
+			danger: true
+		});
+		if (!ok) {
 			return;
 		}
 
 		isBlacklisting = true;
 		blacklistNotice = '';
 		try {
-			const res = await fetch('/api/screening/blacklist', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					company_name: compName,
-					is_headhunter: isHh
-				})
+			const data = await apiPost<{ success: boolean; notice?: string; error?: string }>('/api/screening/blacklist', {
+				company_name: compName,
+				is_headhunter: isHh
 			});
-			const data = await res.json();
-			if (!res.ok || !data.success) {
+			if (!data.success) {
 				throw new Error(data.error || data.notice || '加入黑名单失败');
 			}
 
@@ -523,7 +501,13 @@
 		const targetId = jobToDel.id;
 		const targetTitle = jobToDel.title;
 
-		if (!window.confirm(`确定要删除职位【${targetTitle}】吗？\n删除后该职位指纹将被释放，后续抓取可重新入库。`)) {
+		const ok = await confirmAction({
+			title: '删除职位',
+			message: `确定要删除职位【${targetTitle}】吗？\n删除后该职位指纹将被释放，后续抓取可重新入库。`,
+			confirmText: '删除',
+			danger: true
+		});
+		if (!ok) {
 			return;
 		}
 
@@ -537,7 +521,7 @@
 			onJobDeleted?.(targetId);
 			onActionCompleted?.('delete');
 		} catch (err: any) {
-			alert(`删除职位失败: ${err?.message || '网络或数据库异常'}`);
+			await alertAction(`删除职位失败: ${err?.message || '网络或数据库异常'}`, '删除失败');
 		} finally {
 			isDeleting = false;
 		}

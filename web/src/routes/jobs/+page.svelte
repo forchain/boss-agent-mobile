@@ -21,6 +21,8 @@
 	import { formatCommuteDistance } from '$lib/commute';
 	import JobDetailStudio from '$lib/components/JobDetailStudio.svelte';
 	import JobDetailModal from '$lib/components/JobDetailModal.svelte';
+	import { apiGet } from '$lib/apiClient';
+	import { confirmAction, alertAction } from '$lib/stores/confirm';
 
 	// State
 	let jobs = $state<JobRecord[]>([]);
@@ -165,7 +167,13 @@
 		const targetId = job.id;
 		const targetTitle = job.title;
 
-		if (!window.confirm(`确定要删除职位【${targetTitle}】吗？\n删除后该职位指纹将被释放，后续抓取可重新入库。`)) {
+		const confirmed = await confirmAction({
+			title: '删除职位',
+			message: `确定要删除职位【${targetTitle}】吗？\n删除后该职位指纹将被释放，后续抓取可重新入库。`,
+			danger: true,
+			confirmText: '删除'
+		});
+		if (!confirmed) {
 			return;
 		}
 
@@ -178,7 +186,7 @@
 			}
 			handleJobDeleted(targetId);
 		} catch (err: any) {
-			alert(`删除职位失败: ${err?.message || '网络或数据库异常'}`);
+			await alertAction(`删除职位失败: ${err?.message || '网络或数据库异常'}`, '删除失败');
 		} finally {
 			isDeleting = false;
 		}
@@ -197,10 +205,7 @@
 
 		// Load LLM settings
 		try {
-			const res = await fetch('/api/llm/settings');
-			if (res.ok) {
-				llmSettings = await res.json();
-			}
+			llmSettings = await apiGet<LLMSettings>('/api/llm/settings');
 		} catch (e) {}
 
 		// Realtime SSE updates, through the shared module: health-gated, retried, and

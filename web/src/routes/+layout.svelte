@@ -5,6 +5,7 @@
 	import { checkPocketBaseHealth, setPocketBaseUrl, getPocketBaseUrl } from '$lib/pocketbase';
 	import { getJobRecords } from '$lib/stores/jobs';
 	import { dashboardRealtime } from '$lib/dashboardRealtime';
+	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 
 	let { data, children }: { data: any; children: any } = $props();
 	let isPocketBaseOnline = $state(false);
@@ -175,4 +176,6 @@
 	<footer class="border-t border-slate-800/80 bg-slate-950/60 py-6 text-center text-xs text-slate-500">
 		Boss Agent Mobile · SvelteKit Full-Stack Control Center · Out-of-Process Appium Daemon
 	</footer>
+
+	<ConfirmDialog />
 </div>

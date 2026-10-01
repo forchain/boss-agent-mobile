@@ -42,7 +42,9 @@ async function request<T>(
 	const payload = (await response.json().catch(() => null)) as ApiEnvelope | null;
 	if (!response.ok || payload?.success === false) {
 		throw new ApiError(
-			payload?.message || `Request to ${path} failed (${response.status})`,
+			(payload?.message as string) ||
+				((payload as any)?.error as string) ||
+				`Request to ${path} failed (${response.status})`,
 			response.status
 		);
 	}

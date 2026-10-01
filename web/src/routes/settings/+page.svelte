@@ -5,6 +5,7 @@
 	import { DEFAULT_CHAT_ACKNOWLEDGMENT, normalizeChatAcknowledgment } from '$lib/chatAcknowledgment';
 	import { getCommunicationSummary, postCommunicationAction } from '$lib/pocketbase';
 	import { formatCommuteLimitInput, isCommuteLimitDisabled, normalizeCommuteLimit } from '$lib/commute';
+	import { apiGet, apiPost } from '$lib/apiClient';
 
 
 	let settings = $state<SystemSettings>({
@@ -152,9 +153,8 @@
 			window.addEventListener('beforeunload', beforeUnloadHandler);
 		}
 		try {
-			const res = await fetch('/api/settings');
-			if (res.ok) {
-				const conf = await res.json();
+			const conf = await apiGet<any>('/api/settings');
+			if (conf) {
 				const resolvedChat = normalizeChatAcknowledgment(conf.chat);
 				settings = {
 					device: conf.device || 'emulator-5554',
@@ -201,24 +201,21 @@
 		}
 
 		try {
-			const pRes = await fetch('/api/screening/policy');
-			if (pRes.ok) {
-				const pData = await pRes.json();
-				if (pData.policy) {
-					screeningPolicy = {
-						enable_screening: pData.policy.enable_screening ?? true,
-						title_whitelist: Array.isArray(pData.policy.title_whitelist) ? pData.policy.title_whitelist : [],
-						title_blacklist: Array.isArray(pData.policy.title_blacklist) ? pData.policy.title_blacklist : [],
-						company_blacklist: Array.isArray(pData.policy.company_blacklist) ? pData.policy.company_blacklist : [],
-						jd_blacklist: Array.isArray(pData.policy.jd_blacklist) ? pData.policy.jd_blacklist : [],
-						max_commute_distance_km:
-							pData.policy.max_commute_distance_km === null ||
-							pData.policy.max_commute_distance_km === undefined
-								? null
-								: Number(pData.policy.max_commute_distance_km)
-					};
-					maxCommuteInput = formatCommuteLimitInput(pData.policy.max_commute_distance_km);
-				}
+			const pData = await apiGet<{ policy?: ScreeningPolicy }>('/api/screening/policy');
+			if (pData?.policy) {
+				screeningPolicy = {
+					enable_screening: pData.policy.enable_screening ?? true,
+					title_whitelist: Array.isArray(pData.policy.title_whitelist) ? pData.policy.title_whitelist : [],
+					title_blacklist: Array.isArray(pData.policy.title_blacklist) ? pData.policy.title_blacklist : [],
+					company_blacklist: Array.isArray(pData.policy.company_blacklist) ? pData.policy.company_blacklist : [],
+					jd_blacklist: Array.isArray(pData.policy.jd_blacklist) ? pData.policy.jd_blacklist : [],
+					max_commute_distance_km:
+						pData.policy.max_commute_distance_km === null ||
+						pData.policy.max_commute_distance_km === undefined
+							? null
+							: Number(pData.policy.max_commute_distance_km)
+				};
+				maxCommuteInput = formatCommuteLimitInput(pData.policy.max_commute_distance_km);
 			}
 		} catch (e) {
 			console.warn('Failed to load screening policy:', e);
@@ -227,15 +224,12 @@
 		await loadCommunicationSummary();
 
 		try {
-			const gpRes = await fetch('/api/greeting/prompt');
-			if (gpRes.ok) {
-				const gpData = await gpRes.json();
-				if (typeof gpData.prompt === 'string') {
-					greetingPrompt = gpData.prompt;
-					greetingPromptIsDefault = Boolean(gpData.isDefault);
-					greetingPromptLoaded = true;
-					promptUnsaved = false;
-				}
+			const gpData = await apiGet<{ prompt?: string; isDefault?: boolean }>('/api/greeting/prompt');
+			if (typeof gpData.prompt === 'string') {
+				greetingPrompt = gpData.prompt;
+				greetingPromptIsDefault = Boolean(gpData.isDefault);
+				greetingPromptLoaded = true;
+				promptUnsaved = false;
 			}
 		} catch (e) {
 			console.warn('Failed to load greeting prompt:', e);
@@ -247,13 +241,8 @@
 		savePromptSuccess = '';
 		savePromptError = '';
 		try {
-			const res = await fetch('/api/greeting/prompt', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify(payload)
-			});
-			const data = await res.json();
-			if (res.ok && data.success) {
+			const data = await apiPost<{ success: boolean; prompt?: string; message?: string; error?: string }>('/api/greeting/prompt', payload);
+			if (data.success) {
 				greetingPrompt = data.prompt ?? greetingPrompt;
 				greetingPromptIsDefault = false;
 				promptUnsaved = false;
@@ -313,13 +302,8 @@
 		companyValidationError = '';
 		screeningPolicy.max_commute_distance_km = readCommuteInput();
 		try {
-			const res = await fetch('/api/screening/policy', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify(screeningPolicy)
-			});
-			const data = await res.json();
-			if (res.ok && data.success) {
+			const data = await apiPost<{ success: boolean; message?: string; policy?: ScreeningPolicy; error?: string }>('/api/screening/policy', screeningPolicy);
+			if (data.success) {
 				savePolicySuccess = data.message || '✅ 初筛策略已成功保存至 config/settings.local.yaml';
 				if (data.policy) {
 					screeningPolicy = data.policy;
@@ -360,13 +344,8 @@
 		saveSuccessMessage = '';
 		saveErrorMessage = '';
 		try {
-			const res = await fetch('/api/settings', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify(settings)
-			});
-			const data = await res.json();
-			if (res.ok && data.success) {
+			const data = await apiPost<{ success: boolean; message?: string }>('/api/settings', settings);
+			if (data.success) {
 				saveSuccessMessage = '✅ 系统配置已成功保存到本地 (config/settings.local.yaml)';
 				if (settings.api_key) {
 					isEditingApiKey = false;
@@ -395,20 +374,15 @@
 		isTesting = true;
 		testResult = null;
 		try {
-			const res = await fetch('/api/llm/test', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					provider: settings.provider,
-					model: settings.model,
-					base_url: settings.base_url,
-					api_key: activeApiKey,
-					temperature: settings.temperature,
-					timeout_sec: settings.timeout_sec,
-					max_tokens: settings.max_tokens
-				})
+			const data = await apiPost<{ success: boolean; message: string; latency_ms?: number }>('/api/llm/test', {
+				provider: settings.provider,
+				model: settings.model,
+				base_url: settings.base_url,
+				api_key: activeApiKey,
+				temperature: settings.temperature,
+				timeout_sec: settings.timeout_sec,
+				max_tokens: settings.max_tokens
 			});
-			const data = await res.json();
 			testResult = {
 				success: data.success,
 				message: data.message,
