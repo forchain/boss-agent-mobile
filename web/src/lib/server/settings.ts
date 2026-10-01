@@ -1,151 +1,14 @@
 import { getProjectRoot } from '$lib/server/pythonRunner';
+import { resolveConfigRoot } from '$lib/server/greetingPromptConfig';
 import path from 'path';
 import fs from 'fs';
+import * as yaml from 'js-yaml';
+import { execFileSync } from 'node:child_process';
 import { DEFAULT_CHAT_ACKNOWLEDGMENT, normalizeChatAcknowledgment } from '$lib/chatAcknowledgment';
 import type { SystemSettings } from '$lib/types';
 import { normalizeCommuteLimit } from '$lib/commute';
 
 export { DEFAULT_CHAT_ACKNOWLEDGMENT, normalizeChatAcknowledgment };
-
-/**
- * Interpret a YAML scalar. Callers pass the value with surrounding quotes
- * already stripped, so a quoted `"30"` still coerces to a number exactly as it
- * did before the nested-block support was added.
- */
-function coerceScalar(val: string): any {
-	if (val.toLowerCase() === 'true') return true;
-	if (val.toLowerCase() === 'false') return false;
-	if (/^-?\d+$/.test(val)) return parseInt(val, 10);
-	if (/^-?\d+\.\d+$/.test(val)) return parseFloat(val);
-	return val;
-}
-
-export function parseSimpleYaml(content: string): Record<string, any> {
-	const result: Record<string, any> = {};
-	const lines = content.split('\n');
-	// Dotted path of the collection currently being filled (a flat list, a flat
-	// nested map, or a list nested inside a map). Null means top-level scalars.
-	let targetPath: string[] | null = null;
-
-	// A bare `key:` line is ambiguous. The first following non-blank, non-comment
-	// line decides: an indented `- item` is a list, an indented `k: v` is a map.
-	const blockKind = (startIndex: number): 'list' | 'map' | 'empty' => {
-		for (let j = startIndex + 1; j < lines.length; j++) {
-			const candidate = lines[j];
-			if (!candidate.trim() || candidate.trim().startsWith('#')) continue;
-			if (!/^\s/.test(candidate)) return 'empty';
-			return candidate.trim().startsWith('- ') ? 'list' : 'map';
-		}
-		return 'empty';
-	};
-
-	const containerAt = (path: string[]): any => {
-		let node = result;
-		for (const segment of path.slice(0, -1)) {
-			if (typeof node[segment] !== 'object' || node[segment] === null) node[segment] = {};
-			node = node[segment];
-		}
-		return node;
-	};
-
-	for (let i = 0; i < lines.length; i++) {
-		const raw = lines[i];
-		const trimmed = raw.trim();
-		if (!trimmed || trimmed.startsWith('#')) continue;
-		const indented = /^[ \t]/.test(raw);
-
-		// Support multi-line list items: - "item"
-		if (trimmed.startsWith('- ')) {
-			if (targetPath) {
-				const item = trimmed.slice(2).trim().replace(/^["']|["']$/g, '');
-				const parent = containerAt(targetPath);
-				const leaf = targetPath[targetPath.length - 1];
-				if (!Array.isArray(parent[leaf])) parent[leaf] = [];
-				parent[leaf].push(item);
-			}
-			continue;
-		}
-
-		if (!trimmed.includes(':')) continue;
-
-		const [keyPart, ...valParts] = trimmed.split(':');
-		const key = keyPart.trim();
-		let val = valParts.join(':').trim();
-		const wasQuoted = val.startsWith('"') || val.startsWith("'");
-
-		// Handle quoted values and strip trailing comments
-		if (val.startsWith('"')) {
-			const match = val.match(/^"([^"]*)"/);
-			if (match) {
-				val = match[1];
-			} else {
-				val = val.replace(/^"|"$/g, '');
-			}
-		} else if (val.startsWith("'")) {
-			const match = val.match(/^'([^']*)'/);
-			if (match) {
-				val = match[1];
-			} else {
-				val = val.replace(/^'|'$/g, '');
-			}
-		} else {
-			if (val.includes(' #') || val.includes('\t#')) {
-				val = val.split(/\s+#/)[0].trim();
-			}
-		}
-
-		// A member of the nested block currently being read (e.g. `chat:` children).
-		if (indented && targetPath && targetPath.length === 1) {
-			const parent = containerAt(targetPath);
-			const block = parent[targetPath[targetPath.length - 1]];
-			if (val === '' && !wasQuoted) {
-				const kind = blockKind(i);
-				block[key] = kind === 'map' ? {} : [];
-				if (kind === 'list') targetPath = [...targetPath, key];
-			} else {
-				block[key] = coerceScalar(val.replace(/^["']|["']$/g, ''));
-			}
-			continue;
-		}
-
-		// Support inline array [...]
-		if (val.startsWith('[') && val.endsWith(']')) {
-			try {
-				result[key] = JSON.parse(val);
-			} catch {
-				const inner = val.slice(1, -1).trim();
-				if (!inner) {
-					result[key] = [];
-				} else {
-					result[key] = inner.split(',').map((s) => s.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
-				}
-			}
-			targetPath = null;
-			continue;
-		}
-
-		if (val === '') {
-			if (wasQuoted) {
-				// An explicit "" is an empty string, not an (empty) list header
-				result[key] = '';
-				targetPath = null;
-				continue;
-			}
-			const kind = blockKind(i);
-			if (kind === 'map') {
-				result[key] = {};
-			} else {
-				result[key] = [];
-			}
-			targetPath = [key];
-			continue;
-		}
-
-		targetPath = null;
-		result[key] = coerceScalar(val.replace(/^["']|["']$/g, ''));
-	}
-	return result;
-}
 
 export function getSettingsLocalPath(): string {
 	// Test/dev injection seam (issue #185): point persistence at a scratch file
@@ -154,7 +17,7 @@ export function getSettingsLocalPath(): string {
 	if (override && override.trim()) {
 		return path.resolve(override.trim());
 	}
-	return path.join(getProjectRoot(), 'config', 'settings.local.yaml');
+	return path.join(resolveConfigRoot(), 'config', 'settings.local.yaml');
 }
 
 export function getLegacyLlmPath(): string {
@@ -166,7 +29,7 @@ export function getLegacyLlmPath(): string {
 	if (override && override.trim()) {
 		return path.resolve(override.trim());
 	}
-	return path.join(getProjectRoot(), 'config', 'llm.local.yaml');
+	return path.join(resolveConfigRoot(), 'config', 'llm.local.yaml');
 }
 
 export function maskSecret(val?: string): string {
@@ -217,138 +80,158 @@ export function sanitizeLlmSettingsForRunner(settings: any): any {
 	return cleaned;
 }
 
-/** Merge a parsed settings file, deep-merging the nested `chat:` block. */
-function mergeParsedFile(base: SystemSettings, parsed: Record<string, any>): SystemSettings {
-	const merged: SystemSettings = { ...base, ...parsed };
-	if (parsed.chat && typeof parsed.chat === 'object' && !Array.isArray(parsed.chat)) {
-		merged.chat = { ...(base.chat || {}), ...parsed.chat } as SystemSettings['chat'];
+let cachedSettings: SystemSettings | null = null;
+let cachedSignature: string | null = null;
+
+export function invalidateSettingsCache(): void {
+	cachedSettings = null;
+	cachedSignature = null;
+}
+
+function findPythonBinary(projectRoot: string): string {
+	const candidates = [
+		process.env.PYTHON,
+		path.join(projectRoot, '.venv', 'bin', 'python'),
+		path.join(projectRoot, '.venv', 'bin', 'python3'),
+		'python3',
+		'python'
+	];
+	for (const candidate of candidates) {
+		if (!candidate) continue;
+		if (candidate.includes('/') || candidate.includes('\\')) {
+			if (fs.existsSync(candidate)) return candidate;
+		} else {
+			return candidate;
+		}
 	}
-	return merged;
+	return 'python3';
+}
+
+const CACHE_ENV_KEYS = [
+	'BOSS_SETTINGS_LOCAL_PATH',
+	'BOSS_LEGACY_LLM_PATH',
+	'BOSS_CONFIG_ROOT',
+	'POCKETBASE_URL',
+	'APPIUM_SERVER_URL',
+	'APPIUM_URL',
+	'LLM_API_KEY',
+	'MINIMAX_API_KEY',
+	'OPENAI_API_KEY',
+	'LLM_BASE_URL',
+	'MINIMAX_BASE_URL',
+	'LLM_MODEL',
+	'ANDROID_AVD',
+	'PB_DATA_DIR',
+	'POCKETBASE_DATA_DIR',
+	'PB_DB_PATH',
+	'POCKETBASE_DB_PATH',
+	'CHAT_REJECTION_REPLY_TEXT',
+	'CHAT_MAX_SCAN_DEPTH',
+	'CHAT_MAX_SCROLL_SWIPES',
+	'CHAT_DRY_RUN',
+	'RUN_CLEANUP_ON_STARTUP'
+];
+
+function computeCacheSignature(projectRoot: string): string {
+	const configRoot = resolveConfigRoot();
+	const paths = [
+		getSettingsLocalPath(),
+		path.join(configRoot, 'config', 'settings.local.json'),
+		path.join(configRoot, 'config', 'settings.yaml'),
+		path.join(configRoot, 'config', 'settings.example.yaml'),
+		path.join(projectRoot, 'config', 'settings.example.yaml'),
+		getLegacyLlmPath()
+	];
+
+	const parts: string[] = [];
+	for (const p of paths) {
+		try {
+			const stat = fs.statSync(p);
+			parts.push(`${p}:${stat.mtimeMs}:${stat.size}`);
+		} catch {
+			parts.push(`${p}:absent`);
+		}
+	}
+	for (const k of CACHE_ENV_KEYS) {
+		parts.push(`${k}=${process.env[k] ?? ''}`);
+	}
+	return parts.join('|');
 }
 
 export function loadMergedSettings(): SystemSettings {
 	const projectRoot = getProjectRoot();
+	const sig = computeCacheSignature(projectRoot);
 
-	// Default baseline matches config/settings.example.yaml
-	let settings: SystemSettings = {
-		device: 'emulator-5554',
-		avd_name: 'boss_avd_arm64',
-		server_url: 'http://127.0.0.1:4723',
-		pocketbase_url: 'http://127.0.0.1:8090',
-		provider: 'openai',
-		base_url: 'https://api.minimaxi.com/v1',
-		api_key: '',
-		model: 'MiniMax-M3',
-		temperature: 0.2,
-		timeout_sec: 120.0,
-		max_tokens: 262144,
-		langsmith_tracing: false,
-		langsmith_api_key: '',
-		langsmith_project: 'boss-agent-mobile',
-		daily_greeting_limit: 20,
-		preview_timeout_sec: 3.0,
-		enable_greeting: true,
-		communication_cooldown_days: 30,
-		enable_screening: true,
-		channel_preference: 'all',
-		max_commute_distance_km: 40.0,
-		title_whitelist: [],
-		title_blacklist: ['销售', '电话销售', '电销', '管培生', '实习', '助理', '讲师', '课程顾问', '客服'],
-		company_blacklist: [],
-		jd_blacklist: ['驻场', '外包', '电销', '无底薪', '纯提成'],
-		run_cleanup_on_startup: true,
-		chat: { ...DEFAULT_CHAT_ACKNOWLEDGMENT }
+	if (cachedSettings && cachedSignature === sig) {
+		return structuredClone(cachedSettings);
+	}
+
+	const pythonBin = findPythonBinary(projectRoot);
+	const scriptPath = path.resolve(projectRoot, 'scripts', 'resolve_config.py');
+
+	const env = {
+		...process.env,
+		PATH: `${process.env.HOME || ''}/.local/bin:/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}`
 	};
 
-	// 1. Read base example file
-	const exampleFile = path.join(projectRoot, 'config', 'settings.example.yaml');
-	if (fs.existsSync(exampleFile)) {
+	let rawJson: string;
+	try {
+		rawJson = execFileSync(pythonBin, [scriptPath, '--json'], {
+			cwd: projectRoot,
+			env,
+			encoding: 'utf-8'
+		});
+	} catch (err: any) {
 		try {
-			const parsed = parseSimpleYaml(fs.readFileSync(exampleFile, 'utf-8'));
-			settings = mergeParsedFile(settings, parsed);
-		} catch (e) {
-			console.warn('Failed to parse settings.example.yaml:', e);
+			rawJson = execFileSync('uv', ['run', 'python3', scriptPath, '--json'], {
+				cwd: projectRoot,
+				env,
+				encoding: 'utf-8'
+			});
+		} catch (fallbackErr: any) {
+			console.error('Failed to resolve settings via Configuration Realm:', err, fallbackErr);
+			throw new Error(`Failed to resolve settings via Configuration Realm: ${err?.message || err}`);
 		}
 	}
 
-	// 2. Read legacy config/llm.local.yaml if present for fallback
-	const legacyLlmFile = getLegacyLlmPath();
-	if (fs.existsSync(legacyLlmFile)) {
-		try {
-			const parsed = parseSimpleYaml(fs.readFileSync(legacyLlmFile, 'utf-8'));
-			if (parsed.api_key && parsed.api_key !== 'your-api-key-here') {
-				settings.api_key = parsed.api_key;
-			}
-			for (const k of [
-				'provider',
-				'base_url',
-				'model',
-				'temperature',
-				'timeout_sec',
-				'max_tokens',
-				'langsmith_tracing',
-				'langsmith_api_key',
-				'langsmith_project'
-			] as const) {
-				if (parsed[k] !== undefined) {
-					(settings as any)[k] = parsed[k];
-				}
-			}
-		} catch (e) {}
-	}
+	const parsed = JSON.parse(rawJson.trim());
 
-	// 3. Read active local settings config/settings.local.yaml
-	let localPbUrl: string | undefined;
-	const localFile = getSettingsLocalPath();
-	if (fs.existsSync(localFile)) {
-		try {
-			const parsed = parseSimpleYaml(fs.readFileSync(localFile, 'utf-8'));
-			settings = mergeParsedFile(settings, parsed);
-			if (parsed.pocketbase_url) {
-				localPbUrl = parsed.pocketbase_url;
-			}
-		} catch (e) {
-			console.warn('Failed to parse settings.local.yaml:', e);
-		}
-	}
+	const settings: SystemSettings = {
+		device: parsed.device || 'emulator-5554',
+		avd_name: parsed.avd_name || 'boss_avd_arm64',
+		server_url: parsed.server_url || 'http://127.0.0.1:4723',
+		pocketbase_url: parsed.pocketbase_url || 'http://127.0.0.1:8090',
+		provider: parsed.provider || 'openai',
+		base_url: parsed.base_url || 'https://api.minimaxi.com/v1',
+		api_key: (parsed.api_key === 'your-api-key-here' || !parsed.api_key) ? '' : parsed.api_key,
+		model: parsed.model || 'MiniMax-M3',
+		temperature: typeof parsed.temperature === 'number' ? parsed.temperature : 0.2,
+		timeout_sec: typeof parsed.timeout_sec === 'number' ? parsed.timeout_sec : 120.0,
+		max_tokens: typeof parsed.max_tokens === 'number' ? parsed.max_tokens : 262144,
+		langsmith_tracing: Boolean(parsed.langsmith_tracing),
+		langsmith_api_key: (parsed.langsmith_api_key === 'your-langsmith-api-key-here' || !parsed.langsmith_api_key) ? '' : parsed.langsmith_api_key,
+		langsmith_project: parsed.langsmith_project || 'boss-agent-mobile',
+		daily_greeting_limit: typeof parsed.daily_greeting_limit === 'number' ? parsed.daily_greeting_limit : 20,
+		preview_timeout_sec: typeof parsed.preview_timeout_sec === 'number' ? parsed.preview_timeout_sec : 3.0,
+		enable_greeting: parsed.enable_greeting !== false,
+		communication_cooldown_days: resolveCooldownDays(parsed.communication_cooldown_days),
+		enable_screening: parsed.enable_screening !== false,
+		channel_preference: ['all', 'direct_only', 'headhunter_only'].includes(parsed.channel_preference)
+			? parsed.channel_preference
+			: 'all',
+		max_commute_distance_km: normalizeCommuteLimit(parsed.max_commute_distance_km),
+		title_whitelist: Array.isArray(parsed.title_whitelist) ? parsed.title_whitelist : [],
+		title_blacklist: Array.isArray(parsed.title_blacklist) ? parsed.title_blacklist : ['销售', '电话销售', '电销', '管培生', '实习', '助理', '讲师', '课程顾问', '客服'],
+		company_blacklist: Array.isArray(parsed.company_blacklist) ? parsed.company_blacklist : [],
+		jd_blacklist: Array.isArray(parsed.jd_blacklist) ? parsed.jd_blacklist : ['驻场', '外包', '电销', '无底薪', '纯提成'],
+		run_cleanup_on_startup: parsed.run_cleanup_on_startup !== false,
+		chat: normalizeChatAcknowledgment(parsed.chat)
+	};
 
-	// 4. Environment variable overrides
-	if (process.env.LLM_API_KEY || process.env.MINIMAX_API_KEY || process.env.OPENAI_API_KEY) {
-		settings.api_key =
-			process.env.LLM_API_KEY || process.env.MINIMAX_API_KEY || process.env.OPENAI_API_KEY || settings.api_key;
-	}
-	if (process.env.LLM_BASE_URL || process.env.MINIMAX_BASE_URL) {
-		settings.base_url =
-			process.env.LLM_BASE_URL || process.env.MINIMAX_BASE_URL || settings.base_url;
-	}
-	if (process.env.LLM_MODEL) {
-		settings.model = process.env.LLM_MODEL;
-	}
-	if (process.env.POCKETBASE_URL) {
-		if (!localPbUrl || (process.env.POCKETBASE_URL !== 'http://127.0.0.1:8090' && process.env.POCKETBASE_URL !== 'http://0.0.0.0:8090')) {
-			settings.pocketbase_url = process.env.POCKETBASE_URL;
-		}
-	}
-	if (process.env.APPIUM_SERVER_URL || process.env.APPIUM_URL) {
-		settings.server_url =
-			process.env.APPIUM_SERVER_URL || process.env.APPIUM_URL || settings.server_url;
-	}
-	if (process.env.ANDROID_AVD) {
-		settings.avd_name = process.env.ANDROID_AVD;
-	}
+	cachedSettings = settings;
+	cachedSignature = sig;
 
-	// Commute ceiling: a value on disk always wins over the 40km baseline, including
-	// an explicit null (disabled). YAML `null` parses to the string "null", so the
-	// coercion is what makes "disabled" survive a save/load cycle.
-	settings.max_commute_distance_km = normalizeCommuteLimit(settings.max_commute_distance_km);
-
-	// Filter out template placeholder strings
-	if (settings.api_key === 'your-api-key-here') settings.api_key = '';
-	if (settings.langsmith_api_key === 'your-langsmith-api-key-here') settings.langsmith_api_key = '';
-
-	settings.chat = normalizeChatAcknowledgment(settings.chat);
-
-	return settings;
+	return structuredClone(settings);
 }
 
 export function resolveCooldownDays(raw: unknown): number {
@@ -369,7 +252,14 @@ export function saveSettingsToLocalYaml(
 	// Merge into the current file so partial saves (e.g. screening-only writes)
 	// never reset fields that were absent from the payload.
 	const existingContent = fs.existsSync(targetFile) ? fs.readFileSync(targetFile, 'utf-8') : '';
-	const existing = (existingContent ? parseSimpleYaml(existingContent) : {}) as Partial<SystemSettings>;
+	let existing: Partial<SystemSettings> = {};
+	if (existingContent.trim()) {
+		try {
+			existing = (yaml.load(existingContent) as Partial<SystemSettings>) || {};
+		} catch (e) {
+			console.warn('Failed to parse existing yaml during save:', e);
+		}
+	}
 
 	// Empty strings, masked display values and template placeholders must never
 	// land in the file as a "new" secret (issue #185: fixtures clobbering real keys).
@@ -500,6 +390,8 @@ export function saveSettingsToLocalYaml(
 	// Symlink-safe write: if targetFile is a symlink, write directly to realpath
 	const realTarget = fs.existsSync(targetFile) ? fs.realpathSync(targetFile) : targetFile;
 	fs.writeFileSync(realTarget, yamlContent, 'utf-8');
+
+	invalidateSettingsCache();
 
 	// Report where the settings actually landed (issue #185 review C4)
 	const rel = path.relative(getProjectRoot(), targetFile);

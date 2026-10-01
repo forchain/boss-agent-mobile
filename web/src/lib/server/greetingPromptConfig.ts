@@ -14,7 +14,12 @@ import { getProjectRoot } from './pythonRunner';
 export function resolveConfigRoot(): string {
 	const envOverride = process.env.BOSS_CONFIG_ROOT;
 	if (envOverride && envOverride.trim()) {
-		return path.resolve(envOverride.trim());
+		const resolved = path.resolve(envOverride.trim());
+		try {
+			return fs.realpathSync(resolved);
+		} catch {
+			return resolved;
+		}
 	}
 	try {
 		const out = execFileSync('git', ['rev-parse', '--git-common-dir'], {
@@ -23,12 +28,22 @@ export function resolveConfigRoot(): string {
 		}).trim();
 		if (out) {
 			const commonGit = path.isAbsolute(out) ? out : path.resolve(process.cwd(), out);
-			return path.dirname(commonGit);
+			const rootDir = path.dirname(commonGit);
+			try {
+				return fs.realpathSync(rootDir);
+			} catch {
+				return rootDir;
+			}
 		}
 	} catch {
 		// fall through to probe-based resolution
 	}
-	return getProjectRoot();
+	const projectRoot = getProjectRoot();
+	try {
+		return fs.realpathSync(projectRoot);
+	} catch {
+		return projectRoot;
+	}
 }
 
 export function getGreetingPromptPaths(): { local: string; seed: string } {

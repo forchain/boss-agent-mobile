@@ -1,9 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import * as yaml from 'js-yaml';
 import { getProjectRoot } from './pythonRunner';
 import type { ScreeningPolicy } from '$lib/types';
 import { normalizeCommuteLimit } from '$lib/commute';
-import { loadMergedSettings, saveSettingsToLocalYaml, parseSimpleYaml, getSettingsLocalPath } from './settings';
+import { loadMergedSettings, saveSettingsToLocalYaml, getSettingsLocalPath } from './settings';
 
 export function getScreeningConfigPath(): string {
 	// Follow the settings persistence seam (issue #185): under
@@ -12,7 +13,7 @@ export function getScreeningConfigPath(): string {
 }
 
 export function parseScreeningPolicyYaml(content: string): ScreeningPolicy {
-	const parsed = parseSimpleYaml(content);
+	const parsed = (yaml.load(content) as Record<string, any>) || {};
 	return {
 		enable_screening: parsed.enable_screening !== false,
 		title_whitelist: Array.isArray(parsed.title_whitelist) ? parsed.title_whitelist : [],

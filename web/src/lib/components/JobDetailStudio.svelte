@@ -557,7 +557,7 @@
 				onEvaluate={handleEvaluateMatch}
 			/>
 
-			{#if currentJob.status !== 'unmatched' && currentJob.status !== 'jd_saved' && currentJob.status !== 'digest_only' || currentJob.match_score}
+			{#if (currentJob.status !== 'unmatched' && currentJob.status !== 'jd_saved' && currentJob.status !== 'digest_only') || currentJob.match_score}
 				<!-- Greeting Draft & Refinement Sub-Panel -->
 				<JobGreetingRefinementPanel
 					bind:customGreeting
@@ -582,30 +582,30 @@
 					onConfirmAdoptPrompt={handleConfirmAdoptPrompt}
 					onClosePromptNotice={() => (promptSaveNotice = '')}
 				/>
-
-				<!-- Bottom Action Bar Sub-Panel -->
-				<JobActionsBar
-					job={currentJob}
-					{isRestoring}
-					{isClearingCommunication}
-					{isClearingCompany}
-					{isDispatchingApply}
-					{isBlacklisting}
-					{applyNotice}
-					{restoreNotice}
-					{blacklistNotice}
-					{communicationNotice}
-					{blacklistGuardrail}
-					onRestore={handleRestoreJob}
-					onClearCommunication={handleClearCommunication}
-					onClearCompanyCommunication={handleClearCompanyCommunication}
-					onDispatchApply={handleDispatchApply}
-					onIgnore={handleIgnoreJob}
-					onBlacklist={handleBlacklistCompany}
-					onCloseBlacklistNotice={() => (blacklistNotice = '')}
-					onCloseCommunicationNotice={() => (communicationNotice = '')}
-				/>
 			{/if}
+
+			<!-- Bottom Action Bar Sub-Panel -->
+			<JobActionsBar
+				job={currentJob}
+				{isRestoring}
+				{isClearingCommunication}
+				{isClearingCompany}
+				{isDispatchingApply}
+				{isBlacklisting}
+				{applyNotice}
+				{restoreNotice}
+				{blacklistNotice}
+				{communicationNotice}
+				{blacklistGuardrail}
+				onRestore={handleRestoreJob}
+				onClearCommunication={handleClearCommunication}
+				onClearCompanyCommunication={handleClearCompanyCommunication}
+				onDispatchApply={handleDispatchApply}
+				onIgnore={handleIgnoreJob}
+				onBlacklist={handleBlacklistCompany}
+				onCloseBlacklistNotice={() => (blacklistNotice = '')}
+				onCloseCommunicationNotice={() => (communicationNotice = '')}
+			/>
 		</div>
 	</div>
 {/if}

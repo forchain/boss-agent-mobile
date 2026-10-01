@@ -171,6 +171,10 @@ def resolve_git_common_root(cwd: str | Path | None = None) -> Path:
     If inside a Git worktree, this returns the root directory containing the common .git directory.
     If outside a Git repository, it falls back to the current working directory.
     """
+    env_root = os.getenv("BOSS_CONFIG_ROOT")
+    if env_root and env_root.strip():
+        return Path(env_root.strip()).resolve()
+
     import subprocess
 
     try:
