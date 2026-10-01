@@ -19,6 +19,7 @@ import requests
 
 from boss_agent.async_bridge import execute_broker_request
 from boss_agent.broker.models import AutomationTask, TaskStatus, TaskType
+from boss_agent.errors import ConflictError, ValidationError
 from boss_agent.candidate_memory_store import (
     CandidateMemoryStore,
     InMemoryCandidateMemoryStore,
@@ -151,6 +152,10 @@ class BaseTaskBroker(ABC):
     @abstractmethod
     async def append_log(self, task_id: str, log_line: str) -> bool:
         """Append a single log line to the task."""
+        pass
+
+    async def flush_logs(self, task_id: str | None = None) -> None:
+        """Flush any buffered log lines to the persistent broker."""
         pass
 
     @abstractmethod
@@ -377,6 +382,9 @@ class PocketBaseTaskBroker(BaseTaskBroker):
             base_url=self.base_url, session=self.session, headers=self._headers
         )
         self._subscribers: list[Callable[[str, AutomationTask], Any]] = []
+        self.log_buffer_bound = 10
+        self._task_logs: dict[str, list[str]] = {}
+        self._buffered_logs: dict[str, list[str]] = {}
 
         # Ensure obsolete fallback cache files are removed if present
         try:
@@ -432,22 +440,8 @@ class PocketBaseTaskBroker(BaseTaskBroker):
         return task
 
     async def claim_task(self, task_id: str, worker_id: str) -> AutomationTask | None:
-        url = f"{self._collection_url()}/{task_id}"
+        url = f"{self._collection_url()}/{task_id}?expect_status={TaskStatus.PENDING.value}"
         now = datetime.now(UTC).isoformat()
-
-        # Optimistic verify: check if task is currently pending
-        get_resp = await execute_broker_request(
-            lambda: self.session.get(url, headers=self._headers()),
-            expected_statuses=(200,),
-            allow_404=True,
-            error_prefix=f"PocketBase claim_task check({task_id}) failed",
-        )
-        if get_resp.status_code == 404:
-            return None
-
-        record = get_resp.json()
-        if record.get("status") != TaskStatus.PENDING.value:
-            return None
 
         patch_body = {
             "status": TaskStatus.RUNNING.value,
@@ -455,16 +449,27 @@ class PocketBaseTaskBroker(BaseTaskBroker):
             "locked_at": now,
             "last_heartbeat_at": now,
         }
-        patch_resp = await execute_broker_request(
-            lambda: self.session.patch(url, json=patch_body, headers=self._headers()),
-            expected_statuses=(200,),
-            allow_404=True,
-            error_prefix=f"PocketBase claim_task patch({task_id}) failed",
-        )
+        try:
+            patch_resp = await execute_broker_request(
+                lambda: self.session.patch(url, json=patch_body, headers=self._headers()),
+                expected_statuses=(200,),
+                allow_404=True,
+                error_prefix=f"PocketBase claim_task patch({task_id}) failed",
+            )
+        except (ValidationError, ConflictError):
+            return None
+
         if patch_resp.status_code == 404:
             return None
 
-        claimed = self._record_to_task(patch_resp.json())
+        record = patch_resp.json()
+        if record.get("worker_id") != worker_id or record.get("status") != TaskStatus.RUNNING.value:
+            return None
+
+        claimed = self._record_to_task(record)
+        self._task_logs[task_id] = list(claimed.logs or [])
+        self._buffered_logs[task_id] = []
+
         await self._notify_subscribers("update", claimed)
         return claimed
 
@@ -478,7 +483,10 @@ class PocketBaseTaskBroker(BaseTaskBroker):
         )
         if resp.status_code == 404:
             return None
-        return self._record_to_task(resp.json())
+        task = self._record_to_task(resp.json())
+        if task_id in self._task_logs:
+            task.logs = list(self._task_logs[task_id])
+        return task
 
     async def update_heartbeat(self, task_id: str, worker_id: str) -> bool:
         url = f"{self._collection_url()}/{task_id}"
@@ -517,7 +525,14 @@ class PocketBaseTaskBroker(BaseTaskBroker):
         url = f"{self._collection_url()}/{task_id}"
         body: dict[str, Any] = {"status": status.value}
         if logs is not None:
+            self._task_logs[task_id] = list(logs)
+            self._buffered_logs[task_id] = []
             body["logs"] = logs
+        elif self._buffered_logs.get(task_id) or task_id in self._task_logs:
+            # Guarantee flush: flush buffered logs within the status update payload
+            body["logs"] = self._task_logs[task_id]
+            self._buffered_logs[task_id] = []
+
         if error_message is not None:
             body["error_message"] = error_message
         if worker_id is not None:
@@ -529,18 +544,49 @@ class PocketBaseTaskBroker(BaseTaskBroker):
             error_prefix=f"PocketBase update_task_status({task_id}) failed",
         )
         updated = self._record_to_task(resp.json())
+
+        if status.is_terminal():
+            self._task_logs.pop(task_id, None)
+            self._buffered_logs.pop(task_id, None)
+
         await self._notify_subscribers("update", updated)
         return updated
 
     async def append_log(self, task_id: str, log_line: str) -> bool:
-        task = await self.get_task(task_id)
-        if not task:
-            return False
         now = datetime.now(UTC)
         formatted = f"[{now.isoformat()}] {log_line}"
-        new_logs = task.logs + [formatted]
-        await self.update_task_status(task_id, status=task.status, logs=new_logs)
+
+        if task_id not in self._task_logs:
+            task = await self.get_task(task_id)
+            if not task:
+                return False
+            self._task_logs[task_id] = list(task.logs or [])
+            self._buffered_logs[task_id] = []
+
+        self._task_logs[task_id].append(formatted)
+        self._buffered_logs.setdefault(task_id, []).append(formatted)
+
+        if len(self._buffered_logs[task_id]) >= self.log_buffer_bound:
+            await self.flush_logs(task_id)
         return True
+
+    async def flush_logs(self, task_id: str | None = None) -> None:
+        target_ids = [task_id] if task_id else list(self._buffered_logs.keys())
+        for tid in target_ids:
+            pending = self._buffered_logs.get(tid)
+            if not pending:
+                continue
+            all_logs = self._task_logs.get(tid, [])
+            url = f"{self._collection_url()}/{tid}"
+            await execute_broker_request(
+                lambda: self.session.patch(
+                    url, json={"logs": all_logs}, headers=self._headers()
+                ),
+                expected_statuses=(200,),
+                allow_404=True,
+                error_prefix=f"PocketBase flush_logs patch({tid}) failed",
+            )
+            self._buffered_logs[tid] = []
 
     async def list_pending_tasks(self, limit: int = 10) -> list[AutomationTask]:
         url = f"{self._collection_url()}?filter=(status='pending')&sort=created&perPage={limit}"
@@ -585,6 +631,8 @@ class PocketBaseTaskBroker(BaseTaskBroker):
         return stale
 
     async def requeue_task(self, task_id: str, retry_count: int) -> AutomationTask:
+        self._task_logs.pop(task_id, None)
+        self._buffered_logs.pop(task_id, None)
         url = f"{self._collection_url()}/{task_id}"
         body = {
             "status": TaskStatus.PENDING.value,

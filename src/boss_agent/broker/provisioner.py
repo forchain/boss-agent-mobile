@@ -165,19 +165,36 @@ def _provision_sqlite_collection(
             """
             INSERT INTO _collections
                 (id, system, type, name, fields, listRule, viewRule, createRule, updateRule, deleteRule)
-            VALUES (?, 0, 'base', ?, ?, '', '', '', '', '')
+            VALUES (?, 0, 'base', ?, ?, ?, ?, ?, ?, ?)
             """,
-            (col_id, table_name, fields_json),
+            (
+                col_id,
+                table_name,
+                fields_json,
+                collection.list_rule,
+                collection.view_rule,
+                collection.create_rule,
+                collection.update_rule,
+                collection.delete_rule,
+            ),
         )
         cursor.execute(sqlite_ddl(collection))
     else:
         cursor.execute(
             """
             UPDATE _collections
-            SET fields = ?, listRule = '', viewRule = '', createRule = '', updateRule = '', deleteRule = ''
+            SET fields = ?, listRule = ?, viewRule = ?, createRule = ?, updateRule = ?, deleteRule = ?
             WHERE name = ?
             """,
-            (fields_json, table_name),
+            (
+                fields_json,
+                collection.list_rule,
+                collection.view_rule,
+                collection.create_rule,
+                collection.update_rule,
+                collection.delete_rule,
+                table_name,
+            ),
         )
         cursor.execute(f"PRAGMA table_info({table_name})")  # noqa: S608 - validated identifier
         present = {row[1] for row in cursor.fetchall()}

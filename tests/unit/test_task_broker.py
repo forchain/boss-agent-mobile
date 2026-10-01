@@ -254,23 +254,17 @@ async def test_pocketbase_broker_claim_task_optimistic_lock():
 
 @pytest.mark.asyncio
 async def test_pocketbase_broker_claim_task_conflict():
-    """Verify PocketBaseTaskBroker rejects claiming already running task."""
+    """Verify PocketBaseTaskBroker rejects claiming already running task via atomic CAS."""
     mock_session = MagicMock()
-    get_resp = MagicMock()
-    get_resp.status_code = 200
-    get_resp.json.return_value = {
-        "id": "rec12345",
-        "task_type": "AUTO_APPLY",
-        "status": "running",
-        "worker_id": "worker-other",
-    }
-    mock_session.get.return_value = get_resp
+    patch_resp = MagicMock()
+    patch_resp.status_code = 404  # PocketBase CAS condition fails, returns 404
+    mock_session.patch.return_value = patch_resp
 
     broker = PocketBaseTaskBroker(session=mock_session)
     claimed = await broker.claim_task("rec12345", worker_id="worker-1")
 
     assert claimed is None
-    mock_session.patch.assert_not_called()
+    mock_session.patch.assert_called_once()
 
 
 @pytest.mark.asyncio

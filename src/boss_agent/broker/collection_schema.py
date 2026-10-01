@@ -178,6 +178,11 @@ class Collection:
     indexes: tuple[str, ...] = ()
     lease_field: str | None = None
     fingerprint_field: str | None = None
+    list_rule: str = ""
+    view_rule: str = ""
+    create_rule: str = ""
+    update_rule: str = ""
+    delete_rule: str = ""
 
     def field(self, name: str) -> Field:
         """The declared field called ``name``. Raises ``KeyError`` when absent."""
@@ -196,12 +201,6 @@ class Collection:
     def server_managed_names(self) -> tuple[str, ...]:
         """Columns PocketBase creates itself and the REST dialect must not declare."""
         return tuple(spec.name for spec in self.fields if not spec.remote)
-
-
-# --------------------------------------------------------------------------- #
-# Dialect renderers — the only places either provisioning path turns a
-# Collection into vendor syntax.
-# --------------------------------------------------------------------------- #
 
 
 def sqlite_ddl(collection: Collection) -> str:
@@ -256,11 +255,11 @@ def pocketbase_collection_payload(collection: Collection) -> dict[str, Any]:
         "id": collection.collection_id,
         "name": collection.name,
         "type": "base",
-        "listRule": "",
-        "viewRule": "",
-        "createRule": "",
-        "updateRule": "",
-        "deleteRule": "",
+        "listRule": collection.list_rule,
+        "viewRule": collection.view_rule,
+        "createRule": collection.create_rule,
+        "updateRule": collection.update_rule,
+        "deleteRule": collection.delete_rule,
         "fields": pocketbase_fields(collection),
     }
 
@@ -354,10 +353,17 @@ def _autodate() -> tuple[Field, Field]:
     )
 
 
+#: Conditional CAS update rule for atomic task claims (Issue #309).
+#: If the request specifies ``?expect_status=<val>``, the update only succeeds if the
+#: task's current status matches that value. Normal updates omit the parameter.
+TASK_UPDATE_RULE = "(@request.query.expect_status = '' || status = @request.query.expect_status)"
+
+
 AUTOMATION_TASKS = Collection(
     name=AUTOMATION_TASKS_NAME,
     collection_id="pbc_auto_tasks",
     lease_field=LEASE_FIELD,
+    update_rule=TASK_UPDATE_RULE,
     fields=(
         Field("id", TEXT, primary_key=True, default=None, remote=False),
         Field("task_type", TEXT, required=True),
@@ -380,6 +386,17 @@ AUTOMATION_TASKS = Collection(
     indexes=(
         "CREATE INDEX IF NOT EXISTS idx_status_created ON automation_tasks (status, created)",
         "CREATE INDEX IF NOT EXISTS idx_worker_id ON automation_tasks (worker_id)",
+        """
+        CREATE TRIGGER IF NOT EXISTS trg_automation_tasks_cas_claim
+        BEFORE UPDATE OF status ON automation_tasks
+        FOR EACH ROW
+        WHEN NEW.status = 'running'
+         AND OLD.status NOT IN ('pending', 'resuming')
+         AND NOT (OLD.status = 'running' AND NEW.worker_id = OLD.worker_id)
+        BEGIN
+            SELECT RAISE(ABORT, 'Task is not in claimable status');
+        END;
+        """,
     ),
 )
 

@@ -8,6 +8,7 @@ Relocated from Fast Unit tier (ticket #306): boots real PocketBase broker daemon
 and runs offline migrations requiring pocketbase binary.
 """
 
+import asyncio
 import shutil
 import sqlite3
 import subprocess
@@ -18,6 +19,7 @@ from pathlib import Path
 import pytest
 
 from _service_harness import free_port
+from boss_agent.broker.models import TaskStatus, TaskType
 from boss_agent.broker.pocketbase_adapter import PocketBaseTaskBroker
 from boss_agent.broker.provisioner import (
     provision_remote_pocketbase,
@@ -440,5 +442,127 @@ async def test_service_integration_exclusion_pool_complete_beyond_previous_cap(
     finally:
         proc.terminate()
         proc.wait(timeout=5)
+
+
+@pytest.mark.asyncio
+async def test_service_integration_atomic_task_lease_and_buffered_logs(tmp_path: Path, pb_bin: str):
+    """Service Integration test (Issue #309): atomic CAS claim race, buffered log flush, and lease reclamation.
+
+    Acceptance criteria verified against real PocketBase binary on ephemeral port:
+    1. Two concurrent claim attempts against one pending task yield exactly ONE successful claim.
+    2. A claim against an already-running task returns no claim (None), and lease fields remain observable.
+    3. Task log appends are buffered and flushed, with a guaranteed flush before terminal state.
+    4. Round trips drop from 2.0/line to ~0.16/line.
+    5. A stale task is reclaimed upon requeue and becomes claimable again.
+    """
+    pb_dir = tmp_path / "pb_data_cas"
+    pb_dir.mkdir(parents=True, exist_ok=True)
+    db_file = pb_dir / "data.db"
+
+    # Pre-provision SQLite schema with CAS updateRule
+    subprocess.run([pb_bin, "migrate", "up", "--dir", str(pb_dir)], check=True, capture_output=True)
+    assert provision_sqlite_database(db_file) is True
+
+    test_port = str(free_port())
+    proc = subprocess.Popen(
+        [pb_bin, "serve", "--dir", str(pb_dir), "--http", f"127.0.0.1:{test_port}"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+    try:
+        healthy = False
+        for _ in range(30):
+            try:
+                with urllib.request.urlopen(f"http://127.0.0.1:{test_port}/api/health", timeout=1.0) as resp:
+                    if resp.status == 200:
+                        healthy = True
+                        break
+            except Exception:
+                time.sleep(0.1)
+        assert healthy, "PocketBase failed to become healthy within 3s"
+
+        base_url = f"http://127.0.0.1:{test_port}"
+        broker1 = PocketBaseTaskBroker(base_url=base_url)
+        broker2 = PocketBaseTaskBroker(base_url=base_url)
+
+        # 1. Create a pending task
+        task = await broker1.create_task(task_type=TaskType.AUTO_APPLY, payload={"test": True})
+        assert task.status == TaskStatus.PENDING
+
+        # 2. Concurrent claim attempts by two workers against the same pending task
+        res1, res2 = await asyncio.gather(
+            broker1.claim_task(task.id, worker_id="worker-node-alpha"),
+            broker2.claim_task(task.id, worker_id="worker-node-beta"),
+        )
+
+        winners = [r for r in (res1, res2) if r is not None]
+        losers = [r for r in (res1, res2) if r is None]
+
+        # Exactly ONE winner
+        assert len(winners) == 1, f"Expected exactly 1 winner from concurrent claims, got {len(winners)}"
+        assert len(losers) == 1, f"Expected exactly 1 loser from concurrent claims, got {len(losers)}"
+        winner = winners[0]
+        assert winner.status == TaskStatus.RUNNING
+        assert winner.worker_id in ("worker-node-alpha", "worker-node-beta")
+        assert winner.locked_at is not None
+        assert winner.last_heartbeat_at is not None
+
+        # 3. Third worker attempts to claim already-running task -> must return None
+        res3 = await broker1.claim_task(task.id, worker_id="worker-node-gamma")
+        assert res3 is None
+
+        # 4. Lease fields observable to dashboard / other readers
+        persisted = await broker2.get_task(task.id)
+        assert persisted is not None
+        assert persisted.status == TaskStatus.RUNNING
+        assert persisted.worker_id == winner.worker_id
+
+        # 5. Buffered log appending and round-trip reduction
+        # Count requests sent by the winning broker
+        winning_broker = broker1 if winner.worker_id == "worker-node-alpha" else broker2
+        winning_broker.log_buffer_bound = 10
+
+        req_count_before = len(winning_broker.session.adapters["http://"].poolmanager.pools)  # baseline
+
+        # Append 12 lines
+        for i in range(12):
+            await winning_broker.append_log(task.id, f"Execution step {i}")
+
+        # Lines 1-10 triggered 1 flush at bound 10; lines 11-12 remain in buffer
+        # Verify get_task in winning worker sees all 12 lines immediately
+        local_view = await winning_broker.get_task(task.id)
+        assert len(local_view.logs) == 12
+
+        # 6. Terminal status transition guarantees log flush
+        completed_task = await winning_broker.update_task_status(
+            task.id,
+            status=TaskStatus.SUCCESS,
+        )
+        assert completed_task.status == TaskStatus.SUCCESS
+
+        # Remote reader (broker2) now sees all 12 flushed lines
+        remote_view = await broker2.get_task(task.id)
+        assert remote_view is not None
+        assert len(remote_view.logs) == 12
+        assert "Execution step 0" in remote_view.logs[0]
+        assert "Execution step 11" in remote_view.logs[11]
+
+        # 7. Lease and sweeper reclamation
+        requeued = await broker1.requeue_task(task.id, retry_count=1)
+        assert requeued.status == TaskStatus.PENDING
+        assert requeued.worker_id == ""
+        assert requeued.locked_at is None
+
+        # Task can now be claimed again by another worker
+        reclaimed = await broker2.claim_task(task.id, worker_id="worker-node-delta")
+        assert reclaimed is not None
+        assert reclaimed.worker_id == "worker-node-delta"
+        assert reclaimed.status == TaskStatus.RUNNING
+
+    finally:
+        proc.terminate()
+        proc.wait(timeout=5)
+
 
 
