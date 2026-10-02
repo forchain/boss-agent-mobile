@@ -179,6 +179,58 @@ def test_cli_evaluate_stdout_json(capsys):
     assert "合格保留" in payload["reason"]
 
 
+def test_cli_evaluate_loads_policy_from_settings_when_flag_omitted(capsys):
+    """Regression: without --policy the script must read the merged settings dict.
+
+    The web Studio posts to /api/screening/evaluate without a policy payload, so
+    this fallback is the only policy source on that path. It used to call
+    ``load_settings().to_screening_policy()`` — a method that does not exist on the
+    returned ``dict`` — so the AttributeError was swallowed and the screener ran with
+    an empty policy, reporting "未配置黑名单" while a title blacklist was configured.
+    """
+    import scripts.refine_screening as script
+
+    mock_llm = MagicMock()
+    mock_llm.chat_completion_json.return_value = {
+        "approved": False,
+        "reason": "【淘汰：命中标题黑名单】",
+    }
+
+    job_json = json.dumps(
+        {
+            "job_title": "解决方案架构师",
+            "company_name": "智元未来",
+            "job_description": "大模型智能体架构落地与系统接口开发，负责Agent工作流搭建",
+        }
+    )
+
+    # Same shape as the merged Configuration Realm dict: lists live at top level.
+    settings = {
+        "enable_screening": True,
+        "title_blacklist": ["解决方案", "产品经理"],
+        "jd_blacklist": [],
+    }
+
+    test_args = ["refine_screening.py", "--action", "evaluate", "--job", job_json]
+
+    with (
+        patch("sys.argv", test_args),
+        patch("boss_agent.settings.load_settings", return_value=settings),
+        patch.object(script, "build_llm_client", return_value=mock_llm),
+    ):
+        script.main()
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out.strip())
+
+    # The configured title blacklist must reach the LLM prompt, not be dropped.
+    mock_llm.chat_completion_json.assert_called_once()
+    system_prompt = mock_llm.chat_completion_json.call_args[0][0][0]["content"]
+    assert "解决方案" in system_prompt
+    assert payload["approved"] is False
+    assert payload["stage"] == "filtered_by_deep_screener"
+
+
 def test_cli_evaluate_failure_stdout_json(capsys):
     import scripts.refine_screening as script
 

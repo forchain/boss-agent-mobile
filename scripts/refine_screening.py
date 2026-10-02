@@ -125,7 +125,9 @@ def main() -> None:
             from boss_agent.settings import load_settings
 
             app_settings = load_settings()
-            policy = app_settings.to_screening_policy()
+            # load_settings() returns the merged Configuration Realm dict with the
+            # blacklist lists at top level; ScreeningPolicy.from_dict reads them there.
+            policy = ScreeningPolicy.from_dict(app_settings)
         except Exception as e:
             sys.stderr.write(f"Warning: Failed to load default screening policy ({e})\n")
             policy = ScreeningPolicy()
