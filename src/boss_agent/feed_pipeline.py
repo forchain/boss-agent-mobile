@@ -48,6 +48,7 @@ from .models import (
     JobCardBrief,
     JobRecordStatus,
     ScreeningPolicy,
+    ScreeningStage,
     TargetAction,
     depth_already_reached,
     greeting_is_human,
@@ -75,6 +76,19 @@ from .screening import (
 from .settings import resolve_communication_cooldown_days
 
 logger = logging.getLogger(__name__)
+
+
+def card_rejection_stage(verdict: CardScreeningVerdict) -> ScreeningStage:
+    """The persisted rejection stage for a card-stage (no-JD) verdict.
+
+    Card screening is 初筛: it only ever sees the card, so every rejection it makes is
+    attributed to the card stage regardless of which rule fired — the rule *kind* stays
+    in ``screened_reason``.
+    """
+    if verdict.stage is CardVerdictStage.FILTERED_BY_APP_RULE:
+        return ScreeningStage.CARD_APP_RULE
+    return ScreeningStage.CARD_KEYWORD
+
 
 MAX_SEARCH_ATTEMPTS = 2
 OPEN_SEARCH_TIMEOUT_SEC = 5.0
@@ -768,6 +782,7 @@ class JobFeedPipeline:
                 ),
                 "status": JobRecordStatus.IGNORED.value,
                 "screened_reason": verdict.reason,
+                "screening_stage": card_rejection_stage(verdict).value,
                 "relaxed_by_whitelist": False,
                 "screening_audit": verdict.screening_audit,
             }
@@ -930,6 +945,7 @@ class JobFeedPipeline:
         else:
             terminal["status"] = JobRecordStatus.IGNORED.value
             terminal["screened_reason"] = EXPIRED_POSTING_REASON
+            terminal["screening_stage"] = ScreeningStage.EXPIRED.value
             await self._log(
                 f"🛑 [岗位失效] '{card.title}' @ '{card.company_name}' 已停止招聘/下线，跳过"
             )
@@ -1042,6 +1058,7 @@ class JobFeedPipeline:
         )
         enriched["status"] = JobRecordStatus.IGNORED.value
         enriched["screened_reason"] = reason
+        enriched["screening_stage"] = ScreeningStage.DETAIL_APP_RULE.value
 
         run.result.skipped += 1
         if run.jobs_index is not None and run.result.jobs:
@@ -1391,12 +1408,22 @@ class JobFeedPipeline:
         screened_reason = payload.get("screened_reason") or (
             evaluation.reason if status is JobRecordStatus.IGNORED else ""
         )
+        # The only rejection that reaches here is the deep screener's — the card, expiry
+        # and detail-App-filter paths persist their own stage. Without this the feed
+        # labelled every full-JD rejection 初筛淘汰, since the card never saw the evidence.
+        screening_stage = payload.get("screening_stage") or (
+            ScreeningStage.DEEP_SCREENER.value
+            if status is JobRecordStatus.IGNORED
+            and getattr(evaluation, "stage", None) is JobVerdictStage.FILTERED_BY_DEEP_SCREENER
+            else ""
+        )
         payload = {
             **payload,
             "status": status.value,
             "greeting_message": greeting_message,
             "greeting_source": greeting_source,
             "screened_reason": screened_reason,
+            "screening_stage": screening_stage,
             "jd_key_requirements": evaluation.jd_key_requirements
             or payload.get("jd_key_requirements", []),
         }
@@ -1503,6 +1530,7 @@ class JobFeedPipeline:
                 else:
                     terminal["status"] = JobRecordStatus.IGNORED.value
                     terminal["screened_reason"] = EXPIRED_POSTING_REASON
+                    terminal["screening_stage"] = ScreeningStage.EXPIRED.value
                 await self.store.upsert_job_record(terminal)
             self.detail_page.navigate_back()
             return
@@ -1581,6 +1609,7 @@ class JobFeedPipeline:
                     **run.card_record,
                     "status": JobRecordStatus.IGNORED.value,
                     "screened_reason": run.verdict.reason,
+                    "screening_stage": card_rejection_stage(run.verdict).value,
                     "relaxed_by_whitelist": False,
                     "screening_audit": run.verdict.screening_audit,
                 }

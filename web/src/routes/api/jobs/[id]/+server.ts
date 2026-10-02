@@ -27,6 +27,7 @@ const ALLOWED_JOB_FIELDS = new Set([
 	'greeting_source',
 	'search_keywords',
 	'screened_reason',
+	'screening_stage',
 	'relaxed_by_whitelist',
 	'screening_audit',
 	'applied_at',

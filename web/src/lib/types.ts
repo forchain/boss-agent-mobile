@@ -229,6 +229,11 @@ export interface JobRecord {
 	greeting_source?: 'human' | 'agent_draft' | '' | null;
 	search_keywords?: string[];
 	screened_reason?: string;
+	/**
+	 * Which stage made the rejection (see `ScreeningStage` in `$lib/screening`). Empty on
+	 * legacy/manual records, so the label falls back to a neutral 「已忽略」 (#340/#342).
+	 */
+	screening_stage?: string;
 	relaxed_by_whitelist?: boolean;
 	screening_audit?: string;
 	applied_at?: string | null;

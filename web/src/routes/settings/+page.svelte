@@ -144,10 +144,19 @@
 	let savePromptError = $state('');
 	let promptUnsaved = $state(false);
 
+	// Screening Prompt (single living long-term memory document) State
+	let screeningPrompt = $state('');
+	let screeningPromptIsDefault = $state(false);
+	let screeningPromptLoaded = $state(false);
+	let isSavingScreeningPrompt = $state(false);
+	let saveScreeningPromptSuccess = $state('');
+	let saveScreeningPromptError = $state('');
+	let screeningPromptUnsaved = $state(false);
+
 	function beforeUnloadHandler(e: BeforeUnloadEvent) {
-		if (promptUnsaved) {
+		if (promptUnsaved || screeningPromptUnsaved) {
 			e.preventDefault();
-			e.returnValue = '您有未保存的招呼语长期记忆变更,确定离开吗?';
+			e.returnValue = '您有未保存的提示词变更,确定离开吗?';
 		}
 	}
 
@@ -248,7 +257,59 @@
 		} catch (e) {
 			console.warn('Failed to load greeting prompt:', e);
 		}
+
+		try {
+			const spRes = await fetch('/api/screening/prompt');
+			if (spRes.ok) {
+				const spData = await spRes.json();
+				if (typeof spData.prompt === 'string') {
+					screeningPrompt = spData.prompt;
+					screeningPromptIsDefault = Boolean(spData.isDefault);
+					screeningPromptLoaded = true;
+					screeningPromptUnsaved = false;
+				}
+			}
+		} catch (e) {
+			console.warn('Failed to load screening prompt:', e);
+		}
 	});
+
+	async function postScreeningPrompt(payload: Record<string, unknown>, fallbackSuccess: string, failureLabel: string) {
+		isSavingScreeningPrompt = true;
+		saveScreeningPromptSuccess = '';
+		saveScreeningPromptError = '';
+		try {
+			const res = await fetch('/api/screening/prompt', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(payload)
+			});
+			const data = await res.json();
+			if (res.ok && data.success) {
+				screeningPrompt = data.prompt ?? screeningPrompt;
+				screeningPromptIsDefault = false;
+				screeningPromptUnsaved = false;
+				saveScreeningPromptSuccess = data.message || fallbackSuccess;
+				setTimeout(() => {
+					saveScreeningPromptSuccess = '';
+				}, 4000);
+			} else {
+				saveScreeningPromptError = `❌ ${failureLabel}: ${data.error || '未知错误'}`;
+			}
+		} catch (e: any) {
+			saveScreeningPromptError = `❌ ${failureLabel}异常: ${e?.message || e}`;
+		} finally {
+			isSavingScreeningPrompt = false;
+		}
+	}
+
+	function onSaveScreeningPrompt() {
+		return postScreeningPrompt({ prompt: screeningPrompt }, '✅ 精筛长期记忆提示词已成功持久化', '保存失败');
+	}
+
+	function onRestoreScreeningPromptDefault() {
+		return postScreeningPrompt({ restore_default: true }, '✅ 已恢复为默认提示词并持久化', '恢复默认失败');
+	}
 
 	async function postGreetingPrompt(payload: Record<string, unknown>, fallbackSuccess: string, failureLabel: string) {
 		isSavingPrompt = true;
@@ -1645,6 +1706,79 @@
 			</button>
 		</div>
 	</form>
+
+	<!-- Section: Screening Prompt — 单一精筛长期记忆提示词 (ADR 0010, Spec #340) -->
+	<div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6">
+		<div class="flex items-center justify-between border-b border-slate-800/80 pb-4">
+			<div class="flex items-center space-x-2.5">
+				<span class="text-xl">🎯</span>
+				<div>
+					<h2 class="font-semibold text-sm text-slate-100">
+						岗位精筛长期记忆提示词 (Screening Prompt)
+					</h2>
+					<p class="text-[11px] text-slate-400 mt-0.5">
+						唯一的精筛长期记忆：系统据此对招聘岗位 JD 进行深度阅读与意向判定。固化黑名单外绝不臆造淘汰、复合工种正常落地偏向不予淘汰等铁律，支持编辑与整篇打磨
+					</p>
+				</div>
+			</div>
+			<span class="text-[11px] px-2.5 py-0.5 rounded-full {screeningPromptIsDefault ? 'bg-amber-950 text-amber-300 border border-amber-800/80' : 'bg-cyan-950 text-cyan-300 border border-cyan-800/80'} font-mono">
+				{screeningPromptIsDefault ? '默认种子' : '已沉淀记忆'}
+			</span>
+		</div>
+
+		{#if saveScreeningPromptSuccess}
+			<div class="p-3.5 rounded-xl bg-emerald-950/60 border border-emerald-800/80 text-xs text-emerald-300 flex items-center space-x-2">
+				<span>{saveScreeningPromptSuccess}</span>
+			</div>
+		{/if}
+		{#if saveScreeningPromptError}
+			<div class="p-3.5 rounded-xl bg-rose-950/60 border border-rose-800/80 text-xs text-rose-300 flex items-center space-x-2">
+				<span>{saveScreeningPromptError}</span>
+			</div>
+		{/if}
+
+		<textarea
+			bind:value={screeningPrompt}
+			oninput={() => (screeningPromptUnsaved = true)}
+			rows="14"
+			placeholder="加载精筛长期记忆提示词中..."
+			class="w-full bg-slate-950/80 border border-slate-800 rounded-xl px-4 py-3 text-xs text-slate-200 font-mono leading-relaxed placeholder-slate-600 focus:outline-none focus:border-cyan-500 transition resize-y"
+		></textarea>
+
+		<div class="flex flex-col sm:flex-row items-center justify-between pt-4 border-t border-slate-800/80 gap-3">
+			<span class="text-[11px] text-slate-500 font-mono">
+				{#if screeningPromptUnsaved}
+					<span class="text-amber-400">⚠️ 有未保存的精筛提示词变更</span>
+				{:else}
+					📁 逐字持久化存入 config/screening_prompt.local.md · 当前 {screeningPrompt.length} 字
+				{/if}
+			</span>
+
+			<div class="flex items-center gap-2 w-full sm:w-auto">
+				<button
+					type="button"
+					onclick={onRestoreScreeningPromptDefault}
+					disabled={isSavingScreeningPrompt}
+					class="w-full sm:w-auto bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 font-medium px-4 py-2.5 rounded-xl text-xs transition disabled:opacity-60"
+				>
+					↺ 恢复默认提示词
+				</button>
+				<button
+					type="button"
+					onclick={onSaveScreeningPrompt}
+					disabled={isSavingScreeningPrompt || !screeningPromptLoaded || !screeningPromptUnsaved}
+					class="w-full sm:w-auto bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-semibold px-5 py-2.5 rounded-xl text-xs transition shadow-lg shadow-cyan-500/10 flex items-center justify-center space-x-1.5 disabled:opacity-60"
+				>
+					{#if isSavingScreeningPrompt}
+						<span class="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+						<span>正在保存提示词...</span>
+					{:else}
+						<span>💾 保存精筛长期记忆提示词</span>
+					{/if}
+				</button>
+			</div>
+		</div>
+	</div>
 
 	<!-- Section: Greeting Prompt — 单一长期记忆提示词 (ADR 0010) -->
 	<div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6">

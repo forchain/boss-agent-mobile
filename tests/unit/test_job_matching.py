@@ -74,7 +74,11 @@ def test_job_match_greeting_service_fallback_on_error():
     assert "您好" in result.greeting_message
 
 
-def test_persistent_candidate_profile_context():
+def test_persistent_candidate_profile_context(monkeypatch):
+    monkeypatch.setattr(
+        "boss_agent.matching.load_greeting_prompt",
+        lambda: "【打招呼破冰铁律与原则】\n1. 【严禁模板化套话】",
+    )
     mock_llm = MagicMock()
     mock_llm.chat_completion_json.return_value = {
         "match_score": 88,

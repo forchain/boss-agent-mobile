@@ -15,7 +15,7 @@ from typing import Any
 
 from boss_agent.broker.models import AutomationTask, TaskType
 from boss_agent.broker.pocketbase_adapter import BaseTaskBroker
-from boss_agent.feed_pipeline import FeedStreamConfig, JobFeedPipeline
+from boss_agent.feed_pipeline import FeedStreamConfig, JobFeedPipeline, card_rejection_stage
 from boss_agent.memory import StructuredCandidateProfile
 from boss_agent.models import JobRecordStatus, is_masked_company_name
 from boss_agent.screening import CandidateScreener
@@ -177,6 +177,7 @@ class AutoApplyHandler(BaseTaskHandler):
                     updated_data = dict(existing_rec)
                     updated_data["status"] = JobRecordStatus.IGNORED.value
                     updated_data["screened_reason"] = verdict.reason
+                    updated_data["screening_stage"] = card_rejection_stage(verdict).value
                     await store.upsert_job_record(updated_data)
                 return HandlerResult(
                     success=True,
