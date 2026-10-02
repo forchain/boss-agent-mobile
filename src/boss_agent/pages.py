@@ -1296,6 +1296,7 @@ class JobDetailPage(BaseBossPage):
         _log_info("🔍 Checking job description expansion status...")
 
         # 1. First attempt: standard explicit expand button if visible
+        desc_elem = None
         elem = self.find_by_key("job_detail.expand_btn", timeout_sec=0.5)
         if elem:
             _log_info(
@@ -1306,10 +1307,17 @@ class JobDetailPage(BaseBossPage):
             desc_elem = self.find_by_key("job_detail.desc", timeout_sec=1.0)
             if desc_elem and getattr(desc_elem, "text", None):
                 self._current_description = desc_elem.text.strip()
-            return True
+            if not jd_is_truncated(self._current_description):
+                return True
+            _log_warn(
+                f"⚠️ Explicit expand button did not fully expand description "
+                f"('查看更多' still present, length {len(self._current_description)}); "
+                f"falling back to bottom-right hotspot probing..."
+            )
 
         # 2. Locate the job description TextView (com.hpbr.bosszhipin:id/tv_description)
-        desc_elem = self.find_by_key("job_detail.desc", timeout_sec=1.5)
+        if not desc_elem:
+            desc_elem = self.find_by_key("job_detail.desc", timeout_sec=1.5)
         if not desc_elem:
             win_size = self._get_window_size()
             _log_info(
