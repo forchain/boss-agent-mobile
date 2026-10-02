@@ -7,7 +7,11 @@ Unit tests for JobMatchGreetingService and MatchGreetingResult.
 from unittest.mock import MagicMock
 
 from boss_agent.job_entities import JobPosting
-from boss_agent.matching import JobMatchGreetingService, MatchGreetingResult
+from boss_agent.matching import (
+    JobMatchGreetingService,
+    MatchGreetingResult,
+    offline_match_result,
+)
 from boss_agent.memory import StructuredCandidateProfile
 
 
@@ -70,7 +74,7 @@ def test_job_match_greeting_service_fallback_on_error():
     )
 
     result = service.evaluate_and_draft_greeting(profile=profile, job=job)
-    assert result.match_score == 50  # Default fallback score
+    assert result.match_score > 50  # The degraded path reads the JD, not a fixed 50
     assert "您好" in result.greeting_message
 
 
@@ -420,5 +424,67 @@ def test_evaluate_and_draft_greeting_fallback_includes_dynamic_salutation():
     )
 
     result = service.evaluate_and_draft_greeting(job=job)
-    assert result.match_score == 50
+    # The degraded path reads the JD instead of returning a constant, so the score is no
+    # longer the same 50 for every posting the model could not be reached about.
+    assert result.match_score > 50
+    assert any("Python" in req for req in result.jd_key_requirements)
+    assert "API down" in result.match_reasons[0]
     assert result.greeting_message.startswith("诸葛总您好,幸会!")
+
+
+def test_offline_fallback_reads_the_jd_rather_than_reporting_a_constant():
+    """A JD that names more requirements must not score the same as one that names none."""
+    service = JobMatchGreetingService(llm_client=MagicMock())
+    service.llm_client.chat_completion_json.side_effect = RuntimeError("API down")
+
+    rich = service.evaluate_and_draft_greeting(
+        job=JobPosting(
+            title="资深 Agent 研发",
+            company_name="智能未来",
+            salary_range="40-60K",
+            job_description="负责大模型 Agent 与 Android 移动端自动化架构设计，精通 Python",
+        )
+    )
+    bare = service.evaluate_and_draft_greeting(
+        job=JobPosting(
+            title="综合岗",
+            company_name="智能未来",
+            salary_range="面议",
+            job_description="负责公司日常运营与跨部门协调工作，保障各项业务正常推进与交付。",
+        )
+    )
+
+    assert rich.match_score > bare.match_score
+    assert len(rich.jd_key_requirements) > len(bare.jd_key_requirements)
+    assert bare.jd_key_requirements, "an unrecognised JD still gets a stated requirement"
+
+
+def test_offline_fallback_is_deterministic():
+    """Same JD in, same evaluation out — no clock, no randomness, no model."""
+    job = JobPosting(
+        title="资深 Agent 研发",
+        company_name="智能未来",
+        salary_range="40-60K",
+        job_description="负责大模型 Agent 与 Android 移动端自动化架构设计，精通 Python",
+    )
+    first = offline_match_result(job)
+    second = offline_match_result(job)
+    assert first.to_dict() == second.to_dict()
+
+
+def test_offline_fallback_reports_candidate_skill_coverage():
+    job = JobPosting(
+        title="资深 Agent 研发",
+        company_name="智能未来",
+        salary_range="40-60K",
+        job_description="负责大模型 Agent 与 Android 移动端自动化架构设计，精通 Python",
+    )
+    covering = offline_match_result(
+        job, profile=StructuredCandidateProfile(name="周黄金", core_skills=["Python", "Android"])
+    )
+    unrelated = offline_match_result(
+        job, profile=StructuredCandidateProfile(name="张三", core_skills=["Photoshop"])
+    )
+
+    assert any("Python" in reason for reason in covering.match_reasons)
+    assert any("未覆盖" in reason for reason in unrelated.match_reasons)
