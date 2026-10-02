@@ -54,9 +54,9 @@ def test_job_record_screened_reason_field():
         company_name="某测试外包",
         recruiter_name="HR",
         status="ignored",
-        screened_reason="命中岗位摘要/标签黑名单关键词: '外包'",
+        screened_reason="命中岗位摘要黑名单关键词: '外包'",
     )
-    assert rec.screened_reason == "命中岗位摘要/标签黑名单关键词: '外包'"
+    assert rec.screened_reason == "命中岗位摘要黑名单关键词: '外包'"
     assert rec.status == "ignored"
 
 
