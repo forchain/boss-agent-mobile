@@ -80,6 +80,17 @@
 	let isRestoring = $state(false);
 	let restoreNotice = $state('');
 
+	// Screening Critique & Retest (Spec #340)
+	let screeningPromptText = $state('');
+	let screeningCritiqueInput = $state('');
+	let isRetestingScreening = $state(false);
+	let screeningRetestVerdict = $state<{ approved: boolean; reason: string } | null>(null);
+	let screeningRetestError = $state('');
+	let isRefiningScreeningPrompt = $state(false);
+	let screeningPromptRefinement = $state<{ before: string; after: string } | null>(null);
+	let screeningPromptSaveNotice = $state('');
+	let isSavingScreeningPrompt = $state(false);
+
 	// Communication state clearance (Issue #203)
 	let isClearingCommunication = $state(false);
 	let isClearingCompany = $state(false);
@@ -114,6 +125,11 @@
 			promptRefinement = null;
 			showManualEditSuggestion = false;
 			refineError = '';
+			screeningCritiqueInput = '';
+			screeningRetestVerdict = null;
+			screeningRetestError = '';
+			screeningPromptRefinement = null;
+			screeningPromptSaveNotice = '';
 		}
 	});
 
@@ -124,6 +140,16 @@
 				const gpData = await gpRes.json();
 				if (typeof gpData.prompt === 'string') {
 					greetingPromptText = gpData.prompt;
+				}
+			}
+		} catch (e) {}
+
+		try {
+			const spRes = await fetch('/api/screening/prompt');
+			if (spRes.ok) {
+				const spData = await spRes.json();
+				if (typeof spData.prompt === 'string') {
+					screeningPromptText = spData.prompt;
 				}
 			}
 		} catch (e) {}
@@ -393,6 +419,119 @@
 		}
 	}
 
+	async function handleScreeningRetest() {
+		if (!currentJob || !screeningCritiqueInput.trim()) return;
+		isRetestingScreening = true;
+		screeningRetestError = '';
+		screeningRetestVerdict = null;
+		try {
+			const res = await fetch('/api/screening/critique', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					action: 'retest',
+					job: {
+						title: currentJob.title,
+						company_name: currentJob.company_name,
+						salary_range: currentJob.salary_range,
+						job_description: currentJob.job_description,
+						recruiter_name: currentJob.recruiter_name,
+						recruiter_title: currentJob.recruiter_title
+					},
+					critique: screeningCritiqueInput.trim(),
+					current_prompt: screeningPromptText,
+					llmSettings: llmSettings
+				})
+			});
+			const data = await res.json();
+			if (!res.ok || !data.success) {
+				throw new Error(data.error || '纠偏重测失败');
+			}
+			screeningRetestVerdict = {
+				approved: Boolean(data.approved),
+				reason: String(data.reason || '')
+			};
+		} catch (err: any) {
+			screeningRetestError = err.message || '重测请求异常';
+		} finally {
+			isRetestingScreening = false;
+		}
+	}
+
+	async function handleScreeningAdoptAndRefinePrompt() {
+		if (!currentJob || !screeningRetestVerdict) return;
+		isRefiningScreeningPrompt = true;
+		screeningPromptSaveNotice = '';
+		try {
+			const res = await fetch('/api/screening/critique', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					action: 'prompt-refine',
+					job: {
+						title: currentJob.title,
+						company_name: currentJob.company_name,
+						salary_range: currentJob.salary_range,
+						job_description: currentJob.job_description,
+						recruiter_name: currentJob.recruiter_name,
+						recruiter_title: currentJob.recruiter_title
+					},
+					original_verdict: currentJob.screened_reason || '初筛淘汰',
+					revised_verdict: screeningRetestVerdict.reason || '合格保留',
+					critique: screeningCritiqueInput.trim(),
+					current_prompt: screeningPromptText,
+					llmSettings: llmSettings
+				})
+			});
+			const data = await res.json();
+			if (res.ok && data.success && typeof data.refined_prompt === 'string' && data.refined_prompt.trim()) {
+				screeningPromptRefinement = {
+					before: screeningPromptText,
+					after: data.refined_prompt
+				};
+			} else {
+				screeningPromptSaveNotice = '❌ 提示词打磨失败: ' + (data.error || '未知错误');
+			}
+		} catch (e: any) {
+			screeningPromptSaveNotice = '❌ 提示词打磨异常: ' + (e?.message || e);
+		} finally {
+			isRefiningScreeningPrompt = false;
+		}
+	}
+
+	async function handleConfirmAdoptScreeningPrompt() {
+		if (!currentJob || !screeningPromptRefinement) return;
+		isSavingScreeningPrompt = true;
+		screeningPromptSaveNotice = '';
+		try {
+			const res = await fetch('/api/screening/prompt', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ prompt: screeningPromptRefinement.after })
+			});
+			const data = await res.json();
+			if (!res.ok || !data.success) {
+				throw new Error(data.error || '保存精筛提示词失败');
+			}
+			screeningPromptText = screeningPromptRefinement.after;
+			screeningPromptRefinement = null;
+			screeningPromptSaveNotice = '✅ 精筛长期记忆已成功更新并持久化';
+			// Restore the job automatically upon adoption
+			await handleRestoreJob();
+			setTimeout(() => {
+				screeningPromptSaveNotice = '';
+			}, 3000);
+		} catch (e: any) {
+			screeningPromptSaveNotice = '❌ 保存提示词失败: ' + (e?.message || e);
+		} finally {
+			isSavingScreeningPrompt = false;
+		}
+	}
+
+	function handleDismissScreeningPromptRefinement() {
+		screeningPromptRefinement = null;
+	}
+
 	async function handleClearCommunication() {
 		if (!currentJob) return;
 		const targetId = currentJob.id;
@@ -593,9 +732,190 @@
 						<span class="animate-spin">🔄</span>
 						<span>正在恢复...</span>
 					{:else}
-						<span>🔄 恢复此职位</span>
+						<span>↩️ 恢复为有效候选职位</span>
 					{/if}
 				</button>
+			</div>
+
+			<!-- Screening Critique & Retest Drawer Card (Spec #340, Tickets 2 & 3) -->
+			<div class="bg-slate-900/90 border border-amber-800/60 rounded-2xl p-4 space-y-4 shadow-xl">
+				<div class="flex items-center justify-between border-b border-slate-800 pb-2.5">
+					<div class="flex items-center space-x-2">
+						<span class="text-base">⚖️</span>
+						<span class="text-xs font-semibold text-amber-200">
+							误杀反馈、纠偏重测与提示词自愈 (Screening Critique & Retest)
+						</span>
+					</div>
+					{#if isRetestingScreening}
+						<span class="text-[11px] text-amber-400 animate-pulse flex items-center space-x-1">
+							<span class="animate-spin">🔄</span>
+							<span>正在调用大模型纠偏重测...</span>
+						</span>
+					{/if}
+				</div>
+
+				{#if screeningRetestError}
+					<div class="p-2.5 bg-rose-950/60 border border-rose-800 rounded-lg text-xs text-rose-300">
+						❌ {screeningRetestError}
+					</div>
+				{/if}
+
+				<div class="flex flex-col sm:flex-row gap-2">
+					<textarea
+						bind:value={screeningCritiqueInput}
+						placeholder="输入误杀原因或纠偏批注，例如：该岗位主体是Agent平台架构开发，后端微服务开发是必要的工程落地支撑，未命中黑名单，请予以放行..."
+						rows="3"
+						class="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition resize-y min-h-[60px]"
+					></textarea>
+					<button
+						onclick={handleScreeningRetest}
+						disabled={isRetestingScreening || !screeningCritiqueInput.trim()}
+						class="bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white font-medium px-4 py-2 rounded-lg text-xs transition flex items-center justify-center space-x-1.5 shadow-lg shadow-amber-600/20 disabled:opacity-50 shrink-0 self-end sm:self-stretch min-w-[90px]"
+					>
+						{#if isRetestingScreening}
+							<span class="animate-spin">🔄</span>
+							<span>重测中...</span>
+						{:else}
+							<span>🎯 重新裁决</span>
+						{/if}
+					</button>
+				</div>
+
+				<!-- Quick Critique Presets -->
+				<div class="flex flex-wrap items-center gap-1.5 text-[10px]">
+					<span class="text-slate-500">快捷理由:</span>
+					<button
+						type="button"
+						onclick={() => (screeningCritiqueInput = '复合工种正常落地偏向：该岗位主体为大模型/Agent应用落地，后端与微服务接口开发属于正常工程支撑，未命中黑名单，应予放行。')}
+						class="text-slate-400 hover:text-amber-300 bg-slate-950 hover:bg-slate-800 px-2 py-0.5 rounded border border-slate-800 transition"
+					>
+						💡 复合工种落地偏向
+					</button>
+					<button
+						type="button"
+						onclick={() => (screeningCritiqueInput = '未触犯黑名单关键词：JD未涉及任何黑名单技术栈或限制领域，禁止臆造黑名单外淘汰条件，应判决合格保留。')}
+						class="text-slate-400 hover:text-amber-300 bg-slate-950 hover:bg-slate-800 px-2 py-0.5 rounded border border-slate-800 transition"
+					>
+						💡 未触犯黑名单
+					</button>
+					<button
+						type="button"
+						onclick={() => (screeningCritiqueInput = '非核心职责次要提及：黑名单关键词仅作为背景了解项或上下游协作提及，并非该岗位核心职责，应豁免放行。')}
+						class="text-slate-400 hover:text-amber-300 bg-slate-950 hover:bg-slate-800 px-2 py-0.5 rounded border border-slate-800 transition"
+					>
+						💡 次要提及豁免
+					</button>
+				</div>
+
+				<!-- Retest Result Card -->
+				{#if screeningRetestVerdict}
+					<div class="p-3 rounded-xl border {screeningRetestVerdict.approved ? 'bg-emerald-950/40 border-emerald-800/80 text-emerald-200' : 'bg-rose-950/40 border-rose-800/80 text-rose-200'} space-y-2">
+						<div class="flex items-center justify-between">
+							<div class="flex items-center space-x-2 font-semibold text-xs">
+								<span>{screeningRetestVerdict.approved ? '✅ 重测裁决：合格保留 (Approved)' : '❌ 重测裁决：维持淘汰 (Rejected)'}</span>
+							</div>
+							{#if screeningRetestVerdict.approved}
+								<div class="flex items-center space-x-2">
+									<button
+										onclick={handleRestoreJob}
+										disabled={isRestoring}
+										class="bg-emerald-800 hover:bg-emerald-700 text-white px-2.5 py-1 rounded text-[11px] font-medium transition"
+									>
+										↩️ 立即恢复为有效候选
+									</button>
+									<button
+										onclick={handleScreeningAdoptAndRefinePrompt}
+										disabled={isRefiningScreeningPrompt}
+										class="bg-cyan-800 hover:bg-cyan-700 text-cyan-100 px-2.5 py-1 rounded text-[11px] font-medium transition flex items-center space-x-1"
+									>
+										{#if isRefiningScreeningPrompt}
+											<span class="animate-spin">🔄</span>
+											<span>打磨中...</span>
+										{:else}
+											<span>🪞 采纳并打磨提示词</span>
+										{/if}
+									</button>
+								</div>
+							{/if}
+						</div>
+						<p class="text-[11px] leading-relaxed font-mono opacity-90">
+							判定理由: {screeningRetestVerdict.reason}
+						</p>
+					</div>
+				{/if}
+
+				<!-- Screening Prompt Refinement Proposal (Diff Viewer) -->
+				{#if screeningPromptRefinement}
+					<div class="bg-gradient-to-br from-amber-950/40 via-slate-950 to-orange-950/40 border border-amber-600/50 rounded-xl p-4 space-y-3 shadow-xl">
+						<div class="flex items-center justify-between">
+							<div class="flex items-center space-x-2">
+								<span class="text-base">🪞</span>
+								<span class="text-xs font-semibold text-amber-200">
+									AI 整篇打磨提案：Screening Prompt (Before / After)
+								</span>
+							</div>
+							<button
+								onclick={handleDismissScreeningPromptRefinement}
+								class="text-slate-500 hover:text-slate-300 text-xs px-1.5 py-0.5"
+								title="关闭"
+							>
+								✕ 暂不保存
+							</button>
+						</div>
+
+						<p class="text-[11px] text-slate-400 leading-normal">
+							AI 已结合本次纠偏经验重写整份精筛长期记忆提示词（完整保留既有铁律）。右侧提案可直接审查微调，采纳后将在后续所有岗位的初筛判定中立即生效：
+						</p>
+
+						<div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+							<div class="bg-slate-900/80 border border-slate-800/80 rounded-lg p-3 space-y-1.5">
+								<div class="flex items-center justify-between">
+									<span class="text-[11px] font-semibold text-slate-400">当前版本 (Before)</span>
+									<span class="text-[10px] text-slate-500 font-mono">{screeningPromptRefinement.before.length}字</span>
+								</div>
+								<p class="text-slate-300 font-mono text-xs leading-relaxed whitespace-pre-wrap max-h-64 overflow-y-auto">
+									{screeningPromptRefinement.before || '(空)'}
+								</p>
+							</div>
+							<div class="bg-amber-950/20 border border-amber-800/60 rounded-lg p-3 space-y-1.5">
+								<div class="flex items-center justify-between">
+									<span class="text-[11px] font-semibold text-amber-300">改进提案 (可编辑)</span>
+									<span class="text-[10px] text-amber-400 font-mono">{screeningPromptRefinement.after.length}字</span>
+								</div>
+								<textarea
+									bind:value={screeningPromptRefinement.after}
+									rows="10"
+									class="w-full bg-slate-950 border border-amber-900/60 rounded-lg px-2.5 py-2 text-xs text-amber-200 font-mono leading-relaxed focus:outline-none focus:border-amber-500 transition resize-y"
+								></textarea>
+							</div>
+						</div>
+
+						<div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 pt-1 border-t border-slate-800/80">
+							{#if screeningPromptSaveNotice}
+								<span class="text-xs font-medium {screeningPromptSaveNotice.startsWith('✅') ? 'text-emerald-400' : 'text-rose-400'}">
+									{screeningPromptSaveNotice}
+								</span>
+							{:else}
+								<span class="text-[11px] text-slate-500">
+									采纳后逐字持久化存入 config/screening_prompt.local.md 并自动恢复该岗位
+								</span>
+							{/if}
+
+							<button
+								onclick={handleConfirmAdoptScreeningPrompt}
+								disabled={isSavingScreeningPrompt || !screeningPromptRefinement.after.trim()}
+								class="bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white font-medium px-4 py-1.5 rounded-lg text-xs transition flex items-center space-x-1.5 shadow-lg shadow-amber-600/20 disabled:opacity-50"
+							>
+								{#if isSavingScreeningPrompt}
+									<span class="animate-spin">🔄</span>
+									<span>正在保存并自愈...</span>
+								{:else}
+									<span>💾 采纳并保存为精筛长期记忆</span>
+								{/if}
+							</button>
+						</div>
+					</div>
+				{/if}
 			</div>
 		{/if}
 
