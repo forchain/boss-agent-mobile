@@ -41,3 +41,6 @@ web/build/
 
 
 
+
+# macOS finder metadata (never a project file)
+.DS_Store

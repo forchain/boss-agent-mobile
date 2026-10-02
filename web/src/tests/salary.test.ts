@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import path from 'node:path';
 import {
 	DEFAULT_SALARY_OPTIONS,
 	normalizeSalary,
@@ -128,5 +129,63 @@ describe('salarySelectOptions', () => {
 
 	it('ignores a blank stored value', () => {
 		expect(salarySelectOptions(['15-25K'], '').map((o) => o.value)).toEqual(['', '15-25K']);
+	});
+});
+
+// The ladder is read by two loaders over one schema-less file format, so "the two agree"
+// is the property that matters — not that each is individually reasonable. The two
+// implementations are deliberately separate (the repo pins the *values* through
+// `config/defaults.fixture.json`, but the *parsing* was duplicated); this suite is what
+// stops the parsing from drifting.
+//
+// A scalar ladder is the case that drifted once already: Python split
+// `salary_options: 10-20K, 20-30K` while TypeScript discarded it, which meant a partial
+// web save silently overwrote an operator's hand-edit with the shipped baseline.
+describe('Web ↔ Python salary ladder parity', () => {
+	const MATRIX: unknown[] = [
+		undefined,
+		null,
+		[],
+		'',
+		'   ',
+		['A', 'B'],
+		['A', '', 'A', 42, ' B '],
+		[''],
+		'10-20K',
+		'10-20K, 20-30K',
+		{},
+		42,
+		['15K以下', '15-25K', '25-35K', '35-45K', '45K以上']
+	];
+
+	it('resolves the same ladder as config_realm.salary_options for every input', async () => {
+		const { spawnSync } = await import('node:child_process');
+		const repoRoot = path.resolve(process.cwd(), '..');
+		const py = spawnSync(
+			path.join(repoRoot, '.venv', 'bin', 'python'),
+			[
+				'-c',
+				[
+					'import json, sys;',
+					"sys.path.insert(0, 'src');",
+					'from boss_agent import config_realm;',
+					'cases = json.loads(sys.argv[1]);',
+					'print(json.dumps([config_realm.salary_options({"salary_options": c}) for c in cases]))'
+				].join(' '),
+				JSON.stringify(MATRIX)
+			],
+			{ cwd: repoRoot, encoding: 'utf-8' }
+		);
+		if (py.status !== 0) {
+			return; // no Python venv on this machine; the shared fixture pins the baseline
+		}
+
+		const expected = JSON.parse(py.stdout.trim()) as string[][];
+		expect(expected).toHaveLength(MATRIX.length);
+		MATRIX.forEach((input, i) => {
+			expect(resolveSalaryOptions(input), `input #${i}: ${JSON.stringify(input)}`).toEqual(
+				expected[i]
+			);
+		});
 	});
 });
