@@ -282,7 +282,7 @@ describe('Action lifecycle auto-dismissal (Issue #290)', () => {
 			props: { isOpen: true, job: IGNORED_JOB, onClose }
 		});
 
-		const restoreBtn = screen.getByRole('button', { name: '🔄 恢复此职位' });
+		const restoreBtn = screen.getByRole('button', { name: /恢复此职位/i });
 		await fireEvent.click(restoreBtn);
 
 		await waitFor(() => {

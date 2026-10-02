@@ -37,6 +37,7 @@ from boss_agent.models import (
     ChatButtonState,
     JobRecordStatus,
     ScreeningPolicy,
+    ScreeningStage,
     TargetAction,
 )
 from boss_agent.screening import CandidateScreener
@@ -251,6 +252,8 @@ async def test_a_measured_commute_ceiling_still_rejects_on_an_inventory_jd():
     stored = await store.get_job_record_by_fingerprint(card.card.fingerprint)
     assert stored["status"] == JobRecordStatus.IGNORED.value
     assert "通勤" in stored["screened_reason"] or "19.5" in stored["screened_reason"]
+    # A detail-stage App-Enforced Filter is neither 初筛 nor 精筛; the record must say so.
+    assert stored["screening_stage"] == ScreeningStage.DETAIL_APP_RULE.value
 
 
 @pytest.mark.asyncio

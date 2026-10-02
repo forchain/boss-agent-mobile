@@ -4,6 +4,43 @@
  */
 import type { JobRecord } from './types';
 
+/**
+ * The screening stage that produced an `ignored` verdict, as persisted by the worker
+ * (`boss_agent.models.ScreeningStage`). Empty for records that predate the field or were
+ * ignored by hand.
+ */
+export type ScreeningStage =
+	| 'filtered_by_keyword'
+	| 'filtered_by_app_rule'
+	| 'filtered_by_deep_screener'
+	| 'detail_app_rule'
+	| 'expired_posting'
+	| '';
+
+/**
+ * The label for a rejection, keyed by the stage that made it rather than assumed.
+ *
+ * Card screening (初筛) only ever sees the card digest, while the deep screener (精筛)
+ * reads the full JD — so a 精筛 rejection can cite evidence (e.g. a "Java" requirement)
+ * that appears nowhere on the card. Labelling every rejection 初筛淘汰 made those look
+ * like the card stage had judged on evidence it never had.
+ */
+export function getScreeningStageLabel(stage: string | null | undefined): string {
+	switch (stage) {
+		case 'filtered_by_keyword':
+		case 'filtered_by_app_rule':
+			return '初筛淘汰';
+		case 'filtered_by_deep_screener':
+			return '精筛淘汰';
+		case 'detail_app_rule':
+			return '详情页过滤';
+		case 'expired_posting':
+			return '岗位已失效';
+		default:
+			return '已忽略';
+	}
+}
+
 export function isMaskedCompanyName(name: string | null | undefined): boolean {
 	if (!name || typeof name !== 'string') {
 		return false;

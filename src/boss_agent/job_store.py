@@ -266,6 +266,8 @@ class InMemoryJobRecordStore(JobRecordStore):
             rec["match_score"] = record_data["match_score"]
         if "screened_reason" in record_data:
             rec["screened_reason"] = record_data["screened_reason"]
+        if "screening_stage" in record_data:
+            rec["screening_stage"] = record_data["screening_stage"]
         if "relaxed_by_whitelist" in record_data:
             rec["relaxed_by_whitelist"] = bool(record_data["relaxed_by_whitelist"])
         if record_data.get("screening_audit"):
@@ -515,6 +517,8 @@ class PocketBaseJobRecordStore(JobRecordStore):
             body["match_score"] = record_data["match_score"]
         if "screened_reason" in record_data:
             body["screened_reason"] = record_data["screened_reason"]
+        if "screening_stage" in record_data:
+            body["screening_stage"] = record_data["screening_stage"]
         if "relaxed_by_whitelist" in record_data:
             body["relaxed_by_whitelist"] = bool(record_data["relaxed_by_whitelist"])
         if record_data.get("screening_audit"):

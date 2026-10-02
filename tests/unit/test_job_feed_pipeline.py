@@ -39,6 +39,7 @@ from boss_agent.models import (
     JobPosting,
     JobRecordStatus,
     ScreeningPolicy,
+    ScreeningStage,
     TargetAction,
 )
 from boss_agent.screening import CandidateScreener, JobVerdictStage
@@ -182,6 +183,7 @@ async def test_closed_posting_is_recorded_ignored_and_backed_out():
     ignored = await store.list_job_records(status="ignored")
     assert len(ignored) == 1
     assert "停止招聘" in ignored[0]["screened_reason"]
+    assert ignored[0]["screening_stage"] == ScreeningStage.EXPIRED.value
 
 
 @pytest.mark.asyncio
@@ -239,6 +241,8 @@ async def test_card_screening_rejects_before_any_detail_navigation():
     assert result.skipped == 1
     ignored = await store.list_job_records(status="ignored")
     assert "黑名单外包科技" in ignored[0]["screened_reason"]
+    # The stage is what lets the dashboard label this 初筛淘汰 instead of 精筛淘汰.
+    assert ignored[0]["screening_stage"] == ScreeningStage.CARD_KEYWORD.value
 
 
 @pytest.mark.asyncio
@@ -269,6 +273,10 @@ async def test_card_screening_rejects_business_district_blacklist_before_detail_
     assert len(ignored) == 1
     assert "【商圈黑名单过滤】" in ignored[0]["screened_reason"]
     assert "崇明区" in ignored[0]["screened_reason"]
+    # A business-district blacklist is matched as a card keyword, so it is a card-stage
+    # (初筛) rejection — the label must not fall through to 精筛 just because it is an
+    # App-configured rule.
+    assert ignored[0]["screening_stage"] == ScreeningStage.CARD_KEYWORD.value
 
 
 @pytest.mark.asyncio
@@ -1162,3 +1170,6 @@ async def test_deep_screener_rejection_persists_screened_reason():
     assert stored is not None
     assert stored["status"] == JobRecordStatus.IGNORED.value
     assert stored.get("screened_reason") == "JD明确要求掌握Java架构，触犯黑名单"
+    # This is the Qoder case: a full-JD deep-screener rejection must be attributed to
+    # 精筛, not to card screening — the card digest never carried the Java requirement.
+    assert stored.get("screening_stage") == ScreeningStage.DEEP_SCREENER.value

@@ -16,7 +16,8 @@
 	import {
 		cleanJobTitle,
 		getJobTags,
-		getJobDigest
+		getJobDigest,
+		getScreeningStageLabel
 	} from '$lib/screening';
 	import { formatCommuteDistance } from '$lib/commute';
 	import JobDetailStudio from '$lib/components/JobDetailStudio.svelte';
@@ -494,7 +495,7 @@
 								{#if job.screened_reason}
 									<div class="flex items-center space-x-1.5 text-[10px] bg-rose-950/40 border border-rose-900/50 rounded-lg px-2 py-1 text-rose-300">
 										<span class="shrink-0">🚫</span>
-										<span class="truncate"><span class="font-semibold">初筛淘汰:</span> {job.screened_reason}</span>
+										<span class="truncate"><span class="font-semibold">{getScreeningStageLabel(job.screening_stage)}:</span> {job.screened_reason}</span>
 									</div>
 								{/if}
 

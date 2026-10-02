@@ -242,6 +242,7 @@ class ScreeningVerdict:
 
     approved: bool
     reason: str
+    stage: str = ""
 
 
 def _coerce_screening_verdict(res: dict[str, Any] | Any, reason: str = "") -> bool:
@@ -603,13 +604,110 @@ class CandidateScreener:
                 raise ValueError("LLM 返回非字典响应")
             reason = str(res.get("reason", "重测完成")).strip()
             approved = _coerce_screening_verdict(res, reason)
-            return ScreeningVerdict(approved=approved, reason=reason)
+            stage = "passed" if approved else "filtered_by_deep_screener"
+            return ScreeningVerdict(approved=approved, reason=reason, stage=stage)
         except Exception as e:
             import sys
 
             sys.stderr.write(f"❌ LLM screening critique retest error: {e}\n")
             sys.stderr.flush()
             raise RuntimeError(f"LLM 纠偏重测失败，无法裁决：{e}") from e
+
+    @traceable(name="CandidateScreener.evaluate_jd", run_type="chain")
+    def evaluate_jd(
+        self,
+        job: JobPosting,
+        current_prompt: str | None = None,
+        policy: ScreeningPolicy | dict[str, Any] | None = None,
+    ) -> ScreeningVerdict:
+        """Objectively evaluate a job description against living prompt and policy (Spec #346, Issue #347).
+
+        Unlike ``retest_with_critique``, this evaluation carries zero critique bias.
+        Raises RuntimeError on LLM failure (ADR 0010: never fabricate output).
+        """
+        jd = (job.job_description or "").strip()
+        if not _jd_is_substantive(jd):
+            reason = UNUSABLE_JD_REASON.format(length=len(jd))
+            return ScreeningVerdict(
+                approved=False,
+                reason=reason,
+                stage="jd_unavailable",
+            )
+
+        resolved = _resolve_policy(policy)
+        if not resolved.enable_screening:
+            return ScreeningVerdict(
+                approved=True,
+                reason="筛选策略未启用",
+                stage="passed",
+            )
+
+        blacklist = sorted(
+            {b.strip() for b in resolved.jd_blacklist + resolved.title_blacklist if b and b.strip()}
+        )
+        if not blacklist:
+            return ScreeningVerdict(
+                approved=True,
+                reason="未配置黑名单，JD语义精筛默认放行（白名单对JD正文零否决权）",
+                stage="passed",
+            )
+
+        prompt_template = current_prompt or self.screening_prompt
+        if prompt_template is None:
+            from .screening_prompt import load_screening_prompt
+
+            try:
+                prompt_template = load_screening_prompt()
+            except FileNotFoundError:
+                prompt_template = ""
+
+        prompt_prefix = f"{prompt_template}\n\n" if prompt_template else ""
+        system_prompt = (
+            f"{prompt_prefix}"
+            "【筛选准则】：\n"
+            f"- 当前配置的黑名单关键词(语义一票否决): {blacklist}\n\n"
+            "【客观标准精筛模式】：\n"
+            "请仔细阅读岗位JD与黑名单关键词，严格依据上述精筛铁律与原则（特别是绝对禁止臆造黑名单外淘汰条件、复合技术工种正常落地偏向不予淘汰、黑名单次要提及豁免），"
+            "对该岗位做出客观公正的判决。\n\n"
+            "【输出格式硬性约定】：\n"
+            '严格输出标准 JSON 格式：{"approved": true(合格保留)或false(命中黑名单淘汰), "reason": "50字以内的判定简述，明确写【合格保留】或【淘汰：具体原因】，严禁使用具有中英二义性的 pass 词汇"}。'
+        )
+
+        user_prompt = (
+            f"职位名称: {job.title}\n"
+            f"招聘公司: {job.company_name}\n"
+            f"岗位描述(JD):\n{jd}\n\n"
+            '请客观裁决并输出 JSON：{"approved": true(合格保留)/false(命中黑名单淘汰), "reason": "判定简述(明确标注【合格保留】或【淘汰：原因】，严禁使用 pass)"}'
+        )
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+
+        client = self.llm_client
+        if not client:
+            from .llm_config import create_llm_client
+
+            client = self.llm_client = create_llm_client()
+
+        try:
+            res = client.chat_completion_json(messages)
+            if not isinstance(res, dict):
+                raise ValueError("LLM 返回非字典响应")
+            reason = str(res.get("reason", "精筛完成")).strip()
+            approved = _coerce_screening_verdict(res, reason)
+            stage = "passed" if approved else "filtered_by_deep_screener"
+            return ScreeningVerdict(approved=approved, reason=reason, stage=stage)
+        except Exception as e:
+            import sys
+
+            sys.stderr.write(f"❌ LLM screening evaluation error: {e}\n")
+            sys.stderr.flush()
+            raise RuntimeError(f"LLM 客观精筛评估失败，无法裁决：{e}") from e
+
+    _evaluate_jd = evaluate_jd
+
 
     @traceable(name="CandidateScreener.refine_screening_prompt", run_type="chain")
     def refine_screening_prompt(

@@ -28,9 +28,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--action",
-        choices=["retest", "prompt-refine"],
+        choices=["retest", "prompt-refine", "evaluate", "screen"],
         default="retest",
-        help="Action: retest with critique, or rewrite the Screening Prompt (prompt-refine)",
+        help="Action: retest with critique, rewrite the Screening Prompt (prompt-refine), or evaluate job (evaluate/screen)",
     )
     parser.add_argument("--job", "-j", type=str, required=True, help="Job details JSON string")
     parser.add_argument("--critique", "-c", type=str, default="", help="User critique / feedback")
@@ -202,6 +202,39 @@ def main() -> None:
                 )
                 + "\n"
             )
+    elif args.action in ("evaluate", "screen"):
+        try:
+            verdict = screener._evaluate_jd(
+                job=job,
+                current_prompt=args.screening_prompt,
+                policy=policy,
+            )
+            sys.stdout.write(
+                json.dumps(
+                    {
+                        "success": True,
+                        "approved": verdict.approved,
+                        "reason": verdict.reason,
+                        "stage": verdict.stage,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
+        except Exception as e:
+            sys.stderr.write(f"Evaluate error: {e}\n")
+            sys.stdout.write(
+                json.dumps(
+                    {
+                        "success": False,
+                        "error": str(e),
+                        "evaluate_failed": True,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
+
 
 
 if __name__ == "__main__":
