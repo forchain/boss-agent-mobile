@@ -1627,7 +1627,8 @@ class ScreeningPolicy:
     ) -> tuple[bool, str]:
         """Deterministic keyword evaluation for job card.
 
-        Evaluates title, company_name, tags, digest, and location against screening policy.
+        Evaluates title, company_name, digest, and location against screening policy.
+        Note: card tags are uncoupled from title and digest blacklists (#349, #350).
         Returns (passed: bool, reason: str).
         """
         if not self.enable_screening:
@@ -1635,13 +1636,12 @@ class ScreeningPolicy:
 
         norm_title = (title or "").lower()
         norm_company = (company_name or "").lower()
-        norm_tags = [t.lower() for t in (tags or [])]
         norm_digest = (digest or "").lower()
 
-        # 1. Check title blacklist (一票否决: 检查 title 和 tags)
+        # 1. Check title blacklist (一票否决: 检查 title)
         for black in self.title_blacklist:
             b = black.strip().lower()
-            if b and (b in norm_title or any(b in t for t in norm_tags)):
+            if b and b in norm_title:
                 return False, f"命中职位黑名单关键词: '{black}'"
 
         # 2. Check company blacklist (一票否决: 检查 company_name)
@@ -1650,11 +1650,11 @@ class ScreeningPolicy:
             if b and b in norm_company:
                 return False, f"命中公司黑名单关键词: '{black}'"
 
-        # 3. Check JD/Digest blacklist (一票否决: 检查 digest 和 tags)
+        # 3. Check JD/Digest blacklist (一票否决: 检查 digest)
         for black in self.jd_blacklist:
             b = black.strip().lower()
-            if b and (b in norm_digest or any(b in t for t in norm_tags)):
-                return False, f"命中岗位摘要/标签黑名单关键词: '{black}'"
+            if b and b in norm_digest:
+                return False, f"命中岗位摘要黑名单关键词: '{black}'"
 
         # 4. Business district blacklist (一票否决: 检查 location). The detail stage
         # re-evaluates this same list against the fuller location line (#333).

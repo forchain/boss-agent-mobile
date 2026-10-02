@@ -1051,7 +1051,7 @@
 						<span class="text-[11px] text-slate-500">{screeningPolicy.title_blacklist.length} 项</span>
 					</div>
 					<p class="text-[11px] text-slate-400 leading-relaxed">
-						职位标题或标签命中任意词立即淘汰，绝不点击进入详情页（如：<code class="text-slate-300">销售</code>, <code class="text-slate-300">实习</code>, <code class="text-slate-300">管培生</code>）。
+						仅匹配职位标题（不检查职位标签），命中任意词立即淘汰，绝不点击进入详情页（如：<code class="text-slate-300">销售</code>, <code class="text-slate-300">实习</code>, <code class="text-slate-300">管培生</code>）。
 					</p>
 
 					<!-- Chips container -->
@@ -1149,7 +1149,7 @@
 						<span class="text-[11px] text-slate-500">{screeningPolicy.jd_blacklist.length} 项</span>
 					</div>
 					<p class="text-[11px] text-slate-400 leading-relaxed">
-						卡片摘要或标签命中即淘汰（如：<code class="text-slate-300">外包</code>, <code class="text-slate-300">驻场</code>, <code class="text-slate-300">电销</code>, <code class="text-slate-300">无底薪</code>），仅匹配卡片核心亮点，避免误伤全文。
+						仅匹配岗位卡片摘要（不检查职位标签），命中即淘汰（如：<code class="text-slate-300">外包</code>, <code class="text-slate-300">驻场</code>, <code class="text-slate-300">电销</code>, <code class="text-slate-300">无底薪</code>），仅匹配卡片核心亮点，避免误伤全文。
 					</p>
 
 					<!-- Chips container -->
