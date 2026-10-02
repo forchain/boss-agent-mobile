@@ -19,7 +19,8 @@
     "communication_cooldown_days": 30,
     "enable_screening": true,
     "channel_preference": "all",
-    "run_cleanup_on_startup": true
+    "run_cleanup_on_startup": true,
+    "salary_options": ["15K以下", "15-25K", "25-35K", "35-45K", "45K以上"]
   },
   "chat_defaults": {
     "rejection_reply_text": "收到 谢谢",

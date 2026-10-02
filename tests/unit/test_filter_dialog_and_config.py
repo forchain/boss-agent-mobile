@@ -2,6 +2,7 @@
 
 from unittest.mock import MagicMock, patch
 
+from boss_agent.config_realm import DEFAULT_TOP_SALARY_TIER, salary_options
 from boss_agent.models import FilterConfig
 from boss_agent.pages import FilterDialogPage
 
@@ -9,7 +10,10 @@ from boss_agent.pages import FilterDialogPage
 def test_filter_config_defaults_and_validation():
     cfg = FilterConfig()
     assert cfg.education == "硕士"
-    assert cfg.salary == "5万元以上"
+    # The default must name a tier the app's filter dialog actually offers (issue #337).
+    # It used to be "5万元以上", which exists in neither the legacy nor the current ladder.
+    assert cfg.salary == DEFAULT_TOP_SALARY_TIER
+    assert cfg.salary in salary_options({})
     assert cfg.experience == "10年以上"
     assert cfg.activity == "今日活跃"
     assert len(cfg.company_scales) == 4

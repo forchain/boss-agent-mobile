@@ -5,6 +5,7 @@
 	import { DEFAULT_CHAT_ACKNOWLEDGMENT, normalizeChatAcknowledgment } from '$lib/chatAcknowledgment';
 	import { getCommunicationSummary, postCommunicationAction } from '$lib/pocketbase';
 	import { formatCommuteLimitInput, isCommuteLimitDisabled, normalizeCommuteLimit } from '$lib/commute';
+	import { DEFAULT_SALARY_OPTIONS, resolveSalaryOptions } from '$lib/salary';
 
 
 	let settings = $state<SystemSettings>({
@@ -26,7 +27,8 @@
 		preview_timeout_sec: 3.0,
 		enable_greeting: true,
 		chat: { ...DEFAULT_CHAT_ACKNOWLEDGMENT },
-		communication_cooldown_days: 30
+		communication_cooldown_days: 30,
+		salary_options: [...DEFAULT_SALARY_OPTIONS]
 	});
 
 	// Communication exclusion management (Issue #203)
@@ -135,6 +137,69 @@
 	let savePolicySuccess = $state('');
 	let savePolicyError = $state('');
 
+	// Salary option ladder (issue #337). Edited and saved on its own button rather than
+	// folded into the screening policy, because it is a search *filter* choice (the
+	// ladder the strategy modal offers), not a candidate-rejection rule — and it persists
+	// through `POST /api/settings`, not `/api/screening/policy`.
+	let newSalaryOption = $state('');
+	let isSavingSalaryOptions = $state(false);
+	let saveSalarySuccess = $state('');
+	let saveSalaryError = $state('');
+
+	function addSalaryOption() {
+		const val = newSalaryOption.trim();
+		if (!val) return;
+		const current = settings.salary_options ?? [];
+		if (!current.includes(val)) {
+			settings.salary_options = [...current, val];
+		}
+		newSalaryOption = '';
+		saveSalarySuccess = '';
+		saveSalaryError = '';
+	}
+
+	function removeSalaryOption(index: number) {
+		settings.salary_options = (settings.salary_options ?? []).filter((_, i) => i !== index);
+		saveSalarySuccess = '';
+		saveSalaryError = '';
+	}
+
+	function resetSalaryOptions() {
+		settings.salary_options = [...DEFAULT_SALARY_OPTIONS];
+		saveSalarySuccess = '';
+		saveSalaryError = '';
+	}
+
+	async function onSaveSalaryOptions() {
+		isSavingSalaryOptions = true;
+		saveSalarySuccess = '';
+		saveSalaryError = '';
+		try {
+			// Normalised before the write so an empty list cannot be persisted; the loader
+			// would fall back to the baseline anyway, but the operator should be told.
+			const salaryOptions = resolveSalaryOptions(settings.salary_options);
+			const res = await fetch('/api/settings', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ salary_options: salaryOptions })
+			});
+			const data = await res.json();
+			if (res.ok && data.success) {
+				settings.salary_options = salaryOptions;
+				saveSalarySuccess = `✅ 薪资档位已保存：${salaryOptions.length} 档（config/settings.local.yaml）`;
+				setTimeout(() => {
+					saveSalarySuccess = '';
+				}, 4000);
+			} else {
+				saveSalaryError = `❌ 保存失败: ${data.message || '未知错误'}`;
+			}
+		} catch (e: any) {
+			saveSalaryError = `❌ 保存异常: ${e?.message || e}`;
+		} finally {
+			isSavingSalaryOptions = false;
+		}
+	}
+
 	// Greeting Prompt (single living long-term memory document) State
 	let greetingPrompt = $state('');
 	let greetingPromptIsDefault = $state(false);
@@ -179,7 +244,8 @@
 					preview_timeout_sec: conf.preview_timeout_sec ?? 3.0,
 					enable_greeting: conf.enable_greeting !== false,
 					chat: resolvedChat,
-					communication_cooldown_days: conf.communication_cooldown_days ?? 30
+					communication_cooldown_days: conf.communication_cooldown_days ?? 30,
+					salary_options: resolveSalaryOptions(conf.salary_options)
 				};
 				chatAck = { ...resolvedChat };
 				isEditingApiKey = !conf.api_key;
@@ -1247,7 +1313,95 @@
 			</div>
 		</div>
 
-		<!-- Section 4: Mobile & Virtual Device Automation Card -->
+			<!-- Section 3.5: Salary Option Ladder Card (issue #337) -->
+		<div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-5">
+			<div class="flex items-center justify-between border-b border-slate-800/80 pb-4">
+				<div class="flex items-center space-x-2.5">
+					<span class="text-xl">💰</span>
+					<div>
+						<h2 class="font-semibold text-sm text-slate-100">薪资档位阶梯 (Salary Options)</h2>
+						<p class="text-[11px] text-slate-400 mt-0.5">
+							搜索策略弹窗「薪资要求」下拉的可选项，按移动端 App 实际展示的档位填写
+						</p>
+					</div>
+				</div>
+				<span class="text-[11px] px-2.5 py-0.5 rounded-full bg-cyan-950 text-cyan-400 border border-cyan-800/80 font-mono">
+					{settings.salary_options?.length ?? 0} 档
+				</span>
+			</div>
+
+			<div class="space-y-3">
+				<p class="text-[11px] text-slate-400 leading-relaxed">
+					BOSS 直聘的薪资档位会随 App 版本、城市与岗位族变化，因此不在代码里写死。搜索策略的新建/编辑弹窗直接渲染这里的列表；调整后，存量搜索策略里已不再存在的档位会在编辑时按区间就近映射，无法唯一映射的档位会原样保留并提示复核。
+				</p>
+
+				<!-- Chips container -->
+				<div class="flex flex-wrap gap-1.5 min-h-[32px] p-2 bg-slate-900/60 border border-slate-800 rounded-lg">
+					{#if (settings.salary_options ?? []).length === 0}
+						<span class="text-[11px] text-amber-400 italic">（档位为空，保存时会回退到内置默认档位）</span>
+					{:else}
+						{#each settings.salary_options ?? [] as item, idx}
+							<span class="inline-flex items-center space-x-1 text-xs px-2 py-0.5 rounded-md bg-cyan-950 text-cyan-300 border border-cyan-800/70">
+								<span>{item}</span>
+								<button
+									type="button"
+									onclick={() => removeSalaryOption(idx)}
+									class="text-cyan-400 hover:text-white font-bold ml-1 text-xs"
+									title="移除该档位"
+								>×</button>
+							</span>
+						{/each}
+					{/if}
+				</div>
+
+				<!-- Add Input -->
+				<div class="flex items-center space-x-2">
+					<input
+						type="text"
+						placeholder="输入薪资档位，如: 25-35K"
+						bind:value={newSalaryOption}
+						onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addSalaryOption(); } }}
+						class="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-cyan-500 font-mono"
+					/>
+					<button
+						type="button"
+						onclick={addSalaryOption}
+						class="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs px-3 py-1.5 rounded-lg border border-slate-700 transition"
+					>+ 添加</button>
+					<button
+						type="button"
+						onclick={resetSalaryOptions}
+						class="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs px-3 py-1.5 rounded-lg border border-slate-700 transition"
+					>恢复默认</button>
+				</div>
+
+				<!-- Save -->
+				<div class="flex justify-end">
+					<button
+						type="button"
+						onclick={onSaveSalaryOptions}
+						disabled={isSavingSalaryOptions}
+						class="w-full sm:w-auto bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-semibold px-5 py-2.5 rounded-xl text-xs transition shadow-lg shadow-cyan-500/10 flex items-center justify-center space-x-1.5 disabled:opacity-60 cursor-pointer"
+					>
+						{#if isSavingSalaryOptions}
+							<span class="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+							<span>正在保存薪资档位...</span>
+						{:else}
+							<span>💾 保存薪资档位</span>
+						{/if}
+					</button>
+				</div>
+
+				{#if saveSalarySuccess}
+					<div class="text-[11px] text-emerald-400">{saveSalarySuccess}</div>
+				{/if}
+				{#if saveSalaryError}
+					<div class="text-[11px] text-rose-400">{saveSalaryError}</div>
+				{/if}
+			</div>
+		</div>
+
+	<!-- Section 4: Mobile & Virtual Device Automation Card -->
 		<div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-5">
 			<div class="flex items-center justify-between border-b border-slate-800/80 pb-4">
 				<div class="flex items-center space-x-2.5">

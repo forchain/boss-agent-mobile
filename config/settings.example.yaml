@@ -72,6 +72,12 @@ enable_greeting: true
 # Master switch for deterministic rule-based preliminary screening (zero token cost)
 enable_screening: true
 
+# 搜索策略弹窗「薪资要求」下拉的可选项阶梯（issue #337）。
+# BOSS 直聘 App 的薪资档位随版本 / 城市 / 岗位族变化，因此不在代码里写死：
+# 这里定义的是 Web 搜索策略弹窗与移动端筛选弹窗共用的选项集合，
+# 默认取当前移动端实际展示的档位。删除某档后，该档在新建/编辑搜索策略的下拉中不再出现。
+salary_options: ["15K以下", "15-25K", "25-35K", "35-45K", "45K以上"]
+
 # 招聘渠道 App-Enforced Filter（Boss 平台无原生渠道筛选，由本应用判定）：
 #   "all"            直招与猎头岗位均接受（默认）
 #   "direct_only"    仅直招岗位，猎头岗位被拦截（可被白名单放宽豁免）

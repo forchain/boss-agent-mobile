@@ -2,6 +2,7 @@ import { getProjectRoot } from '$lib/server/pythonRunner';
 import path from 'path';
 import fs from 'fs';
 import { DEFAULT_CHAT_ACKNOWLEDGMENT, normalizeChatAcknowledgment } from '$lib/chatAcknowledgment';
+import { DEFAULT_SALARY_OPTIONS, resolveSalaryOptions } from '$lib/salary';
 import type { SystemSettings } from '$lib/types';
 import { normalizeCommuteLimit } from '$lib/commute';
 
@@ -259,6 +260,10 @@ export function loadMergedSettings(): SystemSettings {
 		business_district_blacklist: [],
 		business_district_inspect_list: [],
 		run_cleanup_on_startup: true,
+		// The salary ladder the search strategy modal offers (issue #337). Configurable
+		// rather than constant because the app's tiers are version/city/role dependent;
+		// see `$lib/salary` for the reconciliation helpers.
+		salary_options: [...DEFAULT_SALARY_OPTIONS],
 		chat: { ...DEFAULT_CHAT_ACKNOWLEDGMENT }
 	};
 
@@ -343,6 +348,11 @@ export function loadMergedSettings(): SystemSettings {
 	// an explicit null (disabled). YAML `null` parses to the string "null", so the
 	// coercion is what makes "disabled" survive a save/load cycle.
 	settings.max_commute_distance_km = normalizeCommuteLimit(settings.max_commute_distance_km);
+
+	// Salary ladder (issue #337): a malformed or empty list on disk must not leave the
+	// search strategy modal with no options to offer. Same fall-back-to-baseline guard
+	// as the Python `config_realm.salary_options`.
+	settings.salary_options = resolveSalaryOptions(settings.salary_options);
 
 	// Filter out template placeholder strings
 	if (settings.api_key === 'your-api-key-here') settings.api_key = '';
@@ -480,6 +490,9 @@ export function saveSettingsToLocalYaml(
 				? (normalizeCommuteLimit(merged.max_commute_distance_km)?.toString() ?? 'null')
 				: '40'
 		}`,
+		// 搜索策略弹窗的薪资档位阶梯 (issue #337). Resolved rather than written verbatim so
+		// a partial or malformed payload cannot persist an empty ladder.
+		`salary_options: ${JSON.stringify(resolveSalaryOptions(merged.salary_options))}`,
 		`title_whitelist: ${JSON.stringify(merged.title_whitelist || [])}`,
 		`title_blacklist: ${JSON.stringify(merged.title_blacklist || [])}`,
 		`company_blacklist: ${JSON.stringify(merged.company_blacklist || [])}`,

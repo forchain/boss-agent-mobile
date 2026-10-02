@@ -126,6 +126,13 @@ export interface SystemSettings {
 	jd_blacklist?: string[];
 	business_district_blacklist?: string[];
 	business_district_inspect_list?: string[];
+
+	/**
+	 * The salary tiers the search strategy modal offers, in dialog order (issue #337).
+	 * Configurable because the app's own ladder shifts with version, city and role.
+	 */
+	salary_options?: string[];
+
 	channel_preference?: 'all' | 'direct_only' | 'headhunter_only';
 	max_commute_distance_km?: number | null;
 

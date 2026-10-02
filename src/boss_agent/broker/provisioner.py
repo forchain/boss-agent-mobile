@@ -26,6 +26,7 @@ _src_root = str(Path(__file__).resolve().parent.parent.parent)
 if _src_root not in sys.path:
     sys.path.insert(0, _src_root)
 
+from boss_agent.config_realm import DEFAULT_TOP_SALARY_TIER  # noqa: E402
 from boss_agent.broker.collection_schema import (  # noqa: E402
     COLLECTIONS,
     JOB_RECORDS_NAME,
@@ -77,6 +78,10 @@ JOB_DESCRIPTION_FIELD: dict[str, Any] = {
 }
 
 
+#: Seeded into PocketBase on first boot. These are persisted product defaults, so a tier
+#: named here outlives the code change that fixed it — they used to carry "5万元以上",
+#: a tier the app's filter dialog does not offer (issue #337). `salary` resolves through
+#: the realm's constant rather than a literal so it stays a tier the dialog can select.
 DEFAULT_INITIAL_SEARCHES: dict[str, dict[str, Any]] = {
     "default_agent_search": {
         "name": "AI Agent Default Startup Search",
@@ -86,7 +91,7 @@ DEFAULT_INITIAL_SEARCHES: dict[str, dict[str, Any]] = {
         "enable_filter": True,
         "filter": {
             "education": "硕士",
-            "salary": "5万元以上",
+            "salary": DEFAULT_TOP_SALARY_TIER,
             "experience": "10年以上",
             "activity": "今日活跃",
             "company_scales": [
@@ -113,7 +118,7 @@ DEFAULT_INITIAL_SEARCHES: dict[str, dict[str, Any]] = {
         "enable_filter": True,
         "filter": {
             "education": "硕士",
-            "salary": "5万元以上",
+            "salary": DEFAULT_TOP_SALARY_TIER,
             "experience": "5-10年",
             "activity": "今日活跃",
             "company_scales": [

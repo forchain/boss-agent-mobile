@@ -11,6 +11,10 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+# Stdlib-only at import time, so this is cycle-free: `config_realm` defers its own
+# `settings`/`rejection` reads into call time.
+from .config_realm import DEFAULT_TOP_SALARY_TIER
+
 
 class AuthStatus(StrEnum):
     AUTHENTICATED = "AUTHENTICATED"
@@ -1126,7 +1130,10 @@ class FilterConfig:
     """Configuration for job filtering on Boss 直聘."""
 
     education: str | None = "硕士"
-    salary: str | None = "5万元以上"
+    # The top configured salary tier, not a hardcoded string: the default used to name
+    # "5万元以上", which the app's filter dialog does not offer, so a default search
+    # applied a band the device could never satisfy (issue #337).
+    salary: str | None = DEFAULT_TOP_SALARY_TIER
     experience: str | None = "10年以上"
     activity: str | None = "今日活跃"
     company_scales: list[str] = field(

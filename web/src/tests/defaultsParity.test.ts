@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { getProjectRoot } from '../lib/server/pythonRunner';
+import { DEFAULT_SALARY_OPTIONS } from '../lib/salary';
 import { setupSettingsSandbox, type SettingsSandbox } from './settingsSandbox';
 
 // Cross-language Configuration Realm parity — the TypeScript half. The same fixture is
@@ -62,5 +63,31 @@ describe('Configuration Realm cross-language parity', () => {
 		const defaults = fixture().shared_defaults;
 		expect(defaults.max_tokens).not.toBe(16384);
 		expect(defaults.timeout_sec).not.toBe(300.0);
+	});
+
+	// Issue #337: `salary_options` is not just a baseline entry, it is an operator-editable
+	// list. Asserting it round-trips through persistence is what makes "declared in the
+	// realm" mean "the Settings panel can actually change it".
+	it('salary_options survives a save/load round-trip', async () => {
+		const { saveSettingsToLocalYaml, loadMergedSettings } = await import('../lib/server/settings');
+
+		const configured = ['3K以下', '3-5K', '5-10K', '10K以上'];
+		saveSettingsToLocalYaml({ ...loadMergedSettings(), salary_options: configured } as any);
+
+		expect(loadMergedSettings().salary_options).toEqual(configured);
+		// The ladder is written as real YAML, not a stringified blob.
+		expect(fs.readFileSync(sandbox.file, 'utf-8')).toContain('salary_options:');
+	});
+
+	it('a malformed salary_options on disk degrades to the shipped ladder', async () => {
+		// Same guard as the Python accessor: the realm's file format is schema-less, so an
+		// empty ladder is one typo away and would leave the search strategy with no
+		// options at all.
+		const { loadMergedSettings } = await import('../lib/server/settings');
+
+		fs.writeFileSync(sandbox.file, 'salary_options: []\n');
+		expect(loadMergedSettings().salary_options).toEqual(DEFAULT_SALARY_OPTIONS);
+
+		fs.writeFileSync(sandbox.file, '');
 	});
 });

@@ -63,6 +63,23 @@ CONFIG_CHAIN: tuple[Path, ...] = (
 #: the realm and is kept as an explicit chain entry rather than as a hidden second pass.
 LEGACY_LLM_FILE: Path = Path("config/llm.local.yaml")
 
+#: The salary tiers offered by the Boss 直聘 app's filter dialog. Declared here because
+#: the app's own tiers drift between app versions, cities and job roles — the Web Dashboard
+#: used to ship a hardcoded legacy ladder (`3K以下` … `50K以上`) that matched nothing the
+#: device actually displays. `salary_options` makes the list operator-configurable; this is
+#: only the floor used when the realm says nothing.
+DEFAULT_SALARY_OPTIONS: list[str] = ["15K以下", "15-25K", "25-35K", "35-45K", "45K以上"]
+
+#: The top of the shipped ladder — the "senior band" every default filter means.
+#:
+#: The domain baseline used to name `"5万元以上"`, a tier that exists in neither the legacy
+#: ladder nor the current app ladder, so a default search applied a filter the device
+#: could not satisfy. Anything that must default to a high band should name *this* rather
+#: than a hardcoded string. It is a constant rather than a realm read on purpose: it is a
+#: product default for code that runs before any operator choice is in play, and resolving
+#: it from ambient config would make it depend on whichever machine is running.
+DEFAULT_TOP_SALARY_TIER: str = DEFAULT_SALARY_OPTIONS[-1]
+
 #: The one defaults table. Every Python loader resolves its baseline from here, and
 #: `config/defaults.fixture.json` is generated from it so the TypeScript mirror can be
 #: asserted against the same values instead of against a comment.
@@ -93,6 +110,9 @@ DEFAULTS: dict[str, Any] = {
     "enable_screening": True,
     "channel_preference": "all",
     "run_cleanup_on_startup": True,
+    # The salary ladder the app filter dialog offers (issue #337). Configurable rather
+    # than constant because the app's own tiers are version- and city-dependent.
+    "salary_options": list(DEFAULT_SALARY_OPTIONS),
 }
 
 
@@ -539,6 +559,42 @@ def worker_settings(
     )
 
 
+def salary_options(
+    settings: dict[str, Any] | None = None,
+    config_path: str | Path | None = None,
+) -> list[str]:
+    """The configured salary tiers, in dialog order.
+
+    Reads the realm rather than re-deriving a ladder locally, so a default that has to
+    name a real tier (the default saved search, `FilterConfig`) resolves against what the
+    operator actually configured instead of against a private copy that can drift.
+
+    A malformed value degrades to the shipped baseline rather than raising: an empty
+    list is never a useful answer here, and the schema-less YAML format makes a
+    hand-edit that produces one a realistic case. Blanks are dropped and duplicates
+    collapsed, but order is preserved — the ladder is a presented list, not a set.
+    """
+    merged = _section(settings, config_path)
+    raw = merged.get("salary_options")
+
+    if isinstance(raw, str):
+        # Tolerate a single scalar: the same hand-edit hazard as the numeric coercions.
+        raw = [part for part in raw.split(",")]
+
+    if not isinstance(raw, (list, tuple)):
+        return list(DEFAULT_SALARY_OPTIONS)
+
+    options: list[str] = []
+    for item in raw:
+        if not isinstance(item, str):
+            continue
+        text = item.strip()
+        if text and text not in options:
+            options.append(text)
+
+    return options or list(DEFAULT_SALARY_OPTIONS)
+
+
 #: Resolved-value printer for the runner scripts. `key=value` lines on stdout, one per
 #: requested key, so shell scripts stop mining YAML with `grep|awk|tr` pipelines that
 #: silently break when the file layout changes.
@@ -558,6 +614,8 @@ def format_resolved_values(keys: list[str], settings: dict[str, Any] | None = No
 __all__ = [
     "CHAT_DEFAULTS",
     "CONFIG_CHAIN",
+    "DEFAULT_SALARY_OPTIONS",
+    "DEFAULT_TOP_SALARY_TIER",
     "DEFAULTS",
     "ENV_OVERRIDES",
     "KEY_ALIASES",
@@ -575,5 +633,6 @@ __all__ = [
     "normalize_url",
     "pocketbase_settings",
     "resolve_chain",
+    "salary_options",
     "worker_settings",
 ]

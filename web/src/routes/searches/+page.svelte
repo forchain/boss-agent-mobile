@@ -11,6 +11,12 @@
 	} from '$lib/pocketbase';
 	import { dashboardRealtime } from '$lib/dashboardRealtime';
 	import { buildSearchLaunch } from '$lib/taskLaunch';
+	import {
+		DEFAULT_SALARY_OPTIONS,
+		normalizeSalary,
+		resolveSalaryOptions,
+		salarySelectOptions
+	} from '$lib/salary';
 
 	let { data }: { data: any } = $props();
 	let searches = $state<SavedSearch[]>([]);
@@ -81,26 +87,30 @@
 	});
 
 	const EDUCATION_OPTIONS = ['不限', '大专', '本科', '硕士', '博士'];
-	const SALARY_OPTIONS = [
-		{ value: '', label: '不限' },
-		{ value: '3K以下', label: '3K以下 (3000元以下)' },
-		{ value: '3-5K', label: '3-5K (3000-5000元)' },
-		{ value: '5-10K', label: '5-10K (5000-10000元)' },
-		{ value: '10-20K', label: '10-20K (1-2万元)' },
-		{ value: '20-50K', label: '20-50K (2-5万元)' },
-		{ value: '50K以上', label: '50K以上 (5万元以上)' }
-	];
 
-	function normalizeSalary(val: string | undefined | null): string {
-		if (!val || val === '不限') return '';
-		if (val === '5万元以上' || val === '5万以上') return '50K以上';
-		if (val === '2-5万元' || val === '2-5万') return '20-50K';
-		if (val === '1-2万元' || val === '1-2万') return '10-20K';
-		if (val === '5000-10000元') return '5-10K';
-		if (val === '3000-5000元') return '3-5K';
-		if (val === '3000元以下') return '3K以下';
-		return val;
+	// The salary ladder is operator-configurable through the `salary_options` realm key
+	// (issue #337), so it is fetched rather than hardcoded: the app's own tiers shift
+	// with version, city and role. The fallback keeps the dropdown usable before the
+	// settings API answers — the ladder is a plain string list, no reason to block on it.
+	let salaryOptions = $state<string[]>([...DEFAULT_SALARY_OPTIONS]);
+
+	/** The top configured tier — what a preset's "senior band" filter means. */
+	function topSalaryTier(): string {
+		return salaryOptions[salaryOptions.length - 1];
 	}
+
+	async function loadSalaryOptions() {
+		try {
+			const res = await fetch('/api/settings');
+			if (res.ok) {
+				const conf = await res.json();
+				salaryOptions = resolveSalaryOptions(conf.salary_options);
+			}
+		} catch (e) {
+			console.warn('Failed to load salary options:', e);
+		}
+	}
+
 	const EXPERIENCE_OPTIONS = ['不限', '在校/应届', '1-3年', '3-5年', '5-10年', '10年以上'];
 	const ACTIVITY_OPTIONS = ['不限', '今日活跃', '3日内活跃', '本周活跃', '本月活跃'];
 	const COMPANY_SCALE_OPTIONS = [
@@ -173,6 +183,10 @@
 		if (isSaving) return;
 		isSaving = true;
 		try {
+			// Seeded presets filter on the configured top tier, so the ladder has to be
+			// resolved first — otherwise an early click persists a tier from the shipped
+			// baseline that the operator's own ladder may not contain.
+			await loadSalaryOptions();
 			const defaults = [
 				{
 					id: 'default_agent_search',
@@ -184,7 +198,7 @@
 					enable_filter: true,
 					filter: {
 						education: '硕士',
-						salary: '5万元以上',
+						salary: topSalaryTier(),
 						experience: '10年以上',
 						activity: '今日活跃',
 						company_scales: ['100-499人', '500-999人', '1000-9999人', '10000人以上'],
@@ -204,7 +218,7 @@
 					enable_filter: true,
 					filter: {
 						education: '硕士',
-						salary: '5万元以上',
+						salary: topSalaryTier(),
 						experience: '5-10年',
 						activity: '今日活跃',
 						company_scales: ['500-999人', '1000-9999人', '10000人以上'],
@@ -278,7 +292,7 @@
 			is_enabled: !!search.is_enabled,
 			filter: {
 				education: search.filter?.education || '不限',
-				salary: normalizeSalary(search.filter?.salary),
+				salary: normalizeSalary(search.filter?.salary, salaryOptions),
 				experience: search.filter?.experience || '不限',
 				activity: search.filter?.activity || '不限',
 				company_scales: [...(search.filter?.company_scales || [])],
@@ -453,6 +467,7 @@
 
 	onMount(() => {
 		loadSearches();
+		loadSalaryOptions();
 
 		offSavedSearches = dashboardRealtime().subscribeToCollection('saved_searches', (e) => {
 			if (e.action === 'create' || e.action === 'update' || e.action === 'delete') {
@@ -1001,7 +1016,7 @@
 								bind:value={modalForm.filter.salary}
 								class="w-full bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-cyan-500"
 							>
-								{#each SALARY_OPTIONS as opt}
+								{#each salarySelectOptions(salaryOptions, modalForm.filter.salary) as opt}
 									<option value={opt.value}>{opt.label}</option>
 								{/each}
 							</select>
