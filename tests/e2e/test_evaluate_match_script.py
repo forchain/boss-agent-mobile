@@ -52,7 +52,10 @@ def test_evaluate_match_script_extracts_recruiter_and_formats_fallback():
 
     assert proc.returncode == 0
     data = json.loads(proc.stdout)
-    assert data["match_score"] == 50
+    # The fallback reads the JD rather than reporting the same 50 for every posting it
+    # could not evaluate, and it still says which requirements it read.
+    assert data["match_score"] > 50
+    assert any("Python" in req for req in data["jd_key_requirements"])
     assert data["greeting_message"].startswith("张女士您好,幸会!")
 
 
