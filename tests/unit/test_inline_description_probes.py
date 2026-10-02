@@ -415,7 +415,7 @@ def test_expand_description_explicit_btn_updates_current_description(monkeypatch
     mock_desc.text = "初始内容"
 
     def fake_btn_click(*a, **kw):
-        mock_desc.text = "点击展开按钮后的完整岗位描述"
+        mock_desc.text = "点击对应按钮后的完整岗位描述"
 
     page.gestures.human_click = MagicMock(side_effect=fake_btn_click)
 
@@ -430,5 +430,111 @@ def test_expand_description_explicit_btn_updates_current_description(monkeypatch
 
     res = page.expand_description_if_collapsed()
     assert res is True
-    assert page._current_description == "点击展开按钮后的完整岗位描述"
+    assert page._current_description == "点击对应按钮后的完整岗位描述"
+
+
+def test_expand_description_falls_back_to_probing_when_expand_btn_does_not_expand(monkeypatch):
+    """Test that when explicit expand button is clicked but description remains truncated,
+
+    the method does NOT prematurely exit, but falls back to bounds checking, scrolling,
+    and tapping the bottom-right ClickableSpan hotspot.
+    """
+    import time
+    monkeypatch.setattr(time, "sleep", lambda s: None)
+
+    mock_driver = MagicMock()
+    page = JobDetailPage(driver=mock_driver)
+    page._get_window_size = MagicMock(return_value={"width": 1080, "height": 2400})
+
+    mock_btn = MagicMock()
+    mock_desc = MagicMock()
+    mock_desc.text = "岗位职责: 1. 负责AI模型微调与Agent开发... 查看更多"
+    mock_desc.rect = {"x": 50, "y": 200, "width": 900, "height": 600}
+
+    # Clicking unrelated expand button does NOT expand description
+    def fake_btn_click(*a, **kw):
+        pass
+
+    page.gestures.human_click = MagicMock(side_effect=fake_btn_click)
+
+    # But tapping the inline ClickableSpan DOES expand description
+    def fake_point_click(x, y, **kw):
+        mock_desc.text = "岗位职责: 1. 负责AI模型微调与Agent开发。\n2. 全文已完整展开并获取！"
+
+    page.gestures.human_click_at_point = MagicMock(side_effect=fake_point_click)
+
+    def custom_find(key, **kwargs):
+        if key == "job_detail.expand_btn":
+            return mock_btn
+        if key == "job_detail.desc":
+            return mock_desc
+        return None
+
+    page.find_by_key = MagicMock(side_effect=custom_find)
+
+    res = page.expand_description_if_collapsed()
+    assert res is True
+    # The explicit button click should have been attempted
+    assert page.gestures.human_click.called
+    # And crucially, because it remained truncated, the inline hotspot tap MUST be called!
+    assert page.gestures.human_click_at_point.called
+    assert "全文已完整展开并获取" in page._current_description
+    assert "查看更多" not in page._current_description
+
+
+def test_expand_description_falls_back_and_scrolls_when_obstructed(monkeypatch):
+    """Test that when explicit expand button fails and description bottom is obstructed,
+
+    it properly scrolls the page down to reveal the bottom and then taps the ClickableSpan hotspot.
+    """
+    import time
+    monkeypatch.setattr(time, "sleep", lambda s: None)
+
+    mock_driver = MagicMock()
+    page = JobDetailPage(driver=mock_driver)
+    page._get_window_size = MagicMock(return_value={"width": 1080, "height": 2400})
+
+    mock_btn = MagicMock()
+    mock_desc = MagicMock()
+    mock_desc.text = "岗位职责: 1. 负责大规模智能体架构... 查看更多"
+
+    scroll_counter = [0]
+
+    def get_rect():
+        if scroll_counter[0] == 0:
+            # Obstructed: bottom=2300 > safe_bottom_threshold 2140
+            return {"x": 50, "y": 900, "width": 900, "height": 1400}
+        # In safe view
+        return {"x": 50, "y": 200, "width": 900, "height": 1400}
+
+    type(mock_desc).rect = property(lambda self: get_rect())
+
+    page.gestures.human_click = MagicMock()
+
+    def fake_swipe(*args, **kwargs):
+        scroll_counter[0] += 1
+
+    page.gestures.human_swipe = MagicMock(side_effect=fake_swipe)
+
+    def fake_point_click(x, y, **kw):
+        mock_desc.text = "岗位职责: 1. 负责大规模智能体架构。全文已完全展开！"
+
+    page.gestures.human_click_at_point = MagicMock(side_effect=fake_point_click)
+
+    def custom_find(key, **kwargs):
+        if key == "job_detail.expand_btn":
+            return mock_btn
+        if key == "job_detail.desc":
+            return mock_desc
+        return None
+
+    page.find_by_key = MagicMock(side_effect=custom_find)
+
+    res = page.expand_description_if_collapsed()
+    assert res is True
+    assert page.gestures.human_click.called
+    assert page.gestures.human_swipe.called
+    assert page.gestures.human_click_at_point.called
+    assert "全文已完全展开" in page._current_description
+    assert "查看更多" not in page._current_description
 
