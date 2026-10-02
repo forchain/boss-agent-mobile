@@ -6,7 +6,7 @@ Handler for CHECK_LOGIN task: verifies session persistence and dismisses startup
 
 from boss_agent.broker.models import AutomationTask, TaskType
 from boss_agent.broker.pocketbase_adapter import BaseTaskBroker
-from boss_agent.models import AuthStatus
+from boss_agent.enums import AuthStatus
 from boss_agent.pages import JobListPage, LoginPage, StartupDialogPage
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.handlers.base import BaseTaskHandler, HandlerResult

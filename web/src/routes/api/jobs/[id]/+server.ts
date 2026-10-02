@@ -1,8 +1,7 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { getPocketBaseUrl } from '$lib/pocketbase';
 import { CLEAR_COMMUNICATION_PATCH } from '$lib/server/communication';
-import { brokerMessage } from '$lib/server/broker';
+import { COLLECTIONS, BrokerError, updateRecord, deleteRecord } from '$lib/server/broker';
 
 const ALLOWED_JOB_FIELDS = new Set([
 	'fingerprint',
@@ -80,37 +79,16 @@ export const PATCH: RequestHandler = async ({ params, request }) => {
 	try {
 		const rawBody = await request.json().catch(() => ({}));
 		const payload = sanitizeJobPatch(rawBody);
-		const pbBase = getPocketBaseUrl();
-
-		const resp = await fetch(`${pbBase}/api/collections/job_records/records/${recordId}`, {
-			method: 'PATCH',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify(payload),
-			signal: AbortSignal.timeout(3000)
-		});
-
-		if (resp.ok) {
-			const updated = await resp.json();
-			return json({ success: true, record: updated });
-		}
-
-		if (resp.status === 404) {
-			return json(
-				{ success: false, message: 'Job record not found', error: 'Job record not found' },
-				{ status: 404 }
-			);
-		}
-
-		const message = await brokerMessage(resp);
-		console.error(`[jobs/[id]] PATCH failed for ${recordId} (${resp.status}): ${message}`);
-		return json(
-			{ success: false, message, error: message },
-			{ status: resp.status || 500 }
-		);
+		const updated = await updateRecord(COLLECTIONS.jobs, recordId, payload);
+		return json({ success: true, record: updated });
 	} catch (err: any) {
-		const message = err?.message || 'Failed to update job';
-		console.error(`[jobs/[id]] Unexpected error updating ${recordId}:`, err);
-		return json({ success: false, message, error: message }, { status: 500 });
+		const status = err instanceof BrokerError ? err.status : 500;
+		const message =
+			status === 404 ? 'Job record not found' : err?.message || 'Failed to update job';
+		if (status !== 404) {
+			console.error(`[jobs/[id]] Unexpected error updating ${recordId}:`, err);
+		}
+		return json({ success: false, message, error: message }, { status });
 	}
 };
 
@@ -124,34 +102,21 @@ export const DELETE: RequestHandler = async ({ params }) => {
 	}
 
 	try {
-		const pbBase = getPocketBaseUrl();
-		const resp = await fetch(`${pbBase}/api/collections/job_records/records/${recordId}`, {
-			method: 'DELETE',
-			signal: AbortSignal.timeout(3000)
-		});
-
-		if (resp.ok) {
-			return json({ success: true });
-		}
-
-		if (resp.status === 404) {
+		const deleted = await deleteRecord(COLLECTIONS.jobs, recordId);
+		if (!deleted) {
 			return json(
 				{ success: false, message: 'Job record not found', error: 'Job record not found' },
 				{ status: 404 }
 			);
 		}
-
-		const message = await brokerMessage(resp);
-		console.error(`[jobs/[id]] DELETE failed for ${recordId} (${resp.status}): ${message}`);
-		return json(
-			{ success: false, message, error: message },
-			{ status: resp.status || 500 }
-		);
+		return json({ success: true });
 	} catch (err: any) {
-		const message = err?.message || 'Failed to delete job';
-		console.error(`[jobs/[id]] Unexpected error deleting ${recordId}:`, err);
-		return json({ success: false, message, error: message }, { status: 500 });
+		const status = err instanceof BrokerError ? err.status : 500;
+		const message =
+			status === 404 ? 'Job record not found' : err?.message || 'Failed to delete job';
+		if (status !== 404) {
+			console.error(`[jobs/[id]] Unexpected error deleting ${recordId}:`, err);
+		}
+		return json({ success: false, message, error: message }, { status });
 	}
 };
-
-

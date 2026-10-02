@@ -16,14 +16,14 @@ Worker and the Web Dashboard can be pointed at either and must not disagree.
 import pytest
 from _job_store_harness import FakePocketBaseSession, pocketbase_job_store
 
-from boss_agent.job_store import InMemoryJobRecordStore
-from boss_agent.models import (
+from boss_agent.enums import (
     STATE_RANK,
     TARGET_ACTION_RANK,
     JobRecordStatus,
     TargetAction,
     depth_already_reached,
 )
+from boss_agent.job_store import InMemoryJobRecordStore
 
 GOOD_JD = (
     "岗位职责：主导企业级大模型应用与Agent工作流平台建设，负责推理链编排、"
@@ -47,8 +47,9 @@ def test_the_visit_rule_reads_the_rank_table_instead_of_bypassing_it():
     assert depth_already_reached(TargetAction.SAVE_JD, draft["status"], draft) is True
     # A save-only run whose record holds no JD still owes it a visit.
     assert (
-        depth_already_reached(TargetAction.SAVE_JD, JobRecordStatus.UNMATCHED.value,
-                              {"job_description": ""})
+        depth_already_reached(
+            TargetAction.SAVE_JD, JobRecordStatus.UNMATCHED.value, {"job_description": ""}
+        )
         is False
     )
     # A rejection is never "depth reached": it is handled upstream with its own reason.

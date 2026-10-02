@@ -1,9 +1,13 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { resolveTargetAction, type AutomationTask, type SavedSearch, type TaskType, type TargetAction } from '$lib/types';
-	import { listSavedSearches, createAutomationTask, getCandidateProfile } from '$lib/pocketbase';
+	import { resolveTargetAction } from '$lib/types';
+	import type { AutomationTask, SavedSearch, TaskType, TargetAction } from '$lib/types.generated';
+	import { listSavedSearches } from '$lib/stores/savedSearches';
+	import { createAutomationTask } from '$lib/stores/tasks';
+	import { getCandidateProfile } from '$lib/stores/candidateMemory';
 	import { DEFAULT_CHAT_ACKNOWLEDGMENT, DEFAULT_LAUNCH_CHAT_DRY_RUN, normalizeChatAcknowledgment } from '$lib/chatAcknowledgment';
 	import { buildChatCleanupLaunch, buildLoginDiagnosticLaunch, buildSearchLaunch } from '$lib/taskLaunch';
+	import { apiGet } from '$lib/apiClient';
 
 	let {
 		isOpen = false,
@@ -43,9 +47,7 @@
 
 	async function loadChatAcknowledgmentDefaults() {
 		try {
-			const res = await fetch('/api/settings');
-			if (!res.ok) return;
-			const conf = await res.json();
+			const conf = await apiGet<{ chat?: unknown }>('/api/settings');
 			chat = normalizeChatAcknowledgment(conf.chat);
 		} catch (e) {}
 	}

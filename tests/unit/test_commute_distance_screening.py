@@ -12,7 +12,7 @@ from pathlib import Path
 
 import yaml
 
-from boss_agent.models import ScreeningPolicy
+from boss_agent.screening_policy import ScreeningPolicy
 
 
 def test_commute_limit_defaults_to_40km():
@@ -88,7 +88,10 @@ def test_evaluate_commute_distance_ignores_channel_dimension():
 
 
 def test_evaluate_commute_distance_respects_disabled_filter():
-    assert ScreeningPolicy(max_commute_distance_km=None).evaluate_commute_distance(500.0) == (True, "")
+    assert ScreeningPolicy(max_commute_distance_km=None).evaluate_commute_distance(500.0) == (
+        True,
+        "",
+    )
     assert ScreeningPolicy(enable_screening=False).evaluate_commute_distance(500.0) == (True, "")
 
 
@@ -100,7 +103,9 @@ def test_commute_filter_active_only_with_positive_ceiling():
     assert ScreeningPolicy(max_commute_distance_km=-5.0).is_commute_filter_active is False
     # Screening off means nothing can be rejected, so no probe should be paid for.
     assert (
-        ScreeningPolicy(max_commute_distance_km=40.0, enable_screening=False).is_commute_filter_active
+        ScreeningPolicy(
+            max_commute_distance_km=40.0, enable_screening=False
+        ).is_commute_filter_active
         is False
     )
 
@@ -113,9 +118,7 @@ def test_commute_probe_gated_on_channel_with_fail_open_unknown():
     Spec #328 added a second gate: the posting must also sit in a 考察名单 district, since
     that is the only set of postings whose distance the operator asked to have measured.
     """
-    active = ScreeningPolicy(
-        max_commute_distance_km=40.0, business_district_inspect_list=["张江"]
-    )
+    active = ScreeningPolicy(max_commute_distance_km=40.0, business_district_inspect_list=["张江"])
     listed = "上海  浦东新区  张江"
     assert active.should_probe_commute_distance(is_headhunter=False, location=listed) is True
     assert active.should_probe_commute_distance(is_headhunter=None, location=listed) is True
@@ -132,11 +135,22 @@ def test_commute_probe_gated_on_channel_with_fail_open_unknown():
 def test_commute_probe_gated_on_the_inspection_list():
     """Spec #328: an empty 考察名单 means nothing is probed, and only a listed location is."""
     unlisted = ScreeningPolicy(max_commute_distance_km=40.0)
-    assert unlisted.should_probe_commute_distance(is_headhunter=False, location="上海  浦东新区  张江") is False
+    assert (
+        unlisted.should_probe_commute_distance(is_headhunter=False, location="上海  浦东新区  张江")
+        is False
+    )
 
-    listed = ScreeningPolicy(max_commute_distance_km=40.0, business_district_inspect_list=["漕河泾"])
-    assert listed.should_probe_commute_distance(is_headhunter=False, location="上海  徐汇区  漕河泾") is True
-    assert listed.should_probe_commute_distance(is_headhunter=False, location="上海  浦东新区  张江") is False
+    listed = ScreeningPolicy(
+        max_commute_distance_km=40.0, business_district_inspect_list=["漕河泾"]
+    )
+    assert (
+        listed.should_probe_commute_distance(is_headhunter=False, location="上海  徐汇区  漕河泾")
+        is True
+    )
+    assert (
+        listed.should_probe_commute_distance(is_headhunter=False, location="上海  浦东新区  张江")
+        is False
+    )
     # A city-only location names no district, so it cannot be in the list and defaults
     # to 距离满足 rather than being measured on a guess.
     assert listed.should_probe_commute_distance(is_headhunter=False, location="上海") is False
@@ -145,12 +159,17 @@ def test_commute_probe_gated_on_the_inspection_list():
 
 def test_a_metro_station_alone_can_put_a_posting_on_the_inspection_list():
     """Spec #333: the detail page's location line carries a station the card facet cannot."""
-    policy = ScreeningPolicy(max_commute_distance_km=40.0, business_district_inspect_list=["华夏中路"])
+    policy = ScreeningPolicy(
+        max_commute_distance_km=40.0, business_district_inspect_list=["华夏中路"]
+    )
     line = "上海·浦东新区·张江(近13/16号线华夏中路地铁站)"
     assert policy.should_probe_commute_distance(is_headhunter=False, location=line) is True
     # The card facet alone would not have matched, which is the whole reason the detail
     # stage re-asks: 张江 was never listed, only the station is.
-    assert policy.should_probe_commute_distance(is_headhunter=False, location="上海  浦东新区  张江") is False
+    assert (
+        policy.should_probe_commute_distance(is_headhunter=False, location="上海  浦东新区  张江")
+        is False
+    )
 
 
 def test_commute_violation_still_relaxable_by_whitelist():
@@ -202,12 +221,16 @@ def test_commute_limit_roundtrip_when_disabled():
 
 
 def test_commute_limit_coerces_blank_and_string_values():
-    assert ScreeningPolicy.from_dict({"max_commute_distance_km": ""}).max_commute_distance_km is None
     assert (
-        ScreeningPolicy.from_dict({"max_commute_distance_km": "null"}).max_commute_distance_km is None
+        ScreeningPolicy.from_dict({"max_commute_distance_km": ""}).max_commute_distance_km is None
     )
     assert (
-        ScreeningPolicy.from_dict({"max_commute_distance_km": "35.5"}).max_commute_distance_km == 35.5
+        ScreeningPolicy.from_dict({"max_commute_distance_km": "null"}).max_commute_distance_km
+        is None
+    )
+    assert (
+        ScreeningPolicy.from_dict({"max_commute_distance_km": "35.5"}).max_commute_distance_km
+        == 35.5
     )
 
 

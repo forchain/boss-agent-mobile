@@ -11,14 +11,15 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from boss_agent.job_entities import JobCardBrief, JobPosting
 from boss_agent.matching import MatchGreetingResult
 from boss_agent.memory import StructuredCandidateProfile
-from boss_agent.models import JobCardBrief, JobPosting, ScreeningPolicy
 from boss_agent.screening import (
     CandidateScreener,
     CardVerdictStage,
     JobVerdictStage,
 )
+from boss_agent.screening_policy import ScreeningPolicy
 
 GOOD_JD = (
     "岗位职责：主导企业级大模型应用与Agent工作流平台建设，负责推理链编排、"
@@ -485,7 +486,10 @@ def test_evaluate_card_rejects_on_business_district_blacklist_administrative_dis
 
     assert verdict.passed is False
     assert verdict.stage is CardVerdictStage.FILTERED_BY_KEYWORD
-    assert verdict.reason == "【商圈黑名单过滤】岗位所在区域/商圈 '上海 崇明区 城桥' 命中黑名单 '崇明区'"
+    assert (
+        verdict.reason
+        == "【商圈黑名单过滤】岗位所在区域/商圈 '上海 崇明区 城桥' 命中黑名单 '崇明区'"
+    )
 
 
 def test_evaluate_card_rejects_on_business_district_blacklist_commercial_quarter():
@@ -497,7 +501,10 @@ def test_evaluate_card_rejects_on_business_district_blacklist_commercial_quarter
 
     assert verdict.passed is False
     assert verdict.stage is CardVerdictStage.FILTERED_BY_KEYWORD
-    assert verdict.reason == "【商圈黑名单过滤】岗位所在区域/商圈 '上海 浦东新区 临港' 命中黑名单 '临港'"
+    assert (
+        verdict.reason
+        == "【商圈黑名单过滤】岗位所在区域/商圈 '上海 浦东新区 临港' 命中黑名单 '临港'"
+    )
 
 
 def test_evaluate_card_rejects_both_direct_and_headhunter_on_business_district_blacklist():
@@ -516,9 +523,15 @@ def test_evaluate_card_rejects_both_direct_and_headhunter_on_business_district_b
     hh_verdict = screener.evaluate_card(hh_card, policy)
 
     assert direct_verdict.passed is False
-    assert direct_verdict.reason == "【商圈黑名单过滤】岗位所在区域/商圈 '上海 崇明区 城桥' 命中黑名单 '崇明区'"
+    assert (
+        direct_verdict.reason
+        == "【商圈黑名单过滤】岗位所在区域/商圈 '上海 崇明区 城桥' 命中黑名单 '崇明区'"
+    )
     assert hh_verdict.passed is False
-    assert hh_verdict.reason == "【商圈黑名单过滤】岗位所在区域/商圈 '上海 崇明区 城桥' 命中黑名单 '崇明区'"
+    assert (
+        hh_verdict.reason
+        == "【商圈黑名单过滤】岗位所在区域/商圈 '上海 崇明区 城桥' 命中黑名单 '崇明区'"
+    )
 
 
 def test_evaluate_card_business_district_blacklist_not_exempted_by_whitelist():
@@ -536,7 +549,10 @@ def test_evaluate_card_business_district_blacklist_not_exempted_by_whitelist():
     verdict = screener.evaluate_card(card, policy)
     assert verdict.passed is False
     assert verdict.relaxed_by_whitelist is False
-    assert verdict.reason == "【商圈黑名单过滤】岗位所在区域/商圈 '上海 浦东新区 临港' 命中黑名单 '临港'"
+    assert (
+        verdict.reason
+        == "【商圈黑名单过滤】岗位所在区域/商圈 '上海 浦东新区 临港' 命中黑名单 '临港'"
+    )
 
 
 def test_evaluate_card_business_district_blacklist_clean_locations_pass():
@@ -558,7 +574,10 @@ def test_evaluate_card_business_district_blacklist_case_insensitive_and_stripped
 
     verdict = screener.evaluate_card(_card(location="Shanghai Pudong Area"), policy)
     assert verdict.passed is False
-    assert verdict.reason == "【商圈黑名单过滤】岗位所在区域/商圈 'Shanghai Pudong Area' 命中黑名单 'Pudong'"
+    assert (
+        verdict.reason
+        == "【商圈黑名单过滤】岗位所在区域/商圈 'Shanghai Pudong Area' 命中黑名单 'Pudong'"
+    )
 
 
 def test_evaluate_card_business_district_blacklist_disabled_when_enable_screening_false():

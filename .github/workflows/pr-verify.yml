@@ -1,0 +1,87 @@
+name: "PR Verification Gate"
+
+on:
+  pull_request:
+    branches:
+      - main
+      - master
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  fast-verification-gate:
+    name: "Fast Verification Gate (Static, Fast Unit, Web)"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install Web Dependencies
+        run: npm --prefix web ci
+
+      - name: Static Analysis (Ruff check)
+        run: uv run --extra dev ruff check
+
+      - name: Formatting Check (Ruff format)
+        run: uv run --extra dev ruff format --check
+
+      - name: Generated Types Drift Guard
+        run: uv run python scripts/generate_dashboard_types.py --check
+
+      - name: Fast Unit Tier (with budget gate)
+        run: uv run --extra dev python scripts/check_fast_tier_budget.py
+
+      - name: Web Dashboard Typecheck
+        run: npm --prefix web run check
+
+      - name: Web Dashboard Unit Tests
+        run: npm --prefix web test
+
+  service-integration:
+    name: "Service Integration Tier"
+    needs: fast-verification-gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install Web Dependencies
+        run: npm --prefix web ci
+
+      - name: Run Service Integration Tier
+        run: uv run --extra dev pytest tests/e2e

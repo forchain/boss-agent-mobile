@@ -30,6 +30,7 @@ seams. They must keep working; they just no longer imply a second loader.
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import json
 import logging
@@ -93,6 +94,23 @@ DEFAULTS: dict[str, Any] = {
     "enable_screening": True,
     "channel_preference": "all",
     "run_cleanup_on_startup": True,
+    "title_whitelist": [],
+    "title_blacklist": [
+        "销售",
+        "电话销售",
+        "电销",
+        "管培生",
+        "实习",
+        "助理",
+        "讲师",
+        "课程顾问",
+        "客服",
+    ],
+    "company_blacklist": [],
+    "jd_blacklist": ["驻场", "外包", "电销", "无底薪", "纯提成"],
+    "business_district_blacklist": [],
+    "business_district_inspect_list": [],
+    "max_commute_distance_km": 40.0,
 }
 
 
@@ -157,6 +175,25 @@ def _compat_attr(name: str, fallback: Any) -> Any:
     return getattr(settings, name, fallback)
 
 
+def resolve_config_root() -> Path:
+    from .settings import resolve_git_common_root
+
+    return resolve_git_common_root()
+
+
+def get_legacy_llm_file() -> Path:
+    override = os.getenv("BOSS_LEGACY_LLM_PATH")
+    if override and override.strip():
+        return Path(override.strip())
+    root = resolve_config_root()
+    p = LEGACY_LLM_FILE
+    if (Path.cwd() / p).is_file():
+        return Path.cwd() / p
+    if (root / p).is_file():
+        return root / p
+    return root / p
+
+
 def resolve_chain(config_path: str | Path | None = None) -> list[Path]:
     """The ordered file chain (highest precedence first) for one load.
 
@@ -165,7 +202,27 @@ def resolve_chain(config_path: str | Path | None = None) -> list[Path]:
     """
     if config_path:
         return [Path(config_path)]
-    return list(_compat_attr("DEFAULT_CONFIG_SEARCH_PATHS", CONFIG_CHAIN))
+    custom = _compat_attr("DEFAULT_CONFIG_SEARCH_PATHS", None)
+    if custom is not None and list(custom) != list(CONFIG_CHAIN):
+        return list(custom)
+
+    local_override = os.getenv("BOSS_SETTINGS_LOCAL_PATH")
+    config_root_env = os.getenv("BOSS_CONFIG_ROOT")
+
+    if not local_override and not config_root_env:
+        return list(CONFIG_CHAIN)
+
+    chain: list[Path] = []
+    root = resolve_config_root() if config_root_env else None
+
+    for p in CONFIG_CHAIN:
+        if p.name == "settings.local.yaml" and local_override and local_override.strip():
+            chain.append(Path(local_override.strip()))
+        elif root is not None and not p.is_absolute():
+            chain.append(root / p)
+        else:
+            chain.append(p)
+    return chain
 
 
 def _env_signature() -> tuple:
@@ -175,9 +232,20 @@ def _env_signature() -> tuple:
     valid under another. Reading a dozen variables is far cheaper than re-parsing YAML,
     and omitting them would make the cache answer a question it was not asked.
     """
-    return tuple(
+    overrides = tuple(
         (key, tuple((name, os.getenv(name)) for name in names)) for key, names in ENV_OVERRIDES
     )
+    special_vars = (
+        ("BOSS_SETTINGS_LOCAL_PATH", os.getenv("BOSS_SETTINGS_LOCAL_PATH")),
+        ("BOSS_LEGACY_LLM_PATH", os.getenv("BOSS_LEGACY_LLM_PATH")),
+        ("BOSS_CONFIG_ROOT", os.getenv("BOSS_CONFIG_ROOT")),
+        ("CHAT_REJECTION_REPLY_TEXT", os.getenv("CHAT_REJECTION_REPLY_TEXT")),
+        ("CHAT_MAX_SCAN_DEPTH", os.getenv("CHAT_MAX_SCAN_DEPTH")),
+        ("CHAT_MAX_SCROLL_SWIPES", os.getenv("CHAT_MAX_SCROLL_SWIPES")),
+        ("CHAT_DRY_RUN", os.getenv("CHAT_DRY_RUN")),
+        ("RUN_CLEANUP_ON_STARTUP", os.getenv("RUN_CLEANUP_ON_STARTUP")),
+    )
+    return (overrides, special_vars)
 
 
 def _legacy_signature() -> tuple:
@@ -187,7 +255,7 @@ def _legacy_signature() -> tuple:
     and an environment yet read different files. Leaving it out of the key made the
     cache answer with a value read from a different directory entirely.
     """
-    return _chain_signature([LEGACY_LLM_FILE])
+    return _chain_signature([get_legacy_llm_file()])
 
 
 def _chain_signature(chain: list[Path]) -> tuple:
@@ -215,9 +283,7 @@ def _parse_file(path: Path) -> dict[str, Any] | None:
         content = path.read_text(encoding="utf-8")
         if path.suffix in (".yaml", ".yml"):
             yaml = _compat_attr("yaml", None)
-            loaded = (
-                yaml.safe_load(content) if yaml is not None else _parse_yaml_fallback(content)
-            )
+            loaded = yaml.safe_load(content) if yaml is not None else _parse_yaml_fallback(content)
         else:
             loaded = json.loads(content)
     except Exception:
@@ -270,6 +336,8 @@ ENV_OVERRIDES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("api_key", ("LLM_API_KEY", "MINIMAX_API_KEY", "OPENAI_API_KEY")),
     ("base_url", ("LLM_BASE_URL", "MINIMAX_BASE_URL")),
     ("model", ("LLM_MODEL",)),
+    ("avd_name", ("ANDROID_AVD",)),
+    ("run_cleanup_on_startup", ("RUN_CLEANUP_ON_STARTUP",)),
 )
 
 #: Legacy LLM keys rescued from :data:`LEGACY_LLM_FILE` when the chain produced no key.
@@ -302,6 +370,8 @@ def _apply_file(merged: dict[str, Any], loaded: dict[str, Any]) -> None:
     """Fold one parsed file into the accumulator, highest-precedence wins."""
     for key, value in loaded.items():
         if value is None:
+            if key == "max_commute_distance_km":
+                merged[key] = None
             continue
         if key == "api_key" and (value == PLACEHOLDER_API_KEY or is_mask_placeholder(value)):
             # A masked display value or the template's placeholder is not a secret. No
@@ -320,7 +390,7 @@ def _apply_legacy_llm_file(merged: dict[str, Any]) -> None:
     """Rescue LLM keys from the pre-realm file when the chain yielded no usable key."""
     if merged.get("api_key") not in (None, "", PLACEHOLDER_API_KEY):
         return
-    loaded = _parse_file(LEGACY_LLM_FILE)
+    loaded = _parse_file(get_legacy_llm_file())
     if not loaded:
         return
     for key in LEGACY_LLM_KEYS:
@@ -339,6 +409,103 @@ def _apply_env_overrides(merged: dict[str, Any]) -> None:
             if value and value.strip():
                 merged[key] = value.strip()
                 break
+
+
+def _apply_chat_env_overrides(merged: dict[str, Any]) -> None:
+    if not isinstance(merged.get("chat"), dict):
+        merged["chat"] = dict(CHAT_DEFAULTS)
+    chat = merged["chat"]
+    reply_text = os.getenv("CHAT_REJECTION_REPLY_TEXT")
+    if reply_text and reply_text.strip():
+        chat["rejection_reply_text"] = reply_text.strip()
+    scan_depth = os.getenv("CHAT_MAX_SCAN_DEPTH")
+    if scan_depth and scan_depth.strip():
+        chat["max_scan_depth"] = scan_depth.strip()
+    scroll_swipes = os.getenv("CHAT_MAX_SCROLL_SWIPES")
+    if scroll_swipes and scroll_swipes.strip():
+        chat["max_scroll_swipes"] = scroll_swipes.strip()
+    dry_run = os.getenv("CHAT_DRY_RUN")
+    if dry_run and dry_run.strip():
+        chat["dry_run"] = dry_run.strip()
+
+
+def _coerce_bool(val: Any) -> bool:
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, (int, float)):
+        return bool(val)
+    if isinstance(val, str):
+        return val.strip().lower() in ("true", "1", "yes", "on")
+    return bool(val)
+
+
+def _coerce_scalar_types(merged: dict[str, Any]) -> None:
+    for int_key in ("max_tokens", "daily_greeting_limit", "communication_cooldown_days"):
+        if int_key in merged and merged[int_key] is not None:
+            with contextlib.suppress(ValueError, TypeError):
+                merged[int_key] = int(merged[int_key])
+
+    for float_key in ("temperature", "timeout_sec", "preview_timeout_sec"):
+        if float_key in merged and merged[float_key] is not None:
+            with contextlib.suppress(ValueError, TypeError):
+                merged[float_key] = float(merged[float_key])
+
+    if "max_commute_distance_km" in merged:
+        val = merged["max_commute_distance_km"]
+        if val is None or val == "" or str(val).lower() in ("null", "none"):
+            merged["max_commute_distance_km"] = None
+        else:
+            try:
+                num = float(val)
+                merged["max_commute_distance_km"] = num if num > 0 else None
+            except (ValueError, TypeError):
+                merged["max_commute_distance_km"] = None
+
+    for bool_key in (
+        "langsmith_tracing",
+        "enable_greeting",
+        "enable_screening",
+        "run_cleanup_on_startup",
+    ):
+        if bool_key in merged and merged[bool_key] is not None:
+            merged[bool_key] = _coerce_bool(merged[bool_key])
+
+    for list_key in (
+        "title_whitelist",
+        "title_blacklist",
+        "company_blacklist",
+        "jd_blacklist",
+        "business_district_blacklist",
+        "business_district_inspect_list",
+    ):
+        if list_key in merged:
+            val = merged[list_key]
+            if isinstance(val, str):
+                val_stripped = val.strip()
+                if val_stripped.startswith("[") and val_stripped.endswith("]"):
+                    try:
+                        merged[list_key] = json.loads(val_stripped)
+                    except Exception:
+                        merged[list_key] = [
+                            s.strip().strip('"').strip("'")
+                            for s in val_stripped[1:-1].split(",")
+                            if s.strip()
+                        ]
+                elif not val_stripped:
+                    merged[list_key] = []
+                else:
+                    merged[list_key] = [val_stripped]
+            elif not isinstance(val, list):
+                merged[list_key] = []
+
+    if isinstance(merged.get("chat"), dict):
+        chat = merged["chat"]
+        for int_key in ("max_scan_depth", "max_scroll_swipes"):
+            if int_key in chat and chat[int_key] is not None:
+                with contextlib.suppress(ValueError, TypeError):
+                    chat[int_key] = int(chat[int_key])
+        if "dry_run" in chat and chat["dry_run"] is not None:
+            chat["dry_run"] = _coerce_bool(chat["dry_run"])
 
 
 def _derive_paths(merged: dict[str, Any]) -> None:
@@ -371,7 +538,9 @@ def _load_uncached(chain: list[Path], *, include_legacy_fallback: bool) -> dict[
         _apply_legacy_llm_file(merged)
 
     _apply_env_overrides(merged)
+    _apply_chat_env_overrides(merged)
     _derive_paths(merged)
+    _coerce_scalar_types(merged)
 
     for key in ("pocketbase_url", "server_url"):
         if isinstance(merged.get(key), str):

@@ -13,7 +13,7 @@ import requests
 
 from .broker.collection_schema import SAVED_SEARCHES, normalize_record
 from .broker.provisioner import DEFAULT_INITIAL_SEARCHES
-from .models import SavedSearch
+from .search_entities import SavedSearch
 from .settings import resolve_pocketbase_url
 
 #: Columns the domain interprets itself when they are absent, by falling back to a
@@ -32,7 +32,9 @@ def record_to_saved_search(search_id: str, record: Mapping[str, Any]) -> SavedSe
     declared default rather than a private one — the ``max_jobs`` 20-vs-30 drift was
     exactly that class of bug.
     """
-    return SavedSearch.from_dict(search_id, normalize_record(SAVED_SEARCHES, record, exclude=_DERIVED_ON_ABSENCE))
+    return SavedSearch.from_dict(
+        search_id, normalize_record(SAVED_SEARCHES, record, exclude=_DERIVED_ON_ABSENCE)
+    )
 
 
 class SavedSearchRegistry:

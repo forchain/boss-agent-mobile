@@ -7,7 +7,6 @@ The job screening workflow is a thin traced adapter over the deep ``CandidateScr
 module (ADR 0013); the resume lifecycle workflow below it remains self-contained.
 """
 
-import asyncio
 import logging
 from pathlib import Path
 from typing import Any, TypedDict
@@ -15,8 +14,9 @@ from typing import Any, TypedDict
 from langgraph.graph import END, START, StateGraph
 from langsmith import traceable
 
-from .models import JobCardBrief, ScreeningPolicy
+from .job_entities import JobCardBrief
 from .screening import CARD_PASS_REASON, CandidateScreener, CardVerdictStage
+from .screening_policy import ScreeningPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -81,91 +81,6 @@ def make_card_screener_node(screener: CandidateScreener):
         }
 
     return card_screener_node
-
-
-def _card_facets(state: JobApplicationState) -> dict[str, Any]:
-    """Extract compact card facets (title, company, tags, digest) from graph state."""
-    card_dict = state.get("card") or {}
-    return {
-        "title": card_dict.get("title", ""),
-        "company_name": card_dict.get("company_name", ""),
-        "tags": card_dict.get("tags") or [],
-        "digest": card_dict.get("digest") or card_dict.get("snippet", ""),
-    }
-
-
-@traceable(name="app_enforced_filter_node", run_type="tool")
-def app_enforced_filter_node(state: JobApplicationState) -> dict[str, Any]:
-    """Deterministic node evaluating App-Enforced Filters (recruitment channel, commute distance).
-
-    These are constraints the Boss platform cannot express in its native search UI
-    and must be judged app-side after card retrieval. Violations are not final:
-    the downstream whitelist_relaxer router may still grant an exemption.
-    """
-    card_dict = state.get("card") or {}
-    policy_dict = state.get("screening_policy") or {}
-    policy = ScreeningPolicy.from_dict(policy_dict)
-
-    commute_distance_km = state.get("commute_distance_km")
-    if commute_distance_km is None:
-        commute_distance_km = card_dict.get("commute_distance_km")
-
-    passed, violation = policy.evaluate_app_enforced_filters(
-        is_headhunter=bool(card_dict.get("is_headhunter", False)),
-        commute_distance_km=commute_distance_km,
-    )
-
-    return {
-        "app_rule_pass": passed,
-        "app_rule_violation": violation,
-    }
-
-
-@traceable(name="whitelist_relaxer", run_type="tool")
-def whitelist_relaxer(state: JobApplicationState) -> str:
-    """Conditional edge router applying Whitelist Relaxation after the App-Enforced Filter."""
-    if state.get("app_rule_pass", True):
-        return "proceed"
-
-    policy_dict = state.get("screening_policy") or {}
-    policy = ScreeningPolicy.from_dict(policy_dict)
-
-    is_relaxed, _matched_token = policy.evaluate_whitelist_relaxation(
-        **_card_facets(state),
-    )
-    if is_relaxed:
-        return "relax"
-    return "reject"
-
-
-@traceable(name="apply_relaxation_node", run_type="tool")
-def apply_relaxation_node(state: JobApplicationState) -> dict[str, Any]:
-    """Grant the whitelist exemption: tag the job and record the relaxation audit trail."""
-    policy_dict = state.get("screening_policy") or {}
-    policy = ScreeningPolicy.from_dict(policy_dict)
-
-    is_relaxed, matched_token = policy.evaluate_whitelist_relaxation(**_card_facets(state))
-    violation = state.get("app_rule_violation", "")
-    reason = (
-        f"【白名单放宽】命中兴趣/专长关键词 '{matched_token}'，豁免 App 端强制过滤违例: {violation}"
-        if is_relaxed
-        else ""
-    )
-
-    return {
-        "relaxed_by_whitelist": bool(is_relaxed),
-        "relaxation_reason": reason,
-        "status": "relaxed_by_whitelist" if is_relaxed else state.get("status", "pending"),
-    }
-
-
-@traceable(name="record_rejection_node", run_type="tool")
-def record_rejection_node(state: JobApplicationState) -> dict[str, Any]:
-    """Cleanly record an unredeemable App-Enforced Filter rejection."""
-    return {
-        "status": "filtered_by_app_rule",
-        "relaxed_by_whitelist": False,
-    }
 
 
 def make_job_evaluation_node(screener: CandidateScreener):
@@ -458,23 +373,11 @@ def make_resume_diff_analyzer_node(broker: Any | None = None):
 
             broker = PocketBaseBroker()
 
-        import asyncio
+        from .async_bridge import run_sync
 
-        try:
-            asyncio.get_running_loop()
-            import concurrent.futures
-
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                existing = pool.submit(
-                    asyncio.run, broker.candidate_memory.get_candidate_profile(user_id=user_id)
-                ).result(timeout=3.0)
-        except Exception:
-            try:
-                existing = asyncio.run(
-                    broker.candidate_memory.get_candidate_profile(user_id=user_id)
-                )
-            except Exception:
-                existing = None
+        existing = run_sync(
+            broker.candidate_memory.get_candidate_profile(user_id=user_id), timeout=5.0
+        )
 
         new_prof = state.get("normalized_profile") or {}
         if not existing or (not existing.get("name") and not existing.get("raw_summary")):
@@ -607,19 +510,9 @@ def make_resume_persister_node(broker: Any | None = None):
             )
             return saved_prof, rev_rec
 
-        try:
-            try:
-                asyncio.get_running_loop()
-                import concurrent.futures
+        from .async_bridge import run_sync
 
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                    saved_prof, rev_rec = pool.submit(asyncio.run, _save()).result(timeout=10.0)
-            except RuntimeError:
-                saved_prof, rev_rec = asyncio.run(_save())
-        except Exception as e:
-            logger.warning("Resume persister save fallback: %s", e)
-            saved_prof = final
-            rev_rec = None
+        saved_prof, rev_rec = run_sync(_save(), timeout=10.0)
 
         return {
             "final_profile": saved_prof,

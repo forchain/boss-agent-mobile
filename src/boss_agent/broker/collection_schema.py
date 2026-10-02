@@ -32,9 +32,26 @@ lacks — :func:`dialect_field_names` is what the equality test asserts against.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
+
+_IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+
+
+def validate_identifier(name: str) -> str:
+    """Validate that a schema-derived name is a safe, valid SQL/schema identifier.
+
+    This is defense-in-depth: collection and field names originate from our own declared
+    collection schema rather than user data, but validating identifiers before
+    interpolating them into DDL / PRAGMA ensures structural integrity and catches
+    typographical anomalies early.
+    """
+    if not isinstance(name, str) or not _IDENTIFIER_RE.match(name):
+        raise ValueError(f"Invalid schema identifier: {name!r}")
+    return name
+
 
 # --------------------------------------------------------------------------- #
 # PocketBase field kinds
@@ -96,13 +113,16 @@ class Field:
     #: ``_collections.fields`` JSON (which must repeat ``id`` with ``primaryKey``,
     #: or PocketBase stops exposing the record id entirely).
     remote: bool = True
+    ts_type: str | None = None
+    optional: bool | None = None
+    description: str | None = None
 
     def sqlite_type(self) -> str:
         return _SQLITE_TYPES[self.kind]
 
     def sqlite_column(self) -> str:
         """The ``name TYPE ...`` fragment used inside ``CREATE TABLE``."""
-        parts = [self.name, self.sqlite_type()]
+        parts = [validate_identifier(self.name), self.sqlite_type()]
         if self.primary_key:
             parts.append("PRIMARY KEY")
         if self.unique:
@@ -117,7 +137,7 @@ class Field:
         non-constant default (the ``strftime`` expression on autodate columns) is
         likewise rejected, so both are dropped here and the column lands nullable.
         """
-        parts = [self.name, self.sqlite_type()]
+        parts = [validate_identifier(self.name), self.sqlite_type()]
         if self.sql_default is not None:
             parts.append(f"DEFAULT {self.sql_default}")
         return " ".join(parts)
@@ -162,6 +182,11 @@ class Collection:
     indexes: tuple[str, ...] = ()
     lease_field: str | None = None
     fingerprint_field: str | None = None
+    list_rule: str = ""
+    view_rule: str = ""
+    create_rule: str = ""
+    update_rule: str = ""
+    delete_rule: str = ""
 
     def field(self, name: str) -> Field:
         """The declared field called ``name``. Raises ``KeyError`` when absent."""
@@ -182,16 +207,11 @@ class Collection:
         return tuple(spec.name for spec in self.fields if not spec.remote)
 
 
-# --------------------------------------------------------------------------- #
-# Dialect renderers — the only places either provisioning path turns a
-# Collection into vendor syntax.
-# --------------------------------------------------------------------------- #
-
-
 def sqlite_ddl(collection: Collection) -> str:
     """The ``CREATE TABLE IF NOT EXISTS`` statement for ``collection``."""
+    table_name = validate_identifier(collection.name)
     columns = ",\n    ".join(spec.sqlite_column() for spec in collection.fields)
-    return f"CREATE TABLE IF NOT EXISTS {collection.name} (\n    {columns}\n)"
+    return f"CREATE TABLE IF NOT EXISTS {table_name} (\n    {columns}\n)"
 
 
 def sqlite_index_ddl(collection: Collection) -> tuple[str, ...]:
@@ -207,7 +227,7 @@ def column_migrations(collection: Collection, existing: Iterable[str]) -> list[t
     """
     present = set(existing)
     return [
-        (spec.name, spec.sqlite_alter_column())
+        (validate_identifier(spec.name), spec.sqlite_alter_column())
         for spec in collection.fields
         if not spec.primary_key and spec.name not in present
     ]
@@ -239,11 +259,11 @@ def pocketbase_collection_payload(collection: Collection) -> dict[str, Any]:
         "id": collection.collection_id,
         "name": collection.name,
         "type": "base",
-        "listRule": "",
-        "viewRule": "",
-        "createRule": "",
-        "updateRule": "",
-        "deleteRule": "",
+        "listRule": collection.list_rule,
+        "viewRule": collection.view_rule,
+        "createRule": collection.create_rule,
+        "updateRule": collection.update_rule,
+        "deleteRule": collection.delete_rule,
         "fields": pocketbase_fields(collection),
     }
 
@@ -300,7 +320,9 @@ def normalize_record(
     for spec in collection.fields:
         if spec.name in skipped:
             continue
-        if (spec.name not in normalized or normalized[spec.name] is None) and spec.default is not None:
+        if (
+            spec.name not in normalized or normalized[spec.name] is None
+        ) and spec.default is not None:
             normalized[spec.name] = spec.default
     return normalized
 
@@ -335,33 +357,62 @@ def _autodate() -> tuple[Field, Field]:
     )
 
 
+#: Conditional CAS update rule for atomic task claims (Issue #309).
+#: If the request specifies ``?expect_status=<val>``, the update only succeeds if the
+#: task's current status matches that value. Normal updates omit the parameter.
+TASK_UPDATE_RULE = "(@request.query.expect_status = '' || status = @request.query.expect_status)"
+
+
 AUTOMATION_TASKS = Collection(
     name=AUTOMATION_TASKS_NAME,
     collection_id="pbc_auto_tasks",
     lease_field=LEASE_FIELD,
+    update_rule=TASK_UPDATE_RULE,
     fields=(
         Field("id", TEXT, primary_key=True, default=None, remote=False),
-        Field("task_type", TEXT, required=True),
-        Field("status", TEXT, required=True, default="pending"),
-        Field("payload", JSON, default={}),
-        Field(LEASE_FIELD, TEXT),
-        Field("locked_at", DATE),
-        Field("last_heartbeat_at", DATE),
+        Field("task_type", TEXT, required=True, ts_type="TaskType"),
+        Field("status", TEXT, required=True, default="pending", ts_type="TaskStatus"),
+        Field("payload", JSON, default={}, ts_type="Record<string, any>", optional=False),
+        Field(
+            LEASE_FIELD,
+            TEXT,
+            ts_type="string | null",
+            description="The Automation Worker holding this task's lease — the column the worker writes.",
+        ),
+        Field("locked_at", DATE, ts_type="string | null"),
+        Field("last_heartbeat_at", DATE, ts_type="string | null"),
         Field("retry_count", NUMBER, default=0, sql_default="0"),
-        Field("logs", JSON, default=[]),
+        Field("logs", JSON, default=[], ts_type="string[]", optional=False),
         Field("error_message", TEXT),
         # Task Provenance (CONTEXT.md): manual | test | scheduler. A real column rather
         # than a payload marker, so startup reclamation can cancel test-sourced tasks
         # without reading five different marker keys, and the dashboard can show the
         # rest. Legacy rows default to manual — the sweep must not reclaim a task whose
         # origin it cannot prove.
-        Field("source", TEXT, default="manual", sql_default="'manual'"),
+        Field(
+            "source",
+            TEXT,
+            default="manual",
+            sql_default="'manual'",
+            ts_type="'manual' | 'test' | 'scheduler' | string",
+            description="Task Provenance (CONTEXT.md): manual | test | scheduler.",
+        ),
         *_autodate(),
     ),
     indexes=(
-        "CREATE INDEX IF NOT EXISTS idx_status_created "
-        "ON automation_tasks (status, created)",
+        "CREATE INDEX IF NOT EXISTS idx_status_created ON automation_tasks (status, created)",
         "CREATE INDEX IF NOT EXISTS idx_worker_id ON automation_tasks (worker_id)",
+        """
+        CREATE TRIGGER IF NOT EXISTS trg_automation_tasks_cas_claim
+        BEFORE UPDATE OF status ON automation_tasks
+        FOR EACH ROW
+        WHEN NEW.status = 'running'
+         AND OLD.status NOT IN ('pending', 'resuming')
+         AND NOT (OLD.status = 'running' AND NEW.worker_id = OLD.worker_id)
+        BEGIN
+            SELECT RAISE(ABORT, 'Task is not in claimable status');
+        END;
+        """,
     ),
 )
 
@@ -380,10 +431,13 @@ CANDIDATE_PROFILES = Collection(
         Field("projects", JSON, default=[]),
         Field("target_positions", JSON, default=[]),
         Field("raw_summary", TEXT, default=""),
-        Field("raw_resume_text", TEXT, default=""),
+        Field("profile_document", TEXT, max_chars=LONG_TEXT_MAX_CHARS, default=""),
+        Field("raw_resume_text", TEXT, max_chars=LONG_TEXT_MAX_CHARS, default=""),
         *_autodate(),
     ),
-    indexes=("CREATE UNIQUE INDEX IF NOT EXISTS idx_candidate_user_id ON candidate_profiles (user_id)",),
+    indexes=(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_candidate_user_id ON candidate_profiles (user_id)",
+    ),
 )
 
 RESUME_REVISIONS = Collection(
@@ -413,32 +467,54 @@ JOB_RECORDS = Collection(
         Field(FINGERPRINT_FIELD, TEXT, required=True, unique=True),
         Field("title", TEXT, required=True, default=""),
         Field("company_name", TEXT, required=True, default=""),
-        Field("recruiter_name", TEXT, required=False, default=""),
-        Field("salary_range", TEXT, default=""),
-        Field("location", TEXT, default=""),
-        Field("digest", TEXT, default=""),
-        Field("job_description", TEXT, max_chars=LONG_TEXT_MAX_CHARS, default=""),
-        Field("company_scale", TEXT, default=""),
-        Field("industry", TEXT, default=""),
-        Field("tags", JSON, default=[]),
+        Field("recruiter_name", TEXT, required=False, default="", optional=False),
         Field("recruiter_title", TEXT, default=""),
         Field("is_headhunter", BOOL, default=False, sql_default="FALSE"),
-        Field("status", TEXT, required=True, default="unmatched", sql_default="'unmatched'"),
-        Field("match_score", NUMBER),
-        Field("jd_key_requirements", JSON, default=[]),
+        Field("company_scale", TEXT, default=""),
+        Field("industry", TEXT, default=""),
+        Field("tags", JSON, default=[], ts_type="string[]"),
+        Field("digest", TEXT, default=""),
+        Field("salary_range", TEXT, default=""),
+        Field("location", TEXT, default=""),
+        Field("job_description", TEXT, max_chars=LONG_TEXT_MAX_CHARS, default=""),
+        Field(
+            "status",
+            TEXT,
+            required=True,
+            default="unmatched",
+            sql_default="'unmatched'",
+            ts_type="JobRecordStatus",
+        ),
+        Field("match_score", NUMBER, ts_type="number | null"),
+        Field("jd_key_requirements", JSON, default=[], ts_type="string[]"),
         Field("greeting_message", TEXT, default=""),
         # Who wrote that greeting (issue #300): `agent_draft`, `human`, or empty for a
         # record that predates the field. No writer default is substituted on read, so a
         # missing column stays missing rather than pretending to be an approval.
         Field("greeting_source", TEXT, default=""),
-        Field("search_keywords", JSON, default=[]),
+        Field("search_keywords", JSON, default=[], ts_type="string[]"),
         Field("screened_reason", TEXT, default=""),
         Field("relaxed_by_whitelist", BOOL, default=False, sql_default="FALSE"),
         Field("screening_audit", TEXT, default=""),
-        Field("applied_at", DATE),
-        Field("applied_source", TEXT, default=""),
-        Field("commute_distance_km", NUMBER),
-        Field("commute_distance_text", TEXT, default=""),
+        Field("applied_at", DATE, ts_type="string | null"),
+        Field(
+            "applied_source",
+            TEXT,
+            default="",
+            ts_type="'agent_auto_send' | 'platform_historical' | '' | null",
+        ),
+        Field(
+            "commute_distance_km",
+            NUMBER,
+            ts_type="number | null",
+            description="App-probed commute distance in km (spec #209); null when unknown.",
+        ),
+        Field(
+            "commute_distance_text",
+            TEXT,
+            default="",
+            description='Raw widget text, e.g. "距离家庭住址19.5千米".',
+        ),
         # The detail page's own location line and the metro station it names (issue #332).
         # Distinct from `location`, which stays the card's district facet: a station is
         # only ever published here, and the two lists the operator edits both match over
@@ -446,14 +522,12 @@ JOB_RECORDS = Collection(
         Field("location_line", TEXT, default=""),
         Field("metro_lines", TEXT, default=""),
         Field("metro_station", TEXT, default=""),
+        Field("source_task_id", TEXT),
         Field("first_seen_at", DATE),
         Field("last_seen_at", DATE),
-        Field("source_task_id", TEXT),
         *_autodate(),
     ),
-    indexes=(
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_job_fingerprint ON job_records (fingerprint)",
-    ),
+    indexes=("CREATE UNIQUE INDEX IF NOT EXISTS idx_job_fingerprint ON job_records (fingerprint)",),
 )
 
 SAVED_SEARCHES = Collection(
@@ -464,18 +538,38 @@ SAVED_SEARCHES = Collection(
         Field("name", TEXT, required=True, default=""),
         Field("description", TEXT, default=""),
         Field("keyword", TEXT, default=""),
-        Field("enable_search", BOOL, default=True, sql_default="1"),
-        Field("enable_filter", BOOL, default=True, sql_default="1"),
-        Field("filter", JSON, default={}),
-        # No writer default: the domain derives this from `target_task_type` when the
-        # column is empty, so substitution here would invert execution depth. The
-        # storage default still exists for rows written directly in SQL.
-        Field("target_action", TEXT, sql_default="'save_jd'"),
-        Field("max_jobs", NUMBER, default=SAVED_SEARCH_MAX_JOBS, sql_default=str(SAVED_SEARCH_MAX_JOBS)),
+        Field(
+            "enable_search",
+            BOOL,
+            default=True,
+            sql_default="1",
+            description="Legacy top-level search enable flag (ticket #321).",
+        ),
+        Field(
+            "enable_filter",
+            BOOL,
+            default=True,
+            sql_default="1",
+            description="Legacy top-level filter enable flag (ticket #321).",
+        ),
+        Field("filter", JSON, default={}, ts_type="SavedSearchFilter"),
+        Field("target_action", TEXT, sql_default="'save_jd'", ts_type="TargetAction"),
+        Field(
+            "max_jobs",
+            NUMBER,
+            default=SAVED_SEARCH_MAX_JOBS,
+            sql_default=str(SAVED_SEARCH_MAX_JOBS),
+        ),
         Field("cron_expression", TEXT, default=""),
         Field("is_enabled", BOOL, default=False, sql_default="0"),
-        Field("last_run_at", DATE),
-        Field("target_task_type", TEXT, default="AUTO_APPLY", sql_default="'AUTO_APPLY'"),
+        Field("last_run_at", DATE, ts_type="string | null"),
+        Field(
+            "target_task_type",
+            TEXT,
+            default="AUTO_APPLY",
+            sql_default="'AUTO_APPLY'",
+            ts_type="'AUTO_APPLY' | 'SCRAPE_JOBS' | string",
+        ),
         *_autodate(),
     ),
 )
@@ -494,6 +588,7 @@ COLLECTIONS_BY_NAME: Mapping[str, Collection] = {c.name: c for c in COLLECTIONS}
 # --------------------------------------------------------------------------- #
 # Migration backfills
 # --------------------------------------------------------------------------- #
+
 
 @dataclass(frozen=True)
 class Backfill:
@@ -523,6 +618,17 @@ _BACKFILLS: Mapping[str, tuple[Backfill, ...]] = {
                 "AND COALESCE(assigned_worker, '') != ''"
             ),
             requires_columns=("assigned_worker", LEASE_FIELD),
+        ),
+    ),
+    CANDIDATE_PROFILES_NAME: (
+        Backfill(
+            label="backfill-profile-document-from-raw-summary",
+            sql=(
+                f"UPDATE {CANDIDATE_PROFILES_NAME} SET profile_document = raw_summary "
+                "WHERE (profile_document IS NULL OR profile_document = '') "
+                "AND (raw_summary IS NOT NULL AND raw_summary != '')"
+            ),
+            requires_columns=("profile_document", "raw_summary"),
         ),
     ),
 }

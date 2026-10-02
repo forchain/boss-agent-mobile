@@ -20,8 +20,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from boss_agent.models import JobLocationLine, ScreeningPolicy
+from boss_agent.job_entities import JobLocationLine
 from boss_agent.pages import JobDetailPage
+from boss_agent.screening_policy import ScreeningPolicy
 
 FULL_LINE = "上海·浦东新区·张江(近13/16号线华夏中路地铁站)"
 
@@ -143,7 +144,9 @@ def test_a_station_only_listing_upgrades_the_commute_probe():
     The page already holds the line before any swipe, so asking here is free — and the
     bottom probe it may authorise is the expensive part this gate exists to avoid.
     """
-    policy = ScreeningPolicy(max_commute_distance_km=40.0, business_district_inspect_list=["华夏中路"])
+    policy = ScreeningPolicy(
+        max_commute_distance_km=40.0, business_district_inspect_list=["华夏中路"]
+    )
     page = _page_with_line(FULL_LINE)
 
     posting = page.extract_job_posting(
@@ -160,7 +163,9 @@ def test_a_station_only_listing_upgrades_the_commute_probe():
 
 
 def test_a_clean_line_buys_no_probe_even_when_asked():
-    policy = ScreeningPolicy(max_commute_distance_km=40.0, business_district_inspect_list=["华夏中路"])
+    policy = ScreeningPolicy(
+        max_commute_distance_km=40.0, business_district_inspect_list=["华夏中路"]
+    )
     page = _page_with_line("上海·徐汇区·漕河泾(近9号线桂林路地铁站)")
 
     posting = page.extract_job_posting(
@@ -180,7 +185,9 @@ def test_a_clean_line_buys_no_probe_even_when_asked():
 def test_the_upgrade_never_overrules_a_headhunter_or_a_yes_the_card_stage_already_gave():
     """The second look may only add a probe, never remove one, and never resurrect a
     headhunter's: the platform cannot render the widget for those at all."""
-    policy = ScreeningPolicy(max_commute_distance_km=40.0, business_district_inspect_list=["华夏中路"])
+    policy = ScreeningPolicy(
+        max_commute_distance_km=40.0, business_district_inspect_list=["华夏中路"]
+    )
     page = _page_with_line(FULL_LINE)
 
     posting = page.extract_job_posting(
@@ -216,9 +223,7 @@ def test_a_blacklisted_station_rejects_with_the_shared_reason():
     assert passed is False
     # One reason string, shared with the card stage, naming the line and the operator's
     # own token — not a normalized copy of either.
-    assert reason == (
-        f"【商圈黑名单过滤】岗位所在区域/商圈 '{FULL_LINE}' 命中黑名单 '华夏中路'"
-    )
+    assert reason == (f"【商圈黑名单过滤】岗位所在区域/商圈 '{FULL_LINE}' 命中黑名单 '华夏中路'")
 
 
 def test_a_blacklisted_district_still_rejects_a_line_that_names_no_station():
@@ -257,9 +262,9 @@ def test_a_line_matches_only_as_the_platform_renders_it():
 
 
 def test_a_disabled_policy_rejects_nothing_at_either_stage():
-    policy = ScreeningPolicy(
-        enable_screening=False, business_district_blacklist=["华夏中路"]
-    )
+    policy = ScreeningPolicy(enable_screening=False, business_district_blacklist=["华夏中路"])
 
     assert policy.evaluate_location_blacklist(FULL_LINE) == (True, "")
-    assert policy.matches_card_keywords("Agent 平台工程师", location="上海  浦东新区  张江")[0] is True
+    assert (
+        policy.matches_card_keywords("Agent 平台工程师", location="上海  浦东新区  张江")[0] is True
+    )

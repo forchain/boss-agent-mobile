@@ -11,7 +11,7 @@ from _card_fixtures import located
 
 from boss_agent.broker.models import TaskStatus, TaskType
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
-from boss_agent.models import JobCardBrief
+from boss_agent.job_entities import JobCardBrief
 from boss_agent.worker.config import WorkerConfig
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.daemon import AutomationWorker
@@ -79,10 +79,13 @@ async def test_scrape_jobs_handler_extracts_and_persists_jobs(broker, mock_drive
 
 
 @pytest.mark.asyncio
-async def test_scrape_enrichment_falls_back_to_jd_digest_when_card_has_no_snippet(broker, mock_driver):
+async def test_scrape_enrichment_falls_back_to_jd_digest_when_card_has_no_snippet(
+    broker, mock_driver
+):
     """A popup card without a snippet must not persist an empty digest; the enrichment
     should fall back to the digest derived from the full job description."""
-    from boss_agent.models import ChatButtonState, JobPosting
+    from boss_agent.enums import ChatButtonState
+    from boss_agent.job_entities import JobPosting
 
     card = JobCardBrief(
         title="Senior AI Agent Engineer（英语口语）",
@@ -143,7 +146,9 @@ async def test_scrape_enrichment_falls_back_to_jd_digest_when_card_has_no_snippe
 
 
 @pytest.mark.asyncio
-async def test_auto_apply_handler_reads_a_legacy_preview_payload_and_never_sends(broker, mock_driver):
+async def test_auto_apply_handler_reads_a_legacy_preview_payload_and_never_sends(
+    broker, mock_driver
+):
     """A task queued before #302 keeps the depth its writer stated.
 
     The payload carries the full legacy pair — both keys, as older builders always wrote
@@ -813,15 +818,15 @@ async def test_auto_apply_handler_clears_filters_when_no_filter(broker, mock_dri
 
 @pytest.mark.asyncio
 async def test_auto_apply_handler_runs_a_contract_built_launch_as_auto_send(broker, mock_driver):
-    '''#298's promise, mechanised: the payload the launch contract builds actually sends.
+    """#298's promise, mechanised: the payload the launch contract builds actually sends.
 
     The reported bug was a strategy whose Target Action said 自动打招呼 producing a run that
     drafted and stopped. Depth is no longer something a caller states, so the honest test is
     the real artifact — `build_search_launch` over an `auto_apply` SavedSearch, read by the
     worker's own parser — and the log line an operator actually reads.
-    '''
+    """
     from boss_agent import task_launch
-    from boss_agent.models import SavedSearch, SearchConfig
+    from boss_agent.search_entities import SavedSearch, SearchConfig
 
     mock_title = MagicMock(text="Agent 平台工程师")
     mock_company = MagicMock(text="智元创新")
@@ -854,7 +859,9 @@ async def test_auto_apply_handler_runs_a_contract_built_launch_as_auto_send(brok
     }
 
     worker = AutomationWorker(
-        config=config, broker=broker, context=context,
+        config=config,
+        broker=broker,
+        context=context,
         handlers=[AutoApplyHandler(llm_client=mock_llm_client)],
     )
 

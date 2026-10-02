@@ -31,6 +31,8 @@ from _runner_harness import (
 
 from _service_harness import REPO_ROOT, wait_until_dead_pid
 
+pytestmark = pytest.mark.e2e
+
 EMULATOR_SH = REPO_ROOT / "emulator.sh"
 
 # An AVD name no real emulator can carry, for tests that reach `cmd_stop`'s `pkill` fallback.

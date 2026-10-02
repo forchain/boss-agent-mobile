@@ -45,8 +45,6 @@ def _record(
     }
 
 
-
-
 # ---------------------------------------------------------------------------
 # Interface conformance
 # ---------------------------------------------------------------------------
@@ -345,9 +343,9 @@ async def test_in_memory_store_rejects_incomplete_records():
     """宁可不录入: a card without a real title or company never becomes a record."""
     store = InMemoryJobRecordStore()
 
-    assert await store.upsert_job_record({"title": "", "company_name": "某公司"}) == {}
-    assert await store.upsert_job_record({"title": "未注明职位", "company_name": "某公司"}) == {}
-    assert await store.upsert_job_record({"title": "工程师", "company_name": "未知公司"}) == {}
+    assert await store.upsert_job_record({"title": "", "company_name": "某公司"}) is None
+    assert await store.upsert_job_record({"title": "未注明职位", "company_name": "某公司"}) is None
+    assert await store.upsert_job_record({"title": "工程师", "company_name": "未知公司"}) is None
     assert await store.list_job_records() == []
 
 
@@ -434,8 +432,13 @@ async def test_both_adapters_carry_the_greeting_source_with_the_greeting(any_job
 
     # A card-facet re-scrape carries no greeting at all: both fields survive it.
     await store.upsert_job_record(
-        {"fingerprint": key, "title": "AI Agent 平台工程师", "company_name": "智元创新",
-         "recruiter_name": "王女士", "status": "matched"}
+        {
+            "fingerprint": key,
+            "title": "AI Agent 平台工程师",
+            "company_name": "智元创新",
+            "recruiter_name": "王女士",
+            "status": "matched",
+        }
     )
     stored = await store.get_job_record_by_fingerprint(key)
     assert stored["greeting_source"] == "human"

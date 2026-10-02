@@ -33,8 +33,8 @@ from boss_agent.feed_pipeline import (
     FeedStreamConfig,
 )
 from boss_agent.job_store import InMemoryJobRecordStore
-from boss_agent.models import FilterConfig, SavedSearch, SearchConfig
 from boss_agent.screening import CandidateScreener
+from boss_agent.search_entities import FilterConfig, SavedSearch, SearchConfig
 from boss_agent.task_launch import (
     DirectApplyTarget,
     LaunchContractError,
@@ -109,8 +109,9 @@ def test_a_new_payload_states_its_depth_once():
     save_only = build_launch(
         TaskKind.SEARCH,
         source=LaunchSource.SCHEDULER,
-        search=SavedSearch(id="s2", name="存JD", search=SearchConfig(keyword="agent"),
-                           target_action="save_jd"),
+        search=SavedSearch(
+            id="s2", name="存JD", search=SearchConfig(keyword="agent"), target_action="save_jd"
+        ),
     ).payload
     assert FeedStreamConfig.from_payload(save_only).send_greeting is False
 
@@ -278,9 +279,7 @@ def test_a_producer_cannot_write_the_pair_by_hand():
             auto_send=True,
         )
     with pytest.raises(LaunchContractError, match="auto_send"):
-        build_launch(
-            TaskKind.SEARCH, source=LaunchSource.MANUAL, search=search, auto_send=True
-        )
+        build_launch(TaskKind.SEARCH, source=LaunchSource.MANUAL, search=search, auto_send=True)
     with pytest.raises(LaunchContractError, match="preview_only"):
         build_launch(
             TaskKind.DIRECT_APPLY,

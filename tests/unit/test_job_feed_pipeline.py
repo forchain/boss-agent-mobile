@@ -25,23 +25,27 @@ from _feed_harness import (
     _posting,
 )
 
+from boss_agent.enums import (
+    ChatButtonState,
+    JobRecordStatus,
+    TargetAction,
+)
 from boss_agent.feed_pipeline import (
     FeedStreamConfig,
     JobAction,
     JobFeedPipeline,
     is_task_cancelled,
 )
-from boss_agent.job_store import InMemoryJobRecordStore
-from boss_agent.models import (
-    APPLIED_SOURCE_AGENT,
-    ChatButtonState,
+from boss_agent.job_entities import (
     JobCardBrief,
     JobPosting,
-    JobRecordStatus,
-    ScreeningPolicy,
-    TargetAction,
 )
+from boss_agent.job_store import InMemoryJobRecordStore
+from boss_agent.keyword_constants import APPLIED_SOURCE_AGENT
 from boss_agent.screening import CandidateScreener, JobVerdictStage
+from boss_agent.screening_policy import (
+    ScreeningPolicy,
+)
 
 
 @pytest.mark.asyncio
@@ -830,6 +834,7 @@ def test_config_from_payload_carries_the_task_contract():
     assert config.filter_config.industries == ["人工智能"]
     assert config.screening_policy.title_blacklist == ["销售"]
 
+
 # ---------------------------------------------------------------------------
 # The `matched` rung is not "depth reached" (issue #299)
 #
@@ -838,7 +843,6 @@ def test_config_from_payload_carries_the_task_contract():
 # backend's "AI 评估" button, or by a quota-degraded run — was skipped by every later run
 # and never went out. These tests pin the rung that actually counts as delivered.
 # ---------------------------------------------------------------------------
-
 
 
 def _greet(score: int = 90, greeting: str = "王总您好,幸会!") -> dict:
@@ -1015,14 +1019,20 @@ async def test_applied_and_ignored_records_are_still_skipped_for_their_own_reaso
     store = InMemoryJobRecordStore()
     # A headhunter contact: the same-employer anchor deliberately ignores masked
     # channels, so this card reaches the state ladder instead of the 避嫌 guard.
-    contacted = located(JobCardBrief(
-        title="已沟通岗位", company_name="甲公司", recruiter_name="猎头王女士", is_headhunter=True
-    ))
+    contacted = located(
+        JobCardBrief(
+            title="已沟通岗位",
+            company_name="甲公司",
+            recruiter_name="猎头王女士",
+            is_headhunter=True,
+        )
+    )
     rejected = _card("淘汰岗位", "乙公司")
     await store.upsert_job_record(
         {
-            **_drafted_record(contacted.card, status=JobRecordStatus.APPLIED.value,
-                              is_headhunter=True),
+            **_drafted_record(
+                contacted.card, status=JobRecordStatus.APPLIED.value, is_headhunter=True
+            ),
             "applied_at": TODAY,
             "applied_source": APPLIED_SOURCE_AGENT,
         }

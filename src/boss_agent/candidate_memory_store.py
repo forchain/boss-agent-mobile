@@ -15,7 +15,6 @@ offline SQLite fallback *inside the seam it protects* rather than loose in the b
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
 import json
 import logging
@@ -26,6 +25,11 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from boss_agent.async_bridge import execute_broker_request
+from boss_agent.errors import (
+    TransportError,
+)
 
 logger = logging.getLogger("boss_agent.candidate_memory_store")
 
@@ -71,17 +75,13 @@ class CandidateMemoryStore(ABC):
 class InMemoryCandidateMemoryStore(CandidateMemoryStore):
     """Volatile candidate memory for tests and local development."""
 
-    def __init__(self, load_local_profile: bool = True) -> None:
-        self._profiles: dict[str, dict[str, Any]] = {}
+    def __init__(
+        self,
+        load_local_profile: bool = False,
+        initial_profiles: dict[str, dict[str, Any]] | None = None,
+    ) -> None:
+        self._profiles: dict[str, dict[str, Any]] = dict(initial_profiles or {})
         self._revisions: dict[str, list[dict[str, Any]]] = {}
-        if load_local_profile:
-            self._load_local_profile()
-
-    def _load_local_profile(self) -> None:
-        config_path = Path("config/candidate_memory.json")
-        if config_path.exists():
-            with contextlib.suppress(Exception):
-                self._profiles["default"] = json.loads(config_path.read_text(encoding="utf-8"))
 
     async def get_candidate_profile(self, user_id: str = "default") -> dict[str, Any] | None:
         profile = self._profiles.get(user_id)
@@ -95,7 +95,13 @@ class InMemoryCandidateMemoryStore(CandidateMemoryStore):
         # what caught that this one replaced wholesale where the other patched.
         merged = dict(self._profiles.get(user_id) or {})
         for key, value in profile_data.items():
-            if value is not None and value != "" and value != [] and value != {} or key not in merged:
+            if (
+                value is not None
+                and value != ""
+                and value != []
+                and value != {}
+                or key not in merged
+            ):
                 merged[key] = value
         self._profiles[user_id] = merged
         return dict(merged)
@@ -145,7 +151,7 @@ class PocketBaseCandidateMemoryStore(CandidateMemoryStore):
 
     def _resolve_sqlite_db_path(self) -> Path | None:
         if self._sqlite_db_path is not None:
-            return self._sqlite_db_path
+            return self._sqlite_db_path if Path(self._sqlite_db_path).is_file() else None
         for candidate in (
             os.environ.get("PB_DB_PATH"),
             Path(".boss_agent/pb_data/data.db"),
@@ -179,7 +185,9 @@ class PocketBaseCandidateMemoryStore(CandidateMemoryStore):
                         with contextlib.suppress(Exception):
                             data[json_col] = json.loads(data[json_col])
                 return data
-        except Exception as e:
+        except (sqlite3.Error, OSError) as e:  # persistence-guard: allow
+            # The SQLite file is a local read-through cache, not the source of truth: a miss
+            # or a corrupt cache means "no cached profile", and the PocketBase read follows.
             logger.warning("Failed to read candidate profile from SQLite fallback: %s", e)
             return None
 
@@ -220,49 +228,103 @@ class PocketBaseCandidateMemoryStore(CandidateMemoryStore):
                         return existing_val
                     return default_val
 
-                values = (
-                    profile_id,
-                    user_id,
-                    resolve_field("name", ""),
-                    resolve_field("years_of_experience", 0),
-                    json.dumps(resolve_field("education", []), ensure_ascii=False),
-                    json.dumps(resolve_field("core_skills", []), ensure_ascii=False),
-                    json.dumps(resolve_field("project_highlights", []), ensure_ascii=False),
-                    json.dumps(resolve_field("work_experiences", []), ensure_ascii=False),
-                    json.dumps(resolve_field("projects", []), ensure_ascii=False),
-                    json.dumps(resolve_field("target_positions", []), ensure_ascii=False),
+                has_profile_doc = any(
+                    col[1] == "profile_document"
+                    for col in cursor.execute("PRAGMA table_info(candidate_profiles)").fetchall()
+                )
+                doc = (
                     profile_data.get("profile_document")
                     or profile_data.get("raw_summary")
-                    or existing_dict.get("raw_summary", ""),
-                    profile_data.get("raw_resume_text") or existing_dict.get("raw_resume_text", ""),
-                    now,
+                    or existing_dict.get("profile_document")
+                    or existing_dict.get("raw_summary", "")
                 )
-                cursor.execute(
-                    """
-                    INSERT INTO candidate_profiles (
-                        id, user_id, name, years_of_experience, education, core_skills,
-                        project_highlights, work_experiences, projects, target_positions,
-                        raw_summary, raw_resume_text, updated
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(id) DO UPDATE SET
-                        user_id=excluded.user_id,
-                        name=excluded.name,
-                        years_of_experience=excluded.years_of_experience,
-                        education=excluded.education,
-                        core_skills=excluded.core_skills,
-                        project_highlights=excluded.project_highlights,
-                        work_experiences=excluded.work_experiences,
-                        projects=excluded.projects,
-                        target_positions=excluded.target_positions,
-                        raw_summary=excluded.raw_summary,
-                        raw_resume_text=excluded.raw_resume_text,
-                        updated=excluded.updated
-                    """,
-                    values,
-                )
+
+                if has_profile_doc:
+                    values = (
+                        profile_id,
+                        user_id,
+                        resolve_field("name", ""),
+                        resolve_field("years_of_experience", 0),
+                        json.dumps(resolve_field("education", []), ensure_ascii=False),
+                        json.dumps(resolve_field("core_skills", []), ensure_ascii=False),
+                        json.dumps(resolve_field("project_highlights", []), ensure_ascii=False),
+                        json.dumps(resolve_field("work_experiences", []), ensure_ascii=False),
+                        json.dumps(resolve_field("projects", []), ensure_ascii=False),
+                        json.dumps(resolve_field("target_positions", []), ensure_ascii=False),
+                        doc,
+                        doc,
+                        profile_data.get("raw_resume_text")
+                        or existing_dict.get("raw_resume_text", ""),
+                        now,
+                    )
+                    cursor.execute(
+                        """
+                        INSERT INTO candidate_profiles (
+                            id, user_id, name, years_of_experience, education, core_skills,
+                            project_highlights, work_experiences, projects, target_positions,
+                            raw_summary, profile_document, raw_resume_text, updated
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(id) DO UPDATE SET
+                            user_id=excluded.user_id,
+                            name=excluded.name,
+                            years_of_experience=excluded.years_of_experience,
+                            education=excluded.education,
+                            core_skills=excluded.core_skills,
+                            project_highlights=excluded.project_highlights,
+                            work_experiences=excluded.work_experiences,
+                            projects=excluded.projects,
+                            target_positions=excluded.target_positions,
+                            raw_summary=excluded.raw_summary,
+                            profile_document=excluded.profile_document,
+                            raw_resume_text=excluded.raw_resume_text,
+                            updated=excluded.updated
+                        """,
+                        values,
+                    )
+                else:
+                    values = (
+                        profile_id,
+                        user_id,
+                        resolve_field("name", ""),
+                        resolve_field("years_of_experience", 0),
+                        json.dumps(resolve_field("education", []), ensure_ascii=False),
+                        json.dumps(resolve_field("core_skills", []), ensure_ascii=False),
+                        json.dumps(resolve_field("project_highlights", []), ensure_ascii=False),
+                        json.dumps(resolve_field("work_experiences", []), ensure_ascii=False),
+                        json.dumps(resolve_field("projects", []), ensure_ascii=False),
+                        json.dumps(resolve_field("target_positions", []), ensure_ascii=False),
+                        doc,
+                        profile_data.get("raw_resume_text")
+                        or existing_dict.get("raw_resume_text", ""),
+                        now,
+                    )
+                    cursor.execute(
+                        """
+                        INSERT INTO candidate_profiles (
+                            id, user_id, name, years_of_experience, education, core_skills,
+                            project_highlights, work_experiences, projects, target_positions,
+                            raw_summary, raw_resume_text, updated
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(id) DO UPDATE SET
+                            user_id=excluded.user_id,
+                            name=excluded.name,
+                            years_of_experience=excluded.years_of_experience,
+                            education=excluded.education,
+                            core_skills=excluded.core_skills,
+                            project_highlights=excluded.project_highlights,
+                            work_experiences=excluded.work_experiences,
+                            projects=excluded.projects,
+                            target_positions=excluded.target_positions,
+                            raw_summary=excluded.raw_summary,
+                            raw_resume_text=excluded.raw_resume_text,
+                            updated=excluded.updated
+                        """,
+                        values,
+                    )
                 conn.commit()
         except Exception as e:
             logger.warning("Failed to save candidate profile to SQLite fallback: %s", e)
+            raise TransportError(f"Failed to save candidate profile to SQLite fallback: {e}") from e
         return profile_data
 
     def _query_sqlite_revisions(self, user_id: str) -> list[dict[str, Any]]:
@@ -280,16 +342,16 @@ class PocketBaseCandidateMemoryStore(CandidateMemoryStore):
                     (user_id,),
                 )
                 return [dict(r) for r in cursor.fetchall()]
-        except Exception as e:
+        except (sqlite3.Error, OSError) as e:  # persistence-guard: allow
+            # Local cache read: an empty revision list is the honest answer for an
+            # unreadable cache, not a fabricated failure to be propagated.
             logger.warning("Failed to query resume revisions from SQLite: %s", e)
             return []
 
-    def _save_sqlite_revision(
-        self, revision_data: dict[str, Any], user_id: str
-    ) -> dict[str, Any]:
+    def _save_sqlite_revision(self, revision_data: dict[str, Any], user_id: str) -> dict[str, Any]:
         db_path = self._resolve_sqlite_db_path()
         if not db_path:
-            return revision_data
+            raise TransportError("Cannot save resume revision: no SQLite database found")
         try:
             import sqlite3
 
@@ -326,7 +388,7 @@ class PocketBaseCandidateMemoryStore(CandidateMemoryStore):
                 }
         except Exception as e:
             logger.warning("Failed to save resume revision to SQLite: %s", e)
-            return revision_data
+            raise TransportError(f"Failed to save resume revision to SQLite: {e}") from e
 
     # ------------------------------------------------------------------ #
     # REST paths
@@ -337,32 +399,40 @@ class PocketBaseCandidateMemoryStore(CandidateMemoryStore):
 
     async def get_candidate_profile(self, user_id: str = "default") -> dict[str, Any] | None:
         url = self._collection_url("candidate_profiles")
-        loop = asyncio.get_running_loop()
         try:
-            resp = await loop.run_in_executor(
-                None,
+            resp = await execute_broker_request(
                 lambda: self.session.get(
                     url,
                     params={"filter": f"user_id='{user_id}'", "perPage": "1", "sort": "-updated"},
                     headers=self._headers(),
                 ),
+                expected_statuses=(200,),
+                allow_404=True,
+                error_prefix=f"PocketBase get_candidate_profile failed for user '{user_id}'",
             )
             if resp.status_code == 404:
                 return self._query_sqlite_profile(user_id)
-            resp.raise_for_status()
             items = resp.json().get("items", [])
             return items[0] if items else self._query_sqlite_profile(user_id)
-        except Exception as e:
-            logger.warning("PocketBase get_candidate_profile failed, fallback to SQLite: %s", e)
-            return self._query_sqlite_profile(user_id)
+        except TransportError as err:
+            logger.warning(
+                "PocketBase get_candidate_profile transport error, trying SQLite: %s", err
+            )
+            fallback = self._query_sqlite_profile(user_id)
+            if fallback is not None:
+                return fallback
+            raise
 
     async def save_candidate_profile(
         self, profile_data: dict[str, Any], user_id: str = "default"
     ) -> dict[str, Any]:
         url = self._collection_url("candidate_profiles")
-        loop = asyncio.get_running_loop()
         try:
-            existing = await self.get_candidate_profile(user_id=user_id)
+            try:
+                existing = await self.get_candidate_profile(user_id=user_id)
+            except TransportError:
+                existing = self._query_sqlite_profile(user_id)
+
             if existing and existing.get("id"):
                 merged_body = dict(existing)
                 for key, value in profile_data.items():
@@ -373,33 +443,45 @@ class PocketBaseCandidateMemoryStore(CandidateMemoryStore):
                 )
                 if incoming_doc:
                     merged_body["raw_summary"] = incoming_doc
-                elif existing.get("raw_summary"):
-                    merged_body["raw_summary"] = existing["raw_summary"]
+                    merged_body["profile_document"] = incoming_doc
+                elif existing.get("profile_document") or existing.get("raw_summary"):
+                    doc = existing.get("profile_document") or existing.get("raw_summary", "")
+                    merged_body["raw_summary"] = doc
+                    merged_body["profile_document"] = doc
                 merged_body["user_id"] = user_id
-                resp = await loop.run_in_executor(
-                    None,
+                resp = await execute_broker_request(
                     lambda: self.session.patch(
                         f"{url}/{existing['id']}", json=merged_body, headers=self._headers()
                     ),
+                    expected_statuses=(200,),
+                    error_prefix=f"PocketBase patch candidate profile failed for user '{user_id}'",
                 )
             else:
                 body = {**profile_data, "user_id": user_id}
-                resp = await loop.run_in_executor(
-                    None,
-                    lambda: self.session.post(url, json=body, headers=self._headers()),
+                incoming_doc = profile_data.get("profile_document") or profile_data.get(
+                    "raw_summary"
                 )
-            if resp.ok:
-                return resp.json()
-        except Exception as e:
-            logger.warning("PocketBase save_candidate_profile failed, fallback to SQLite: %s", e)
-        return self._save_sqlite_profile(profile_data, user_id)
+                if incoming_doc:
+                    body["raw_summary"] = incoming_doc
+                    body["profile_document"] = incoming_doc
+                resp = await execute_broker_request(
+                    lambda: self.session.post(url, json=body, headers=self._headers()),
+                    expected_statuses=(200, 201),
+                    error_prefix=f"PocketBase post candidate profile failed for user '{user_id}'",
+                )
+            return resp.json()
+        except TransportError as err:
+            logger.warning(
+                "PocketBase save_candidate_profile transport error, trying SQLite: %s", err
+            )
+            if self._resolve_sqlite_db_path() is not None:
+                return self._save_sqlite_profile(profile_data, user_id)
+            raise
 
     async def list_resume_revisions(self, user_id: str = "default") -> list[dict[str, Any]]:
         url = self._collection_url("resume_revisions")
-        loop = asyncio.get_running_loop()
         try:
-            resp = await loop.run_in_executor(
-                None,
+            resp = await execute_broker_request(
                 lambda: self.session.get(
                     url,
                     params={
@@ -409,28 +491,100 @@ class PocketBaseCandidateMemoryStore(CandidateMemoryStore):
                     },
                     headers=self._headers(),
                 ),
+                expected_statuses=(200,),
+                allow_404=True,
+                error_prefix=f"PocketBase list_resume_revisions failed for user '{user_id}'",
             )
             if resp.status_code == 404:
                 return self._query_sqlite_revisions(user_id)
-            resp.raise_for_status()
             return resp.json().get("items", [])
-        except Exception as e:
-            logger.warning("PocketBase list_resume_revisions failed, fallback to SQLite: %s", e)
-            return self._query_sqlite_revisions(user_id)
+        except TransportError as err:
+            logger.warning(
+                "PocketBase list_resume_revisions transport error, trying SQLite: %s", err
+            )
+            if self._resolve_sqlite_db_path() is not None:
+                return self._query_sqlite_revisions(user_id)
+            raise
 
     async def create_resume_revision(
         self, revision_data: dict[str, Any], user_id: str = "default"
     ) -> dict[str, Any]:
         url = self._collection_url("resume_revisions")
-        loop = asyncio.get_running_loop()
         body = {**revision_data, "user_id": user_id}
         try:
-            resp = await loop.run_in_executor(
-                None,
+            resp = await execute_broker_request(
                 lambda: self.session.post(url, json=body, headers=self._headers()),
+                expected_statuses=(200, 201),
+                error_prefix=f"PocketBase create_resume_revision failed for user '{user_id}'",
             )
-            if resp.ok:
-                return resp.json()
-        except Exception as e:
-            logger.warning("PocketBase create_resume_revision failed, fallback to SQLite: %s", e)
-        return self._save_sqlite_revision(body, user_id)
+            return resp.json()
+        except TransportError as err:
+            logger.warning(
+                "PocketBase create_resume_revision transport error, trying SQLite: %s", err
+            )
+            if self._resolve_sqlite_db_path() is not None:
+                return self._save_sqlite_revision(body, user_id)
+            raise
+
+
+async def async_migrate_legacy_candidate_profile(
+    local_path: Path | str | None = None,
+    broker: Any = None,
+    user_id: str = "default",
+) -> dict[str, Any] | None:
+    """Lift an existing local candidate profile JSON file into the broker's Candidate Profile collection.
+
+    Converts legacy profile formats (such as dictionary-shaped core_skills, raw_summary-only
+    profile documents, or legacy project structures) into the canonical StructuredCandidateProfile
+    schema and persists it to the Candidate Profile database collection.
+    """
+    path = Path(local_path or "config/candidate_memory.json")
+    if not path.is_file():
+        return None
+
+    try:
+        raw_text = path.read_text(encoding="utf-8")
+        if not raw_text.strip():
+            return None
+        raw_data = json.loads(raw_text)
+    except (
+        json.JSONDecodeError,
+        OSError,
+        UnicodeDecodeError,
+        ValueError,
+    ) as e:  # persistence-guard: allow
+        # Best-effort migration of a legacy on-disk profile: an unparseable file is treated
+        # as "no legacy profile to migrate", not as a failure worth aborting startup for.
+        logger.warning("Failed to parse legacy profile at %s: %s", path, e)
+        return None
+
+    if not isinstance(raw_data, dict):
+        return None
+
+    from boss_agent.memory import StructuredCandidateProfile
+
+    profile = StructuredCandidateProfile.from_dict(raw_data)
+    profile_dict = profile.to_dict()
+
+    if broker is None:
+        from boss_agent.broker.pocketbase_adapter import PocketBaseTaskBroker
+
+        broker = PocketBaseTaskBroker()
+
+    return await broker.candidate_memory.save_candidate_profile(profile_dict, user_id=user_id)
+
+
+def migrate_legacy_candidate_profile(
+    local_path: Path | str | None = None,
+    broker: Any = None,
+    user_id: str = "default",
+) -> dict[str, Any] | None:
+    """Synchronous entry point for async_migrate_legacy_candidate_profile."""
+    from boss_agent.async_bridge import run_sync
+
+    return run_sync(
+        async_migrate_legacy_candidate_profile(
+            local_path=local_path, broker=broker, user_id=user_id
+        ),
+        timeout=10.0,
+    )

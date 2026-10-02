@@ -89,6 +89,7 @@ def test_expand_description_skips_when_not_truncated():
 
 def test_expand_description_early_stopping_on_first_hit(monkeypatch):
     import time
+
     monkeypatch.setattr(time, "sleep", lambda s: None)
 
     mock_driver = MagicMock()
@@ -118,6 +119,7 @@ def test_expand_description_early_stopping_on_first_hit(monkeypatch):
 
 def test_expand_description_multi_point_retry_until_success(monkeypatch):
     import time
+
     monkeypatch.setattr(time, "sleep", lambda s: None)
 
     mock_driver = MagicMock()
@@ -152,6 +154,7 @@ def test_expand_description_multi_point_retry_until_success(monkeypatch):
 def test_expand_description_scrolls_when_bottom_obstructed(monkeypatch):
     """Test that if tv_description bottom exceeds safe viewport, page scrolls up until bottom is visible."""
     import time
+
     monkeypatch.setattr(time, "sleep", lambda s: None)
 
     mock_driver = MagicMock()
@@ -199,6 +202,7 @@ def test_expand_description_scrolls_when_bottom_obstructed(monkeypatch):
 def test_expand_description_scrolls_to_locate_desc_when_below_fold(monkeypatch):
     """Test that if tv_description is completely below fold initially, it scrolls down to locate it."""
     import time
+
     monkeypatch.setattr(time, "sleep", lambda s: None)
 
     mock_driver = MagicMock()
@@ -236,6 +240,7 @@ def test_expand_description_scrolls_to_locate_desc_when_below_fold(monkeypatch):
 def test_expand_description_logs_error_when_expansion_fails(monkeypatch):
     """Test that an explicit error is logged when '查看更多' cannot be expanded."""
     import time
+
     monkeypatch.setattr(time, "sleep", lambda s: None)
 
     mock_driver = MagicMock()
@@ -266,6 +271,7 @@ def test_expand_description_logs_error_when_expansion_fails(monkeypatch):
 def test_extract_job_posting_logs_error_if_desc_still_contains_expand_text(monkeypatch):
     """Test that extract_job_posting logs an error if '查看更多' is still present after expansion."""
     import time
+
     monkeypatch.setattr(time, "sleep", lambda s: None)
 
     mock_driver = MagicMock()
@@ -300,7 +306,10 @@ def test_extract_job_posting_logs_error_if_desc_still_contains_expand_text(monke
         posting = page.extract_job_posting(timeout_sec=2.0)
         assert posting.title == "AI Agent应用开发师"
         assert mock_err_log.called
-        assert any("Incomplete Job Description" in str(call_arg) for call_arg in mock_err_log.call_args_list)
+        assert any(
+            "Incomplete Job Description" in str(call_arg)
+            for call_arg in mock_err_log.call_args_list
+        )
 
 
 def test_extract_job_posting_preserves_headers_when_scrolled_offscreen(monkeypatch):
@@ -310,6 +319,7 @@ def test_extract_job_posting_preserves_headers_when_scrolled_offscreen(monkeypat
     from the Android accessibility tree, causing a false-positive RuntimeError and empty JD.
     """
     import time
+
     monkeypatch.setattr(time, "sleep", lambda s: None)
 
     mock_driver = MagicMock()
@@ -379,6 +389,7 @@ def test_extract_job_posting_preserves_headers_when_scrolled_offscreen(monkeypat
 def test_extract_job_posting_tolerates_missing_headers_if_desc_present(monkeypatch):
     """Test that extract_job_posting does not raise if headers are missing but desc is present."""
     import time
+
     monkeypatch.setattr(time, "sleep", lambda s: None)
 
     mock_driver = MagicMock()
@@ -405,6 +416,7 @@ def test_extract_job_posting_tolerates_missing_headers_if_desc_present(monkeypat
 def test_expand_description_explicit_btn_updates_current_description(monkeypatch):
     """Test that clicking standard explicit expand button updates _current_description."""
     import time
+
     monkeypatch.setattr(time, "sleep", lambda s: None)
 
     mock_driver = MagicMock()
@@ -440,6 +452,7 @@ def test_expand_description_falls_back_to_probing_when_expand_btn_does_not_expan
     and tapping the bottom-right ClickableSpan hotspot.
     """
     import time
+
     monkeypatch.setattr(time, "sleep", lambda s: None)
 
     mock_driver = MagicMock()
@@ -488,6 +501,7 @@ def test_expand_description_falls_back_and_scrolls_when_obstructed(monkeypatch):
     it properly scrolls the page down to reveal the bottom and then taps the ClickableSpan hotspot.
     """
     import time
+
     monkeypatch.setattr(time, "sleep", lambda s: None)
 
     mock_driver = MagicMock()
@@ -537,4 +551,3 @@ def test_expand_description_falls_back_and_scrolls_when_obstructed(monkeypatch):
     assert page.gestures.human_click_at_point.called
     assert "全文已完全展开" in page._current_description
     assert "查看更多" not in page._current_description
-

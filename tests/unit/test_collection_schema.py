@@ -33,10 +33,11 @@ from boss_agent.broker.collection_schema import (
     pocketbase_fields,
     sqlite_ddl,
     sqlite_metadata_fields,
+    validate_identifier,
     wire_payload,
 )
 from boss_agent.broker.provisioner import provision_remote_pocketbase, provision_sqlite_database
-from boss_agent.models import SavedSearch
+from boss_agent.search_entities import SavedSearch
 from boss_agent.searches import record_to_saved_search
 
 _COLLECTIONS_DDL = """
@@ -117,9 +118,7 @@ def test_rest_dialect_declares_the_job_records_fields_it_used_to_omit() -> None:
 
 def test_job_description_keeps_its_explicit_length_cap_in_both_dialects() -> None:
     """PocketBase caps text at 5000 chars without an explicit max; an expanded JD needs more."""
-    rest_field = next(
-        f for f in pocketbase_fields(JOB_RECORDS) if f["name"] == "job_description"
-    )
+    rest_field = next(f for f in pocketbase_fields(JOB_RECORDS) if f["name"] == "job_description")
     assert rest_field["options"]["max"] > 5000
     assert "job_description TEXT" in sqlite_ddl(JOB_RECORDS)
 
@@ -197,9 +196,7 @@ def test_a_provisioned_database_carries_exactly_the_declared_columns(
 
 
 @pytest.mark.parametrize("collection", COLLECTIONS, ids=lambda c: c.name)
-def test_the_collections_metadata_is_rendered_from_the_schema(
-    tmp_path: Path, collection
-) -> None:
+def test_the_collections_metadata_is_rendered_from_the_schema(tmp_path: Path, collection) -> None:
     """`_collections.fields` is a view of the schema, not a third spelling."""
     db_file = _blank_pocketbase_db(tmp_path)
     assert provision_sqlite_database(db_file) is True
@@ -275,9 +272,7 @@ def test_remote_provisioning_patches_an_existing_collection_with_the_declared_fi
     session = _remote_session([live])
 
     with patch("requests.Session", return_value=session):
-        assert (
-            provision_remote_pocketbase("http://127.0.0.1:8090", "a@b.c", "pw") is True
-        )
+        assert provision_remote_pocketbase("http://127.0.0.1:8090", "a@b.c", "pw") is True
 
     assert session.patch.called, "an existing collection missing fields must be patched"
     body = session.patch.call_args.kwargs["json"]
@@ -352,7 +347,9 @@ def test_reading_an_older_record_degrades_to_the_declared_default() -> None:
 def test_normalized_reads_leave_derived_columns_for_the_domain() -> None:
     """A column the domain derives from a sibling key is not pre-filled."""
     normalized = normalize_record(
-        SAVED_SEARCHES, {"name": "s"}, exclude=("name", "keyword", "enable_search", "enable_filter", "target_action")
+        SAVED_SEARCHES,
+        {"name": "s"},
+        exclude=("name", "keyword", "enable_search", "enable_filter", "target_action"),
     )
     assert "target_action" not in normalized
     assert normalized["max_jobs"] == SAVED_SEARCH_MAX_JOBS
@@ -383,3 +380,20 @@ def test_the_registry_mapper_derives_target_action_from_the_task_type() -> None:
     )
     assert search.target_action == "auto_apply"
     assert search.target_task_type == "AUTO_APPLY"
+
+
+def test_validate_identifier_permits_safe_schema_names() -> None:
+    assert validate_identifier("job_records") == "job_records"
+    assert validate_identifier("col_123") == "col_123"
+    assert validate_identifier("_private_name") == "_private_name"
+
+
+def test_validate_identifier_rejects_malformed_or_dangerous_names() -> None:
+    with pytest.raises(ValueError, match="Invalid schema identifier"):
+        validate_identifier("table; DROP TABLE users;")
+    with pytest.raises(ValueError, match="Invalid schema identifier"):
+        validate_identifier("123column")
+    with pytest.raises(ValueError, match="Invalid schema identifier"):
+        validate_identifier("col-dash")
+    with pytest.raises(ValueError, match="Invalid schema identifier"):
+        validate_identifier("")

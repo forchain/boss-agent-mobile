@@ -9,7 +9,7 @@ emulator, no Appium session, and no child process (spec #247, ticket #249).
 
 from unittest.mock import MagicMock, patch
 
-from boss_agent.models import JobPosting
+from boss_agent.job_entities import JobPosting
 from boss_agent.workflows import SmokeHarness, TakeoverHandler
 
 
@@ -66,7 +66,7 @@ def test_smoke_harness_end_to_end_job_detail_extraction():
     mock_driver.find_elements.side_effect = mock_find_elements
 
     takeover = TakeoverHandler(mock_driver, auto_confirm_for_test=True)
-    from boss_agent.models import FilterConfig, SearchConfig
+    from boss_agent.search_entities import FilterConfig, SearchConfig
 
     harness = SmokeHarness(
         driver=mock_driver,
@@ -147,7 +147,7 @@ def test_smoke_harness_with_search_enabled():
 
 def test_smoke_harness_with_search_disabled():
     """Verify that SmokeHarness skips search when keyword is None."""
-    from boss_agent.models import FilterConfig, SearchConfig
+    from boss_agent.search_entities import FilterConfig, SearchConfig
 
     mock_driver = MagicMock()
     mock_driver.get_window_size.return_value = {"width": 1080, "height": 2400}

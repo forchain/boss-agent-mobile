@@ -8,6 +8,15 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/svelte';
 import JobsPage from '../routes/jobs/+page.svelte';
 
+// Production mounts the confirm dialog once in +layout.svelte; these tests drive the page in
+// isolation, so they stand in for the user's click on the shared dialog (which has its own suite).
+vi.mock('$lib/stores/confirm', () => ({
+	confirmAction: vi.fn(async () => true),
+	alertAction: vi.fn(async () => true),
+	confirmDialogState: { subscribe: () => () => {} },
+	isConfirmDialogMounted: () => true
+}));
+
 const APPLIED_DIRECT_JOB = {
 	id: 'job_applied_1',
 	fingerprint: 'fp_applied_1',

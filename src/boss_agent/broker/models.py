@@ -32,6 +32,10 @@ class TaskStatus(StrEnum):
     FAILED = "failed"
     CANCELLED = "cancelled"
 
+    def is_terminal(self) -> bool:
+        """Return True if this status represents a terminal state."""
+        return self in (TaskStatus.SUCCESS, TaskStatus.FAILED, TaskStatus.CANCELLED)
+
 
 class AutomationTask(BaseModel):
     """Representation of an automation task in the State Stream Broker."""

@@ -15,10 +15,11 @@ root_dir = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(root_dir))
 sys.path.insert(0, str(root_dir / "src"))
 
+from boss_agent.identifier_helpers import format_recruiter_greeting_prefix  # noqa: E402
+from boss_agent.job_entities import JobPosting  # noqa: E402
 from boss_agent.llm_config import load_llm_config  # noqa: E402
 from boss_agent.matching import JobMatchGreetingService  # noqa: E402
 from boss_agent.memory import StructuredCandidateProfile  # noqa: E402
-from boss_agent.models import JobPosting, format_recruiter_greeting_prefix  # noqa: E402
 from droid_agent_core.llm import LLMConfig, OpenAIChatClient  # noqa: E402
 
 

@@ -16,6 +16,8 @@ import pytest
 
 from _service_harness import REPO_ROOT
 
+pytestmark = pytest.mark.e2e
+
 RUN_SH = REPO_ROOT / "run.sh"
 BUDGET_SEC = 10.0
 
@@ -185,4 +187,3 @@ def test_run_sh_app_start_does_not_attach(orchestrator_runtime: Path):
     assert "worker.sh start --daemon" in content
     assert "web.sh start --daemon" in content
     assert "worker.sh attach" not in content
-

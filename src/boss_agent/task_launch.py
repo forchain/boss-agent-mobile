@@ -56,7 +56,8 @@ from typing import Any
 
 from .broker.collection_schema import SAVED_SEARCH_MAX_JOBS
 from .broker.models import TaskType
-from .models import SavedSearch, TargetAction, TargetTaskType
+from .enums import TargetAction, TargetTaskType
+from .search_entities import SavedSearch
 from .settings import resolve_chat_acknowledgment_settings
 
 #: The baseline relevance threshold. One value, so a manual launch and a scheduled run
@@ -187,9 +188,7 @@ def build_search_launch(
     _refuse_stated_depth(mode, "A search")
     _refuse_hand_authored_depth(preview_only, auto_send, "A search")
     action = _target_action_for(search)
-    task_type = (
-        TaskType.AUTO_APPLY if action == TargetAction.AUTO_APPLY else TaskType.SCRAPE_JOBS
-    )
+    task_type = TaskType.AUTO_APPLY if action == TargetAction.AUTO_APPLY else TaskType.SCRAPE_JOBS
 
     search_dict = search.to_dict()
     payload: dict[str, Any] = {

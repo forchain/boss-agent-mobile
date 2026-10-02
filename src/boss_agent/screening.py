@@ -23,15 +23,11 @@ from typing import Any
 
 from langsmith import traceable
 
+from .identifier_helpers import is_substantive_jd, resolve_headhunter_channel
+from .job_entities import JobCardBrief, JobPosting
 from .matching import JobMatchGreetingService
 from .memory import StructuredCandidateProfile
-from .models import (
-    JobCardBrief,
-    JobPosting,
-    ScreeningPolicy,
-    is_substantive_jd,
-    resolve_headhunter_channel,
-)
+from .screening_policy import ScreeningPolicy
 
 logger = logging.getLogger(__name__)
 

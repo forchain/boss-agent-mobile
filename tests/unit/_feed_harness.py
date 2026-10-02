@@ -19,10 +19,11 @@ from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+from boss_agent.enums import ChatButtonState, TargetAction
 from boss_agent.feed_pipeline import FeedStreamConfig, JobFeedPipeline
+from boss_agent.job_entities import JobCardBrief, JobPosting
 from boss_agent.job_store import JobRecordStore
 from boss_agent.memory import StructuredCandidateProfile
-from boss_agent.models import ChatButtonState, JobCardBrief, JobPosting, TargetAction
 from boss_agent.pages import LocatedJobCard
 from boss_agent.screening import CandidateScreener
 
@@ -34,7 +35,9 @@ GOOD_JD = (
 )
 
 
-def _card(title: str, company: str, y: int | None = None, digest: str = "", location: str = "") -> LocatedJobCard:
+def _card(
+    title: str, company: str, y: int | None = None, digest: str = "", location: str = ""
+) -> LocatedJobCard:
     """One scripted card: the parsed brief plus the element it would have been read from."""
     element = MagicMock()
     if y is not None:
@@ -152,7 +155,6 @@ def _detail_page(
     return detail
 
 
-
 def _apply_config(**overrides) -> FeedStreamConfig:
     """A direct ``FeedStreamConfig`` for an outreach run.
 
@@ -172,5 +174,3 @@ def _apply_config(**overrides) -> FeedStreamConfig:
     }
     data.update(overrides)
     return FeedStreamConfig(**data)
-
-

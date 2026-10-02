@@ -11,14 +11,11 @@ facets and the enriched record — can be read and tested without a driver or a 
 
 from typing import Any
 
+from .enums import JobRecordStatus
+from .identifier_helpers import is_invalid_company_name
+from .job_entities import JobCardBrief, JobPosting
 from .job_store import INVALID_JOB_TITLES
-from .models import (
-    INVALID_COMPANY_NAMES,
-    JobCardBrief,
-    JobPosting,
-    JobRecordStatus,
-    is_invalid_company_name,
-)
+from .keyword_constants import INVALID_COMPANY_NAMES
 from .screening import CardScreeningVerdict
 
 
@@ -157,15 +154,22 @@ def enriched_record(
         "tags": list(card.tags) or list(getattr(posting, "tags", None) or []),
         "salary_range": posting.salary_range or card_record.get("salary_range", ""),
         "location": posting.location or card_record.get("location", ""),
-        "location_line": getattr(posting, "location_line", "") or card_record.get("location_line", ""),
+        "location_line": getattr(posting, "location_line", "")
+        or card_record.get("location_line", ""),
         "metro_lines": getattr(posting, "metro_lines", "") or card_record.get("metro_lines", ""),
-        "metro_station": getattr(posting, "metro_station", "") or card_record.get("metro_station", ""),
+        "metro_station": getattr(posting, "metro_station", "")
+        or card_record.get("metro_station", ""),
         "digest": card_record.get("digest", "") or getattr(posting, "digest", "") or "",
         "job_description": jd_text or card_record.get("job_description", ""),
         "relaxed_by_whitelist": bool(verdict and verdict.relaxed_by_whitelist),
         "screening_audit": verdict.screening_audit if verdict else "",
         "search_keywords": [keyword] if keyword else [],
         "source_task_id": source_task_id,
-        "commute_distance_km": getattr(posting, "commute_distance_km", None) or getattr(card, "commute_distance_km", None),
-        "commute_distance_text": (getattr(posting, "commute_distance_text", "") or getattr(card, "commute_distance_text", "") or ""),
+        "commute_distance_km": getattr(posting, "commute_distance_km", None)
+        or getattr(card, "commute_distance_km", None),
+        "commute_distance_text": (
+            getattr(posting, "commute_distance_text", "")
+            or getattr(card, "commute_distance_text", "")
+            or ""
+        ),
     }

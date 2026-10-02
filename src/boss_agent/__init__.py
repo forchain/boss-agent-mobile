@@ -24,20 +24,17 @@ with contextlib.suppress(ImportError):
         StructuredCandidateProfile,
     )
 
-from .models import (
-    AuthStatus,
-    CandidateProfile,
-    ChannelPreference,
-    FilterConfig,
-    JobPosting,
-    SavedSearch,
-    ScreeningPolicy,
-    SearchConfig,
+from .candidate_entities import CandidateProfile
+from .enums import AuthStatus, ChannelPreference
+from .identifier_helpers import (
     format_recruiter_greeting_prefix,
     is_headhunter_agency_name,
     is_masked_company_name,
     parse_recruiter_title,
 )
+from .job_entities import JobPosting
+from .screening_policy import ScreeningPolicy
+from .search_entities import FilterConfig, SavedSearch, SearchConfig
 
 with contextlib.suppress(ImportError):
     from .screening_config import (

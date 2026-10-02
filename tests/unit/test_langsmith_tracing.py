@@ -14,10 +14,11 @@ from langsmith import traceable
 from langsmith.run_helpers import get_current_run_tree
 
 from boss_agent.graph import run_job_application_graph
+from boss_agent.job_entities import JobCardBrief, JobPosting
 from boss_agent.matching import JobMatchGreetingService
 from boss_agent.memory import ResumeMemoryManager
-from boss_agent.models import JobCardBrief, JobPosting, ScreeningPolicy
 from boss_agent.screening import CandidateScreener
+from boss_agent.screening_policy import ScreeningPolicy
 from droid_agent_core.llm import LLMConfig, OpenAIChatClient, configure_langsmith
 
 
@@ -258,7 +259,9 @@ def test_resume_memory_manager_traceable(tmp_path):
     }
 
     resume_file = tmp_path / "resume.txt"
-    resume_file.write_text("张三 8年经验 清华大学计算机硕士 精通Python与LangGraph", encoding="utf-8")
+    resume_file.write_text(
+        "张三 8年经验 清华大学计算机硕士 精通Python与LangGraph", encoding="utf-8"
+    )
 
     memory_file = tmp_path / "memory.json"
     manager = ResumeMemoryManager(
@@ -318,4 +321,3 @@ def test_openai_chat_client_error_propagation():
         with pytest.raises(LLMError) as exc_info:
             client.chat_completion([{"role": "user", "content": "Hello"}])
         assert "500" in str(exc_info.value)
-

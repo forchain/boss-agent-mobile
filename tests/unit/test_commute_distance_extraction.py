@@ -14,7 +14,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from boss_agent.models import JobPosting
+from boss_agent.job_entities import JobPosting
 from boss_agent.pages import JobDetailPage
 
 

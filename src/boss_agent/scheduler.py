@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 
 from boss_agent.broker.models import AutomationTask
 from boss_agent.broker.pocketbase_adapter import BaseTaskBroker
-from boss_agent.models import SavedSearch
+from boss_agent.search_entities import SavedSearch
 from boss_agent.settings import resolve_run_cleanup_on_startup
 from boss_agent.startup_cleanup import StartupCleanupGate
 from boss_agent.task_launch import (
@@ -214,7 +214,18 @@ class AutomationScheduler:
             # the same-minute guard above, because the next tick re-reads the stale
             # timestamp. Say so rather than let the search re-dispatch silently.
             search.last_run_at = now.isoformat()
-            if await self.broker.saved_searches.save_saved_search(search) is None:
+            persisted = None
+            try:
+                persisted = await self.broker.saved_searches.save_saved_search(search)
+            except Exception as e:
+                logger.warning(
+                    "Could not persist last_run_at for search %s (%s): %s; it may dispatch "
+                    "again within this minute",
+                    search.id,
+                    search.name,
+                    e,
+                )
+            if persisted is None:
                 logger.warning(
                     "Could not persist last_run_at for search %s (%s); it may dispatch "
                     "again within this minute",

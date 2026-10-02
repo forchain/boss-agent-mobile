@@ -24,14 +24,14 @@ from _feed_harness import (
     _posting,
 )
 
+from boss_agent.enums import JobRecordStatus
 from boss_agent.job_store import InMemoryJobRecordStore
-from boss_agent.models import (
+from boss_agent.keyword_constants import (
     APPLIED_SOURCE_AGENT,
     GREETING_SOURCE_HUMAN,
-    JobRecordStatus,
-    ScreeningPolicy,
 )
 from boss_agent.screening import CandidateScreener
+from boss_agent.screening_policy import ScreeningPolicy
 
 HUMAN_COPY = "李工您好，看到贵司在招 Agent 平台方向，我做过端侧推理编排，想具体聊聊。"
 # A policy that spends no model call before the greeting decision is reached.
@@ -79,16 +79,18 @@ async def test_a_human_copy_still_yields_to_the_same_company_guard():
     store = InMemoryJobRecordStore()
     card = _card("AI Agent 平台工程师", "智元创新")
     await _seed(store, card)
-    await store.upsert_job_record({
-        "fingerprint": "fp-earlier-contact",
-        "title": "另一个岗位",
-        "company_name": "智元创新",
-        "recruiter_name": "刘女士",
-        "status": JobRecordStatus.APPLIED.value,
-        "applied_at": TODAY,
-        "applied_source": APPLIED_SOURCE_AGENT,
-        "is_headhunter": False,
-    })
+    await store.upsert_job_record(
+        {
+            "fingerprint": "fp-earlier-contact",
+            "title": "另一个岗位",
+            "company_name": "智元创新",
+            "recruiter_name": "刘女士",
+            "status": JobRecordStatus.APPLIED.value,
+            "applied_at": TODAY,
+            "applied_source": APPLIED_SOURCE_AGENT,
+            "is_headhunter": False,
+        }
+    )
 
     detail = _detail_page()
     detail.extract_job_posting.return_value = _posting(card.card.title, card.card.company_name)
@@ -154,7 +156,10 @@ async def test_a_human_copy_skips_drafting_even_with_semantic_screening_configur
     llm.chat_completion_json.return_value = verdict
 
     pipeline = _pipeline(
-        store, feed=ScriptedFeed([[card]]), detail=detail, chat=chat,
+        store,
+        feed=ScriptedFeed([[card]]),
+        detail=detail,
+        chat=chat,
         screener=CandidateScreener(llm_client=llm),
     )
     await pipeline.stream_jobs(
@@ -206,17 +211,20 @@ async def test_a_payload_with_no_direct_target_ignores_a_stray_greeting():
     """
     from boss_agent.feed_pipeline import FeedStreamConfig
 
-    search_like = FeedStreamConfig.from_payload({
-        "target_action": "auto_apply",
-        "keyword": "Agent",
-        "greeting_message": "误放的文案",
-    })
+    search_like = FeedStreamConfig.from_payload(
+        {
+            "target_action": "auto_apply",
+            "keyword": "Agent",
+            "greeting_message": "误放的文案",
+        }
+    )
     assert search_like.direct_greeting == ""
 
-    direct = FeedStreamConfig.from_payload({
-        "target_action": "auto_apply",
-        "direct_job_id": "rec-7",
-        "greeting_message": "我在面板里改过的文案",
-    })
+    direct = FeedStreamConfig.from_payload(
+        {
+            "target_action": "auto_apply",
+            "direct_job_id": "rec-7",
+            "greeting_message": "我在面板里改过的文案",
+        }
+    )
     assert direct.direct_greeting == "我在面板里改过的文案"
-

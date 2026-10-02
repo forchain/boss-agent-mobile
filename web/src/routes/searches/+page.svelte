@@ -11,6 +11,7 @@
 	} from '$lib/pocketbase';
 	import { dashboardRealtime } from '$lib/dashboardRealtime';
 	import { buildSearchLaunch } from '$lib/taskLaunch';
+	import { alertAction } from '$lib/stores/confirm';
 
 	let { data }: { data: any } = $props();
 	let searches = $state<SavedSearch[]>([]);
@@ -220,7 +221,7 @@
 			}
 			await loadSearches();
 		} catch (e: any) {
-			alert('导入默认预设失败: ' + (e?.message || e));
+			await alertAction('导入默认预设失败: ' + (e?.message || e), '导入失败');
 		} finally {
 			isSaving = false;
 		}

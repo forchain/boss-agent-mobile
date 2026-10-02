@@ -1,13 +1,21 @@
 """
-tests/unit/test_evaluate_match_script.py
-========================================
-Unit and CLI tests for scripts/evaluate_match.py recruiter salutation integration.
+tests/e2e/test_evaluate_match_script.py
+=======================================
+CLI integration tests for scripts/evaluate_match.py recruiter salutation fallback.
+
+Relocated from Fast Unit tier (ticket #306) as a subprocess violation: the test spawns
+a Python interpreter subprocess pointing at an unreachable endpoint to verify the
+fallback path, rather than contacting a live model.
 """
 
 import json
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
+
+pytestmark = pytest.mark.e2e
 
 
 def test_evaluate_match_script_extracts_recruiter_and_formats_fallback():
@@ -44,7 +52,10 @@ def test_evaluate_match_script_extracts_recruiter_and_formats_fallback():
 
     assert proc.returncode == 0
     data = json.loads(proc.stdout)
-    assert data["match_score"] == 50
+    # The fallback reads the JD rather than reporting the same 50 for every posting it
+    # could not evaluate, and it still says which requirements it read.
+    assert data["match_score"] > 50
+    assert any("Python" in req for req in data["jd_key_requirements"])
     assert data["greeting_message"].startswith("张女士您好,幸会!")
 
 

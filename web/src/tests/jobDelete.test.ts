@@ -5,6 +5,13 @@ import JobsPage from '../routes/jobs/+page.svelte';
 import { resetDashboardRealtime } from '$lib/dashboardRealtime';
 import type { JobRecord } from '$lib/types';
 
+vi.mock('$lib/stores/confirm', () => ({
+	confirmAction: vi.fn(async () => true),
+	alertAction: vi.fn(async () => true),
+	confirmDialogState: { subscribe: () => () => {} },
+	isConfirmDialogMounted: () => true
+}));
+
 const BASE_JOB: JobRecord = {
 	id: 'job_test_1',
 	fingerprint: 'fp_test_1',

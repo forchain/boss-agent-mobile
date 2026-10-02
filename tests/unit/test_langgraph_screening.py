@@ -1,8 +1,10 @@
 from unittest.mock import MagicMock
 
 from boss_agent.graph import run_job_application_graph
-from boss_agent.models import JobCardBrief, SavedSearch, ScreeningPolicy
+from boss_agent.job_entities import JobCardBrief
 from boss_agent.screening import CandidateScreener, JobVerdictStage
+from boss_agent.screening_policy import ScreeningPolicy
+from boss_agent.search_entities import SavedSearch
 
 
 def test_screening_policy_serialization():
@@ -115,7 +117,9 @@ def test_keyword_screener_whitelist_hit_and_pass():
         "match_score": 85,
         "greeting_message": "您好，关注到贵司在招聘AI Agent岗位...",
     }
-    jd_text = "岗位职责：负责智能体协同平台架构与大模型自动化体系建设，要求精通Python与Multi-Agent。"
+    jd_text = (
+        "岗位职责：负责智能体协同平台架构与大模型自动化体系建设，要求精通Python与Multi-Agent。"
+    )
     state = run_job_application_graph(card, policy=policy, jd_text=jd_text, llm_client=mock_llm)
     assert state["keyword_pass"] is True
     assert state["deep_screen_pass"] is True
@@ -301,8 +305,7 @@ def test_full_lifecycle_job_application_graph_with_profile():
         salary_range="40-60K",
     )
     jd_text = (
-        "岗位职责：\n"
-        "负责基于手机端与大模型的 Agent 自动化系统构建，要求精通 Python 与 LangGraph。"
+        "岗位职责：\n负责基于手机端与大模型的 Agent 自动化系统构建，要求精通 Python 与 LangGraph。"
     )
 
     mock_llm = MagicMock()
@@ -429,7 +432,9 @@ def test_app_filter_direct_only_rejects_headhunter_without_whitelist():
 
     mock_llm = MagicMock()
     jd_text = "岗位职责：负责智能体平台后端开发。"
-    state = run_job_application_graph(card=card, policy=policy, jd_text=jd_text, llm_client=mock_llm)
+    state = run_job_application_graph(
+        card=card, policy=policy, jd_text=jd_text, llm_client=mock_llm
+    )
 
     assert state["keyword_pass"] is True
     assert state["app_rule_pass"] is False
@@ -482,13 +487,18 @@ def test_app_filter_violation_rescued_by_whitelist_relaxation():
     mock_llm = MagicMock()
     mock_llm.chat_completion_json.side_effect = [
         {"pass": True, "reason": "岗位核心是大模型应用架构，未触犯黑名单"},
-        {"match_score": 88, "greeting_message": "您好，看到贵司大模型架构师岗位，我在LLM应用落地有深厚积累..."},
+        {
+            "match_score": 88,
+            "greeting_message": "您好，看到贵司大模型架构师岗位，我在LLM应用落地有深厚积累...",
+        },
     ]
     jd_text = (
         "岗位职责：主导企业级大模型应用与Agent工作流平台建设，负责LLM推理链编排、"
         "向量检索体系优化以及多智能体协同框架的架构设计与落地。"
     )
-    state = run_job_application_graph(card=card, policy=policy, jd_text=jd_text, llm_client=mock_llm)
+    state = run_job_application_graph(
+        card=card, policy=policy, jd_text=jd_text, llm_client=mock_llm
+    )
 
     assert state["keyword_pass"] is True
     assert state["app_rule_pass"] is False
@@ -521,7 +531,9 @@ def test_app_filter_clean_job_bypasses_relaxation():
         {"match_score": 90, "greeting_message": "您好，我对贵司Agent平台岗位很感兴趣..."},
     ]
     jd_text = "岗位职责：负责Agent编排平台研发，要求精通Python。"
-    state = run_job_application_graph(card=card, policy=policy, jd_text=jd_text, llm_client=mock_llm)
+    state = run_job_application_graph(
+        card=card, policy=policy, jd_text=jd_text, llm_client=mock_llm
+    )
 
     assert state["app_rule_pass"] is True
     assert state["app_rule_violation"] == ""
@@ -569,8 +581,12 @@ def test_semantic_screener_prompt_has_zero_whitelist_veto():
     assert "白名单目标关键词" not in system_prompt, (
         "legacy whitelist criteria line must be stripped from the JD screening prompt"
     )
-    assert "大模型" not in system_prompt, "whitelist tokens must not leak into the JD screening prompt"
-    assert "与目标方向完全无关" not in system_prompt, "legacy whitelist rejection rule must be deleted"
+    assert "大模型" not in system_prompt, (
+        "whitelist tokens must not leak into the JD screening prompt"
+    )
+    assert "与目标方向完全无关" not in system_prompt, (
+        "legacy whitelist rejection rule must be deleted"
+    )
     assert "Java" in system_prompt, "blacklist criteria must remain"
     # Core-vs-secondary-mention distinction guidance stays central to the prompt
     assert "协作" in system_prompt or "背景" in system_prompt
@@ -585,9 +601,7 @@ def test_semantic_screener_whitelist_only_policy_passes_without_llm():
 
     screener = CandidateScreener(llm_client=mock_llm)
     result = screener.evaluate_job(
-        card=JobCardBrief(
-            title="云原生平台工程师", company_name="某公司", recruiter_name="招聘者"
-        ),
+        card=JobCardBrief(title="云原生平台工程师", company_name="某公司", recruiter_name="招聘者"),
         jd_text="岗位职责：负责云原生容器平台建设，要求精通Go与Kubernetes。",
         policy=policy,
         draft_greeting=False,
@@ -625,7 +639,9 @@ def test_greeting_drafter_injects_active_blacklists_into_prompt():
         },
     ]
 
-    state = run_job_application_graph(card=card, policy=policy, jd_text=jd_text, llm_client=mock_llm)
+    state = run_job_application_graph(
+        card=card, policy=policy, jd_text=jd_text, llm_client=mock_llm
+    )
     assert state["deep_screen_pass"] is True
     assert state["status"] == "greeting_drafted"
 
@@ -634,6 +650,3 @@ def test_greeting_drafter_injects_active_blacklists_into_prompt():
     for token in ("Java", "微服务", "外包"):
         assert token in drafter_prompt, f"blacklist token '{token}' missing from drafter prompt"
     assert "严禁" in drafter_prompt
-
-
-

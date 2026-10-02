@@ -1,63 +1,51 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { getPocketBaseUrl } from '$lib/pocketbase';
 import { loadMergedSettings, resolveCooldownDays } from '$lib/server/settings';
 import {
 	CLEAR_COMMUNICATION_PATCH,
 	isCommunicationExpired,
 	summarizeAppliedCompanies
 } from '$lib/server/communication';
+import { COLLECTIONS, listAllRecords, updateRecord } from '$lib/server/broker';
 
 const APPLIED_FIELDS = 'id,company_name,status,is_headhunter,applied_at,applied_source,created';
-const PAGE_SIZE = 200;
-// Bounds the walk so a runaway collection cannot stall the dashboard request.
-const MAX_PAGES = 25;
 
-/** Walk every page of applied records; a single page would silently under-report the pool. */
-async function fetchAppliedRecords(pbBase: string): Promise<any[]> {
-	const filter = encodeURIComponent("status = 'applied'");
-	const collected: any[] = [];
-
-	for (let page = 1; page <= MAX_PAGES; page++) {
-		const resp = await fetch(
-			`${pbBase}/api/collections/job_records/records?filter=${filter}&page=${page}&perPage=${PAGE_SIZE}&fields=${APPLIED_FIELDS}`,
-			{ signal: AbortSignal.timeout(5000) }
-		);
-		if (!resp.ok) break;
-		const data = await resp.json();
-		const items = data.items || [];
-		collected.push(...items);
-		if (items.length < PAGE_SIZE) break;
+/** Walk every page of applied records through the broker helper so a full list is not truncated. */
+async function fetchAppliedRecords(): Promise<any[]> {
+	try {
+		return await listAllRecords(COLLECTIONS.jobs, {
+			filter: "status = 'applied'",
+			fields: APPLIED_FIELDS
+		});
+	} catch {
+		return [];
 	}
-	return collected;
 }
 
 function currentCooldownDays(): number {
 	return resolveCooldownDays(loadMergedSettings().communication_cooldown_days);
 }
 
-async function clearRecords(pbBase: string, ids: string[]): Promise<number> {
+async function clearRecords(ids: string[]): Promise<number> {
 	let cleared = 0;
 	for (const id of ids) {
 		try {
-			const resp = await fetch(`${pbBase}/api/collections/job_records/records/${id}`, {
-				method: 'PATCH',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify(CLEAR_COMMUNICATION_PATCH),
-				signal: AbortSignal.timeout(5000)
-			});
-			if (resp.ok) cleared += 1;
+			await updateRecord(COLLECTIONS.jobs, id, CLEAR_COMMUNICATION_PATCH);
+			cleared += 1;
 		} catch {}
 	}
 	return cleared;
 }
 
 export const GET: RequestHandler = async () => {
-	const pbBase = getPocketBaseUrl();
 	const cooldownDays = currentCooldownDays();
 	try {
-		const records = await fetchAppliedRecords(pbBase);
-		return json({ success: true, cooldown_days: cooldownDays, ...summarizeAppliedCompanies(records, cooldownDays) });
+		const records = await fetchAppliedRecords();
+		return json({
+			success: true,
+			cooldown_days: cooldownDays,
+			...summarizeAppliedCompanies(records, cooldownDays)
+		});
 	} catch (err: any) {
 		return json(
 			{
@@ -83,7 +71,6 @@ export const POST: RequestHandler = async ({ request }) => {
 	}
 
 	const action = String(body.action || '');
-	const pbBase = getPocketBaseUrl();
 	const cooldownDays = currentCooldownDays();
 
 	try {
@@ -92,11 +79,11 @@ export const POST: RequestHandler = async ({ request }) => {
 			if (!companyName) {
 				return json({ success: false, error: 'company_name is required' }, { status: 400 });
 			}
-			const records = await fetchAppliedRecords(pbBase);
+			const records = await fetchAppliedRecords();
 			const ids = records
 				.filter((r) => (r.company_name || '').trim() === companyName)
 				.map((r) => r.id);
-			const cleared = await clearRecords(pbBase, ids);
+			const cleared = await clearRecords(ids);
 			return json({
 				success: true,
 				cleared,
@@ -105,11 +92,11 @@ export const POST: RequestHandler = async ({ request }) => {
 		}
 
 		if (action === 'clear_expired') {
-			const records = await fetchAppliedRecords(pbBase);
+			const records = await fetchAppliedRecords();
 			const ids = records
 				.filter((r) => isCommunicationExpired(r, cooldownDays))
 				.map((r) => r.id);
-			const cleared = await clearRecords(pbBase, ids);
+			const cleared = await clearRecords(ids);
 			return json({
 				success: true,
 				cleared,

@@ -13,8 +13,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from boss_agent.job_entities import JobPosting
 from boss_agent.matching import JobMatchGreetingService
-from boss_agent.models import JobPosting
 
 
 def test_service_refine_with_critique():
