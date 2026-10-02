@@ -1086,6 +1086,7 @@ class JobPosting:
     # (spec #209). None means unknown/absent — screening must fail open on it.
     commute_distance_km: float | None = None
     commute_distance_text: str = ""
+    search_filter: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if self.title:
@@ -1098,6 +1099,8 @@ class JobPosting:
         self.is_headhunter = resolve_headhunter_channel(
             self.is_headhunter, self.recruiter_name, self.recruiter_title
         )
+        if hasattr(self.search_filter, "to_dict"):
+            self.search_filter = self.search_filter.to_dict()
         if not self.digest and self.job_description:
             self.digest = extract_digest_from_jd(self.job_description)
         self.tags = sanitize_tags(
@@ -1195,6 +1198,18 @@ class FilterConfig:
         if not self.enable_filter:
             return False
         return bool(self.industries)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert filter configuration to a dictionary representation."""
+        return {
+            "education": self.education,
+            "salary": self.salary,
+            "experience": self.experience,
+            "activity": self.activity,
+            "company_scales": list(self.company_scales) if self.company_scales else [],
+            "industries": list(self.industries) if self.industries else [],
+            "enable_filter": self.enable_filter,
+        }
 
 
 # A JD shorter than this carries no evaluable signal: screening or greeting from it would
