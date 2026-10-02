@@ -142,6 +142,8 @@
 	// ladder the strategy modal offers), not a candidate-rejection rule — and it persists
 	// through `POST /api/settings`, not `/api/screening/policy`.
 	let newSalaryOption = $state('');
+	let editingSalaryIndex = $state<number | null>(null);
+	let editingSalaryText = $state('');
 	let isSavingSalaryOptions = $state(false);
 	let saveSalarySuccess = $state('');
 	let saveSalaryError = $state('');
@@ -159,12 +161,50 @@
 	}
 
 	function removeSalaryOption(index: number) {
+		if (editingSalaryIndex === index) cancelSalaryEdit();
 		settings.salary_options = (settings.salary_options ?? []).filter((_, i) => i !== index);
 		saveSalarySuccess = '';
 		saveSalaryError = '';
 	}
 
+	// Rename in place. Adding instead would silently move the tier to the end of the
+	// ladder, and position is meaningful — it is what "top band" reads as.
+	function startSalaryEdit(index: number) {
+		editingSalaryIndex = index;
+		editingSalaryText = settings.salary_options?.[index] ?? '';
+	}
+
+	function cancelSalaryEdit() {
+		editingSalaryIndex = null;
+		editingSalaryText = '';
+	}
+
+	function commitSalaryEdit() {
+		if (editingSalaryIndex === null) return;
+		const index = editingSalaryIndex;
+		const val = editingSalaryText.trim();
+		const current = [...(settings.salary_options ?? [])];
+
+		if (!val) {
+			// An emptied rename means "remove this tier".
+			settings.salary_options = current.filter((_, i) => i !== index);
+		} else if (val !== current[index]) {
+			// A rename onto an existing tier would duplicate it.
+			if (current.includes(val)) {
+				settings.salary_options = current.filter((_, i) => i !== index);
+			} else {
+				current[index] = val;
+				settings.salary_options = current;
+			}
+		}
+
+		cancelSalaryEdit();
+		saveSalarySuccess = '';
+		saveSalaryError = '';
+	}
+
 	function resetSalaryOptions() {
+		cancelSalaryEdit();
 		settings.salary_options = [...DEFAULT_SALARY_OPTIONS];
 		saveSalarySuccess = '';
 		saveSalaryError = '';
@@ -1332,7 +1372,7 @@
 
 			<div class="space-y-3">
 				<p class="text-[11px] text-slate-400 leading-relaxed">
-					BOSS 直聘的薪资档位会随 App 版本、城市与岗位族变化，因此不在代码里写死。搜索策略的新建/编辑弹窗直接渲染这里的列表；调整后，存量搜索策略里已不再存在的档位会在编辑时按区间就近映射，无法唯一映射的档位会原样保留并提示复核。
+					BOSS 直聘的薪资档位会随 App 版本、城市与岗位族变化，因此不在代码里写死。搜索策略的新建/编辑弹窗直接渲染这里的列表。请<strong class="text-slate-300">按从低到高的顺序</strong>填写：默认搜索策略的「资深档」取的是列表最后一项，顺序颠倒会让它落到低档位。点击档位名称可原地重命名（不改变顺序），清空重命名即删除该档。
 				</p>
 
 				<!-- Chips container -->
@@ -1341,15 +1381,34 @@
 						<span class="text-[11px] text-amber-400 italic">（档位为空，保存时会回退到内置默认档位）</span>
 					{:else}
 						{#each settings.salary_options ?? [] as item, idx}
-							<span class="inline-flex items-center space-x-1 text-xs px-2 py-0.5 rounded-md bg-cyan-950 text-cyan-300 border border-cyan-800/70">
-								<span>{item}</span>
-								<button
-									type="button"
-									onclick={() => removeSalaryOption(idx)}
-									class="text-cyan-400 hover:text-white font-bold ml-1 text-xs"
-									title="移除该档位"
-								>×</button>
-							</span>
+							{#if editingSalaryIndex === idx}
+								<input
+									type="text"
+									bind:value={editingSalaryText}
+									onblur={commitSalaryEdit}
+									onkeydown={(e) => {
+										if (e.key === 'Enter') { e.preventDefault(); commitSalaryEdit(); }
+										if (e.key === 'Escape') { e.preventDefault(); cancelSalaryEdit(); }
+									}}
+									class="text-xs px-2 py-0.5 rounded-md bg-slate-950 border border-cyan-600 text-cyan-200 focus:outline-none font-mono w-28"
+									title="回车保存，Esc 取消，清空则删除该档"
+								/>
+							{:else}
+								<span class="inline-flex items-center space-x-1 text-xs px-2 py-0.5 rounded-md bg-cyan-950 text-cyan-300 border border-cyan-800/70">
+									<button
+										type="button"
+										onclick={() => startSalaryEdit(idx)}
+										class="hover:text-white font-mono"
+										title="点击重命名（保持原有顺序）"
+									>{item}</button>
+									<button
+										type="button"
+										onclick={() => removeSalaryOption(idx)}
+										class="text-cyan-400 hover:text-white font-bold ml-1 text-xs"
+										title="移除该档位"
+									>×</button>
+								</span>
+							{/if}
 						{/each}
 					{/if}
 				</div>

@@ -25,6 +25,15 @@ export const DEFAULT_SALARY_OPTIONS: string[] = [
 	'45K以上'
 ];
 
+/**
+ * The top of the shipped ladder, mirroring `config_realm.DEFAULT_TOP_SALARY_TIER`.
+ *
+ * The domain baseline used to name `"5万元以上"`, a tier that exists in neither the
+ * legacy ladder nor the current app ladder, so a default search applied a filter the
+ * device could not satisfy. Anything that must default to a high band names this.
+ */
+export const DEFAULT_TOP_SALARY_TIER: string = DEFAULT_SALARY_OPTIONS[DEFAULT_SALARY_OPTIONS.length - 1];
+
 /** The tier that means "no salary filter". Stored as an empty string, not as this label. */
 const UNLIMITED = '不限';
 
@@ -39,9 +48,18 @@ export interface SalarySelectOption {
  * Blanks are dropped and duplicates collapsed but order is preserved — the ladder is a
  * presented list, not a set. An empty result falls back rather than yielding a dropdown
  * with no options, which is the case `config_realm.salary_options` also guards.
+ *
+ * A comma-separated scalar is accepted and split, matching the Python accessor: the
+ * realm's file format is schema-less, so `salary_options: 10-20K, 20-30K` is a typo away,
+ * and the two loaders must not disagree about whether a hand-edit is honoured.
  */
 export function resolveSalaryOptions(raw: unknown): string[] {
-	const source = Array.isArray(raw) ? raw : [];
+	const source = Array.isArray(raw)
+		? raw
+		: typeof raw === 'string'
+			? raw.split(',')
+			: [];
+
 	const options: string[] = [];
 	for (const item of source) {
 		if (typeof item !== 'string') continue;
@@ -119,10 +137,19 @@ function scaleMagnitude(value: number, unit: string): number | null {
 /**
  * Reconcile a stored salary value against the configured ladder.
  *
- * In order: "no filter" → an exact configured tier → the configured tier whose range
- * contains the stored one → the stored value verbatim. The last step is deliberate: an
- * unrecognised value (a hand-typed `面议`, a tier from a future ladder) is preserved so
- * the operator can see and change it, rather than silently widening the search.
+ * In order: "no filter" → an exact configured tier → a configured tier that denotes the
+ * *same* band → the stored value verbatim.
+ *
+ * The middle step is deliberately equality, not containment. A legacy band merely *inside*
+ * a configured tier means something different — `3-5K` inside `15K以下` is a job paying
+ * 3–5K, and rewriting it to `15K以下` silently widens the search threefold. Because
+ * `openEdit` writes the modal's form straight back to PocketBase, that widening would be
+ * persisted, so a spelling variant that is not an exact synonym is left alone.
+ *
+ * The last step is preservation rather than loss: an unrecognised value (a hand-typed
+ * `面议`, a legacy band with no configured equivalent) is returned verbatim, and
+ * `salarySelectOptions` renders it as an extra option so the operator sees and corrects it
+ * rather than losing a filter they set deliberately.
  */
 export function normalizeSalary(value: string | undefined | null, options: string[]): string {
 	const raw = (value ?? '').trim();
@@ -133,20 +160,15 @@ export function normalizeSalary(value: string | undefined | null, options: strin
 
 	const target = parseSalaryBounds(raw);
 	if (target) {
-		// The narrowest containing tier wins, so an operator who keeps both `3K以下` and
-		// `15K以下` gets the more specific one for a legacy `3000-5000元`.
-		let best: { label: string; span: number } | null = null;
+		// The same band under a different spelling: `3000-5000元` against a configured
+		// `3-5K`. Comparing bounds rather than strings is what makes the mapping survive a
+		// ladder the operator renames or re-spells.
 		for (const label of configured) {
 			const bounds = parseSalaryBounds(label);
-			if (!bounds) continue;
-			if (target.min < bounds.min || target.max > bounds.max) continue;
-			const span = bounds.max - bounds.min;
-			if (!best || span < best.span) best = { label, span };
+			if (bounds && bounds.min === target.min && bounds.max === target.max) {
+				return label;
+			}
 		}
-		// No containing tier: an open-ended legacy band above everything configured
-		// degrades to the top configured tier, which is what "5万元以上" meant.
-		if (!best && target.max === Infinity) return configured[configured.length - 1];
-		if (best) return best.label;
 	}
 
 	return raw;

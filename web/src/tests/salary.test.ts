@@ -20,7 +20,10 @@ describe('resolveSalaryOptions', () => {
 		expect(resolveSalaryOptions(undefined)).toEqual(DEFAULT_SALARY_OPTIONS);
 		expect(resolveSalaryOptions(null)).toEqual(DEFAULT_SALARY_OPTIONS);
 		expect(resolveSalaryOptions([])).toEqual(DEFAULT_SALARY_OPTIONS);
-		expect(resolveSalaryOptions('not-a-list')).toEqual(DEFAULT_SALARY_OPTIONS);
+		expect(resolveSalaryOptions('')).toEqual(DEFAULT_SALARY_OPTIONS);
+		// Not a list and not a scalar string either.
+		expect(resolveSalaryOptions({})).toEqual(DEFAULT_SALARY_OPTIONS);
+		expect(resolveSalaryOptions(42)).toEqual(DEFAULT_SALARY_OPTIONS);
 	});
 
 	it('takes the operator list verbatim, in order', () => {
@@ -29,6 +32,14 @@ describe('resolveSalaryOptions', () => {
 			'3-5K',
 			'5K以上'
 		]);
+	});
+
+	it('splits a comma-separated scalar, matching the Python accessor', () => {
+		// The realm's file format is schema-less, so `salary_options: 10-20K, 20-30K` is
+		// one typo away. Python honours it (`config_realm.salary_options`); the two
+		// loaders must not disagree about whether a hand-edit is accepted.
+		expect(resolveSalaryOptions('10-20K, 20-30K')).toEqual(['10-20K', '20-30K']);
+		expect(resolveSalaryOptions('10-20K')).toEqual(['10-20K']);
 	});
 
 	it('drops blanks and duplicates without reordering', () => {
@@ -55,45 +66,36 @@ describe('normalizeSalary', () => {
 		expect(normalizeSalary('45K以上', DEFAULT_SALARY_OPTIONS)).toBe('45K以上');
 	});
 
-	it('retires the invalid domain baseline onto the configured top tier', () => {
-		// The old `FilterConfig.salary` / provisioner default. There is no such tier in
-		// the app, so it must land on the band that now means the same thing.
-		expect(normalizeSalary('5万元以上', DEFAULT_SALARY_OPTIONS)).toBe('45K以上');
-		expect(normalizeSalary('5万以上', DEFAULT_SALARY_OPTIONS)).toBe('45K以上');
-		expect(normalizeSalary('50K以上', DEFAULT_SALARY_OPTIONS)).toBe('45K以上');
+	it('maps a legacy spelling onto a configured tier that means the same band', () => {
+		// Equality, not containment: `3000-5000元` and `3-5K` are the same band under two
+		// spellings, so swapping one for the other cannot change what is matched.
+		const legacyLadder = ['0-3K', '3-5K', '5-10K', '10K以上'];
+		expect(normalizeSalary('3000-5000元', legacyLadder)).toBe('3-5K');
+		expect(normalizeSalary('3000元以下', legacyLadder)).toBe('0-3K');
+		expect(normalizeSalary('1万元以上', legacyLadder)).toBe('10K以上');
 	});
 
-	it('maps a legacy band that sits inside one configured tier', () => {
-		// Numeric containment, not a fixed alias table — so it still works when the
-		// operator configures a ladder with different bands.
-		expect(normalizeSalary('3000元以下', DEFAULT_SALARY_OPTIONS)).toBe('15K以下');
-		expect(normalizeSalary('3000-5000元', DEFAULT_SALARY_OPTIONS)).toBe('15K以下');
-		expect(normalizeSalary('5000-10000元', DEFAULT_SALARY_OPTIONS)).toBe('15K以下');
+	it('never widens a stored filter onto a containing tier', () => {
+		// `3-5K` sits inside `15K以下`, but rewriting it would turn "pays 3–5K" into "pays
+		// up to 15K" — and `openEdit` feeds this value into the form whose Save persists
+		// it, so a cosmetic mapping here is permanent data corruption.
+		expect(normalizeSalary('3-5K', DEFAULT_SALARY_OPTIONS)).toBe('3-5K');
+		expect(normalizeSalary('5-10K', DEFAULT_SALARY_OPTIONS)).toBe('5-10K');
+		expect(normalizeSalary('3000-5000元', DEFAULT_SALARY_OPTIONS)).toBe('3000-5000元');
+		expect(normalizeSalary('3000元以下', DEFAULT_SALARY_OPTIONS)).toBe('3000元以下');
+	});
+
+	it('preserves the old domain baseline rather than widening it to the top tier', () => {
+		// `5万元以上` (50K+) has no exact synonym in the current ladder: `45K以上` is
+		// looser, so mapping onto it would silently relax the filter.
+		expect(normalizeSalary('5万元以上', DEFAULT_SALARY_OPTIONS)).toBe('5万元以上');
+		expect(normalizeSalary('50K以上', DEFAULT_SALARY_OPTIONS)).toBe('50K以上');
 	});
 
 	it('preserves a legacy band that straddles tier boundaries', () => {
-		// `10-20K` and its `1-2万元` spelling overlap both `15K以下` and `15-25K`;
-		// `2-5万元` spans several tiers. None has one honest successor, so narrowing it
-		// would silently change what the saved search matches. Kept verbatim instead —
-		// `salarySelectOptions` renders it as an extra option so the operator can see and
-		// correct it, and the mobile side maps the legacy synonym (issue #338).
 		expect(normalizeSalary('10-20K', DEFAULT_SALARY_OPTIONS)).toBe('10-20K');
 		expect(normalizeSalary('1-2万元', DEFAULT_SALARY_OPTIONS)).toBe('1-2万元');
 		expect(normalizeSalary('2-5万元', DEFAULT_SALARY_OPTIONS)).toBe('2-5万元');
-	});
-
-	it('picks the narrowest containing tier when several would do', () => {
-		// An operator keeping both `3K以下` and `15K以下` should get the more specific
-		// one for a legacy band that sits inside both.
-		const twoLowTiers = ['3K以下', '15K以下', '45K以上'];
-		expect(normalizeSalary('1000-2000元', twoLowTiers)).toBe('3K以下');
-	});
-
-	it('falls back to the top configured tier for a legacy open-ended band', () => {
-		// An operator who deleted `45K以上` must still get *some* senior band rather than
-		// a value the dropdown cannot select.
-		const withoutTop = ['15K以下', '15-25K', '25-35K'];
-		expect(normalizeSalary('5万元以上', withoutTop)).toBe('25-35K');
 	});
 
 	it('keeps an unrecognised value rather than discarding the filter', () => {

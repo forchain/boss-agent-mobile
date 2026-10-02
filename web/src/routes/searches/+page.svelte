@@ -13,6 +13,7 @@
 	import { buildSearchLaunch } from '$lib/taskLaunch';
 	import {
 		DEFAULT_SALARY_OPTIONS,
+		DEFAULT_TOP_SALARY_TIER,
 		normalizeSalary,
 		resolveSalaryOptions,
 		salarySelectOptions
@@ -96,7 +97,7 @@
 
 	/** The top configured tier — what a preset's "senior band" filter means. */
 	function topSalaryTier(): string {
-		return salaryOptions[salaryOptions.length - 1];
+		return salaryOptions[salaryOptions.length - 1] || DEFAULT_TOP_SALARY_TIER;
 	}
 
 	async function loadSalaryOptions() {

@@ -350,8 +350,9 @@ export function loadMergedSettings(): SystemSettings {
 	settings.max_commute_distance_km = normalizeCommuteLimit(settings.max_commute_distance_km);
 
 	// Salary ladder (issue #337): a malformed or empty list on disk must not leave the
-	// search strategy modal with no options to offer. Same fall-back-to-baseline guard
-	// as the Python `config_realm.salary_options`.
+	// search strategy modal with no options to offer. Same fall-back-to-baseline guard —
+	// and the same tolerance for a comma-separated scalar — as the Python
+	// `config_realm.salary_options`, so a hand-edit is read the same way by both loaders.
 	settings.salary_options = resolveSalaryOptions(settings.salary_options);
 
 	// Filter out template placeholder strings
