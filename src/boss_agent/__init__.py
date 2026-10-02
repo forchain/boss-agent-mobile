@@ -62,6 +62,14 @@ with contextlib.suppress(ImportError):
     )
 
 with contextlib.suppress(ImportError):
+    from .salary import (
+        find_closest_salary_tier,
+        is_salary_text,
+        normalize_salary,
+        parse_salary_bounds,
+    )
+
+with contextlib.suppress(ImportError):
     from .feed_pipeline import (
         FeedStreamConfig,
         FeedStreamResult,
@@ -165,4 +173,8 @@ __all__ = [
     "ensure_greeting_prefix",
     "format_recruiter_greeting_prefix",
     "parse_recruiter_title",
+    "find_closest_salary_tier",
+    "is_salary_text",
+    "normalize_salary",
+    "parse_salary_bounds",
 ]

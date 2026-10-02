@@ -34,6 +34,7 @@ from .models import (
     jd_is_truncated,
 )
 from .rejection import DISINTEREST_REASON
+from .salary import find_closest_salary_tier, is_salary_text
 
 logger = logging.getLogger("boss_agent.pages")
 ui_logger = logging.getLogger("droid_agent_core.ui")
@@ -840,21 +841,50 @@ class SearchPage(BaseBossPage):
 
 
 FILTER_OPTION_SYNONYMS: dict[str, list[str]] = {
+    # 15K以下 and variants (issue #338)
+    "15k以下": ["15K以下", "15k以下", "1.5万以下", "1.5万元以下", "15000元以下", "15000以下"],
+    "1.5万以下": ["15K以下", "15k以下", "1.5万以下", "1.5万元以下", "15000元以下", "15000以下"],
+    "1.5万元以下": ["15K以下", "15k以下", "1.5万以下", "1.5万元以下", "15000元以下", "15000以下"],
+    "15000元以下": ["15K以下", "15k以下", "1.5万以下", "1.5万元以下", "15000元以下", "15000以下"],
+    "15000以下": ["15K以下", "15k以下", "1.5万以下", "1.5万元以下", "15000元以下", "15000以下"],
+    # 15-25K and variants (issue #338)
+    "15-25k": ["15-25K", "15-25k", "1.5-2.5万", "1.5-2.5万元", "15000-25000元"],
+    "1.5-2.5万": ["15-25K", "15-25k", "1.5-2.5万", "1.5-2.5万元", "15000-25000元"],
+    "1.5-2.5万元": ["15-25K", "15-25k", "1.5-2.5万", "1.5-2.5万元", "15000-25000元"],
+    "15000-25000元": ["15-25K", "15-25k", "1.5-2.5万", "1.5-2.5万元", "15000-25000元"],
+    # 25-35K and variants (issue #338)
+    "25-35k": ["25-35K", "25-35k", "2.5-3.5万", "2.5-3.5万元", "25000-35000元"],
+    "2.5-3.5万": ["25-35K", "25-35k", "2.5-3.5万", "2.5-3.5万元", "25000-35000元"],
+    "2.5-3.5万元": ["25-35K", "25-35k", "2.5-3.5万", "2.5-3.5万元", "25000-35000元"],
+    "25000-35000元": ["25-35K", "25-35k", "2.5-3.5万", "2.5-3.5万元", "25000-35000元"],
+    # 35-45K and variants (issue #338)
+    "35-45k": ["35-45K", "35-45k", "3.5-4.5万", "3.5-4.5万元", "35000-45000元"],
+    "3.5-4.5万": ["35-45K", "35-45k", "3.5-4.5万", "3.5-4.5万元", "35000-45000元"],
+    "3.5-4.5万元": ["35-45K", "35-45k", "3.5-4.5万", "3.5-4.5万元", "35000-45000元"],
+    "35000-45000元": ["35-45K", "35-45k", "3.5-4.5万", "3.5-4.5万元", "35000-45000元"],
+    # 45K以上 and variants (issue #338)
+    "45k以上": ["45K以上", "45k以上", "4.5万以上", "4.5万元以上", "45000以上", "45000元以上"],
+    "4.5万以上": ["45K以上", "45k以上", "4.5万以上", "4.5万元以上", "45000以上", "45000元以上"],
+    "4.5万元以上": ["45K以上", "45k以上", "4.5万以上", "4.5万元以上", "45000以上", "45000元以上"],
+    "45000以上": ["45K以上", "45k以上", "4.5万以上", "4.5万元以上", "45000以上", "45000元以上"],
+    "45000元以上": ["45K以上", "45k以上", "4.5万以上", "4.5万元以上", "45000以上", "45000元以上"],
+    # Legacy tiers (unit & casing synonyms)
     "3k以下": ["3000元以下", "3K以下", "3k以下"],
     "3000元以下": ["3000元以下", "3K以下", "3k以下"],
     "3-5k": ["3000-5000元", "3-5K", "3-5k"],
     "3000-5000元": ["3000-5000元", "3-5K", "3-5k"],
     "5-10k": ["5000-10000元", "5-10K", "5-10k"],
     "5000-10000元": ["5000-10000元", "5-10K", "5-10k"],
-    "10-20k": ["1-2万元", "1-2万", "10-20K", "10-20k"],
+    "10-20k": ["10-20K", "10-20k", "1-2万元", "1-2万"],
     "1-2万": ["1-2万元", "1-2万", "10-20K", "10-20k"],
     "1-2万元": ["1-2万元", "1-2万", "10-20K", "10-20k"],
     "20-50k": ["2-5万元", "2-5万", "20-50K", "20-50k"],
     "2-5万": ["2-5万元", "2-5万", "20-50K", "20-50k"],
     "2-5万元": ["2-5万元", "2-5万", "20-50K", "20-50k"],
-    "50k以上": ["5万元以上", "5万以上", "50K以上", "50k以上"],
+    "50k以上": ["50K以上", "50k以上", "5万元以上", "5万以上"],
     "5万以上": ["5万元以上", "5万以上", "50K以上", "50k以上"],
     "5万元以上": ["5万元以上", "5万以上", "50K以上", "50k以上"],
+    # Non-salary
     "在校/应届": ["应届生", "在校生", "在校/应届"],
     "在校生": ["在校生", "在校/应届"],
     "应届生": ["应届生", "在校/应届"],
@@ -897,8 +927,26 @@ class FilterDialogPage(BaseBossPage):
         end = Point(w * 0.5, h * 0.30)
         self.gestures.human_swipe(start, end, duration_ms=400)
 
-    def select_option(self, option_text: str, auto_scroll: bool = True) -> bool:
-        """Find and click a filter option tag with optional auto-scroll and synonym fallback."""
+    def select_category(self, category_name: str, timeout_sec: float = 2.0) -> bool:
+        """Click a category tab on the left-hand panel of the filter dialog (e.g. '薪资')."""
+        elem = self.find_by_key(
+            "filter.category_tab",
+            timeout_sec=timeout_sec,
+            format_args={"text": category_name},
+        )
+        if elem:
+            self.gestures.human_click(elem)
+            logger.info("Selected filter category tab: '%s'", category_name)
+            return True
+        return False
+
+    def select_option(
+        self,
+        option_text: str,
+        auto_scroll: bool = True,
+        category: str | None = None,
+    ) -> bool:
+        """Find and click a filter option tag with optional category navigation, auto-scroll, and synonym fallback."""
         if not option_text or not option_text.strip():
             return False
 
@@ -915,6 +963,16 @@ class FilterDialogPage(BaseBossPage):
         if trimmed not in candidates:
             candidates.insert(0, trimmed)
 
+        # Dynamic fallback mapping for salary options (issue #338)
+        is_salary = category == "薪资" or is_salary_text(trimmed)
+        if is_salary:
+            closest = find_closest_salary_tier(trimmed)
+            if closest and closest not in candidates:
+                candidates.append(closest)
+            for s in FILTER_OPTION_SYNONYMS.get((closest or "").lower(), []):
+                if s not in candidates:
+                    candidates.append(s)
+
         def _try_click_option() -> bool:
             for cand in candidates:
                 elem = self.find_by_key(
@@ -928,9 +986,16 @@ class FilterDialogPage(BaseBossPage):
                     return True
             return False
 
+        # 1. Try directly in current view of the right panel
         if _try_click_option():
             return True
 
+        # 2. Category tab navigation if category is provided or inferred (issue #338)
+        target_category = category or ("薪资" if is_salary else None)
+        if target_category and self.select_category(target_category) and _try_click_option():
+            return True
+
+        # 3. Auto-scroll down if enabled
         if auto_scroll:
             self.scroll_dialog_down()
             return _try_click_option()
@@ -999,11 +1064,11 @@ class FilterDialogPage(BaseBossPage):
 
         # 1. Top visible filters: Education, Salary, Experience
         if _is_effective(config.education):
-            self.select_option(config.education, auto_scroll=False)
+            self.select_option(config.education, auto_scroll=False, category="学历")
         if _is_effective(config.salary):
-            self.select_option(config.salary, auto_scroll=False)
+            self.select_option(config.salary, auto_scroll=False, category="薪资")
         if _is_effective(config.experience):
-            self.select_option(config.experience, auto_scroll=False)
+            self.select_option(config.experience, auto_scroll=False, category="经验")
 
         # 2. Scroll down for bottom sections: Activity and Company Scales
         needs_scroll = _is_effective(config.activity) or any(

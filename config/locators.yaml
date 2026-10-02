@@ -120,6 +120,11 @@ filter:
   option_item:
     - "//*[@resource-id='com.hpbr.bosszhipin:id/keywords_view_text' and (@text='{text}' or contains(@text, '{text}'))]"
     - "//*[@text='{text}']"
+  category_tab:
+    - "//*[@resource-id='com.hpbr.bosszhipin:id/tv_category_name' and @text='{text}']"
+    - "//*[@resource-id='com.hpbr.bosszhipin:id/tv_tab_name' and @text='{text}']"
+    - "//*[@resource-id='com.hpbr.bosszhipin:id/tv_title' and @text='{text}']"
+    - "//*[@text='{text}']"
 
 industry:
   filter_entry:
