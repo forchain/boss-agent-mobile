@@ -14,8 +14,17 @@
 	} from '$lib/pocketbase';
 	import { buildSearchLaunch, DEFAULT_MAX_JOBS } from '$lib/taskLaunch';
 	import { dashboardRealtime } from '$lib/dashboardRealtime';
-	import TaskLaunchModal from '$lib/components/TaskLaunchModal.svelte';
-	import TaskLogModal from '$lib/components/TaskLogModal.svelte';
+	import {
+		activeTaskFilter,
+		createTaskStatusTracker,
+		isActiveTask,
+		isTerminalTaskStatus,
+		pickConsoleTask,
+		shouldReEvaluateConsoleFocus,
+		shouldSyncTaskHistory
+	} from '$lib/taskConsole';
+	import { logAutoScroll } from '$lib/logFollow.svelte';
+	import TaskLaunchModal from '$lib/components/TaskLaunchModal.svelte';	import TaskLogModal from '$lib/components/TaskLogModal.svelte';
 
 	// Active Running Task State
 	let activeTaskId = $state<string | null>(null);
@@ -26,6 +35,12 @@
 		'[System] 任务控制台就绪，正在监听自动化状态流...'
 	]);
 
+	//: A one-line console note per task, held until tracking adopts that task. Setting
+	//: `activeTaskId` directly on a create event is what used to let a queued task take the
+	//: viewport, so the note travels with its task (issue #357). Not `$state`: read only
+	//: while adopting, never rendered on its own.
+	const consoleNotices = new Map<string, string>();
+
 	// Task History State
 	let historyTasks = $state<AutomationTask[]>([]);
 	let historyFilter = $state<string>('all');
@@ -34,6 +49,10 @@
 	let taskPageSize = $state(20);
 	let totalTasks = $state(0);
 	let taskTotalPages = $state(1);
+
+	//: Row statuses this page has already seen, so a log append can be told apart from a
+	//: lifecycle transition (issue #355). Not `$state`: a cache, never rendered.
+	const statusTracker = createTaskStatusTracker();
 
 	// Scheduled Tasks & Saved Searches State
 	let savedSearches = $state<SavedSearch[]>([]);
@@ -60,19 +79,29 @@
 	let isLogModalOpen = $state(false);
 	let inspectTask = $state<AutomationTask | null>(null);
 
-	function getTaskPriority(status: string): number {
-		switch (status) {
-			case 'running':
-				return 100; // Actively executing on device/worker
-			case 'paused_for_takeover':
-				return 90; // Requires human intervention
-			case 'resuming':
-				return 80;
-			case 'pending':
-				return 10; // Waiting in queue
-			default:
-				return 0;
+	/**
+	 * Point the console at a task. A note made when the task was dispatched is shown here
+	 * only if the console lands on that task while it is still queued, so one task's
+	 * context never leaks onto another, and never contradicts a later status.
+	 */
+	function adoptTask(task: AutomationTask) {
+		const switched = activeTaskId !== task.id;
+		activeTaskId = task.id;
+		activeTask = task;
+		const notice = task.status === 'pending' ? consoleNotices.get(task.id) : undefined;
+		if (task.logs && task.logs.length) {
+			logLines = task.logs;
+		} else if (switched) {
+			// Only a switch may replace the view. Re-seeding for the same task would wipe
+			// lines the operator's own actions had pushed into the box.
+			logLines = [notice ?? defaultConsoleLine(task)];
 		}
+		isPausedForTakeover = task.status === 'paused_for_takeover';
+		consoleNotices.delete(task.id);
+	}
+
+	function defaultConsoleLine(task: AutomationTask): string {
+		return `[System] 任务 ${task.id} 当前状态: ${task.status}，等待新的日志推送...`;
 	}
 
 	async function refreshAllData() {
@@ -84,48 +113,38 @@
 		try {
 			// Query non-terminal tasks
 			const res = await listAutomationTasks({
-				filter: "status='running' || status='paused_for_takeover' || status='resuming' || status='pending'",
+				filter: activeTaskFilter(),
 				limit: 20
 			});
-			const activeCandidates = res.items.filter((t) =>
-				['running', 'paused_for_takeover', 'resuming', 'pending'].includes(t.status)
-			);
+			const activeRows = res.items.filter(isActiveTask);
 
-			if (activeCandidates.length > 0) {
-				// Sort by status priority first, then by creation time (-created)
-				activeCandidates.sort((a, b) => {
-					const prioDiff = getTaskPriority(b.status) - getTaskPriority(a.status);
-					if (prioDiff !== 0) return prioDiff;
-					const timeA = a.created ? new Date(a.created).getTime() : 0;
-					const timeB = b.created ? new Date(b.created).getTime() : 0;
-					return timeB - timeA;
-				});
+			// Seed the tracker with what this load already knows. Without it the first
+			// broker event for an already-running row reads as a brand-new arrival, and the
+			// history table reloads once for a log append it did not need (issue #355).
+			for (const row of activeRows) {
+				statusTracker.record(row);
+			}
 
-				const bestCandidate = activeCandidates[0];
+			// A pin on a task that has left the active set is stale: drop it, and let
+			// tracking resume rather than watching a task that cannot make progress.
+			if (
+				manuallySelectedTaskId &&
+				!activeRows.some((t) => t.id === manuallySelectedTaskId)
+			) {
+				manuallySelectedTaskId = null;
+			}
 
-				// If user explicitly focused on an active task, honor it
-				let chosen = bestCandidate;
-				if (manuallySelectedTaskId) {
-					const manualMatch = activeCandidates.find((t) => t.id === manuallySelectedTaskId);
-					if (manualMatch) {
-						chosen = manualMatch;
-					} else {
-						// Manually selected task is no longer active, unpin
-						manuallySelectedTaskId = null;
-					}
-				}
+			const chosen = pickConsoleTask(activeRows, {
+				pinnedId: manuallySelectedTaskId,
+				currentId: activeTaskId
+			});
 
-				activeTaskId = chosen.id;
-				activeTask = chosen;
-				if (chosen.logs && chosen.logs.length) {
-					logLines = chosen.logs;
-				}
-				isPausedForTakeover = chosen.status === 'paused_for_takeover';
+			if (chosen) {
+				adoptTask(chosen);
 				return;
 			}
 
-			// No active candidates found
-			manuallySelectedTaskId = null;
+			// Nothing active. Keep the finished task on screen for the operator to read.
 			if (activeTaskId) {
 				const rec = await getAutomationTask(activeTaskId);
 				if (rec) {
@@ -137,7 +156,7 @@
 				}
 			}
 
-			if (activeTask && !['success', 'failed', 'cancelled'].includes(activeTask.status)) {
+			if (activeTask && !isTerminalTaskStatus(activeTask.status)) {
 				activeTaskId = null;
 				activeTask = null;
 				isPausedForTakeover = false;
@@ -149,12 +168,7 @@
 
 	function onFocusTask(t: AutomationTask) {
 		manuallySelectedTaskId = t.id;
-		activeTaskId = t.id;
-		activeTask = t;
-		if (t.logs && t.logs.length) {
-			logLines = t.logs;
-		}
-		isPausedForTakeover = t.status === 'paused_for_takeover';
+		adoptTask(t);
 	}
 
 	function onUnfocusManualTask() {
@@ -162,8 +176,16 @@
 		checkActiveTask();
 	}
 
-	async function loadTaskHistory(page = taskPage) {
-		isHistoryLoading = true;
+	/**
+	 * @param options.silent Background sync. It must never blank the table it is
+	 *   refreshing: while rows are on screen there is nothing to announce, and raising the
+	 *   loading flag swapped the rendered rows for the placeholder on every appended log
+	 *   line (issue #355).
+	 */
+	async function loadTaskHistory(page = taskPage, options: { silent?: boolean } = {}) {
+		if (!options.silent || historyTasks.length === 0) {
+			isHistoryLoading = true;
+		}
 		taskPage = page;
 		try {
 			const res = await listAutomationTasks({
@@ -227,9 +249,13 @@
 	async function onRerunTask(t: AutomationTask) {
 		const newRun = await rerunTask(t.id);
 		if (newRun) {
-			activeTaskId = newRun.id;
-			activeTask = newRun;
-			logLines = [`[System] 已重新下发任务 ${newRun.id} (来源于 ${t.id})...`];
+			// The rerun joins the back of the queue. Whether the console follows it is
+			// tracking's call, not this button's (issue #357).
+			consoleNotices.set(
+				newRun.id,
+				`[System] 已重新下发任务 ${newRun.id} (来源于 ${t.id})...`
+			);
+			await checkActiveTask();
 			await loadTaskHistory();
 		}
 	}
@@ -252,16 +278,24 @@
 		// "run the scheduled strategy" means the strategy's own Target Action.
 		const launch = buildSearchLaunch({ ...search, max_jobs: search.max_jobs || DEFAULT_MAX_JOBS }, { source: 'manual' });
 		const task = await createAutomationTask(launch.task_type, launch.payload, launch.source);
-		activeTaskId = task.id;
-		activeTask = task;
-		logLines = [`[Scheduled] 手动触发策略 [${search.name}] 任务下发成功 (ID: ${task.id})...`];
+		// Queued, not adopted: see `onRerunTask` (issue #357).
+		consoleNotices.set(
+			task.id,
+			`[Scheduled] 手动触发策略 [${search.name}] 任务下发成功 (ID: ${task.id})...`
+		);
+		await checkActiveTask();
 		await loadTaskHistory();
 	}
 
 	function handleTaskCreated(task: AutomationTask) {
-		activeTaskId = task.id;
-		activeTask = task;
-		logLines = [`[System] 任务下发成功 (ID: ${task.id}), 等待 Worker 认领...`];
+		// The console does not jump to a task that has only just been queued — it keeps
+		// watching whatever the worker is doing, and picks this one up if the queue drains
+		// to it or the worker claims it (issue #357).
+		consoleNotices.set(
+			task.id,
+			`[System] 任务下发成功 (ID: ${task.id})，正在队列中等待 Worker 认领...`
+		);
+		checkActiveTask();
 		loadTaskHistory();
 	}
 
@@ -319,28 +353,52 @@
 		// Health-gated, retried and unsubscribed by handle in one place. This page was
 		// the only one with a gate; the gate and the teardown now live in the module.
 		offTasks = dashboardRealtime().subscribeToCollection('automation_tasks', (e) => {
-					if (e.action === 'create' || e.action === 'update' || e.action === 'delete') {
-						const t = e.record as unknown as AutomationTask;
-						if (activeTaskId && t.id === activeTaskId) {
-							activeTask = t;
-							if (t.logs && t.logs.length) {
-								logLines = t.logs;
-							}
-							isPausedForTakeover = t.status === 'paused_for_takeover';
-						}
+			if (e.action !== 'create' && e.action !== 'update' && e.action !== 'delete') return;
+			const t = e.record as unknown as AutomationTask;
 
-						// If an active task appears, or current active task finished, re-evaluate
-						if (['running', 'paused_for_takeover', 'resuming', 'pending'].includes(t.status) && !activeTaskId) {
-							checkActiveTask();
-						} else if (t.status === 'running' && activeTask?.status !== 'running') {
-							checkActiveTask();
-						} else if (activeTask && ['success', 'failed', 'cancelled'].includes(activeTask.status)) {
-							checkActiveTask();
-						}
+			// A running task appends a log line every few seconds, and each one arrives
+			// here as an ordinary `update` on a row whose status never changed. Splitting
+			// that from a real transition is what keeps the history table from reloading —
+			// and strobing its "正在加载历史任务..." placeholder — on every line (issue #355).
+			const statusChanged = statusTracker.record(t);
+			if (e.action === 'delete') statusTracker.forget(t.id);
 
-						// Refresh history in background
-						loadTaskHistory();
-					}
+			// The live log box is the one surface a log append is allowed to touch.
+			if (activeTaskId && t.id === activeTaskId) {
+				activeTask = t;
+				if (t.logs && t.logs.length) {
+					logLines = t.logs;
+				}
+				isPausedForTakeover = t.status === 'paused_for_takeover';
+			}
+
+			// The log modal is opened on a task, not on a snapshot of one: without this an
+			// open modal kept showing the logs it was opened with, so its auto-scroll
+			// (#356) had nothing to follow.
+			if (inspectTask && t.id === inspectTask.id) {
+				inspectTask = t;
+			}
+
+			if (
+				shouldReEvaluateConsoleFocus({
+					action: e.action,
+					taskId: t.id,
+					status: t.status,
+					activeTaskId,
+					statusChanged
+				})
+			) {
+				// A claim, a fresh queue entry, or the watched task finishing: re-decide
+				// which task the console should be on (issue #357).
+				checkActiveTask();
+			}
+
+			// Only a lifecycle transition or a row appearing/disappearing changes what the
+			// history table has to show. This runs silently so the rows already rendered
+			// stay exactly where they are (issue #355).
+			if (shouldSyncTaskHistory({ action: e.action, statusChanged })) {
+				loadTaskHistory(taskPage, { silent: true });
+			}
 		});
 	});
 
@@ -469,7 +527,7 @@
 				<div class="flex items-center space-x-4">
 					<div>
 						<span class="text-slate-500 text-[10px] block">任务 ID</span>
-						<span class="font-mono text-slate-200">{activeTask.id}</span>
+						<span data-testid="console-task-id" class="font-mono text-slate-200">{activeTask.id}</span>
 					</div>
 					<div>
 						<span class="text-slate-500 text-[10px] block">任务类型</span>
@@ -537,6 +595,8 @@
 					</button>
 				</div>
 				<div
+					use:logAutoScroll={() => ({ identity: activeTaskId, content: logLines.length })}
+					data-testid="task-console-log"
 					class="bg-slate-950 border border-slate-800 rounded-xl p-4 h-64 overflow-y-auto font-mono text-xs text-slate-300 space-y-1 custom-scrollbar leading-relaxed"
 				>
 					{#each logLines as line}
@@ -633,7 +693,10 @@
 
 		<!-- Tab Content: Task History -->
 		{#if bottomTab === 'history'}
-			{#if isHistoryLoading}
+			<!-- The placeholder is for a table with nothing in it yet. Rows already on
+			     screen stay put through a background sync, so a live run cannot make the
+			     list blink back to empty (issue #355). -->
+			{#if isHistoryLoading && historyTasks.length === 0}
 				<div class="p-8 text-center text-xs text-slate-500">正在加载历史任务...</div>
 			{:else if historyTasks.length === 0}
 				<div class="p-8 text-center text-xs text-slate-500 rounded-xl bg-slate-950/40 border border-dashed border-slate-800">
