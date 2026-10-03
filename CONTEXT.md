@@ -128,6 +128,26 @@ _Avoid_: Crontab daemon, task timer, periodic runner
 The unified web operational command center (`/`) coordinating real-time active task telemetry, historical task audit logs, and scheduled automation jobs without duplicate entity widgets.
 _Avoid_: Control panel, home view, main dashboard
 
+**Console Focus Decision (控制台焦点决策)**:
+The single ranked rule deciding which active task the Task Management Dashboard's console displays: a Monitor Pin outranks everything, executing work holds the console, a task awaiting human takeover outranks running work, and ties break oldest-first to match the Automation Worker's claim order. Implemented in `web/src/lib/taskConsole.ts`; import it rather than re-deriving the ranking in the page.
+_Avoid_: Focus logic, active task selection, newest task focus
+
+**Monitor Pin (监视 pin)**:
+The operator's explicit choice to hold the dashboard console on one task, outranking every automatic rule, and released either on request or once its task has left the active set.
+_Avoid_: Manual selection, sticky task, locked task
+
+**Console Notice (控制台提示行)**:
+The single `[System]` line recorded when a task is dispatched and held until the Console Focus Decision actually adopts that task, so a merely queued task never takes the viewport and one task's context never leaks onto another's.
+_Avoid_: Toast, notification, log line
+
+**Silent History Sync (静默历史同步)**:
+A history-table refresh that updates the rows on screen without raising the loading flag or swapping in the 正在加载历史任务... placeholder, so an appended log line — told apart from a lifecycle transition by the page's task status tracker — cannot strobe the table.
+_Avoid_: Background refresh, quiet reload, load-without-spinner
+
+**Follow-the-Tail Log Viewport (跟随日志尾部)**:
+The two-state scroll rule shared by the dashboard console's log box and `TaskLogModal` (`web/src/lib/logFollow.ts`): pinned to the newest line until the operator scrolls back to read, re-armed within 48px of the bottom, and reset to pinned when a different task is shown.
+_Avoid_: Auto-scroll, scroll-to-bottom, sticky log
+
 **Settings Panel**:
 The dedicated, extensible system configuration view (`/settings`) housing LLM parameters, connectivity testing, and modular placeholders for future device bindings and notification rules.
 _Avoid_: Config tab, options modal, preference page

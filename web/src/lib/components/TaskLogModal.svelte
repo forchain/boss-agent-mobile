@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { logAutoScroll } from '$lib/logFollow.svelte';
 	import type { AutomationTask } from '$lib/types';
 
 	let {
@@ -98,7 +99,11 @@
 			</div>
 
 			<!-- Terminal Logs Box -->
-			<div class="p-6 overflow-y-auto flex-1 bg-slate-950 font-mono text-xs text-slate-300 space-y-1 select-text leading-relaxed">
+			<div
+				use:logAutoScroll={() => ({ identity: task?.id ?? null, content: task?.logs?.length ?? 0 })}
+				data-testid="task-log-scroll"
+				class="p-6 overflow-y-auto flex-1 bg-slate-950 font-mono text-xs text-slate-300 space-y-1 select-text leading-relaxed"
+			>
 				{#if task.logs && task.logs.length > 0}
 					{#each task.logs as line}
 						<div class="break-all whitespace-pre-wrap">{line}</div>
