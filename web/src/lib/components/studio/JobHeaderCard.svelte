@@ -1,16 +1,29 @@
 <script lang="ts">
 	import type { JobRecord } from '$lib/types';
-	import { cleanJobTitle, getJobTags, getJobDigest } from '$lib/screening';
+	import {
+		cleanJobTitle,
+		getJobTags,
+		getJobDigest,
+		getScreeningStageLabel
+	} from '$lib/screening';
 	import { formatCommuteDistance } from '$lib/commute';
 
 	let {
 		job,
 		isDeleting = false,
-		onDelete
+		onDelete,
+		isEvaluatingScreening = false,
+		screeningEvaluateVerdict = null,
+		screeningEvaluateError = '',
+		onEvaluateScreening
 	}: {
 		job: JobRecord;
 		isDeleting?: boolean;
 		onDelete?: (job: JobRecord) => void;
+		isEvaluatingScreening?: boolean;
+		screeningEvaluateVerdict?: { approved: boolean; reason: string; stage?: string } | null;
+		screeningEvaluateError?: string;
+		onEvaluateScreening?: () => void;
 	} = $props();
 
 	let selectedJobTags = $derived(getJobTags(job));
@@ -45,7 +58,7 @@
 					</span>
 				{:else}
 					<span class="px-2 py-0.5 rounded text-[10px] bg-rose-950 text-rose-400 border border-rose-800 font-medium">
-						已初筛淘汰 / 已忽略
+						{getScreeningStageLabel(job.screening_stage)}
 					</span>
 				{/if}
 			</div>
@@ -146,11 +159,49 @@
 
 	<!-- Job Description Details -->
 	<div>
-		<h4 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
-			📋 岗位职责与任职要求 (JD 全文)
-		</h4>
+		<div class="flex items-center justify-between mb-2">
+			<h4 class="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+				📋 岗位职责与任职要求 (JD 全文)
+			</h4>
+			{#if job.status !== 'ignored' && onEvaluateScreening}
+				<button
+					type="button"
+					onclick={() => onEvaluateScreening()}
+					disabled={isEvaluatingScreening}
+					class="px-2.5 py-1 rounded-lg text-xs font-medium bg-amber-950/60 hover:bg-amber-900/80 text-amber-300 border border-amber-800/80 transition flex items-center space-x-1 disabled:opacity-50"
+					title="依据当前生效的筛选准则与精筛提示词对本岗位进行客观语义精筛"
+				>
+					{#if isEvaluatingScreening}
+						<span class="animate-spin text-[10px]">🔄</span>
+						<span>精筛中...</span>
+					{:else}
+						<span>🔍 依据当前提示词重新精筛</span>
+					{/if}
+				</button>
+			{/if}
+		</div>
 		<div class="bg-slate-950 border border-slate-800/80 rounded-xl p-4 text-xs text-slate-300 font-sans whitespace-pre-wrap leading-relaxed max-h-60 overflow-y-auto custom-scrollbar">
 			{job.job_description || '暂无详细描述文本'}
 		</div>
+
+		{#if job.status !== 'ignored' && screeningEvaluateError}
+			<div class="mt-2.5 p-2.5 bg-rose-950/60 border border-rose-800 rounded-lg text-xs text-rose-300">
+				❌ {screeningEvaluateError}
+			</div>
+		{/if}
+
+		{#if job.status !== 'ignored' && screeningEvaluateVerdict}
+			<div class="mt-2.5 p-3 rounded-xl border {screeningEvaluateVerdict.approved ? 'bg-emerald-950/40 border-emerald-800 text-emerald-200' : 'bg-rose-950/40 border-rose-800 text-rose-200'} space-y-1.5 text-xs">
+				<div class="flex items-center space-x-2 font-semibold">
+					<span>{screeningEvaluateVerdict.approved ? '✅ 精筛通过 (Approved)' : '❌ 精筛淘汰 (Rejected)'}</span>
+					{#if screeningEvaluateVerdict.stage}
+						<span class="px-1.5 py-0.5 rounded text-[10px] bg-slate-900 border border-slate-700 text-slate-300 font-normal">
+							{getScreeningStageLabel(screeningEvaluateVerdict.stage)}
+						</span>
+					{/if}
+				</div>
+				<p class="text-[11px] font-mono opacity-90">{screeningEvaluateVerdict.reason}</p>
+			</div>
+		{/if}
 	</div>
 </div>

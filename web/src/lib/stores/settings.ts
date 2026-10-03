@@ -56,11 +56,26 @@ export interface GreetingPromptState {
 	unsaved: boolean;
 }
 
+/** The screening long-term memory document (ADR 0010, Spec #340) — the twin of
+ * `GreetingPromptState`, so both living-memory documents load, save and warn the same way. */
+export interface ScreeningPromptState {
+	prompt: string;
+	isDefault: boolean;
+	loaded: boolean;
+	unsaved: boolean;
+}
+
 export const settingsStore = writable<SystemSettings>({ ...DEFAULT_SETTINGS });
 export const screeningPolicyStore = writable<ScreeningPolicy>({ ...DEFAULT_SCREENING_POLICY });
 export const maxCommuteInputStore = writable<string | number | null>('40');
 export const chatAckStore = writable<ChatAcknowledgmentConfig>({ ...DEFAULT_CHAT_ACKNOWLEDGMENT });
 export const greetingPromptStore = writable<GreetingPromptState>({
+	prompt: '',
+	isDefault: false,
+	loaded: false,
+	unsaved: false
+});
+export const screeningPromptStore = writable<ScreeningPromptState>({
 	prompt: '',
 	isDefault: false,
 	loaded: false,
@@ -83,6 +98,10 @@ export const savePolicyError = writable<string>('');
 export const isSavingPrompt = writable<boolean>(false);
 export const savePromptSuccess = writable<string>('');
 export const savePromptError = writable<string>('');
+
+export const isSavingScreeningPrompt = writable<boolean>(false);
+export const saveScreeningPromptSuccess = writable<string>('');
+export const saveScreeningPromptError = writable<string>('');
 
 export const isLoadingCommunication = writable<boolean>(false);
 export const isClearingExpired = writable<boolean>(false);
@@ -191,6 +210,20 @@ export async function loadAllSettings(): Promise<void> {
 	} catch (e) {
 		console.warn('Failed to load greeting prompt:', e);
 	}
+
+	try {
+		const spData = await apiGet<{ prompt?: string; isDefault?: boolean }>('/api/screening/prompt');
+		if (typeof spData.prompt === 'string') {
+			screeningPromptStore.set({
+				prompt: spData.prompt,
+				isDefault: Boolean(spData.isDefault),
+				loaded: true,
+				unsaved: false
+			});
+		}
+	} catch (e) {
+		console.warn('Failed to load screening prompt:', e);
+	}
 }
 
 export async function saveSystemSettings(): Promise<boolean> {
@@ -298,6 +331,41 @@ export async function postGreetingPrompt(
 		return false;
 	} finally {
 		isSavingPrompt.set(false);
+	}
+}
+
+export async function postScreeningPrompt(
+	payload: Record<string, unknown>,
+	fallbackSuccess = '✅ 精筛长期记忆提示词已成功持久化',
+	failureLabel = '保存失败'
+): Promise<boolean> {
+	isSavingScreeningPrompt.set(true);
+	saveScreeningPromptSuccess.set('');
+	saveScreeningPromptError.set('');
+
+	try {
+		const data = await apiPost<{ success: boolean; prompt?: string; message?: string; error?: string }>(
+			'/api/screening/prompt',
+			payload
+		);
+		if (data.success) {
+			screeningPromptStore.update((s) => ({
+				...s,
+				prompt: data.prompt ?? s.prompt,
+				isDefault: false,
+				unsaved: false
+			}));
+			setFeedback(saveScreeningPromptSuccess, data.message || fallbackSuccess);
+			return true;
+		} else {
+			saveScreeningPromptError.set(`❌ ${failureLabel}: ${data.error || '未知错误'}`);
+			return false;
+		}
+	} catch (e: any) {
+		saveScreeningPromptError.set(`❌ ${failureLabel}异常: ${e?.message || e}`);
+		return false;
+	} finally {
+		isSavingScreeningPrompt.set(false);
 	}
 }
 

@@ -348,11 +348,11 @@ def test_matches_card_keywords_with_digest_blacklist_rejection():
         digest="此职位需长期在银行客户现场驻场办公，负责系统维护",
     )
     assert passed is False
-    assert "驻场" in reason
+    assert reason == "命中岗位摘要黑名单关键词: '驻场'"
 
 
-def test_matches_card_keywords_with_tags_blacklist_rejection():
-    """Card is rejected if title_blacklist keyword appears in tags."""
+def test_matches_card_keywords_uncoupled_tags_do_not_trigger_title_blacklist():
+    """Card tags do not trigger title_blacklist, preventing false-positive rejection."""
     policy = ScreeningPolicy(
         title_blacklist=["Java", "C++"],
     )
@@ -362,8 +362,38 @@ def test_matches_card_keywords_with_tags_blacklist_rejection():
         tags=["Java", "SpringCloud", "MySQL"],
         digest="负责核心微服务系统架构",
     )
-    assert passed is False
-    assert "Java" in reason
+    assert passed is True
+    assert "通过卡片初筛" in reason
+
+
+def test_matches_card_keywords_tags_do_not_trigger_title_blacklist_regression():
+    """Regression test for #350: '资深Agent研发工程师' with tags ['Java', 'Python'] passes when title_blacklist=['Java']."""
+    policy = ScreeningPolicy(
+        title_blacklist=["Java"],
+    )
+    passed, reason = policy.matches_card_keywords(
+        title="资深Agent研发工程师",
+        company_name="智元创新",
+        tags=["Java", "Python"],
+        digest="负责前沿多智能体协同框架设计与核心落地",
+    )
+    assert passed is True
+    assert "通过卡片初筛" in reason
+
+
+def test_matches_card_keywords_uncoupled_tags_do_not_trigger_digest_blacklist():
+    """Card tags do not trigger jd_blacklist, preventing false-positive rejection."""
+    policy = ScreeningPolicy(
+        jd_blacklist=["外包", "驻场"],
+    )
+    passed, reason = policy.matches_card_keywords(
+        title="资深Agent研发工程师",
+        company_name="某自研科技",
+        tags=["外包", "驻场服务"],
+        digest="自研核心产品研发，技术挑战大",
+    )
+    assert passed is True
+    assert "通过卡片初筛" in reason
 
 
 def test_matches_card_keywords_with_digest_whitelist_admission():

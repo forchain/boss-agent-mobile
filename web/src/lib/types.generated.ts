@@ -103,6 +103,7 @@ export interface JobRecord {
 	greeting_source?: string;
 	search_keywords?: string[];
 	screened_reason?: string;
+	screening_stage?: string;
 	relaxed_by_whitelist?: boolean;
 	screening_audit?: string;
 	applied_at?: string | null;

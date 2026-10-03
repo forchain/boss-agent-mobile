@@ -14,7 +14,14 @@
 		postCommunicationAction
 	} from '$lib/stores/jobs';
 	import { createAutomationTask } from '$lib/stores/tasks';
-	import { validateCanBlacklistCompany, isMaskedCompanyName } from '$lib/screening';
+	import {
+		validateCanBlacklistCompany,
+		isMaskedCompanyName,
+		cleanJobTitle,
+		getJobTags,
+		getJobDigest,
+		getScreeningStageLabel
+	} from '$lib/screening';
 	import { apiGet, apiPost } from '$lib/apiClient';
 	import { confirmAction, alertAction } from '$lib/stores/confirm';
 	import { buildDirectApplyLaunch } from '$lib/taskLaunch';
@@ -25,6 +32,7 @@
 	import JobMatchEvaluationPanel from './studio/JobMatchEvaluationPanel.svelte';
 	import JobGreetingRefinementPanel from './studio/JobGreetingRefinementPanel.svelte';
 	import JobActionsBar from './studio/JobActionsBar.svelte';
+	import JobScreeningStudioPanel from './studio/JobScreeningStudioPanel.svelte';
 
 	let {
 		job = null,
@@ -81,6 +89,22 @@
 	let isRestoring = $state(false);
 	let restoreNotice = $state('');
 
+	// Screening Critique & Retest (Spec #340)
+	let screeningPromptText = $state('');
+	let screeningCritiqueInput = $state('');
+	let isRetestingScreening = $state(false);
+	let screeningRetestVerdict = $state<{ approved: boolean; reason: string } | null>(null);
+	let screeningRetestError = $state('');
+	let isRefiningScreeningPrompt = $state(false);
+	let screeningPromptRefinement = $state<{ before: string; after: string } | null>(null);
+	let screeningPromptSaveNotice = $state('');
+	let isSavingScreeningPrompt = $state(false);
+
+	// Standalone Manual Deep Screening (Spec #346, Issue #347)
+	let isEvaluatingScreening = $state(false);
+	let screeningEvaluateVerdict = $state<{ approved: boolean; reason: string; stage?: string } | null>(null);
+	let screeningEvaluateError = $state('');
+
 	// Communication state clearance (Issue #203)
 	let isClearingCommunication = $state(false);
 	let isClearingCompany = $state(false);
@@ -110,6 +134,13 @@
 			promptRefinement = null;
 			showManualEditSuggestion = false;
 			refineError = '';
+			screeningCritiqueInput = '';
+			screeningRetestVerdict = null;
+			screeningRetestError = '';
+			screeningPromptRefinement = null;
+			screeningPromptSaveNotice = '';
+			screeningEvaluateVerdict = null;
+			screeningEvaluateError = '';
 		}
 	});
 
@@ -118,6 +149,16 @@
 			const gpData = await apiGet<{ prompt?: string }>('/api/greeting/prompt');
 			if (typeof gpData.prompt === 'string') {
 				greetingPromptText = gpData.prompt;
+			}
+		} catch (e) {}
+
+		try {
+			const spRes = await fetch('/api/screening/prompt');
+			if (spRes.ok) {
+				const spData = await spRes.json();
+				if (typeof spData.prompt === 'string') {
+					screeningPromptText = spData.prompt;
+				}
 			}
 		} catch (e) {}
 	});
@@ -344,9 +385,10 @@
 			const targetStatus: JobRecordStatus = 'jd_saved';
 			const updated = await updateJobRecord(currentJob.id, {
 				status: targetStatus,
-				screened_reason: ''
+				screened_reason: '',
+				screening_stage: ''
 			});
-			localOverride = { ...currentJob, status: targetStatus, screened_reason: '' };
+			localOverride = { ...currentJob, status: targetStatus, screened_reason: '', screening_stage: '' };
 			if (updated) {
 				onJobUpdated?.({ ...localOverride });
 			}
@@ -359,6 +401,157 @@
 			restoreNotice = '❌ 恢复职位失败: ' + (e?.message || e);
 		} finally {
 			isRestoring = false;
+		}
+	}
+
+	async function handleScreeningRetest() {
+		if (!currentJob || !screeningCritiqueInput.trim()) return;
+		isRetestingScreening = true;
+		screeningRetestError = '';
+		screeningRetestVerdict = null;
+		try {
+			const res = await fetch('/api/screening/critique', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					action: 'retest',
+					job: {
+						title: currentJob.title,
+						company_name: currentJob.company_name,
+						salary_range: currentJob.salary_range,
+						job_description: currentJob.job_description,
+						recruiter_name: currentJob.recruiter_name,
+						recruiter_title: currentJob.recruiter_title
+					},
+					critique: screeningCritiqueInput.trim(),
+					current_prompt: screeningPromptText,
+					llmSettings: llmSettings
+				})
+			});
+			const data = await res.json();
+			if (!res.ok || !data.success) {
+				throw new Error(data.error || '纠偏重测失败');
+			}
+			screeningRetestVerdict = {
+				approved: Boolean(data.approved),
+				reason: String(data.reason || '')
+			};
+		} catch (err: any) {
+			screeningRetestError = err.message || '重测请求异常';
+		} finally {
+			isRetestingScreening = false;
+		}
+	}
+
+	async function handleScreeningAdoptAndRefinePrompt() {
+		if (!currentJob || !screeningRetestVerdict) return;
+		isRefiningScreeningPrompt = true;
+		screeningPromptSaveNotice = '';
+		try {
+			const res = await fetch('/api/screening/critique', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					action: 'prompt-refine',
+					job: {
+						title: currentJob.title,
+						company_name: currentJob.company_name,
+						salary_range: currentJob.salary_range,
+						job_description: currentJob.job_description,
+						recruiter_name: currentJob.recruiter_name,
+						recruiter_title: currentJob.recruiter_title
+					},
+					original_verdict: currentJob.screened_reason || '初筛淘汰',
+					revised_verdict: screeningRetestVerdict.reason || '合格保留',
+					critique: screeningCritiqueInput.trim(),
+					current_prompt: screeningPromptText,
+					llmSettings: llmSettings
+				})
+			});
+			const data = await res.json();
+			if (res.ok && data.success && typeof data.refined_prompt === 'string' && data.refined_prompt.trim()) {
+				screeningPromptRefinement = {
+					before: screeningPromptText,
+					after: data.refined_prompt
+				};
+			} else {
+				screeningPromptSaveNotice = '❌ 提示词打磨失败: ' + (data.error || '未知错误');
+			}
+		} catch (e: any) {
+			screeningPromptSaveNotice = '❌ 提示词打磨异常: ' + (e?.message || e);
+		} finally {
+			isRefiningScreeningPrompt = false;
+		}
+	}
+
+	async function handleConfirmAdoptScreeningPrompt() {
+		if (!currentJob || !screeningPromptRefinement) return;
+		isSavingScreeningPrompt = true;
+		screeningPromptSaveNotice = '';
+		try {
+			const res = await fetch('/api/screening/prompt', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ prompt: screeningPromptRefinement.after })
+			});
+			const data = await res.json();
+			if (!res.ok || !data.success) {
+				throw new Error(data.error || '保存精筛提示词失败');
+			}
+			screeningPromptText = screeningPromptRefinement.after;
+			screeningPromptRefinement = null;
+			screeningPromptSaveNotice = '✅ 精筛长期记忆已成功更新并持久化';
+			// Restore the job automatically upon adoption
+			await handleRestoreJob();
+			setTimeout(() => {
+				screeningPromptSaveNotice = '';
+			}, 3000);
+		} catch (e: any) {
+			screeningPromptSaveNotice = '❌ 保存提示词失败: ' + (e?.message || e);
+		} finally {
+			isSavingScreeningPrompt = false;
+		}
+	}
+
+	function handleDismissScreeningPromptRefinement() {
+		screeningPromptRefinement = null;
+	}
+
+	async function handleManualEvaluateScreening() {
+		if (!currentJob) return;
+		isEvaluatingScreening = true;
+		screeningEvaluateError = '';
+		screeningEvaluateVerdict = null;
+		try {
+			const res = await fetch('/api/screening/evaluate', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					job: {
+						title: currentJob.title,
+						company_name: currentJob.company_name,
+						salary_range: currentJob.salary_range,
+						job_description: currentJob.job_description,
+						recruiter_name: currentJob.recruiter_name,
+						recruiter_title: currentJob.recruiter_title
+					},
+					current_prompt: screeningPromptText,
+					llmSettings: llmSettings
+				})
+			});
+			const data = await res.json();
+			if (!res.ok || !data.success) {
+				throw new Error(data.error || '精筛评估失败');
+			}
+			screeningEvaluateVerdict = {
+				approved: Boolean(data.approved),
+				reason: String(data.reason || ''),
+				stage: data.stage
+			};
+		} catch (err: any) {
+			screeningEvaluateError = err.message || '精筛评估异常';
+		} finally {
+			isEvaluatingScreening = false;
 		}
 	}
 
@@ -555,13 +748,42 @@
 			job={currentJob}
 			{isRestoring}
 			onRestore={handleRestoreJob}
+			isEvaluatingScreening={isEvaluatingScreening}
+			onEvaluateScreening={handleManualEvaluateScreening}
 		/>
+
+		{#if currentJob.status === 'ignored'}
+			<JobScreeningStudioPanel
+				bind:critiqueInput={screeningCritiqueInput}
+				isRetesting={isRetestingScreening}
+				retestVerdict={screeningRetestVerdict}
+				retestError={screeningRetestError}
+				isEvaluating={isEvaluatingScreening}
+				evaluateVerdict={screeningEvaluateVerdict}
+				evaluateError={screeningEvaluateError}
+				isRefiningPrompt={isRefiningScreeningPrompt}
+				bind:promptRefinement={screeningPromptRefinement}
+				isSavingPrompt={isSavingScreeningPrompt}
+				promptSaveNotice={screeningPromptSaveNotice}
+				{isRestoring}
+				onRestore={handleRestoreJob}
+				onRetest={handleScreeningRetest}
+				onEvaluate={handleManualEvaluateScreening}
+				onAdoptAndRefinePrompt={handleScreeningAdoptAndRefinePrompt}
+				onDismissPromptRefinement={handleDismissScreeningPromptRefinement}
+				onConfirmAdoptPrompt={handleConfirmAdoptScreeningPrompt}
+			/>
+		{/if}
 
 		<!-- Job Header Card -->
 		<JobHeaderCard
 			job={currentJob}
 			{isDeleting}
 			onDelete={() => currentJob && handleDeleteJob(currentJob)}
+			isEvaluatingScreening={isEvaluatingScreening}
+			screeningEvaluateVerdict={screeningEvaluateVerdict}
+			screeningEvaluateError={screeningEvaluateError}
+			onEvaluateScreening={handleManualEvaluateScreening}
 		/>
 
 		<!-- AI Match & Tailored Greeting Studio -->

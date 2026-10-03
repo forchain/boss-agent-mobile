@@ -176,7 +176,7 @@
 			title="职位标题黑名单 (Title Blacklist)"
 			badgeText="一票否决"
 			badgeVariant="rose"
-			description="职位标题或标签命中任意词立即淘汰，绝不点击进入详情页（如：销售, 实习, 管培生）。"
+			description="仅匹配职位标题（不检查职位标签），命中任意词立即淘汰，绝不点击进入详情页（如：销售, 实习, 管培生）。"
 			bind:items={$screeningPolicyStore.title_blacklist}
 			unit="项"
 			emptyText="（暂无职位黑名单关键词）"
@@ -201,7 +201,7 @@
 			title="JD 内容语义黑名单 (JD Blacklist)"
 			badgeText="一票否决"
 			badgeVariant="rose"
-			description="大模型对提取出的岗位详情正文语义理解，若该项为核心职责要求则淘汰（如: 大小周, 纯销售）。"
+			description="大模型对提取出的岗位详情正文语义理解，若该项为核心职责要求则淘汰（如: 大小周, 纯销售）；卡片初筛阶段仅匹配岗位卡片摘要（不检查职位标签），仅匹配卡片核心亮点，避免误伤全文。"
 			bind:items={$screeningPolicyStore.jd_blacklist}
 			unit="项"
 			emptyText="（暂无 JD 语义黑名单）"

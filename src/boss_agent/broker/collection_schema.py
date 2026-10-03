@@ -494,6 +494,10 @@ JOB_RECORDS = Collection(
         Field("greeting_source", TEXT, default=""),
         Field("search_keywords", JSON, default=[], ts_type="string[]"),
         Field("screened_reason", TEXT, default=""),
+        # Which stage rejected the job (see ScreeningStage): card keyword/app-rule,
+        # deep screener, detail-stage app filter, or expiry. Lets the dashboard label a
+        # rejection 初筛淘汰 vs 精筛淘汰 instead of assuming card screening for all.
+        Field("screening_stage", TEXT, default=""),
         Field("relaxed_by_whitelist", BOOL, default=False, sql_default="FALSE"),
         Field("screening_audit", TEXT, default=""),
         Field("applied_at", DATE, ts_type="string | null"),

@@ -16,6 +16,7 @@
 	import CommunicationExclusionSection from '$lib/components/settings/CommunicationExclusionSection.svelte';
 	import ChatTriageSection from '$lib/components/settings/ChatTriageSection.svelte';
 	import GreetingPromptSection from '$lib/components/settings/GreetingPromptSection.svelte';
+	import ScreeningPromptSection from '$lib/components/settings/ScreeningPromptSection.svelte';
 
 	onMount(async () => {
 		await loadAllSettings();
@@ -122,6 +123,9 @@
 		</div>
 	</form>
 
-	<!-- Section 9: Greeting Prompt (Living Long-Term Memory) -->
+	<!-- Section 9: Screening Prompt (单一精筛长期记忆提示词) -->
+	<ScreeningPromptSection />
+
+	<!-- Section 10: Greeting Prompt (Living Long-Term Memory) -->
 	<GreetingPromptSection />
 </div>

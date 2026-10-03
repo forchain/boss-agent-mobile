@@ -6,6 +6,7 @@ import JobHeaderCard from '$lib/components/studio/JobHeaderCard.svelte';
 import JobMatchEvaluationPanel from '$lib/components/studio/JobMatchEvaluationPanel.svelte';
 import JobGreetingRefinementPanel from '$lib/components/studio/JobGreetingRefinementPanel.svelte';
 import JobActionsBar from '$lib/components/studio/JobActionsBar.svelte';
+import JobScreeningStudioPanel from '$lib/components/studio/JobScreeningStudioPanel.svelte';
 import type { JobRecord } from '$lib/types';
 
 const BASE_JOB: JobRecord = {
@@ -41,7 +42,9 @@ describe('JobIgnoredBanner (Issue #318)', () => {
 
 		expect(screen.getByText(/此岗位已被初步筛选淘汰/)).toBeTruthy();
 		expect(screen.getByText(/工作年限不符合/)).toBeTruthy();
-		const restoreBtn = screen.getByRole('button', { name: /恢复此职位/ });
+		// Label reads 恢复为有效候选职位 since #347: the banner now offers a re-screen
+		// button beside restore, so "恢复此职位" alone no longer says which is which.
+		const restoreBtn = screen.getByRole('button', { name: /恢复为有效候选职位/ });
 		await fireEvent.click(restoreBtn);
 		expect(onRestore).toHaveBeenCalledTimes(1);
 	});
@@ -211,5 +214,57 @@ describe('JobActionsBar (Issue #318)', () => {
 		const clearBtn = screen.getByRole('button', { name: /清除沟通状态/ });
 		await fireEvent.click(clearBtn);
 		expect(onClearCommunication).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe('JobScreeningStudioPanel (Spec #340, Issue #347)', () => {
+	const BASE_PROPS = {
+		critiqueInput: '',
+		onRestore: () => {},
+		onRetest: () => {},
+		onEvaluate: () => {},
+		onAdoptAndRefinePrompt: () => {},
+		onDismissPromptRefinement: () => {},
+		onConfirmAdoptPrompt: () => {}
+	};
+
+	it('renders the deep screening drawer and gates retest on a critique', async () => {
+		const onRetest = vi.fn();
+		render(JobScreeningStudioPanel, { props: { ...BASE_PROPS, onRetest } });
+
+		expect(screen.getByText(/精筛复核、纠偏重测与提示词自愈/)).toBeTruthy();
+
+		// Retest stays disabled until an operator states why the verdict was wrong:
+		// a blind retest is the same verdict asked twice.
+		const retestBtn = screen.getByRole('button', { name: /重新裁决/ });
+		expect((retestBtn as HTMLButtonElement).disabled).toBe(true);
+	});
+
+	it('runs an objective re-screen through the evaluate callback', async () => {
+		const onEvaluate = vi.fn();
+		render(JobScreeningStudioPanel, { props: { ...BASE_PROPS, onEvaluate } });
+
+		const evaluateBtn = screen.getByRole('button', { name: /依据当前提示词重新精筛/ });
+		await fireEvent.click(evaluateBtn);
+		expect(onEvaluate).toHaveBeenCalled();
+	});
+
+	it('surfaces the objective verdict with its stage label, and restores on approval', async () => {
+		const onRestore = vi.fn();
+		render(JobScreeningStudioPanel, {
+			props: {
+				...BASE_PROPS,
+				onRestore,
+				evaluateVerdict: { approved: true, reason: '未命中黑名单', stage: 'filtered_by_deep_screener' }
+			}
+		});
+
+		expect(screen.getByText(/精筛客观裁决：合格保留 \(Approved\)/)).toBeTruthy();
+		expect(screen.queryByText(/精筛客观裁决：维持淘汰/)).toBeNull();
+		expect(screen.getByText('精筛淘汰')).toBeTruthy();
+
+		const restoreBtn = screen.getByRole('button', { name: /恢复为有效候选/ });
+		await fireEvent.click(restoreBtn);
+		expect(onRestore).toHaveBeenCalledTimes(1);
 	});
 });

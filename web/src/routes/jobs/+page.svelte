@@ -10,13 +10,15 @@
 	import {
 		getJobRecords,
 		deleteJobRecord,
+		updateJobRecord,
 		getCandidateProfile
 	} from '$lib/pocketbase';
 	import { dashboardRealtime } from '$lib/dashboardRealtime';
 	import {
 		cleanJobTitle,
 		getJobTags,
-		getJobDigest
+		getJobDigest,
+		getScreeningStageLabel
 	} from '$lib/screening';
 	import { formatCommuteDistance } from '$lib/commute';
 	import JobDetailStudio from '$lib/components/JobDetailStudio.svelte';
@@ -229,6 +231,76 @@
 			await alertAction(`删除职位失败: ${err?.message || '网络或数据库异常'}`, '删除失败');
 		} finally {
 			isDeleting = false;
+		}
+	}
+
+	// Card-level re-screening state (Issue #348)
+	let evaluatingJobIds = $state<Record<string, boolean>>({});
+	let cardFeedback = $state<Record<string, { type: 'success' | 'rejected' | 'error'; message: string }>>({});
+
+	async function handleCardEvaluateScreening(job: JobRecord) {
+		const targetId = job.id;
+		if (evaluatingJobIds[targetId]) return;
+
+		evaluatingJobIds[targetId] = true;
+		delete cardFeedback[targetId];
+
+		try {
+			const res = await fetch('/api/screening/evaluate', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ job })
+			});
+
+			const data = await res.json().catch(() => ({}));
+			if (!res.ok || !data.success) {
+				throw new Error(data.error || '精筛评估服务异常');
+			}
+
+			if (data.approved) {
+				const updatedRecord: Partial<JobRecord> = {
+					status: 'jd_saved',
+					screened_reason: '',
+					screening_stage: ''
+				};
+				await updateJobRecord(targetId, updatedRecord);
+
+				jobs = jobs.map((j) => (j.id === targetId ? { ...j, ...updatedRecord } : j));
+
+				counts.ignored = Math.max(0, counts.ignored - 1);
+				counts.jd_saved = counts.jd_saved + 1;
+				counts.all = counts.all + 1;
+				if (currentFilter === 'ignored') {
+					totalJobs = Math.max(0, totalJobs - 1);
+				}
+
+				cardFeedback[targetId] = {
+					type: 'success',
+					message: '✅ 精筛通过已恢复为有效候选'
+				};
+			} else {
+				const updatedReason = data.reason || '依据当前提示词重新精筛未通过';
+				const updatedStage = data.stage || 'filtered_by_deep_screener';
+				const updatedRecord: Partial<JobRecord> = {
+					screened_reason: updatedReason,
+					screening_stage: updatedStage
+				};
+				await updateJobRecord(targetId, updatedRecord);
+
+				jobs = jobs.map((j) => (j.id === targetId ? { ...j, ...updatedRecord } : j));
+
+				cardFeedback[targetId] = {
+					type: 'rejected',
+					message: '⚠️ 未通过精筛，已刷新原因'
+				};
+			}
+		} catch (err: any) {
+			cardFeedback[targetId] = {
+				type: 'error',
+				message: '❌ 精筛失败: ' + (err?.message || '未知错误')
+			};
+		} finally {
+			evaluatingJobIds[targetId] = false;
 		}
 	}
 
@@ -509,11 +581,39 @@
 									{/if}
 								</div>
 
-								<!-- Elimination Reason (if screened out) -->
-								{#if job.screened_reason}
-									<div class="flex items-center space-x-1.5 text-[10px] bg-rose-950/40 border border-rose-900/50 rounded-lg px-2 py-1 text-rose-300">
-										<span class="shrink-0">🚫</span>
-										<span class="truncate"><span class="font-semibold">初筛淘汰:</span> {job.screened_reason}</span>
+								<!-- Elimination Reason & Quick In-Card Re-screening (Issue #348) -->
+								{#if job.screened_reason || job.status === 'ignored'}
+									<div class="flex items-center justify-between gap-1.5 text-[10px] bg-rose-950/40 border border-rose-900/50 rounded-lg px-2 py-1 text-rose-300">
+										<div class="flex items-center space-x-1.5 min-w-0 flex-1">
+											<span class="shrink-0">🚫</span>
+											<span class="truncate" title="{getScreeningStageLabel(job.screening_stage)}: {job.screened_reason || '已淘汰'}">
+												<span class="font-semibold">{getScreeningStageLabel(job.screening_stage)}:</span> {job.screened_reason || '已淘汰'}
+											</span>
+										</div>
+										<button
+											type="button"
+											data-testid="card-rescreen-button"
+											onclick={(e) => {
+												e.stopPropagation();
+												handleCardEvaluateScreening(job);
+											}}
+											disabled={evaluatingJobIds[job.id]}
+											class="shrink-0 px-2 py-0.5 rounded bg-rose-900/50 hover:bg-rose-800/80 border border-rose-700/60 text-rose-200 transition font-medium flex items-center gap-1 disabled:opacity-50 text-[10px]"
+											title="依据当前提示词重新精筛此岗位"
+										>
+											{#if evaluatingJobIds[job.id]}
+												<span class="animate-spin inline-block text-[9px]">🌀</span>
+												<span>精筛中...</span>
+											{:else}
+												<span>🔍 重新精筛</span>
+											{/if}
+										</button>
+									</div>
+								{/if}
+
+								{#if cardFeedback[job.id]}
+									<div class="text-[10px] rounded-lg px-2 py-1 border flex items-center justify-between gap-1.5 {cardFeedback[job.id].type === 'success' ? 'bg-emerald-950/40 border-emerald-800 text-emerald-300' : cardFeedback[job.id].type === 'rejected' ? 'bg-amber-950/40 border-amber-800 text-amber-300' : 'bg-rose-950/40 border-rose-800 text-rose-300'}">
+										<span class="truncate">{cardFeedback[job.id].message}</span>
 									</div>
 								{/if}
 

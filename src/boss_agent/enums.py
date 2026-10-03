@@ -25,6 +25,29 @@ class JobRecordStatus(StrEnum):
     DIGEST_ONLY = "digest_only"
 
 
+class ScreeningStage(StrEnum):
+    """Which screening stage produced a terminal ``ignored`` verdict.
+
+    Persisted as ``JobRecord.screening_stage`` so a reader can label a rejection by the
+    stage that actually made it. Every rejection used to be written as the same
+    ``ignored`` + ``screened_reason`` pair, so the dashboard showed all of them as
+    初筛淘汰 — even the deep screener's, whose evidence lives in the full JD and never in
+    the card digest the card stage sees. Values reuse the verdict-stage vocabularies in
+    :mod:`boss_agent.screening` where they overlap.
+    """
+
+    #: Card stage (no JD read): a keyword/company blacklist hit.
+    CARD_KEYWORD = "filtered_by_keyword"
+    #: Card stage: an App-Enforced Filter violation (e.g. business-district blacklist).
+    CARD_APP_RULE = "filtered_by_app_rule"
+    #: Full-JD semantic blacklist screening — the 「精筛」 stage.
+    DEEP_SCREENER = "filtered_by_deep_screener"
+    #: Detail stage: an App-Enforced Filter (commute ceiling / district) after the JD.
+    DETAIL_APP_RULE = "detail_app_rule"
+    #: The posting was closed / stopped hiring.
+    EXPIRED = "expired_posting"
+
+
 class TargetAction(StrEnum):
     SAVE_JD = "save_jd"
     AUTO_APPLY = "auto_apply"

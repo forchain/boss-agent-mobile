@@ -179,6 +179,10 @@ class JobRecord:
     greeting_message: str = ""
     search_keywords: list[str] = field(default_factory=list)
     screened_reason: str = ""
+    #: Which stage made the rejection (see :class:`ScreeningStage`); empty when the
+    #: record was never rejected or predates the field, so the dashboard falls back to a
+    #: neutral 「已忽略」 rather than guessing a stage.
+    screening_stage: str = ""
     relaxed_by_whitelist: bool = False
     screening_audit: str = ""
     first_seen_at: str | None = None
