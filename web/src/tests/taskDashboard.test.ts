@@ -415,4 +415,27 @@ describe('console follows the work, not the newest event (issue #357)', () => {
 			screen.getByText('检测到安全验证码 / 页面需要人工接管 (HITL Required)')
 		).toBeTruthy();
 	});
+
+	it('keeps a finished task readable, logs included, once the active set drains', async () => {
+		// A task snapshot reaches the console from three directions — choosing its task, a
+		// broker event on the watched row, and the fallback that fires when nothing is
+		// active any more. The event below carries no logs, so only the fallback can put
+		// the run's last line on screen.
+		const running = task('run_1', 'running', OLD, ['line 1']);
+		mocks.listAutomationTasks.mockResolvedValue(page([running]));
+
+		const { container } = renderPage();
+		await waitForSubscription();
+		await waitFor(() => expect(focusedTaskId()).toBe('run_1'));
+
+		mocks.listAutomationTasks.mockResolvedValue(page([]));
+		mocks.getAutomationTask.mockResolvedValue(task('run_1', 'success', OLD, ['line 1', 'done']));
+		mocks.handler!({ action: 'update', record: task('run_1', 'success', OLD) });
+		await tick();
+		await tick();
+
+		const panel = container.querySelector('#task-console');
+		await waitFor(() => expect(panel?.textContent).toContain('SUCCESS: SCRAPE_JOBS'));
+		expect(panel?.querySelector('[data-testid="task-console-log"]')?.textContent).toContain('done');
+	});
 });

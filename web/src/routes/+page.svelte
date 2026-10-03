@@ -24,7 +24,8 @@
 		shouldSyncTaskHistory
 	} from '$lib/taskConsole';
 	import { logAutoScroll } from '$lib/logFollow.svelte';
-	import TaskLaunchModal from '$lib/components/TaskLaunchModal.svelte';	import TaskLogModal from '$lib/components/TaskLogModal.svelte';
+	import TaskLaunchModal from '$lib/components/TaskLaunchModal.svelte';
+	import TaskLogModal from '$lib/components/TaskLogModal.svelte';
 
 	// Active Running Task State
 	let activeTaskId = $state<string | null>(null);
@@ -80,23 +81,36 @@
 	let inspectTask = $state<AutomationTask | null>(null);
 
 	/**
+	 * Everything a task snapshot contributes to the console box: the task itself, its log
+	 * lines when it has any, and the takeover flag. Stated once, because three paths apply
+	 * a snapshot — choosing the console's task, a broker event on the watched row, and the
+	 * finished-task fallback — and three copies of these three assignments is how the box
+	 * and the log modal end up disagreeing about what a task looks like.
+	 */
+	function applyTaskSnapshot(task: AutomationTask) {
+		activeTask = task;
+		if (task.logs && task.logs.length) {
+			logLines = task.logs;
+		}
+		isPausedForTakeover = task.status === 'paused_for_takeover';
+	}
+
+	/**
 	 * Point the console at a task. A note made when the task was dispatched is shown here
 	 * only if the console lands on that task while it is still queued, so one task's
 	 * context never leaks onto another, and never contradicts a later status.
 	 */
 	function adoptTask(task: AutomationTask) {
 		const switched = activeTaskId !== task.id;
+		const hasLogs = Boolean(task.logs && task.logs.length);
 		activeTaskId = task.id;
-		activeTask = task;
-		const notice = task.status === 'pending' ? consoleNotices.get(task.id) : undefined;
-		if (task.logs && task.logs.length) {
-			logLines = task.logs;
-		} else if (switched) {
+		applyTaskSnapshot(task);
+		if (switched && !hasLogs) {
 			// Only a switch may replace the view. Re-seeding for the same task would wipe
 			// lines the operator's own actions had pushed into the box.
+			const notice = task.status === 'pending' ? consoleNotices.get(task.id) : undefined;
 			logLines = [notice ?? defaultConsoleLine(task)];
 		}
-		isPausedForTakeover = task.status === 'paused_for_takeover';
 		consoleNotices.delete(task.id);
 	}
 
@@ -148,11 +162,7 @@
 			if (activeTaskId) {
 				const rec = await getAutomationTask(activeTaskId);
 				if (rec) {
-					activeTask = rec;
-					if (rec.logs && rec.logs.length) {
-						logLines = rec.logs;
-					}
-					isPausedForTakeover = rec.status === 'paused_for_takeover';
+					applyTaskSnapshot(rec);
 				}
 			}
 
@@ -361,15 +371,16 @@
 			// that from a real transition is what keeps the history table from reloading —
 			// and strobing its "正在加载历史任务..." placeholder — on every line (issue #355).
 			const statusChanged = statusTracker.record(t);
-			if (e.action === 'delete') statusTracker.forget(t.id);
+			if (e.action === 'delete') {
+				statusTracker.forget(t.id);
+				// The same for the note held on its behalf: a row that is gone can never be
+				// adopted, so its note would sit in the map for the life of the page.
+				consoleNotices.delete(t.id);
+			}
 
 			// The live log box is the one surface a log append is allowed to touch.
 			if (activeTaskId && t.id === activeTaskId) {
-				activeTask = t;
-				if (t.logs && t.logs.length) {
-					logLines = t.logs;
-				}
-				isPausedForTakeover = t.status === 'paused_for_takeover';
+				applyTaskSnapshot(t);
 			}
 
 			// The log modal is opened on a task, not on a snapshot of one: without this an
