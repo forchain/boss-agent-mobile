@@ -85,6 +85,7 @@ class CardFacets:
     is_headhunter: bool = False
     commute_distance_km: float | None = None
     commute_distance_text: str = ""
+    search_filter: dict[str, Any] | None = None
 
     @classmethod
     def from_card(cls, card: Any) -> "CardFacets":
@@ -96,6 +97,9 @@ class CardFacets:
         if isinstance(card, dict):
             recruiter_name = str(card.get("recruiter_name") or "")
             recruiter_title = str(card.get("recruiter_title") or "")
+            raw_filter = card.get("search_filter")
+            if hasattr(raw_filter, "to_dict"):
+                raw_filter = raw_filter.to_dict()
             return cls(
                 title=str(card.get("title") or ""),
                 company_name=str(card.get("company_name") or ""),
@@ -110,11 +114,15 @@ class CardFacets:
                 ),
                 commute_distance_km=card.get("commute_distance_km"),
                 commute_distance_text=str(card.get("commute_distance_text") or ""),
+                search_filter=raw_filter,
             )
         digest = getattr(card, "digest", "") or getattr(card, "snippet", "")
         recruiter_name = str(getattr(card, "recruiter_name", "") or "")
         recruiter_title = str(getattr(card, "recruiter_title", "") or "")
         declared_channel = getattr(card, "is_headhunter", None)
+        raw_filter = getattr(card, "search_filter", None)
+        if hasattr(raw_filter, "to_dict"):
+            raw_filter = raw_filter.to_dict()
         return cls(
             title=str(getattr(card, "title", "") or ""),
             company_name=str(getattr(card, "company_name", "") or ""),
@@ -129,15 +137,25 @@ class CardFacets:
             ),
             commute_distance_km=getattr(card, "commute_distance_km", None),
             commute_distance_text=str(getattr(card, "commute_distance_text", "") or ""),
+            search_filter=raw_filter,
         )
 
-    def to_job_posting(self, jd_text: str) -> JobPosting:
+    def to_job_posting(
+        self,
+        jd_text: str,
+        *,
+        search_filter: dict[str, Any] | Any | None = None,
+    ) -> JobPosting:
         """Materialize a JobPosting view of these facets for JD-level evaluation."""
+        filter_dict = search_filter if search_filter is not None else self.search_filter
+        if hasattr(filter_dict, "to_dict"):
+            filter_dict = filter_dict.to_dict()
         return JobPosting(
             title=self.title,
             company_name=self.company_name,
             salary_range=self.salary_range,
             job_description=jd_text,
+            digest=self.digest,
             location=self.location,
             tags=list(self.tags),
             recruiter_name=self.recruiter_name,
@@ -145,6 +163,7 @@ class CardFacets:
             is_headhunter=self.is_headhunter,
             commute_distance_km=self.commute_distance_km,
             commute_distance_text=self.commute_distance_text,
+            search_filter=filter_dict,
         )
 
 
@@ -382,6 +401,7 @@ class CandidateScreener:
         *,
         draft_greeting: bool = True,
         screening_prompt: str | None = None,
+        search_filter: dict[str, Any] | Any | None = None,
     ) -> JobEvaluationResult:
         """Validate the extracted JD, run semantic screening, and draft the greeting.
 
@@ -391,6 +411,20 @@ class CandidateScreener:
         """
         resolved = _resolve_policy(policy)
         facets = CardFacets.from_card(card)
+        effective_search_filter = (
+            search_filter
+            if search_filter is not None
+            else (
+                facets.search_filter
+                or (
+                    card.get("search_filter")
+                    if isinstance(card, dict)
+                    else getattr(card, "search_filter", None)
+                )
+            )
+        )
+        if hasattr(effective_search_filter, "to_dict"):
+            effective_search_filter = effective_search_filter.to_dict()
         jd = (jd_text or "").strip() if isinstance(jd_text, str) else ""
 
         # A JD too thin to carry signal is never worth a screening token, let alone a
@@ -428,7 +462,7 @@ class CandidateScreener:
         profile_obj = _resolve_profile(profile)
         try:
             match = self._greeting_service().evaluate_and_draft_greeting(
-                job=facets.to_job_posting(jd),
+                job=facets.to_job_posting(jd, search_filter=effective_search_filter),
                 profile=profile_obj,
                 greeting_prompt=prompt or self.greeting_prompt,
                 screening_policy=resolved,

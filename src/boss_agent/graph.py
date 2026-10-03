@@ -173,11 +173,13 @@ def make_job_evaluation_node(screener: CandidateScreener):
 
     def job_evaluation_node(state: JobApplicationState) -> dict[str, Any]:
         policy = ScreeningPolicy.from_dict(state.get("screening_policy") or {})
+        search_filter = state.get("search_filter") or (state.get("card") or {}).get("search_filter")
         result = screener.evaluate_job(
             card=state.get("card") or {},
             jd_text=state.get("jd_text") or "",
             profile=state.get("candidate_profile") or None,
             policy=policy,
+            search_filter=search_filter,
         )
         return {
             "deep_screen_pass": result.passed,
