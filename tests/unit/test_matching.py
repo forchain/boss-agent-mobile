@@ -140,9 +140,9 @@ def test_master_candidate_bachelor_jd_matching_with_search_filter_and_tags():
     # 2. Education fit elevation guidance check
     assert "【匹配评估与打招呼任务指引】:" in user_prompt
     assert "学历与要求偏好升维" in user_prompt
-    assert "当检索过滤条件或卡片标签明确包含硕士或硕士优先时" in user_prompt
-    assert "升维判定为强偏好" in user_prompt
-    assert "必须结合求职者的硕士学历及专业背景" in user_prompt
+    assert "明确提到硕士要求或优先" in user_prompt
+    assert "升维判定为关键核心偏好与诉求" in user_prompt
+    assert "结合求职者的硕士学历及院校/专业背景" in user_prompt
 
 
 def test_refine_with_critique_includes_search_filter_and_tags_context():
@@ -185,3 +185,93 @@ def test_refine_with_critique_includes_search_filter_and_tags_context():
     assert "硕士优先" in user_msg
     assert "【卡片岗位摘要】:" in user_msg
     assert "急聘核心研发，硕士优先考虑" in user_msg
+
+
+def test_job_match_prompt_guidance_for_master_in_jd_text():
+    """Verify that when JD text itself mentions 硕士或博士优先, matching prompt elevation instructs LLM."""
+    mock_llm = MagicMock()
+    mock_llm.chat_completion_json.return_value = {
+        "match_score": 88,
+        "jd_key_requirements": ["计算机相关专业硕士或博士优先", "Agent架构设计"],
+        "match_reasons": ["硕士毕业于知名高校，学术研究与工程实战双重背景完全匹配"],
+        "greeting_message": "殷先生您好,幸会!我硕士主攻人工智能方向，主导过大型多Agent生产系统落地，期待交流！",
+    }
+
+    job = JobPosting(
+        title="技术高岗-AI出海健康赛道B轮",
+        company_name="某互联网公司",
+        salary_range="12-15万元·14月",
+        job_description=(
+            "任职要求：\n"
+            "1. 计算机科学、人工智能等相关专业本科及以上学历，硕士或博士优先。\n"
+            "2. 8年以上技术研发经验，3年以上团队管理经验。"
+        ),
+        tags=["5-10年", "硕士", "agent", "AI", "多模态"],
+        digest="规划多模态大模型、agent系统、健康数据平台等核心技术方向",
+        recruiter_name="殷先生",
+    )
+
+    profile = StructuredCandidateProfile(
+        name="周黄金",
+        years_of_experience=19,
+        education=[{"school": "沙迦美国大学", "degree": "硕士", "major": "计算机工程"}],
+    )
+
+    service = JobMatchGreetingService(llm_client=mock_llm, candidate_profile=profile)
+    res = service.evaluate_and_draft_greeting(job=job)
+
+    assert res.match_score == 88
+    call_args = mock_llm.chat_completion_json.call_args[0][0]
+    user_prompt = call_args[1]["content"]
+
+    assert "【卡片要求标签】:\n5-10年, 硕士, agent, AI, 多模态" in user_prompt
+    assert "【卡片岗位摘要】:\n规划多模态大模型、agent系统、健康数据平台等核心技术方向" in user_prompt
+    assert "硕士或博士优先" in user_prompt
+    assert "在【JD核心诉求提炼 (jd_key_requirements)】中，必须明确提炼并包含该学历与学术/研发背景偏好" in user_prompt
+    assert "在【契合度评估 (match_reasons)】中，必须结合求职者的硕士学历及院校/专业背景" in user_prompt
+    assert "在【定制破冰打招呼语 (greeting_message)】中，自然融入求职者的硕士专业研究背景" in user_prompt
+
+
+def test_evaluate_match_script_preserves_tags_and_digest(monkeypatch):
+    """Verify scripts/evaluate_match.py parses tags, digest, and search_filter and feeds to JobPosting."""
+    import json
+    import subprocess
+    import sys
+
+    job_data = {
+        "job_title": "技术高岗-AI出海健康赛道B轮",
+        "company_name": "某互联网公司",
+        "salary_range": "12-15万元·14月",
+        "job_description": "任职要求：计算机科学等相关专业本科及以上学历，硕士或博士优先。8年以上技术研发经验。",
+        "recruiter_name": "殷先生",
+        "recruiter_title": "猎头顾问",
+        "tags": ["5-10年", "硕士", "agent", "AI", "多模态"],
+        "digest": "规划多模态大模型、agent系统、健康数据平台等核心技术方向",
+        "search_filter": {"education": "硕士"},
+    }
+
+    # Test via importing main and intercepting JobMatchGreetingService
+    from unittest.mock import patch
+    import scripts.evaluate_match as eval_script
+
+    captured_job = None
+
+    def fake_evaluate(self, job, profile=None, greeting_prompt=None):
+        nonlocal captured_job
+        captured_job = job
+        from boss_agent.matching import MatchGreetingResult
+        return MatchGreetingResult(
+            match_score=90,
+            match_reasons=["硕士学历与AI Agent实战高度吻合"],
+            jd_key_requirements=["硕士或博士优先"],
+            greeting_message="殷先生您好,幸会!我硕士阶段主攻计算机工程，期待深入交流！",
+        )
+
+    monkeypatch.setattr(sys, "argv", ["evaluate_match.py", "--job", json.dumps(job_data, ensure_ascii=False)])
+    with patch.object(JobMatchGreetingService, "evaluate_and_draft_greeting", fake_evaluate):
+        eval_script.main()
+
+    assert captured_job is not None
+    assert captured_job.tags == ["5-10年", "硕士", "agent", "AI", "多模态"]
+    assert captured_job.digest == "规划多模态大模型、agent系统、健康数据平台等核心技术方向"
+    assert captured_job.search_filter == {"education": "硕士"}

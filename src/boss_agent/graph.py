@@ -382,6 +382,15 @@ def make_resume_document_generator_node(llm_client: Any | None = None):
             '  "years_of_experience": 经验年限(整数),\n'
             '  "target_positions": ["期望职位1", "期望职位2"],\n'
             '  "core_skills": ["分类1: 技能列表", "分类2: 技能列表"],\n'
+            '  "education": [\n'
+            "    {\n"
+            '      "school": "学校名称",\n'
+            '      "degree": "学历(如: 硕士 / 本科 / 博士)",\n'
+            '      "major": "专业名称",\n'
+            '      "start_date": "入学年份",\n'
+            '      "end_date": "毕业年份"\n'
+            "    }\n"
+            "  ],\n"
             '  "profile_document": "详尽完整的 Markdown 格式候选人全景画像文档",\n'
             '  "work_experiences": [],\n'
             '  "projects": []\n'

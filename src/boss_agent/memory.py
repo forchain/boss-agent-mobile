@@ -97,19 +97,23 @@ class StructuredCandidateProfile:
                 for p in raw_projects
             ]
 
+        raw_edu = data.get("education") or []
         doc = (data.get("profile_document") or data.get("raw_summary") or "").strip()
+        raw_text = data.get("raw_resume_text") or ""
+        if not raw_edu and (doc or raw_text):
+            raw_edu = ProfileNormalizer._extract_education_from_text(f"{doc}\n{raw_text}")
 
         return cls(
             name=data.get("name") or "求职者",
             years_of_experience=int(data.get("years_of_experience") or 0),
-            education=data.get("education") or [],
+            education=raw_edu,
             core_skills=normalized_skills,
             work_experiences=raw_work,
             projects=raw_projects,
             project_highlights=raw_highlights,
             target_positions=data.get("target_positions") or [],
             raw_summary=doc,
-            raw_resume_text=data.get("raw_resume_text") or "",
+            raw_resume_text=raw_text,
             profile_document=doc,
         )
 
@@ -413,6 +417,13 @@ class ProfileNormalizer:
                     skills.append(s)
             result["core_skills"] = skills
 
+        # 5.5. Self-heal education if empty or missing
+        edu = result.get("education")
+        if not edu or not isinstance(edu, list):
+            search_corpus = f"{doc}\n{raw_text_clean}"
+            extracted_edu = cls._extract_education_from_text(search_corpus)
+            result["education"] = extracted_edu if extracted_edu else []
+
         # 6. Guarantee array fields are lists, never None or null
         for array_key in [
             "core_skills",
@@ -432,6 +443,71 @@ class ProfileNormalizer:
 
         return result
 
+    @classmethod
+    def _extract_education_from_text(cls, text: str) -> list[dict[str, str]]:
+        """Extract structured education entries from resume text or markdown profile document."""
+        import re
+        import unicodedata
+
+        norm_text = unicodedata.normalize("NFKC", text or "")
+        edu_list: list[dict[str, str]] = []
+        degree_words = ["硕士", "本科", "博士", "学士", "大专", "MBA", "EMBA", "PhD", "Master", "Bachelor"]
+
+        # 1. Pipe-separated format: School | Degree | Major (with optional date or details)
+        # e.g.: - 沙迦美国大学（American University of Sharjah）| 硕士 | 计算机工程（2019 - 2022）
+        pipe_pattern = re.compile(r"[-*•]?\s*([^|\n\r]+?)\s*\|\s*([^|\n\r]+?)\s*\|\s*([^\n\r|]+)")
+        for m in pipe_pattern.finditer(norm_text):
+            parts = [m.group(1).lstrip("-*• ").strip(), m.group(2).strip(), m.group(3).strip()]
+            degree = ""
+            for p in parts:
+                if any(d in p for d in degree_words):
+                    degree = p
+                    break
+            if degree:
+                rem = [p for p in parts if p != degree]
+                school = rem[0] if rem else ""
+                major = rem[1] if len(rem) > 1 else ""
+                school = re.sub(r"^[#\s\-*•]+", "", school).strip()
+                if school and len(school) < 60:
+                    edu_list.append({"school": school, "degree": degree, "major": major})
+
+        # 2. Explicit narrative: e.g. "硕士毕业于沙迦美国大学计算机工程专业"
+        if not edu_list:
+            narrative_pattern = re.compile(
+                r"(?:(硕士|博士|本科|学士|研究生))?\s*毕业于\s*([^\s，,。；;]+?(?:大学|学院|分校|Institute|University|College))\s*([^\s，,。；;]+?专业)?",
+                re.IGNORECASE,
+            )
+            for m in narrative_pattern.finditer(norm_text):
+                deg = m.group(1) or "本科"
+                sch = m.group(2).strip()
+                maj = (m.group(3) or "").replace("专业", "").strip()
+                if sch:
+                    edu_list.append({"school": sch, "degree": deg, "major": maj})
+
+        # 3. Space/slash-delimited format: School Degree Major
+        # e.g.: "清华大学 硕士 人工智能"
+        if not edu_list:
+            space_pattern = re.compile(
+                r"[-*•]?\s*([^\s，,。；;|]+?(?:大学|学院|分校|Institute|University|College))\s+([^\s，,。；;|]*?(?:硕士|本科|学士|博士|大专|MBA|PhD|Master|Bachelor)[^\s，,。；;|]*)\s+([^\n\r，,。；;|]+)"
+            )
+            for m in space_pattern.finditer(norm_text):
+                sch = re.sub(r"^[#\s\-*•]+", "", m.group(1)).strip()
+                deg = m.group(2).strip()
+                maj = m.group(3).strip()
+                if sch and len(sch) < 60:
+                    edu_list.append({"school": sch, "degree": deg, "major": maj})
+
+        # Deduplicate by base school name while preserving the richest entry
+        deduped: list[dict[str, str]] = []
+        seen_schools: set[str] = set()
+        for e in edu_list:
+            base_school = re.sub(r"[\(（].*?[\)）]", "", e["school"]).strip()
+            if base_school and base_school not in seen_schools:
+                seen_schools.add(base_school)
+                deduped.append(e)
+
+        return deduped
+
 
 class ResumeMemoryManager:
     """Manages parsing, structuring, and local caching of candidate profile memory."""
@@ -450,9 +526,7 @@ class ResumeMemoryManager:
         # Load candidate config if available
         self.candidate_config = self._load_candidate_config(candidate_config_path)
 
-        self.explicit_memory_file = memory_file_path is not None or bool(
-            self.candidate_config.get("memory_path")
-        )
+        self.explicit_memory_file = memory_file_path is not None
         configured_memory = (
             memory_file_path or self.candidate_config.get("memory_path") or self.DEFAULT_MEMORY_PATH
         )
@@ -559,6 +633,15 @@ class ResumeMemoryManager:
             '  "years_of_experience": 经验年限(整数),\n'
             '  "target_positions": ["期望职位1", "期望职位2"],\n'
             '  "core_skills": ["分类1: 技能列表", "分类2: 技能列表"],\n'
+            '  "education": [\n'
+            "    {\n"
+            '      "school": "学校名称",\n'
+            '      "degree": "学历(如: 硕士 / 本科 / 博士)",\n'
+            '      "major": "专业名称",\n'
+            '      "start_date": "入学年份",\n'
+            '      "end_date": "毕业年份"\n'
+            "    }\n"
+            "  ],\n"
             '  "profile_document": "详尽完整的 Markdown 格式候选人全景画像文档",\n'
             '  "work_experiences": [\n'
             "    {\n"
