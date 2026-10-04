@@ -20,7 +20,7 @@
 #
 # Single Service Routing:
 #   ./run.sh worker [args...]             # Dedicated Automation Worker (./worker.sh)
-#   ./run.sh dashboard [args...]         # SvelteKit Web Dashboard (./dashboard.sh)
+#   ./run.sh dashboard [args...]          # SvelteKit Web Dashboard (./dashboard.sh)
 #   ./run.sh web [args...]                # Compatibility route for ./run.sh dashboard
 #   ./run.sh pb [args...]                 # PocketBase State Stream (./pocketbase.sh)
 #   ./run.sh emu [args...]                # Dedicated Android AVD (./emulator.sh)
@@ -69,8 +69,8 @@ Service Group Orchestration:
 
 Single Service Delegation:
   ./run.sh worker [action]            Manage Automation Worker (./worker.sh)
-  ./run.sh dashboard [action]        Manage Web Dashboard (./dashboard.sh)
-  ./run.sh web [action]              Alias for ./run.sh dashboard (kept for muscle memory)
+  ./run.sh dashboard [action]         Manage Web Dashboard (./dashboard.sh)
+  ./run.sh web [action]               Alias for ./run.sh dashboard (kept for muscle memory)
   ./run.sh pb [action]                Manage PocketBase (./pocketbase.sh)
   ./run.sh emu [action]               Manage Android Emulator (./emulator.sh)
   ./run.sh appium [action]            Manage Appium Server (./appium.sh)
