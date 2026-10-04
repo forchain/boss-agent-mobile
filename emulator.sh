@@ -844,12 +844,17 @@ reap_emulator_processes() {
 
     local REMAINING
     REMAINING="$(emulator_process_pids "${AVD}")"
-    if [[ -n "${REMAINING}" ]]; then
-        echo "⚠️ Emulator processes for ${AVD} survived the kill: ${REMAINING}."
-    else
-        echo "ℹ️ Reaped emulator process(es) for ${AVD} (PIDs:${PIDS})."
-    fi
     rm -f "${PID_FILE}"
+    if [[ -n "${REMAINING}" ]]; then
+        # Non-zero, so `stop` cannot report success over a surviving AVD. The only way to
+        # reach this branch is a process that outlived SIGKILL, which no ordinary userland
+        # process can do — so this is the "the kernel has wedged it" line, and it is not
+        # covered by an automated test because a SIGKILL-proof fixture cannot be built.
+        echo "⚠️ Emulator processes for ${AVD} survived the kill: ${REMAINING}."
+        return 1
+    fi
+    echo "ℹ️ Reaped emulator process(es) for ${AVD} (PIDs:${PIDS})."
+    return 0
 }
 
 cmd_stop() {
@@ -859,21 +864,27 @@ cmd_stop() {
 
     if [[ -n "${SERIAL}" ]] && adb_query -s "${SERIAL}" emu kill >/dev/null; then
         echo "✅ Sent emu kill to ${SERIAL} (${TARGET_AVD})."
-    else
-        if [[ -n "${SERIAL}" ]]; then
-            # A kill the wedged device never acknowledged leaves the emulator running, so
-            # fall back to the same process cleanup the "no device found" path uses.
-            echo "⚠️ ${SERIAL} did not acknowledge the kill within ${ADB_QUERY_TIMEOUT_SEC}s."
-        fi
-        echo "ℹ️ Stopped emulator processes for ${TARGET_AVD}."
+    elif [[ -n "${SERIAL}" ]]; then
+        # A kill the wedged device never acknowledged leaves the emulator running, so fall
+        # back to the same process cleanup the "no device found" path uses.
+        echo "⚠️ ${SERIAL} did not acknowledge the kill within ${ADB_QUERY_TIMEOUT_SEC}s."
     fi
 
     # The AVD must be gone before the bridge is: the bridge publishes one of the transports
     # this stop negotiates over, so tearing it down first severs the very path the kill needs
     # and leaves a "stopped" AVD still running.
-    reap_emulator_processes
+    local REAP_STATUS=0
+    reap_emulator_processes || REAP_STATUS=$?
 
     stop_remote_bridge
+
+    # "Stopped emulator processes" is claimed only once the sweep has actually reported the
+    # AVD gone. Printing it up front, before the sweep, let a run whose processes survived
+    # SIGKILL report a clean stop and then contradict itself a line later.
+    if [[ ${REAP_STATUS} -eq 0 ]]; then
+        echo "ℹ️ Stopped emulator processes for ${TARGET_AVD}."
+    fi
+    return "${REAP_STATUS}"
 }
 
 cmd_start() {

@@ -270,25 +270,48 @@ def test_stop_never_trusts_a_recycled_pid_in_the_pidfile(runner: RunnerScriptHar
 def test_stop_lets_the_emulator_go_before_tearing_the_bridge_down(
     runner: RunnerScriptHarness,
 ):
-    """AC: the bridge must come down after the emulator's exit negotiation, not before.
+    """AC: the bridge must come down after the emulator is gone, not before.
 
     Dropping the bridge first severs the transport the stop depends on, which is how a stop
-    can report success while the AVD keeps running. Both events land in one ordered call log,
-    so the ordering is a fact about this run rather than a claim about the code.
+    can report success while the AVD keeps running. So the thing under test is the *process*
+    being reaped, not the `emu kill` request being sent: the request can be in flight while
+    the AVD is very much still alive, which is exactly the state the ordering forbids.
+
+    Both events land in one ordered call log — the AVD's own TERM and the bridge daemon's
+    teardown — so this is a fact about the run rather than an inference from two files.
     """
     runner.script(devices=[(NATIVE_SERIAL, "device")], avd_name=TARGET_AVD, boot_completed="1")
+    runner.install_fake_emulator()
+    # A real process the sweep will find: its argv is `emulator @<avd>`, one of the two
+    # shapes the sweep matches.
+    avd_process = runner.spawn_process(
+        [str(runner.bin_dir / "emulator"), f"@{HARNESS_AVD}", "-no-snapshot-load"]
+    )
     runner.start_bridge()
+
+    result = runner.run("stop", env={"ANDROID_AVD": HARNESS_AVD})
+
+    reaped_at = runner.call_index("emulator: signal TERM")
+    bridge_down_at = runner.call_index("bridge: signal 15")
+    assert reaped_at >= 0, (
+        f"the AVD process was never signalled:\n{result.output}\n{runner.calls()}"
+    )
+    assert bridge_down_at >= 0, f"the bridge was never torn down:\n{runner.calls()}"
+    assert reaped_at < bridge_down_at, (
+        "the bridge was torn down while the AVD was still running:\n" + runner.calls()
+    )
+    assert_reaped(avd_process, f"the AVD process (PID {avd_process.pid})", result.output)
+    assert not runner.port_is_bound(), "the bridge is still holding its port after `stop`"
+
+
+def test_stop_still_sends_emu_kill_to_the_native_transport(runner: RunnerScriptHarness):
+    """The kill request is sent too, and addressed to the emulator console."""
+    runner.script(devices=[(NATIVE_SERIAL, "device")], avd_name=TARGET_AVD, boot_completed="1")
 
     result = runner.run("stop")
 
-    kill_at = runner.call_index("emu kill")
-    bridge_down_at = runner.call_index("bridge: signal 15")
-    assert kill_at >= 0, f"no `emu kill` was sent at all:\n{result.stdout}"
-    assert bridge_down_at >= 0, f"the bridge was never torn down:\n{result.stdout}"
-    assert kill_at < bridge_down_at, (
-        "the bridge was torn down before the emulator was asked to stop:\n" + runner.calls()
-    )
-    assert not runner.port_is_bound(), "the bridge is still holding its port after `stop`"
+    assert result.returncode == 0, f"stop failed:\n{result.output}"
+    assert f"{NATIVE_SERIAL} emu kill" in runner.calls(), runner.calls()
 
 
 # ---------------------------------------------------------------------------

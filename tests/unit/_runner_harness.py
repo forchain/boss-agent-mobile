@@ -203,8 +203,13 @@ fi
 
 # Record the signal, then stay alive. The suite asserts on the absence of these lines, so
 # a regression that lets the terminal signal through cannot pass silently.
+#
+# The TERM case is also written to the shared call log, next to the bridge daemon's own
+# teardown lines. Two events in one ordered log are what make "the emulator was signalled
+# before the bridge was closed" a checkable fact rather than an inference from two files
+# written at different moments.
+trap 'printf "TERM\n" >> "${STATE}/signals"; log_call "emulator: signal TERM"' TERM
 trap 'printf "INT\n" >> "${STATE}/signals"' INT
-trap 'printf "TERM\n" >> "${STATE}/signals"' TERM
 trap 'printf "HUP\n" >> "${STATE}/signals"' HUP
 
 while true; do
@@ -491,9 +496,12 @@ class RunnerScriptHarness:
 
         `emulator.sh` identifies emulator processes by pattern-matching `ps` output, so a
         test has to be able to hand the script a real process wearing a real command line.
+        The harness environment is passed through, because a fake binary launched this way is
+        a shell script with `set -u` and dies instantly on an unset `FAKE_ADB_PYTHON`.
         """
         process = subprocess.Popen(
             list(argv),
+            env=self.command_env(),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,

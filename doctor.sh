@@ -178,12 +178,22 @@ if command -v adb >/dev/null 2>&1; then
             # console and only shows up as "cannot connect" for a remote client, so it is
             # called out separately -- with the command that repairs it, because the obvious
             # reflex (restart the emulator) throws away the running session for nothing.
+            #
+            # The port is not the whole story: a bridge can be listening while its transport
+            # has dropped, and that state must not be reported as healthy when
+            # `emulator.sh status` calls it DISCONNECTED.
             BRIDGE_PORT="${REMOTE_ADB_PORT:-6555}"
             BRIDGE_PID="$(runner_port_listener_pid "${BRIDGE_PORT}")"
-            if [[ -n "${BRIDGE_PID}" ]]; then
-                log_pass "Remote ADB Bridge 正在运行 (PID: ${BRIDGE_PID}, 端口: ${BRIDGE_PORT})"
-            else
+            LAN_SERIAL=""
+            if [[ -n "${HOST_LAN_IP:-}" && "${HOST_LAN_IP}" != "127.0.0.1" ]]; then
+                LAN_SERIAL="${HOST_LAN_IP}:${BRIDGE_PORT}"
+            fi
+            if [[ -z "${BRIDGE_PID}" ]]; then
                 log_warn "Remote ADB Bridge 未运行 (端口 ${BRIDGE_PORT})，远程客户端将无法连接" "运行: ./emulator.sh reconnect（无需重启模拟器即可恢复局域网 ADB 访问）"
+            elif [[ -n "${LAN_SERIAL}" ]] && ! adb devices 2>/dev/null | awk -v s="${LAN_SERIAL}" '$1 == s && $2 == "device" {found=1} END {exit !found}'; then
+                log_warn "Remote ADB Bridge 在运行，但局域网 ADB 连接已断开 (${LAN_SERIAL})" "运行: ./emulator.sh reconnect（无需重启模拟器即可恢复局域网 ADB 访问）"
+            else
+                log_pass "Remote ADB Bridge 正在运行 (PID: ${BRIDGE_PID}, 端口: ${BRIDGE_PORT})"
             fi
         else
             log_warn "专用 Android AVD '${TARGET_AVD}' 正在启动中..." "请等待模拟器启动完毕: ./emulator.sh status"
