@@ -69,12 +69,20 @@ KEEPALIVE_IDLE_MAX_SEC = 3600
 KEEPALIVE_INTERVAL_MAX_SEC = 600
 KEEPALIVE_COUNT_MAX = 100
 
-# Which TCP-level keepalive knob each platform actually has. Darwin exposes a single
-# idle knob (`TCP_KEEPALIVE`, a.k.a. net.inet.tcp.keepidle) and no interval or probe
-# count at all; Linux has all three. An unknown platform gets the Linux set, and any
-# name the running kernel does not define is skipped rather than invented.
+# Which TCP-level keepalive knob each platform actually has.
+#
+# Darwin's per-socket keepalive used to be a single idle knob (`TCP_KEEPALIVE`, a.k.a.
+# net.inet.tcp.keepidle) with no interval or probe count, but current macOS honours all
+# three -- verified per-socket on macOS 27.0.1, where `getsockopt` read back exactly what
+# was set for `TCP_KEEPALIVE`, `TCP_KEEPINTVL` and `TCP_KEEPCNT`. Declaring all three for
+# Darwin is therefore not a guess: on an older Python the name is simply absent, and on an
+# older kernel `setsockopt` raises `ENOPROTOOPT`, both of which the apply loop below skips.
+#
+# That difference is not cosmetic. Setting only the idle knob leaves the system defaults in
+# charge of the rest (macOS ships roughly a 75s interval and 8 probes), so a dead peer took
+# 45 + 8*75 = ~645s to reap. Setting all three brings it to the ~105s the policy intends.
 _KEEPALIVE_OPTION_NAMES: dict[str, tuple[str, ...]] = {
-    "darwin": ("TCP_KEEPALIVE",),
+    "darwin": ("TCP_KEEPALIVE", "TCP_KEEPINTVL", "TCP_KEEPCNT"),
     "linux": ("TCP_KEEPIDLE", "TCP_KEEPINTVL", "TCP_KEEPCNT"),
 }
 _KEEPALIVE_FALLBACK_OPTIONS = _KEEPALIVE_OPTION_NAMES["linux"]
@@ -120,9 +128,9 @@ def keepalive_options(
     """Resolve the `(level, socket option name, value)` triples to apply on `platform`.
 
     Kept separate from `configure_keepalive` and expressed as option *names* rather
-    than resolved constants, so both the Darwin single-knob branch and the Linux
-    three-knob branch are observable from any host without a socket that has the
-    other platform's ABI. `platform` defaults to the running platform.
+    than resolved constants, so the Darwin and Linux option sets are observable from any
+    host without a socket carrying the other platform's ABI. `platform` defaults to
+    the running platform.
     """
     resolved_platform = sys.platform if platform is None else platform
     names = _KEEPALIVE_OPTION_NAMES.get(resolved_platform, _KEEPALIVE_FALLBACK_OPTIONS)

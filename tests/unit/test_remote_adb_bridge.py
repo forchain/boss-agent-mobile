@@ -330,15 +330,48 @@ def test_keepalive_tolerates_more_silence_than_any_link_handoff():
     )
 
 
-def test_keepalive_options_macos_sets_the_single_idle_knob_only():
-    """Darwin exposes `TCP_KEEPALIVE` (idle) and nothing else: no TCP_KEEPIDLE /
-    TCP_KEEPINTVL / TCP_KEEPCNT. Asserted against a pure option list, so this holds
-    on a Linux test host without patching the `socket` module's ABI."""
+def test_keepalive_options_darwin_sets_the_idle_interval_and_count():
+    """Darwin takes all three knobs today, in idle/interval/count order.
+
+    Its per-socket keepalive was historically the single `TCP_KEEPALIVE` idle knob, and a
+    Darwin-only single-knob set was the reason this assertion used to pin one option. That
+    is stale: current macOS honours `TCP_KEEPINTVL` and `TCP_KEEPCNT` per socket too
+    (verified by `getsockopt` read-back on macOS 27.0.1), so declaring only the idle knob
+    left the system defaults in charge — about a 75s interval and 8 probes, i.e. ~645s to
+    reap a dead peer instead of the ~105s the policy states.
+
+    Asserted against a pure option list, so this holds on a Linux test host without
+    patching the `socket` module's ABI.
+    """
     options = keepalive_options(platform="darwin")
 
-    assert [name for _level, name, _value in options] == ["TCP_KEEPALIVE"]
-    assert options[0][0] == socket.IPPROTO_TCP
-    assert options[0][2] == KEEPALIVE_IDLE_SEC
+    assert [name for _level, name, _value in options] == [
+        "TCP_KEEPALIVE",
+        "TCP_KEEPINTVL",
+        "TCP_KEEPCNT",
+    ]
+    assert all(level == socket.IPPROTO_TCP for level, _name, _value in options)
+    assert [value for _level, _name, value in options] == [
+        KEEPALIVE_IDLE_SEC,
+        KEEPALIVE_INTERVAL_SEC,
+        KEEPALIVE_COUNT,
+    ]
+
+
+def test_darwin_and_linux_agree_on_which_policies_they_can_set():
+    """The two supported platforms must not drift into different coverage.
+
+    They name the idle knob differently (`TCP_KEEPALIVE` vs `TCP_KEEPIDLE`) but must carry
+    the same three policy values, or one platform would silently fall back to system
+    defaults for the interval and count — exactly the defect the Darwin set above had.
+    """
+    darwin = keepalive_options(platform="darwin")
+    linux = keepalive_options(platform="linux")
+
+    assert [value for _l, _n, value in darwin] == [value for _l, _n, value in linux]
+    assert len({name for _l, name, _v in darwin} & {name for _l, name, _v in linux}) == 2, (
+        "expected the interval and count knobs to be spelled identically on both platforms"
+    )
 
 
 def test_keepalive_options_linux_sets_exactly_the_three_knobs():
@@ -426,6 +459,36 @@ def test_configure_keepalive_skips_unsupported_options_without_raising():
 
     assert recorder.options[0] == (socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
     assert socket.TCP_NODELAY not in [opt for _lvl, opt, _v in recorder.options]
+
+
+def test_configure_keepalive_skips_a_knob_the_host_does_not_define():
+    """A platform may name an option this Python or kernel does not have.
+
+    The Darwin set now names all three knobs on the strength of current macOS, so the
+    getattr-and-skip path is a live code path rather than a hypothetical: an older host must
+    get the knobs it does have, silently, instead of raising out of the accept loop.
+    """
+    absent = "TCP_KEEPCNT" if not hasattr(socket, "TCP_KEEPCNT") else "TCP_KEEPALIVE"
+    declared = keepalive_options(platform="darwin")
+    assert absent in [name for _l, name, _v in declared], (
+        "this test needs a knob Darwin declares to be absent on the host"
+    )
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.delattr(socket, absent, raising=False)
+        recorder = RecordingSocket()
+        configure_keepalive(recorder, platform="darwin")
+        expected = [
+            (socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1),
+            (socket.IPPROTO_TCP, socket.TCP_NODELAY, 1),
+            *[
+                (socket.IPPROTO_TCP, getattr(socket, name), value)
+                for _level, name, value in declared
+                if name != absent
+            ],
+        ]
+
+    assert recorder.options == expected
 
 
 def test_configure_keepalive_clamps_and_reports_an_aggressive_override(
