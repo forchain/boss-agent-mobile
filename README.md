@@ -77,7 +77,7 @@ JD 输入 → AI 契合度评分 → 自动生成招呼语草稿
 - `pocketbase.sh`: PocketBase 状态流持久化与实时 SSE Broker 服务管理脚本。
 - `emulator.sh`: 专用 Android Virtual Device (AVD) 模拟器生命周期管理工具。
 - `appium.sh`: 独立 Appium 自动化服务启动与日志挂载工具。
-- `web.sh`: Web 控制台一键启动管理工具。
+- `dashboard.sh`: Web 控制台一键启动管理工具。
 - `run.sh`: 真实设备/模拟器冒烟与 Worker 任务执行入口。
 - `config/`: 声明式系统配置（`greeting_prompt.local.md`, `settings.local.yaml`, `locators.yaml`）。
 - `docs/adr/`: 核心架构决策记录（ADR 0001 - 0012，含决策总览索引 [docs/adr/README.md](docs/adr/README.md)）。
@@ -115,7 +115,7 @@ uv run python scripts/bootstrap.py
 ./appium.sh start --daemon
 
 # 启动 Web 管理控制台（访问 http://127.0.0.1:5173）
-./web.sh
+./dashboard.sh
 ```
 
 ### 4. 运行自动化与测试

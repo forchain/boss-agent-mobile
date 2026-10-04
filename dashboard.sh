@@ -6,14 +6,20 @@
 # persistent logging and auto-attach if already running.
 #
 # Usage:
-#   ./web.sh
-#   ./web.sh start
-#   ./web.sh start --daemon
-#   ./web.sh stop
-#   ./web.sh restart
-#   ./web.sh restart --daemon
-#   ./web.sh status
-#   POCKETBASE_URL=http://192.168.1.100:8090 ./web.sh
+#   ./dashboard.sh
+#   ./dashboard.sh start
+#   ./dashboard.sh start --daemon
+#   ./dashboard.sh stop
+#   ./dashboard.sh restart
+#   ./dashboard.sh restart --daemon
+#   ./dashboard.sh status
+#   POCKETBASE_URL=http://192.168.1.100:8090 ./dashboard.sh
+#   ./run.sh web <cmd>                 # Short orchestrator route for ./dashboard.sh
+#
+# The runner is named `dashboard.sh` rather than `web.sh` because the project root also
+# holds the `web/` frontend source directory: under one name, `./web<Tab>` stalled on two
+# candidates. The runtime files stay `.boss_agent/web.pid` / `.boss_agent/web.log`, which
+# is the on-disk contract the teardown gate and the `WEB_PORT` env var already speak.
 # ==============================================================================
 
 set -euo pipefail

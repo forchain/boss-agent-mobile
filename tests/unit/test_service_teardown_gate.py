@@ -4,7 +4,7 @@ tests/unit/test_service_teardown_gate.py
 Unit tests for the E2E pre-test teardown gate (spec #218, ticket #222).
 
 Every scenario runs against a temporary repository root containing a copy of the real
-`web.sh`, so the gate is exercised end to end without signalling the shared Web Dashboard
+`dashboard.sh`, so the gate is exercised end to end without signalling the shared Web Dashboard
 or Automation Worker belonging to other worktrees.
 """
 
@@ -106,10 +106,10 @@ time.sleep(600)
 
 @pytest.fixture
 def runtime_root(tmp_path: Path) -> Path:
-    """Throwaway repo root carrying a copy of web.sh plus its own .boss_agent runtime dir."""
+    """Throwaway repo root carrying a copy of dashboard.sh plus its own .boss_agent runtime dir."""
     root = tmp_path / "repo"
     (root / ".boss_agent").mkdir(parents=True)
-    shutil.copy2(REPO_ROOT / "web.sh", root / "web.sh")
+    shutil.copy2(REPO_ROOT / "dashboard.sh", root / "dashboard.sh")
     shutil.copy2(REPO_ROOT / "runner_lib.sh", root / "runner_lib.sh")
     return root
 
@@ -253,7 +253,7 @@ def test_gate_force_kills_worker_behind_launcher_that_ignores_sigterm(runtime_ro
 
 
 def test_gate_stops_web_dashboard_and_frees_port(runtime_root: Path, spawn):
-    """Verify a detected Web Dashboard is stopped through web.sh and port release is verified."""
+    """Verify a detected Web Dashboard is stopped through dashboard.sh and port release is verified."""
     port = free_port()
     server = spawn(
         [sys.executable, "-m", "http.server", str(port), "--bind", "127.0.0.1"],

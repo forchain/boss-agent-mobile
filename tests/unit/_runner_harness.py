@@ -39,7 +39,7 @@ HANG_SECONDS = 600
 TARGET_AVD = "boss_avd_arm64"
 BASH = shutil.which("bash") or "/bin/bash"
 
-RUNNER_SCRIPTS = ("emulator.sh", "run.sh", "worker.sh", "web.sh")
+RUNNER_SCRIPTS = ("emulator.sh", "run.sh", "worker.sh", "dashboard.sh")
 #: Sourced by every runner, so a copied script must find it beside itself.
 RUNNER_LIBRARY = "runner_lib.sh"
 

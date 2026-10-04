@@ -47,7 +47,7 @@ WORKER_LOG_FILE=".boss_agent/worker.log"
 WORKER_STOP_TIMEOUT_SEC="${WORKER_STOP_TIMEOUT_SEC:-10}"
 
 # The library's primitives, under this script's historical names. They were identical
-# copies of web.sh's — including the zombie guard — which is exactly the drift the
+# copies of dashboard.sh's — including the zombie guard — which is exactly the drift the
 # library exists to end.
 process_alive() {
     runner_process_alive "${1:-}"

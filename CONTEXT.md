@@ -367,7 +367,7 @@ _Avoid_: infinite scroll, unconstrained sweep, opening-screen only scan
 The holistic health diagnostic and remediation CLI tool that inspects end-to-end operational readiness across PocketBase State Stream, SvelteKit Web Dashboard, Python Worker, Appium automation server, Android Virtual Device, and LLM configuration with actionable remediation steps.
 _Avoid_: sanity script, health checker, debug helper
 
-**Dedicated Runner Scripts (`emulator.sh`, `appium.sh`, `pocketbase.sh`, `web.sh`, `worker.sh`)**:
+**Dedicated Runner Scripts (`emulator.sh`, `appium.sh`, `pocketbase.sh`, `dashboard.sh`, `worker.sh`)**:
 The first-class shell lifecycle scripts managing process states (start, stop, restart, status, daemon mode) with persistent logging and auto-attach log streaming across all operational infrastructure tiers.
 _Avoid_: helper scripts, launcher utils, batch scripts
 
@@ -380,11 +380,11 @@ The machine-shared backend services (`pocketbase.sh`, `emulator.sh`, `appium.sh`
 _Avoid_: worker services, client tier, host daemons
 
 **Application Services (应用服务)**:
-The per-worktree operational components (`worker.sh`, `web.sh`) that execute automation tasks and render the user dashboard, subject to worktree-level preemption and restart.
+The per-worktree operational components (`worker.sh`, `dashboard.sh`) that execute automation tasks and render the user dashboard, subject to worktree-level preemption and restart.
 _Avoid_: backend services, shared infra, base daemons
 
 **Cross-Worktree Service Preemption**:
-The operational contract whereby executing `restart` on an application service (`web.sh restart`, `worker.sh restart`, or `run.sh restart`) gracefully stops lingering processes from other worktrees per the Graceful Shutdown Protocol and binds the port or mobile device session exclusively to the active worktree.
+The operational contract whereby executing `restart` on an application service (`dashboard.sh restart`, `worker.sh restart`, or `run.sh restart`) gracefully stops lingering processes from other worktrees per the Graceful Shutdown Protocol and binds the port or mobile device session exclusively to the active worktree.
 _Avoid_: port clash, session steal, silent conflict
 
 

@@ -19,7 +19,8 @@
 #
 # Single Service Routing:
 #   ./run.sh worker [args...]             # Dedicated Automation Worker (./worker.sh)
-#   ./run.sh web [args...]                # SvelteKit Web Dashboard (./web.sh)
+#   ./run.sh dashboard [args...]         # SvelteKit Web Dashboard (./dashboard.sh)
+#   ./run.sh web [args...]                # Compatibility route for ./run.sh dashboard
 #   ./run.sh pb [args...]                 # PocketBase State Stream (./pocketbase.sh)
 #   ./run.sh emu [args...]                # Dedicated Android AVD (./emulator.sh)
 #   ./run.sh appium [args...]             # Appium Server (./appium.sh)
@@ -66,7 +67,8 @@ Service Group Orchestration:
 
 Single Service Delegation:
   ./run.sh worker [action]            Manage Automation Worker (./worker.sh)
-  ./run.sh web [action]               Manage Web Dashboard (./web.sh)
+  ./run.sh dashboard [action]        Manage Web Dashboard (./dashboard.sh)
+  ./run.sh web [action]              Alias for ./run.sh dashboard (kept for muscle memory)
   ./run.sh pb [action]                Manage PocketBase (./pocketbase.sh)
   ./run.sh emu [action]               Manage Android Emulator (./emulator.sh)
   ./run.sh appium [action]            Manage Appium Server (./appium.sh)
@@ -88,7 +90,7 @@ cmd_app() {
         start)
             echo "🚀 Starting Application Services (Worker + Web Dashboard)..."
             ./worker.sh start --daemon "$@"
-            ./web.sh start --daemon "$@"
+            ./dashboard.sh start --daemon "$@"
             echo "✅ Application services started in background."
             echo "   Worker Logs: .boss_agent/worker.log"
             echo "   Web Logs   : .boss_agent/web.log"
@@ -96,15 +98,15 @@ cmd_app() {
         stop)
             echo "🛑 Stopping Application Services..."
             ./worker.sh stop
-            ./web.sh stop
+            ./dashboard.sh stop
             ;;
         restart)
             echo "🔄 Restarting Application Services..."
             ./worker.sh stop || true
-            ./web.sh stop || true
+            ./dashboard.sh stop || true
             sleep 0.5
             ./worker.sh start --daemon "$@"
-            ./web.sh start --daemon "$@"
+            ./dashboard.sh start --daemon "$@"
             echo "✅ Application services restarted in background."
             echo "   Worker Logs: .boss_agent/worker.log"
             echo "   Web Logs   : .boss_agent/web.log"
@@ -112,7 +114,7 @@ cmd_app() {
         status)
             echo "📊 Application Services Status:"
             ./worker.sh status || true
-            ./web.sh status || true
+            ./dashboard.sh status || true
             ;;
         *)
             echo "❌ Unknown app action: ${ACTION}. Valid actions: start, stop, restart, status" >&2
@@ -200,9 +202,11 @@ case "${SUBCOMMAND}" in
         shift
         exec ./worker.sh "$@"
         ;;
-    web|svelte)
+    # `web` stays routed to the same runner: the script was renamed to match the `web/`
+    # source directory, but every existing muscle-memory invocation keeps working.
+    dashboard|web|svelte)
         shift
-        exec ./web.sh "$@"
+        exec ./dashboard.sh "$@"
         ;;
     pb|pocketbase)
         shift

@@ -47,7 +47,7 @@ exit 0
 
     for script in (
         "worker.sh",
-        "web.sh",
+        "dashboard.sh",
         "pocketbase.sh",
         "emulator.sh",
         "appium.sh",
@@ -86,10 +86,10 @@ def test_run_sh_delegates_to_single_services(orchestrator_runtime: Path):
     assert res.returncode == 0
     assert "worker.sh status" in calls_log.read_text(encoding="utf-8")
 
-    # Delegate web
+    # Delegate web (compatibility route, kept after the web.sh -> dashboard.sh rename)
     res = _run(orchestrator_runtime, "web", "status")
     assert res.returncode == 0
-    assert "web.sh status" in calls_log.read_text(encoding="utf-8")
+    assert "dashboard.sh status" in calls_log.read_text(encoding="utf-8")
 
     # Delegate pb
     res = _run(orchestrator_runtime, "pb", "status")
@@ -107,6 +107,41 @@ def test_run_sh_delegates_to_single_services(orchestrator_runtime: Path):
     assert "appium.sh status" in calls_log.read_text(encoding="utf-8")
 
 
+def test_run_sh_dashboard_is_the_canonical_route(orchestrator_runtime: Path):
+    """`./run.sh dashboard` is the canonical name; `./run.sh web` still reaches it (#361).
+
+    The script was renamed away from `web.sh` because the project root also holds the `web/`
+    source directory and `./web<Tab>` stalled on both. Every pre-existing `./run.sh web`
+    invocation has to keep working, so both spellings are asserted here.
+    """
+    calls_log = orchestrator_runtime / "calls.log"
+
+    res = _run(orchestrator_runtime, "dashboard", "status")
+    assert res.returncode == 0
+    assert "dashboard.sh status" in calls_log.read_text(encoding="utf-8")
+
+    calls_log.unlink()
+    res = _run(orchestrator_runtime, "web", "status")
+    assert res.returncode == 0
+    assert "dashboard.sh status" in calls_log.read_text(encoding="utf-8")
+
+
+def test_no_root_script_shares_a_name_with_the_web_source_directory(orchestrator_runtime: Path):
+    """No root entry may collide with the `web/` directory prefix (#361).
+
+    A single `./web*` candidate is what makes tab-completion usable again: the completion
+    engine has nothing to disambiguate, so it completes straight through to `web/`.
+    """
+    repo_root = Path(__file__).resolve().parent.parent.parent
+    collisions = sorted(p.name for p in repo_root.glob("web*") if p.name != "web")
+    assert not collisions, (
+        f"root entries {collisions} share the `web/` directory prefix and re-create the "
+        "tab-completion conflict"
+    )
+    assert not (repo_root / "web.sh").exists(), "web.sh must have been renamed (dashboard.sh)"
+    assert (repo_root / "dashboard.sh").is_file(), "dashboard.sh must exist"
+
+
 def test_run_sh_app_group_orchestration(orchestrator_runtime: Path):
     calls_log = orchestrator_runtime / "calls.log"
 
@@ -115,7 +150,7 @@ def test_run_sh_app_group_orchestration(orchestrator_runtime: Path):
     assert res.returncode == 0
     content = calls_log.read_text(encoding="utf-8")
     assert "worker.sh stop" in content
-    assert "web.sh stop" in content
+    assert "dashboard.sh stop" in content
 
     # Test app restart
     calls_log.unlink()
@@ -123,9 +158,9 @@ def test_run_sh_app_group_orchestration(orchestrator_runtime: Path):
     assert res.returncode == 0
     content = calls_log.read_text(encoding="utf-8")
     assert "worker.sh stop" in content
-    assert "web.sh stop" in content
+    assert "dashboard.sh stop" in content
     assert "worker.sh start --daemon" in content
-    assert "web.sh start --daemon" in content
+    assert "dashboard.sh start --daemon" in content
 
 
 def test_run_sh_default_restart_operates_on_app(orchestrator_runtime: Path):
@@ -136,9 +171,9 @@ def test_run_sh_default_restart_operates_on_app(orchestrator_runtime: Path):
     assert res.returncode == 0
     content = calls_log.read_text(encoding="utf-8")
     assert "worker.sh stop" in content
-    assert "web.sh stop" in content
+    assert "dashboard.sh stop" in content
     assert "worker.sh start --daemon" in content
-    assert "web.sh start --daemon" in content
+    assert "dashboard.sh start --daemon" in content
 
 
 def test_run_sh_infra_group_orchestration(orchestrator_runtime: Path):
@@ -168,7 +203,7 @@ def test_run_sh_bare_invocation_starts_app_and_attaches_to_worker(orchestrator_r
     assert res.returncode == 0
     content = calls_log.read_text(encoding="utf-8")
     assert "worker.sh start --daemon" in content
-    assert "web.sh start --daemon" in content
+    assert "dashboard.sh start --daemon" in content
     assert "worker.sh attach" in content
 
 
@@ -179,7 +214,7 @@ def test_run_sh_explicit_start_does_not_attach(orchestrator_runtime: Path):
     assert res.returncode == 0
     content = calls_log.read_text(encoding="utf-8")
     assert "worker.sh start --daemon" in content
-    assert "web.sh start --daemon" in content
+    assert "dashboard.sh start --daemon" in content
     assert "worker.sh attach" not in content
 
 
@@ -190,6 +225,6 @@ def test_run_sh_app_start_does_not_attach(orchestrator_runtime: Path):
     assert res.returncode == 0
     content = calls_log.read_text(encoding="utf-8")
     assert "worker.sh start --daemon" in content
-    assert "web.sh start --daemon" in content
+    assert "dashboard.sh start --daemon" in content
     assert "worker.sh attach" not in content
 
