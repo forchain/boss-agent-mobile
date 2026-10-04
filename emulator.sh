@@ -723,33 +723,43 @@ cmd_status() {
         echo "⚪ Remote ADB Bridge is NOT RUNNING (Port: ${PORT})"
     fi
 
-    local LAN_SERIAL CONNECTED=0
+    local LAN_SERIAL CONNECTED=0 LAN_STATE
     LAN_SERIAL="$(lan_serial)"
-    if [[ -n "${LAN_SERIAL}" ]]; then
+    if [[ -z "${LAN_SERIAL}" ]]; then
+        # There is no address to publish the bridge on, so the LAN path does not exist on this
+        # host. Saying that plainly is the whole answer: recommending `reconnect` here would
+        # be a diagnostic pointing at a repair that can only fail.
+        LAN_STATE="no-lan-address"
+    else
         if lan_adb_connected "${LAN_SERIAL}"; then
             echo "🟢 LAN ADB Connection is CONNECTED and READY (${LAN_SERIAL})"
             CONNECTED=1
         else
             echo "⚪ LAN ADB Connection is DISCONNECTED (${LAN_SERIAL})"
         fi
+        LAN_STATE="$(lan_verdict "${BRIDGE_PID}" "${CONNECTED}")"
     fi
 
-    # The AVD can be perfectly healthy while remote management is locked out, so a broken
-    # LAN path gets a lever rather than just a report.
-    local LAN_STATE
-    LAN_STATE="$(lan_verdict "${BRIDGE_PID}" "${CONNECTED}")"
-    if [[ "${LAN_STATE}" != "ok" ]]; then
-        if [[ ${FIX} -eq 1 ]]; then
-            echo "🛠️ Self-heal requested (--fix): repairing the LAN path (${LAN_STATE})..."
-            if cmd_reconnect; then
-                echo "🟢 LAN path repaired."
+    case "${LAN_STATE}" in
+        ok) ;;
+        no-lan-address)
+            echo "⚪ No non-loopback LAN IP detected; LAN ADB access is unavailable on this host."
+            ;;
+        *)
+            # The AVD can be perfectly healthy while remote management is locked out, so a
+            # broken LAN path gets a lever rather than just a report.
+            if [[ ${FIX} -eq 1 ]]; then
+                echo "🛠️ Self-heal requested (--fix): repairing the LAN path (${LAN_STATE})..."
+                if cmd_reconnect; then
+                    echo "🟢 LAN path repaired."
+                else
+                    echo "⚠️ Self-heal could not confirm the LAN path; see ${BRIDGE_LOG_FILE}."
+                fi
             else
-                echo "⚠️ Self-heal could not confirm the LAN path; see ${BRIDGE_LOG_FILE}."
+                echo "💡 Repair without restarting the AVD: ./emulator.sh reconnect  (or re-run with --fix)"
             fi
-        else
-            echo "💡 Repair without restarting the AVD: ./emulator.sh reconnect  (or re-run with --fix)"
-        fi
-    fi
+            ;;
+    esac
 
     return 0
 }

@@ -197,6 +197,34 @@ def test_status_offers_a_flag_and_heals_when_given_it(runner: RunnerScriptHarnes
     assert_all_green(runner)
 
 
+def test_status_does_not_offer_a_repair_that_cannot_work(
+    runner: RunnerScriptHarness,
+):
+    """A diagnostic must not point at a repair that can only fail.
+
+    On a host with no non-loopback address there is nowhere to publish the bridge, so
+    `reconnect` has nothing to do and exits non-zero. A `status` that still advertised it
+    would send the operator through a command whose only possible outcome is an error — the
+    one thing a health check exists to prevent.
+    """
+    avd_up(runner)
+
+    result = runner.run("status", env={"HOST_LAN_IP": "127.0.0.1"})
+
+    assert result.returncode == 0, f"status failed:\n{result.output}"
+    assert "emulator.sh reconnect" not in result.stdout, (
+        f"status recommends a repair this host cannot perform:\n{result.stdout}"
+    )
+    assert "No non-loopback LAN IP" in result.stdout, (
+        f"status does not explain why LAN access is unavailable:\n{result.stdout}"
+    )
+
+    # And the command itself has to agree with that verdict.
+    repair = runner.run("reconnect", env={"HOST_LAN_IP": "127.0.0.1"})
+    assert repair.returncode != 0, "reconnect claimed success with nowhere to connect to"
+    assert "No non-loopback LAN IP" in repair.stdout, repair.stdout
+
+
 def test_plain_status_reports_but_never_repairs(runner: RunnerScriptHarness):
     """A diagnostic must stay read-only unless it is asked to act.
 
