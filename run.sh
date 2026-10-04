@@ -20,7 +20,7 @@
 # Single Service Routing:
 #   ./run.sh worker [args...]             # Dedicated Automation Worker (./worker.sh)
 #   ./run.sh web [args...]                # SvelteKit Web Dashboard (./web.sh)
-#   ./run.sh pb [args...]                 # PocketBase State Stream (./pb.sh)
+#   ./run.sh pb [args...]                 # PocketBase State Stream (./pocketbase.sh)
 #   ./run.sh emu [args...]                # Dedicated Android AVD (./emulator.sh)
 #   ./run.sh appium [args...]             # Appium Server (./appium.sh)
 #   ./run.sh doctor [args...]             # Diagnostic Health Check (./doctor.sh)
@@ -67,7 +67,7 @@ Service Group Orchestration:
 Single Service Delegation:
   ./run.sh worker [action]            Manage Automation Worker (./worker.sh)
   ./run.sh web [action]               Manage Web Dashboard (./web.sh)
-  ./run.sh pb [action]                Manage PocketBase (./pb.sh)
+  ./run.sh pb [action]                Manage PocketBase (./pocketbase.sh)
   ./run.sh emu [action]               Manage Android Emulator (./emulator.sh)
   ./run.sh appium [action]            Manage Appium Server (./appium.sh)
   ./run.sh doctor                     Run system diagnostic check (./doctor.sh)
@@ -127,7 +127,7 @@ cmd_infra() {
     case "${ACTION}" in
         start)
             echo "🚀 Starting Infrastructure Services (PocketBase + Emulator + Appium)..."
-            ./pb.sh start --daemon "$@"
+            ./pocketbase.sh start --daemon "$@"
             ./emulator.sh start
             ./appium.sh start --daemon "$@"
             echo "✅ Infrastructure services started."
@@ -136,23 +136,23 @@ cmd_infra() {
             echo "🛑 Stopping Infrastructure Services..."
             ./appium.sh stop || true
             ./emulator.sh stop || true
-            ./pb.sh stop || true
+            ./pocketbase.sh stop || true
             echo "✅ Infrastructure services stopped."
             ;;
         restart)
             echo "🔄 Restarting Infrastructure Services..."
             ./appium.sh stop || true
             ./emulator.sh stop || true
-            ./pb.sh stop || true
+            ./pocketbase.sh stop || true
             sleep 0.5
-            ./pb.sh start --daemon "$@"
+            ./pocketbase.sh start --daemon "$@"
             ./emulator.sh start
             ./appium.sh start --daemon "$@"
             echo "✅ Infrastructure services restarted."
             ;;
         status)
             echo "📊 Infrastructure Services Status:"
-            ./pb.sh status || true
+            ./pocketbase.sh status || true
             ./emulator.sh status || true
             ./appium.sh status || true
             ;;
@@ -206,7 +206,7 @@ case "${SUBCOMMAND}" in
         ;;
     pb|pocketbase)
         shift
-        exec ./pb.sh "$@"
+        exec ./pocketbase.sh "$@"
         ;;
     emu|emulator)
         shift

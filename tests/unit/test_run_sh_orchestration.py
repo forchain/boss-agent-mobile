@@ -45,7 +45,14 @@ exit 0
         script_path.write_text(content, encoding="utf-8")
         script_path.chmod(0o755)
 
-    for script in ("worker.sh", "web.sh", "pb.sh", "emulator.sh", "appium.sh", "doctor.sh"):
+    for script in (
+        "worker.sh",
+        "web.sh",
+        "pocketbase.sh",
+        "emulator.sh",
+        "appium.sh",
+        "doctor.sh",
+    ):
         _make_mock_script(script)
 
     return runtime_root
@@ -87,7 +94,7 @@ def test_run_sh_delegates_to_single_services(orchestrator_runtime: Path):
     # Delegate pb
     res = _run(orchestrator_runtime, "pb", "status")
     assert res.returncode == 0
-    assert "pb.sh status" in calls_log.read_text(encoding="utf-8")
+    assert "pocketbase.sh status" in calls_log.read_text(encoding="utf-8")
 
     # Delegate emu
     res = _run(orchestrator_runtime, "emu", "status")
@@ -141,7 +148,7 @@ def test_run_sh_infra_group_orchestration(orchestrator_runtime: Path):
     res = _run(orchestrator_runtime, "infra", "stop")
     assert res.returncode == 0
     content = calls_log.read_text(encoding="utf-8")
-    assert "pb.sh stop" in content
+    assert "pocketbase.sh stop" in content
     assert "emulator.sh stop" in content
     assert "appium.sh stop" in content
 

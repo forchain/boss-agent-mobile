@@ -47,9 +47,9 @@ boss-agent-mobile/
 │   ├── bootstrap.py              # Idempotent environment provisioner
 │   └── run_live_test.py          # Live device smoke harness runner
 ├── doctor.sh                     # System health diagnostics & remediation CLI
-├── emulator.sh (emu.sh)          # Dedicated AVD lifecycle manager
-├── appium.sh (app.sh)            # Dedicated Appium server runner
-├── pocketbase.sh (pb.sh)         # PocketBase State Stream Broker runner
+├── emulator.sh                    # Dedicated AVD lifecycle manager
+├── appium.sh                     # Dedicated Appium server runner
+├── pocketbase.sh                 # PocketBase State Stream Broker runner
 ├── web.sh                        # SvelteKit Web Dashboard runner
 ├── run.sh                        # Live test harness & worker CLI
 ├── web/                          # Full-Stack SvelteKit Web Management Dashboard
