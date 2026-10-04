@@ -75,6 +75,25 @@ def test_reconnect_restores_a_dead_bridge_for_a_live_avd(runner: RunnerScriptHar
     assert_all_green(runner)
 
 
+def test_reconnect_recovers_when_the_bridge_is_up_but_the_lan_transport_dropped(
+    runner: RunnerScriptHarness,
+):
+    """The other half of the outage the ticket names: bridge alive, LAN connection gone.
+
+    This is the case a port check cannot see. The bridge is listening and holding its port, so
+    anything watching the process or the socket calls the box healthy, while every remote
+    client fails to connect. The verdict has to be taken from adb's own device list.
+    """
+    avd_up(runner)
+    runner.start_bridge()
+
+    result = runner.run("reconnect")
+
+    assert result.returncode == 0, f"reconnect failed:\n{result.output}"
+    assert f"connect {lan_serial(runner)}" in runner.calls(), runner.calls()
+    assert_all_green(runner)
+
+
 def test_reconnect_never_restarts_the_avd(runner: RunnerScriptHarness):
     """The whole point of the command: repair the network path, not the AVD.
 
