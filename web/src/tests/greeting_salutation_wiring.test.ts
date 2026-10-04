@@ -29,6 +29,8 @@ const MATCHED_JOB = {
 	is_headhunter: true,
 	status: 'matched',
 	match_score: 62,
+	tags: ['硕士优先', 'AI'],
+	digest: '大模型平台核心研发，硕士优先',
 	job_description:
 		'负责 AI 辅助研发全链路：ai 编码/检索/评审/测试/发布/故障分析、mcp/tool/agent 建设、CI/CD 平台治理与构建效率优化。',
 	greeting_message: '您好,幸会!',
@@ -114,6 +116,8 @@ describe('Greeting salutation boundary contract (dashboard)', () => {
 		const body = findCall(calls, '/api/match/evaluate')!.body;
 		expect(body.recruiter_name).toBe('吴灏颖');
 		expect(body.recruiter_title).toBe('猎头顾问');
+		expect(body.tags).toEqual(['硕士优先', 'AI']);
+		expect(body.digest).toBe('大模型平台核心研发，硕士优先');
 	});
 
 	it('sends the recruiter name and title when refining the greeting', async () => {
@@ -133,5 +137,7 @@ describe('Greeting salutation boundary contract (dashboard)', () => {
 		const body = findCall(calls, '/api/match/critique')!.body;
 		expect(body.job.recruiter_name).toBe('吴灏颖');
 		expect(body.job.recruiter_title).toBe('猎头顾问');
+		expect(body.job.tags).toEqual(['硕士优先', 'AI']);
+		expect(body.job.digest).toBe('大模型平台核心研发，硕士优先');
 	});
 });

@@ -372,9 +372,9 @@ class PocketBaseCandidateMemoryStore(CandidateMemoryStore):
                     "raw_summary"
                 )
                 if incoming_doc:
-                    merged_body["raw_summary"] = incoming_doc
+                    merged_body["raw_summary"] = incoming_doc[:4990]
                 elif existing.get("raw_summary"):
-                    merged_body["raw_summary"] = existing["raw_summary"]
+                    merged_body["raw_summary"] = str(existing["raw_summary"])[:4990]
                 merged_body["user_id"] = user_id
                 resp = await loop.run_in_executor(
                     None,
@@ -384,6 +384,8 @@ class PocketBaseCandidateMemoryStore(CandidateMemoryStore):
                 )
             else:
                 body = {**profile_data, "user_id": user_id}
+                if body.get("raw_summary"):
+                    body["raw_summary"] = str(body["raw_summary"])[:4990]
                 resp = await loop.run_in_executor(
                     None,
                     lambda: self.session.post(url, json=body, headers=self._headers()),

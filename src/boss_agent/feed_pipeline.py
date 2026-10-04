@@ -1185,6 +1185,16 @@ class JobFeedPipeline:
         # nothing to draft, and "nothing to draft" means no token is spent drafting it.
         run.human_greeting, run.human_greeting_origin = self._resolve_human_greeting(run)
 
+        filter_dict = (
+            config.filter_config.to_dict()
+            if config.filter_config and hasattr(config.filter_config, "to_dict")
+            else None
+        )
+        if hasattr(posting, "search_filter") and not getattr(posting, "search_filter", None):
+            posting.search_filter = filter_dict
+        if hasattr(card, "search_filter") and not getattr(card, "search_filter", None):
+            card.search_filter = filter_dict
+
         evaluation = self.screener.evaluate_job(
             card=card,
             jd_text=jd_text,
@@ -1192,6 +1202,7 @@ class JobFeedPipeline:
             policy=config.screening_policy,
             draft_greeting=config.target_action == TargetAction.AUTO_APPLY
             and not run.human_greeting,
+            search_filter=filter_dict,
         )
 
         if "查看更多" in jd_text:

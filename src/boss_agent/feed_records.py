@@ -110,6 +110,7 @@ def posting_from_record(
         company_name=str(record.get("company_name") or "").strip() or card.company_name,
         salary_range=str(record.get("salary_range") or "").strip() or card.salary_range,
         job_description=job_description,
+        digest=str(record.get("digest") or card.digest or card.snippet or ""),
         location=str(record.get("location") or "").strip() or card.location or None,
         location_line=str(record.get("location_line") or ""),
         metro_lines=str(record.get("metro_lines") or ""),
@@ -122,6 +123,7 @@ def posting_from_record(
         is_headhunter=bool(record.get("is_headhunter") or card.is_headhunter),
         commute_distance_km=commute_distance_km,
         commute_distance_text=commute_distance_text,
+        search_filter=record.get("search_filter") or getattr(card, "search_filter", None),
     )
     # The same guards a live read applies: "未注明职位"/"未注明公司" is not an identity, and
     # the card is the fallback the detail page would have supplied.

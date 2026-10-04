@@ -173,11 +173,13 @@ def make_job_evaluation_node(screener: CandidateScreener):
 
     def job_evaluation_node(state: JobApplicationState) -> dict[str, Any]:
         policy = ScreeningPolicy.from_dict(state.get("screening_policy") or {})
+        search_filter = state.get("search_filter") or (state.get("card") or {}).get("search_filter")
         result = screener.evaluate_job(
             card=state.get("card") or {},
             jd_text=state.get("jd_text") or "",
             profile=state.get("candidate_profile") or None,
             policy=policy,
+            search_filter=search_filter,
         )
         return {
             "deep_screen_pass": result.passed,
@@ -380,6 +382,15 @@ def make_resume_document_generator_node(llm_client: Any | None = None):
             '  "years_of_experience": 经验年限(整数),\n'
             '  "target_positions": ["期望职位1", "期望职位2"],\n'
             '  "core_skills": ["分类1: 技能列表", "分类2: 技能列表"],\n'
+            '  "education": [\n'
+            "    {\n"
+            '      "school": "学校名称",\n'
+            '      "degree": "学历(如: 硕士 / 本科 / 博士)",\n'
+            '      "major": "专业名称",\n'
+            '      "start_date": "入学年份",\n'
+            '      "end_date": "毕业年份"\n'
+            "    }\n"
+            "  ],\n"
             '  "profile_document": "详尽完整的 Markdown 格式候选人全景画像文档",\n'
             '  "work_experiences": [],\n'
             '  "projects": []\n'

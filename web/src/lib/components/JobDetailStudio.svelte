@@ -179,6 +179,9 @@
 					job_description: currentJob.job_description,
 					recruiter_name: currentJob.recruiter_name,
 					recruiter_title: currentJob.recruiter_title,
+					tags: currentJob.tags || [],
+					digest: currentJob.digest || '',
+					search_filter: currentJob.search_filter || null,
 					candidate_profile: profile,
 					llmSettings: llmSettings
 				})
@@ -253,7 +256,10 @@
 						salary_range: currentJob.salary_range,
 						job_description: currentJob.job_description,
 						recruiter_name: currentJob.recruiter_name,
-						recruiter_title: currentJob.recruiter_title
+						recruiter_title: currentJob.recruiter_title,
+						tags: currentJob.tags || [],
+						digest: currentJob.digest || '',
+						search_filter: currentJob.search_filter || null
 					},
 					current_greeting: customGreeting,
 					critique: critiqueInput.trim(),
