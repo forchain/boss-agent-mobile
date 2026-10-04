@@ -172,7 +172,11 @@ restart_emulator_reusing_if_online() {
         return 0
     fi
 
+    # The verdict and its reason are printed on both paths: "absent", "still booting" and
+    # "adb is missing" all mean "cold restart", and without the reason the operator cannot
+    # tell which of the three they are looking at.
     echo "🌙 No online dedicated AVD found — performing a cold restart."
+    printf '%s\n' "${STATUS_OUT}" | sed 's/^/   /'
     ./emulator.sh stop || true
 }
 

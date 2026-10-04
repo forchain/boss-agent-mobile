@@ -300,10 +300,24 @@ def launched_avd(runner: RunnerScriptHarness):
     runner.script(devices=[])
     process = runner.spawn_script("emulator.sh", "start")
     deadline = time.monotonic() + LAUNCH_BUDGET_SEC
-    while not (state_dir / "pid").exists() and time.monotonic() < deadline:
+    # Wait for the *complete* identity report, not just the pid file: the fake emulator
+    # writes `pid` first and only then spawns the helper that fills `session`, so a bare
+    # existence check races that second write and the session read below raises IndexError
+    # roughly half the time under load.
+    while time.monotonic() < deadline:
+        session = state_dir / "session"
+        if (
+            (state_dir / "pid").exists()
+            and session.exists()
+            and len(session.read_text(encoding="utf-8").split()) == 3
+        ):
+            break
         assert process.poll() is None, "emulator.sh exited before launching the AVD"
         time.sleep(0.05)
     assert (state_dir / "pid").exists(), "the fake emulator was never launched"
+    assert len((state_dir / "session").read_text(encoding="utf-8").split()) == 3, (
+        "the fake emulator never reported its session and process group"
+    )
     try:
         yield runner, state_dir, process
     finally:

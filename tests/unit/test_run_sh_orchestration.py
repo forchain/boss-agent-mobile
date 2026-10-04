@@ -56,10 +56,11 @@ exit 0
         _make_mock_script(script)
 
     # The AVD mock keeps the real runner's status contract: exit 0 only when the device is
-    # online *and* booted, exit 1 otherwise. That is the signal `run.sh` uses to decide
-    # between reusing a healthy AVD and cold-restarting it, so a mock that always exited 0
-    # would make the reuse path untestable. Touching `avd_online` in the runtime root flips
-    # the device to online.
+    # online *and* booted, exit 1 otherwise, and the same three verdicts the real runner
+    # prints. That is the signal `run.sh` uses to decide between reusing a healthy AVD and
+    # cold-restarting it, so a mock that always exited 0 would make the reuse path
+    # untestable. Dropping `avd_online` in the runtime root marks the device online;
+    # `avd_booting` marks it up but not yet usable.
     emulator_sh = runtime_root / "emulator.sh"
     emulator_sh.write_text(
         f"""#!/usr/bin/env bash
@@ -68,6 +69,10 @@ if [[ "${{1:-}}" == "status" ]]; then
     if [[ -f "{avd_online_marker}" ]]; then
         echo "🟢 Dedicated AVD 'boss_avd_arm64' is ONLINE and READY (emulator-5554)."
         exit 0
+    fi
+    if [[ -f "{runtime_root}/avd_booting" ]]; then
+        echo "🟡 Dedicated AVD 'boss_avd_arm64' is BOOTING (emulator-5554, sys.boot_completed='')."
+        exit 1
     fi
     echo "🔴 Dedicated AVD 'boss_avd_arm64' is NOT RUNNING."
     exit 1
@@ -313,17 +318,39 @@ def test_infra_restart_cold_restarts_when_no_avd_is_online(orchestrator_runtime:
 
 
 def test_infra_restart_stops_the_avd_when_it_is_still_booting(orchestrator_runtime: Path):
-    """`status` returning non-zero (booting is not ready) must not be mistaken for reuse.
+    """A booting AVD is not reused, and the reason is reported (#363).
 
     The real `emulator.sh status` exits non-zero for a device that is up but still booting,
-    so a non-zero verdict has to mean "not usable", not "unknown".
+    so a non-zero verdict has to mean "not usable" and not "unknown" — otherwise restart
+    would leave a half-booted device in place and skip the only clean stop it would get.
     """
+    (orchestrator_runtime / "avd_booting").touch()
     calls_log = orchestrator_runtime / "calls.log"
 
-    # No marker file: the mock reports NOT RUNNING and exits 1.
     res = _run(orchestrator_runtime, "infra", "restart")
 
     assert res.returncode == 0
+    content = calls_log.read_text(encoding="utf-8")
+    assert "emulator.sh stop" in content, (
+        "a booting AVD must still be stopped rather than reused"
+    )
+    assert "emulator.sh start --daemon" in content
+    assert "cold restart" in res.stdout.lower(), res.stdout
+    # The verdict is not swallowed: an operator has to be able to tell "still booting" from
+    # "no device at all" from "adb is broken".
+    assert "BOOTING" in res.stdout, res.stdout
+
+
+def test_infra_restart_reports_why_the_avd_could_not_be_reused(orchestrator_runtime: Path):
+    """The cold-restart path prints the status verdict, not just its own conclusion."""
+    calls_log = orchestrator_runtime / "calls.log"
+
+    res = _run(orchestrator_runtime, "infra", "restart")
+
+    assert res.returncode == 0
+    assert "NOT RUNNING" in res.stdout, (
+        f"the cold-restart path discarded the reason it could not reuse the AVD:\n{res.stdout}"
+    )
     assert "emulator.sh stop" in calls_log.read_text(encoding="utf-8")
 
 

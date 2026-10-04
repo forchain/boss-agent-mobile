@@ -108,7 +108,7 @@ cmd_status() {
         STALE_CWD="$(runner_process_cwd "${PORT_PID}")"
         echo "🔴 SvelteKit Web Dashboard port ${WEB_PORT} is held by a STALE process (PID: ${PORT_PID})"
         echo "   Deleted CWD: ${STALE_CWD:-unknown}"
-        echo "   Run './web.sh restart' to reclaim port and start a fresh server."
+        echo "   Run './dashboard.sh restart' to reclaim port and start a fresh server."
         return 1
     fi
 

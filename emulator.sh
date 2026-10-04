@@ -117,24 +117,27 @@ PYTHON_BIN="$(find_python_binary)"
 detached_spawn() {
     local SPAWN_LOG="$1"
     shift
-    local PY_BIN
-    PY_BIN="$(find_python_binary)"
-    if [[ -z "${PY_BIN}" ]]; then
+    if [[ -z "${PYTHON_BIN}" ]]; then
         # No Python available: fall back to the old behaviour rather than refusing to
-        # start. `nohup` still covers the SIGHUP case.
+        # start. `nohup` still covers the SIGHUP case. This does *not* restore session
+        # isolation, and a call site that needs Python anyway (the remote ADB bridge) will
+        # simply fail to exec, which it already degraded around before this helper existed.
         nohup "$@" </dev/null >> "${SPAWN_LOG}" 2>&1 &
         disown $! 2>/dev/null || true
         echo "$!"
         return 0
     fi
 
-    nohup "${PY_BIN}" -c \
+    nohup "${PYTHON_BIN}" -c \
         'import os, sys
 try:
     os.setsid()
 except OSError:
-    # Already a process-group leader (job control was on): there is no parent group left
-    # to be signalled through, so the isolation this call wants already holds.
+    # setsid() only fails when this child is already a process-group leader, which takes
+    # job control to be on — not the case for a background job in this non-interactive
+    # script. Even if it were reached, only the process group would be new: the session and
+    # the controlling terminal are still shared with the runner, so this is degraded
+    # isolation rather than none at all.
     pass
 os.execvp(sys.argv[1], sys.argv[1:])' \
         "$@" </dev/null >> "${SPAWN_LOG}" 2>&1 &
@@ -436,12 +439,14 @@ start_remote_bridge() {
     echo "🌉 Starting Remote ADB Bridge daemon (0.0.0.0:${PORT} -> 127.0.0.1:${TARGET_PORT})..."
     # Session-isolated for the same reason as the emulator: a bridge that dies with the
     # terminal leaves the AVD unreachable over LAN even though the device is still up.
-    # `env` carries PYTHONPATH through the exec chain without a shell variable assignment
-    # prefixing a function call, whose scope differs between bash versions.
+    # `env` rather than a `PYTHONPATH=…` prefix, because a variable assignment applied to
+    # the `detached_spawn` *function* call is how the override reaches the helper's own
+    # commands, and keeping it on the exec chain instead makes the intent explicit and
+    # independent of how a given bash version scopes assignments around function calls.
     local BRIDGE_PID
     BRIDGE_PID="$(detached_spawn \
         "${BRIDGE_LOG_FILE}" \
-        env "PYTHONPATH=${ROOT_DIR}/src:${PYTHONPATH:-}" "$(find_python_binary)" \
+        env "PYTHONPATH=${ROOT_DIR}/src:${PYTHONPATH:-}" "${PYTHON_BIN}" \
         -m boss_agent.services.remote_adb_bridge \
         --host 0.0.0.0 \
         --port "${PORT}" \
