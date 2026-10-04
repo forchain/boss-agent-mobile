@@ -6,14 +6,15 @@
 # services, or delegating directly to dedicated subsystem runners.
 #
 # Usage:
-#   ./run.sh                              # Start application services (worker + web)
-#   ./run.sh start                        # Start application services (worker + web)
-#   ./run.sh restart                      # Restart application services (worker + web)
-#   ./run.sh stop                         # Stop application services (worker + web)
+#   ./run.sh                              # Start application services (worker + dashboard) & attach logs
+#   ./run.sh start                        # Start application services (worker + dashboard)
+#   ./run.sh restart                      # Restart application services (worker + dashboard) & attach logs
+#   ./run.sh restart --daemon             # Restart application services in background (no attach)
+#   ./run.sh stop                         # Stop application services (worker + dashboard)
 #   ./run.sh status                       # Service status dashboard (infra + app)
 #
 # Service Group Orchestration:
-#   ./run.sh app [start|stop|restart|status]   # Manage application layer (worker + web)
+#   ./run.sh app [start|stop|restart|status]   # Manage application layer (worker + dashboard)
 #   ./run.sh infra [start|stop|restart|status] # Manage infrastructure (pb + emu + appium)
 #   ./run.sh all [start|stop|restart|status]   # Manage full stack (infra + app)
 #
@@ -52,16 +53,17 @@ Boss Agent Mobile - Unified Master Runner & Service Orchestrator
 Usage:
   ./run.sh [command] [action] [options]
 
-Default Actions (operates on Application services: worker + web):
+Default Actions (operates on Application services: worker + dashboard):
   ./run.sh                            Start application services & auto-attach to worker logs
   ./run.sh start                      Start application services in background
   ./run.sh stop                       Stop application services
-  ./run.sh restart                    Restart application services
+  ./run.sh restart                    Restart application services & auto-attach to worker logs
+  ./run.sh restart --daemon           Restart application services in background (no attach)
   ./run.sh status                     Show overall system status dashboard
   ./run.sh attach                     Attach to live Automation Worker logs
 
 Service Group Orchestration:
-  ./run.sh app [action]               Manage application services (worker, web)
+  ./run.sh app [action]               Manage application services (worker, dashboard)
   ./run.sh infra [action]             Manage infrastructure (pb, emulator, appium)
   ./run.sh all [action]               Manage all services (infra + app)
 
@@ -76,9 +78,10 @@ Single Service Delegation:
   ./run.sh live [args...]             Run live mobile test harness
 
 Examples:
-  ./run.sh restart                    Restart worker + web to test current worktree
+  ./run.sh restart                    Restart worker + dashboard and watch the new run
+  ./run.sh restart --daemon           Restart worker + dashboard and return to the prompt
   ./run.sh infra start                Start PocketBase, Emulator, and Appium in background
-  ./run.sh app status                 Check status of worker and web
+  ./run.sh app status                 Check status of worker and dashboard
   ./run.sh live --keyword "AI"        Run live harness with test arguments
 EOF
 }
@@ -93,7 +96,7 @@ cmd_app() {
             ./dashboard.sh start --daemon "$@"
             echo "✅ Application services started in background."
             echo "   Worker Logs: .boss_agent/worker.log"
-            echo "   Web Logs   : .boss_agent/web.log"
+            echo "   Dashboard Logs: .boss_agent/web.log"
             ;;
         stop)
             echo "🛑 Stopping Application Services..."
@@ -109,7 +112,7 @@ cmd_app() {
             ./dashboard.sh start --daemon "$@"
             echo "✅ Application services restarted in background."
             echo "   Worker Logs: .boss_agent/worker.log"
-            echo "   Web Logs   : .boss_agent/web.log"
+            echo "   Dashboard Logs: .boss_agent/web.log"
             ;;
         status)
             echo "📊 Application Services Status:"
@@ -121,6 +124,33 @@ cmd_app() {
             return 1
             ;;
     esac
+}
+
+cmd_restart_app() {
+    # `restart` mirrors bare `./run.sh`: restarting mid-development is a "watch what the new
+    # code does" action, so it lands on the live Worker log stream. `--daemon` / `-d` is the
+    # explicit opt-out for supervisors and scripts, which have no terminal to follow.
+    #
+    # The flag is consumed here rather than forwarded: the runners already get `--daemon`
+    # from `cmd_app restart`, so passing a second copy down would be noise.
+    local RESTART_ARGS=()
+    local ATTACH_WORKER=1
+    for arg in "$@"; do
+        case "${arg}" in
+            --daemon|-d) ATTACH_WORKER=0 ;;
+            *) RESTART_ARGS+=("${arg}") ;;
+        esac
+    done
+
+    if [[ ${#RESTART_ARGS[@]} -gt 0 ]]; then
+        cmd_app restart "${RESTART_ARGS[@]}"
+    else
+        cmd_app restart
+    fi
+
+    if [[ ${ATTACH_WORKER} -eq 1 ]]; then
+        exec ./worker.sh attach
+    fi
 }
 
 cmd_infra() {
@@ -266,7 +296,7 @@ case "${SUBCOMMAND}" in
         ;;
     restart)
         shift || true
-        cmd_app restart "$@"
+        cmd_restart_app "$@"
         ;;
     stop)
         shift || true

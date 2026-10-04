@@ -176,6 +176,60 @@ def test_run_sh_default_restart_operates_on_app(orchestrator_runtime: Path):
     assert "dashboard.sh start --daemon" in content
 
 
+def test_run_sh_restart_attaches_to_worker_logs_by_default(orchestrator_runtime: Path):
+    """`./run.sh restart` lands on the live Worker log stream, like bare `./run.sh` (#362).
+
+    Restarting mid-development is a "watch what the new code does" action, so returning to
+    the prompt left the user with a restart and no way to watch it, forcing a second
+    command. Defaulting to the attach removes that second step.
+    """
+    calls_log = orchestrator_runtime / "calls.log"
+
+    res = _run(orchestrator_runtime, "restart")
+
+    assert res.returncode == 0
+    content = calls_log.read_text(encoding="utf-8")
+    assert "worker.sh start --daemon" in content, "restart must still background the services"
+    assert "worker.sh attach" in content, (
+        "a bare `./run.sh restart` must attach to the Worker logs the same way bare "
+        "`./run.sh` does"
+    )
+
+
+@pytest.mark.parametrize("flag", ["--daemon", "-d"])
+def test_run_sh_restart_daemon_stays_detached(orchestrator_runtime: Path, flag: str):
+    """`--daemon` / `-d` keeps `restart` a background-only action (#362).
+
+    Scripts and supervisors drive `restart` from a non-interactive context where a log
+    follow would hang forever, so the flag is the documented way to opt out of attaching.
+    """
+    calls_log = orchestrator_runtime / "calls.log"
+
+    res = _run(orchestrator_runtime, "restart", flag)
+
+    assert res.returncode == 0
+    content = calls_log.read_text(encoding="utf-8")
+    assert "worker.sh start --daemon" in content
+    assert "worker.sh attach" not in content, f"`restart {flag}` must not follow the log"
+    # The flag is consumed by the orchestrator, so it must not be forwarded to the runners
+    # as a duplicate `--daemon`.
+    assert f"worker.sh start --daemon {flag}" not in content, (
+        f"`restart {flag}` forwarded the flag to the runner instead of consuming it"
+    )
+
+
+def test_run_sh_restart_still_forwards_unknown_options(orchestrator_runtime: Path):
+    """Options that are not the daemon switch keep reaching the underlying runners."""
+    calls_log = orchestrator_runtime / "calls.log"
+
+    res = _run(orchestrator_runtime, "restart", "--poll-interval", "2")
+
+    assert res.returncode == 0
+    content = calls_log.read_text(encoding="utf-8")
+    assert "worker.sh start --daemon --poll-interval 2" in content
+    assert "worker.sh attach" in content, "forwarded options must not suppress the attach"
+
+
 def test_run_sh_infra_group_orchestration(orchestrator_runtime: Path):
     calls_log = orchestrator_runtime / "calls.log"
 
