@@ -1,6 +1,11 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import { isChatCleanupStrategy, resolveTargetAction, type SavedSearch } from '$lib/types';
+	import {
+		isChatCleanupStrategy,
+		resolveTargetAction,
+		type ChannelPreference,
+		type SavedSearch
+	} from '$lib/types';
 	import {
 		checkPocketBaseHealth,
 		listSavedSearches,
@@ -57,6 +62,7 @@
 			activity: string;
 			company_scales: string[];
 			industries: string[];
+			channel_preference: ChannelPreference;
 		};
 	}>({
 		id: '',
@@ -76,7 +82,10 @@
 			experience: '',
 			activity: '',
 			company_scales: [],
-			industries: []
+			industries: [],
+			// Inherit, so a new strategy picks up the operator's global screening
+			// preference instead of silently pinning itself to one channel (#368).
+			channel_preference: ''
 		}
 	});
 
@@ -129,6 +138,42 @@
 		{ label: '工作日 14:00', expr: '0 14 * * 1-5' },
 		{ label: '每 30 分钟', expr: '*/30 * * * *' }
 	];
+
+	/**
+	 * 招聘渠道 — four states, not three (issue #368).
+	 *
+	 * `''` (inherit) is listed first and is the default, because a preset that says
+	 * nothing must keep following the operator's global screening preference. `all` is
+	 * kept separate from `''` so a strategy can deliberately search both channels *over*
+	 * a global `direct_only` setting — collapsing the two would make that impossible.
+	 */
+	const CHANNEL_PREFERENCE_OPTIONS: { value: ChannelPreference; label: string }[] = [
+		{ value: '', label: '🌐 继承全局设置' },
+		{ value: 'all', label: '🌐 全部渠道 (不限)' },
+		{ value: 'direct_only', label: '🏢 仅企业直招' },
+		{ value: 'headhunter_only', label: '👔 仅猎头代招' }
+	];
+
+	/** A strategy card badge, or null when the strategy constrains no channel (#368). */
+	function channelBadge(preference: ChannelPreference | undefined): { label: string; className: string } | null {
+		if (preference === 'direct_only') {
+			return { label: '🏢 仅直招', className: 'bg-emerald-950/60 text-emerald-300 border-emerald-800/60' };
+		}
+		if (preference === 'headhunter_only') {
+			return { label: '👔 仅猎头', className: 'bg-violet-950/60 text-violet-300 border-violet-800/60' };
+		}
+		// Inherit and 全部渠道 both leave the search unconstrained, so both stay badge-free:
+		// a badge is meant to answer "what does this strategy exclude?", and neither does.
+		return null;
+	}
+
+	/** The full selector label for a stored value, for the badge's tooltip (#368). */
+	function modalLabelForChannel(preference: ChannelPreference | undefined): string {
+		return (
+			CHANNEL_PREFERENCE_OPTIONS.find((opt) => opt.value === preference)?.label ??
+			CHANNEL_PREFERENCE_OPTIONS[0].label
+		);
+	}
 
 	function formatNextRunTime(cronExpr: string | undefined): string {
 		if (!cronExpr || !cronExpr.trim()) return '未配置';
@@ -248,7 +293,8 @@
 				experience: '不限',
 				activity: '不限',
 				company_scales: [],
-				industries: []
+				industries: [],
+				channel_preference: ''
 			}
 		};
 		isModalOpen = true;
@@ -282,7 +328,15 @@
 				experience: search.filter?.experience || '不限',
 				activity: search.filter?.activity || '不限',
 				company_scales: [...(search.filter?.company_scales || [])],
-				industries: [...(search.filter?.industries || [])]
+				industries: [...(search.filter?.industries || [])],
+				// A preset saved before channel filtering existed carries no key, and an
+				// unrecognized one is not a value the selector can offer — both read as
+				// inherit, which is what the worker would resolve them to anyway (#368).
+				channel_preference: CHANNEL_PREFERENCE_OPTIONS.some(
+					(opt) => opt.value === search.filter?.channel_preference
+				)
+					? (search.filter?.channel_preference as ChannelPreference)
+					: ''
 			}
 		};
 		isModalOpen = true;
@@ -356,7 +410,16 @@
 					experience: !modalForm.filter.experience || modalForm.filter.experience === '不限' ? undefined : modalForm.filter.experience,
 					activity: !modalForm.filter.activity || modalForm.filter.activity === '不限' ? undefined : modalForm.filter.activity,
 					company_scales: modalForm.filter.company_scales,
-					industries: modalForm.filter.industries
+					industries: modalForm.filter.industries,
+					// Always written, including as ''. An omitted key would read back as
+					// inherit too, but writing the value the operator actually chose keeps
+					// "inherit" an explicit decision on the record rather than an accident
+					// of which fields the patch happened to carry (#368). A 收件箱清理
+					// strategy searches nothing, so it keeps no channel at all — otherwise a
+					// strategy converted from a search would carry a restriction that is
+					// never applied and, since chat-cleanup cards show no channel badge,
+					// never visible either.
+					channel_preference: isChatCleanup ? '' : modalForm.filter.channel_preference
 				}
 			};
 			if (isEditing && modalForm.id) {
@@ -592,6 +655,7 @@
 							     so these would read 「推荐流」「筛选已关闭」 on a card whose
 							     job is scanning 仅沟通. The 扫描范围 line above covers it. -->
 							{#if !isChatCleanup}
+								{@const channel = channelBadge(search.filter?.channel_preference)}
 								<div class="flex items-center gap-1.5">
 									{#if search.enable_search === false}
 										<span class="text-[10px] px-2 py-0.5 rounded bg-amber-950/60 text-amber-300 border border-amber-800/60 font-medium">
@@ -609,6 +673,17 @@
 									{:else}
 										<span class="text-[10px] px-2 py-0.5 rounded bg-emerald-950/60 text-emerald-300 border border-emerald-800/60 font-medium">
 											🎯 筛选已开启
+										</span>
+									{/if}
+									<!-- Only a strategy that actually excludes a channel earns a
+									     badge. Inherit and 全部渠道 both leave the scan
+									     unconstrained, so an unconstrained card stays clean. -->
+									{#if channel}
+										<span
+											class="text-[10px] px-2 py-0.5 rounded border font-medium {channel.className}"
+											title="招聘渠道限制：{modalLabelForChannel(search.filter?.channel_preference)}"
+										>
+											{channel.label}
 										</span>
 									{/if}
 								</div>
@@ -1032,6 +1107,27 @@
 								{/each}
 							</select>
 						</div>
+					</div>
+
+					<!-- Recruitment Channel: the one filter dimension Boss's own dialog
+					     cannot express, so it is enforced by the screener at the card stage
+					     rather than selected on the device (#368). -->
+					<div>
+						<label for="filter-channel" class="block text-[11px] font-medium text-slate-400 mb-1">
+							招聘渠道 (仅在初筛生效)
+						</label>
+						<select
+							id="filter-channel"
+							bind:value={modalForm.filter.channel_preference}
+							class="w-full bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-cyan-500"
+						>
+							{#each CHANNEL_PREFERENCE_OPTIONS as opt}
+								<option value={opt.value}>{opt.label}</option>
+							{/each}
+						</select>
+						<p class="text-[10px] text-slate-500 mt-1">
+							猎头代招岗位在打开详情页前即被跳过；命中标题白名单的岗位仍会被放行。
+						</p>
 					</div>
 
 					<!-- Company Scales Checkboxes -->
