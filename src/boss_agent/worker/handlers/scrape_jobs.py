@@ -54,7 +54,8 @@ class ScrapeJobsHandler(BaseTaskHandler):
         await broker.append_log(
             task.id,
             f"Starting SCRAPE_JOBS ({strategy_desc}keyword='{config.keyword}', "
-            f"target_action='{config.target_action.value}', max_jobs={config.max_jobs})",
+            f"target_action='{config.target_action.value}', max_jobs={config.max_jobs}, "
+            f"channel='{config.screening_policy.channel_preference}')",
         )
 
         pipeline = JobFeedPipeline.for_task(

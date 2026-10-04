@@ -231,6 +231,7 @@ class FeedStreamConfig:
                 activity=raw_filter.get("activity"),
                 company_scales=raw_filter.get("company_scales", []),
                 industries=raw_filter.get("industries", []),
+                channel_preference=raw_filter.get("channel_preference", ""),
                 enable_filter=bool(data.get("enable_filter", True)),
             )
             if isinstance(raw_filter, dict)
@@ -280,17 +281,24 @@ class FeedStreamConfig:
             data.get("daily_greeting_limit") or load_settings().get("daily_greeting_limit", 20)
         )
 
+        screening_policy = (
+            ScreeningPolicy.from_dict(raw_policy) if raw_policy else ScreeningPolicy.load_default()
+        )
+        # A strategy may pin its own recruitment channel; saying nothing means inherit the
+        # policy resolved above (issue #368). Resolution happens here rather than in either
+        # handler because a task's channel has to be settled before the screener reads it —
+        # and the two handlers share this parser precisely so they cannot disagree.
+        strategy_channel = _strategy_channel_preference(data.get("filter"))
+        if strategy_channel:
+            screening_policy.channel_preference = strategy_channel
+
         return cls(
             target_action=target_action,
             keyword=data.get("keyword"),
             max_jobs=int(data.get("max_jobs", DEFAULT_MAX_JOBS)),
             enable_search=bool(data.get("enable_search", True)),
             filter_config=filter_config,
-            screening_policy=(
-                ScreeningPolicy.from_dict(raw_policy)
-                if raw_policy
-                else ScreeningPolicy.load_default()
-            ),
+            screening_policy=screening_policy,
             cooldown_days=resolve_communication_cooldown_days(data),
             daily_greeting_limit=daily_limit,
             min_score=float(data.get("min_score", 70)),
@@ -309,6 +317,30 @@ class FeedStreamConfig:
             direct_job_id=data.get("direct_job_id"),
             is_headhunter=data.get("is_headhunter"),
         )
+
+
+def _strategy_channel_preference(raw_filter: Any) -> str:
+    """The recruitment channel a task's strategy pinned, or '' for "inherit global".
+
+    Read the same two shapes ``SavedSearch.from_dict`` reads for the same PocketBase
+    column, so a task queued before the value was normalized cannot resolve a different
+    channel than the preset it was launched from. Normalization itself belongs to
+    ``FilterConfig`` — this asks it the question rather than owning a second rule, which
+    is how the dashboard's selector and the worker's runtime policy would otherwise
+    come to accept different spellings of the same value.
+    """
+    if isinstance(raw_filter, str):
+        try:
+            import json
+
+            raw_filter = json.loads(raw_filter)
+        except Exception:
+            return ""
+    if not isinstance(raw_filter, dict):
+        return ""
+    return FilterConfig(
+        channel_preference=raw_filter.get("channel_preference", "")
+    ).channel_preference
 
 
 @dataclass

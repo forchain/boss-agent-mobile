@@ -1166,6 +1166,36 @@ class FilterConfig:
     )
     industries: list[str] = field(default_factory=list)
     enable_filter: bool = True
+    #: Recruitment channel this *strategy* targets, as one ``ChannelPreference`` or
+    #: ``""`` for "inherit the global setting" (issue #368). It lives on the filter
+    #: because that is the JSON column a SavedSearch already serializes into, so no
+    #: schema change is needed and every historical row reads back unchanged.
+    #:
+    #: Unlike the dimensions above it is **not** a native app filter: Boss's filter
+    #: dialog has no channel control, so it is never handed to
+    #: ``SearchPage.apply_filters`` and stays out of ``has_filters`` for the same
+    #: reason. The screener adjudicates it at the zero-token card stage instead.
+    channel_preference: str = ""
+
+    def __post_init__(self) -> None:
+        self.channel_preference = self._normalize_channel_preference(self.channel_preference)
+
+    @staticmethod
+    def _normalize_channel_preference(value: Any) -> str:
+        """Coerce a strategy's channel preference, defaulting to '' (inherit global).
+
+        The counterpart to ``ScreeningPolicy._normalize_channel_preference``, and the
+        difference between the two defaults is the whole point of the field: a policy
+        that is never configured must be *restrictive enough to matter* (``all``),
+        while a strategy that says nothing must defer to whatever the operator configured
+        globally. So an unknown value here reads as "inherit" rather than as "all" —
+        silently widening a search to every channel is the one outcome an operator who
+        typed a preference would never expect.
+        """
+        try:
+            return ChannelPreference(str(value or "").strip().lower()).value
+        except ValueError:
+            return ""
 
     @property
     def has_filters(self) -> bool:
@@ -1904,6 +1934,11 @@ class SavedSearch:
                 "company_scales": self.filter.company_scales,
                 "industries": self.filter.industries,
                 "enable_filter": self.enable_filter,
+                # '' is a real value, not a missing key: it is how a strategy says
+                # "inherit the global channel" and it must survive a round-trip
+                # unchanged, or editing an unrelated field would quietly pin the
+                # strategy to whatever the global setting happened to be that day.
+                "channel_preference": self.filter.channel_preference,
             },
             "screening_policy": self.screening_policy.to_dict(),
             "cron_expression": self.cron_expression,
@@ -1967,6 +2002,10 @@ class SavedSearch:
                 if "industries" not in filter_data
                 else filter_data.get("industries", []),
             ),
+            # Absent on every preset written before issue #368, which is exactly the
+            # "inherit the global channel" state — normalization in FilterConfig turns
+            # a missing key, a null and an unrecognized value into that same state.
+            channel_preference=filter_data.get("channel_preference", ""),
             enable_filter=enable_filter,
         )
 
