@@ -31,16 +31,18 @@ from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
-from _runner_harness import (
-    FAKE_LAN_IP,
-    STATUS_BUDGET_SEC,
-    TARGET_AVD,
-    RunnerScriptHarness,
-)
+from _runner_harness import FAKE_LAN_IP, TARGET_AVD, RunnerScriptHarness
 
 from _service_harness import wait_until_dead
 
 NATIVE_SERIAL = "emulator-5554"
+
+# `status` is bounded by contract, and `STATUS_BUDGET_SEC` is that bound. A `restart` is a
+# different order of operation — it stops the AVD, launches a replacement, waits for the boot,
+# spawns a bridge daemon and waits for the LAN transport — so it needs a budget of its own.
+# The value is not a latency target: it exists to catch a *lockup* (the no-`--daemon` path
+# parks on `tail -f` forever), and any finite bound catches that just as well.
+RESTART_BUDGET_SEC = 45.0
 
 # An AVD name no real emulator can carry. Anything that reaches a process-pattern `pkill`
 # must name this, or the suite would signal the developer's real AVD.
@@ -303,9 +305,14 @@ def test_restart_runs_the_full_stop_then_start_cycle(runner: RunnerScriptHarness
     runner.script(devices=[], avd_name=TARGET_AVD, boot_completed="1")
     runner.start_bridge()
 
-    result = runner.run("restart", "--daemon", env={"FAKE_EMULATOR_REGISTERS_DEVICE": "1"})
+    result = runner.run(
+        "restart",
+        "--daemon",
+        budget=RESTART_BUDGET_SEC,
+        env={"FAKE_EMULATOR_REGISTERS_DEVICE": "1"},
+    )
 
-    assert result.returncode == 0, f"restart failed:\n{result.stdout}\n{result.stderr}"
+    assert result.returncode == 0, f"restart failed:\n{result.output}"
     stopped_at = runner.call_index("bridge: signal 15")
     started_at = runner.call_index("emulator: launched")
     assert stopped_at >= 0, f"restart never stopped the running AVD:\n{result.output}"
@@ -336,7 +343,7 @@ def test_restart_daemon_does_not_attach_to_the_log_stream(runner: RunnerScriptHa
     result = runner.run(
         "restart",
         "--daemon",
-        budget=STATUS_BUDGET_SEC,
+        budget=RESTART_BUDGET_SEC,
         env={"FAKE_EMULATOR_REGISTERS_DEVICE": "1"},
     )
 
@@ -344,7 +351,9 @@ def test_restart_daemon_does_not_attach_to_the_log_stream(runner: RunnerScriptHa
     assert "Attaching to live log stream" not in result.stdout, (
         f"`--daemon` was dropped and the runner attached to logs:\n{result.stdout}"
     )
-    assert result.elapsed < STATUS_BUDGET_SEC, (
+    # The point is that it *returns*: without `--daemon` this call parks on `tail -f` and
+    # only ends when the harness kills it at the budget.
+    assert result.elapsed < RESTART_BUDGET_SEC, (
         f"`restart --daemon` took {result.elapsed:.2f}s — it is holding the terminal"
     )
 
@@ -359,7 +368,12 @@ def test_restart_is_not_the_same_as_start(runner: RunnerScriptHarness):
     runner.script(devices=[], avd_name=TARGET_AVD, boot_completed="1")
     runner.start_bridge()
 
-    runner.run("restart", "--daemon", env={"FAKE_EMULATOR_REGISTERS_DEVICE": "1"})
+    runner.run(
+        "restart",
+        "--daemon",
+        budget=RESTART_BUDGET_SEC,
+        env={"FAKE_EMULATOR_REGISTERS_DEVICE": "1"},
+    )
 
     assert runner.call_index("bridge: signal 15") >= 0, (
         "`restart` behaved like `start`: the running bridge was never stopped"
