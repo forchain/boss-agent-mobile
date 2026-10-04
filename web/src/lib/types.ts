@@ -278,6 +278,17 @@ export interface CommunicationSummary {
 	error?: string;
 }
 
+/**
+ * Recruitment channel a strategy targets (issue #368).
+ *
+ * `''` is a real fourth state, not a missing key: it means "inherit the system-wide
+ * `ScreeningPolicy` setting", which is what every preset written before channel
+ * filtering existed has always done. `all` is the deliberate widening override, and it
+ * is distinct from `''` precisely so a strategy can say "search both channels" over a
+ * global setting of `direct_only`.
+ */
+export type ChannelPreference = '' | 'all' | 'direct_only' | 'headhunter_only';
+
 export interface SavedSearchFilter {
 	education?: string;
 	salary?: string;
@@ -285,6 +296,7 @@ export interface SavedSearchFilter {
 	activity?: string;
 	company_scales?: string[];
 	industries?: string[];
+	channel_preference?: ChannelPreference;
 }
 
 export interface SavedSearch {
