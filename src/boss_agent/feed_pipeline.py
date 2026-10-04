@@ -55,6 +55,7 @@ from .models import (
     is_communication_expired,
     is_direct_hire_company,
     jd_is_usable_on_file,
+    resolve_screening_policy,
 )
 from .pages import (
     ChatPage,
@@ -231,6 +232,7 @@ class FeedStreamConfig:
                 activity=raw_filter.get("activity"),
                 company_scales=raw_filter.get("company_scales", []),
                 industries=raw_filter.get("industries", []),
+                channel_preference=raw_filter.get("channel_preference", ""),
                 enable_filter=bool(data.get("enable_filter", True)),
             )
             if isinstance(raw_filter, dict)
@@ -280,17 +282,25 @@ class FeedStreamConfig:
             data.get("daily_greeting_limit") or load_settings().get("daily_greeting_limit", 20)
         )
 
+        base_policy = (
+            ScreeningPolicy.from_dict(raw_policy) if raw_policy else ScreeningPolicy.load_default()
+        )
+        # A strategy may pin its own recruitment channel; saying nothing means inherit the
+        # policy resolved above (issue #368). The rule itself belongs to
+        # ``models.resolve_screening_policy``, which the interactive SmokeHarness also
+        # goes through — two callers, one answer.
+        screening_policy = resolve_screening_policy(
+            base_policy,
+            channel_preference=_strategy_channel_preference(data.get("filter")),
+        )
+
         return cls(
             target_action=target_action,
             keyword=data.get("keyword"),
             max_jobs=int(data.get("max_jobs", DEFAULT_MAX_JOBS)),
             enable_search=bool(data.get("enable_search", True)),
             filter_config=filter_config,
-            screening_policy=(
-                ScreeningPolicy.from_dict(raw_policy)
-                if raw_policy
-                else ScreeningPolicy.load_default()
-            ),
+            screening_policy=screening_policy,
             cooldown_days=resolve_communication_cooldown_days(data),
             daily_greeting_limit=daily_limit,
             min_score=float(data.get("min_score", 70)),
@@ -309,6 +319,27 @@ class FeedStreamConfig:
             direct_job_id=data.get("direct_job_id"),
             is_headhunter=data.get("is_headhunter"),
         )
+
+
+def _strategy_channel_preference(raw_filter: Any) -> str:
+    """The recruitment channel a task's strategy pinned, or '' for "inherit global".
+
+    Read the same two shapes ``SavedSearch.from_dict`` reads for the same PocketBase
+    column, so a task queued before the value was normalized cannot resolve a different
+    channel than the preset it was launched from. The value is normalized by the caller
+    (``resolve_screening_policy``) rather than here — this only says where in the payload
+    the answer lives, and the two halves of the question are not allowed to disagree.
+    """
+    if isinstance(raw_filter, str):
+        try:
+            import json
+
+            raw_filter = json.loads(raw_filter)
+        except Exception:
+            return ""
+    if not isinstance(raw_filter, dict):
+        return ""
+    return raw_filter.get("channel_preference", "") or ""
 
 
 @dataclass

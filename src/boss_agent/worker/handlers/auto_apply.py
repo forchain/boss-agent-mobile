@@ -73,7 +73,8 @@ class AutoApplyHandler(BaseTaskHandler):
             task.id,
             f"Starting AUTO_APPLY ({strategy_desc}candidate='{profile.name}', "
             f"keyword='{config.keyword}', min_score={config.min_score}, "
-            f"mode='{mode_desc}', depth='{config.depth_expression}')",
+            f"mode='{mode_desc}', depth='{config.depth_expression}', "
+            f"channel='{config.screening_policy.channel_preference}')",
         )
 
         refusal = await self._preflight(broker, task, payload, config, store, screener)
