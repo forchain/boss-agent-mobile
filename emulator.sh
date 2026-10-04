@@ -14,7 +14,7 @@
 #   ./emulator.sh list                # List all installed local AVDs
 #   ./emulator.sh logs                # Attach to live log stream of running AVD
 #   ./emulator.sh stop                # Stop the running dedicated AVD and its ADB bridge
-#   ./emulator.sh restart             # Stop, then start the dedicated AVD again
+#   ./emulator.sh restart             # Stop, then start, then attach to logs (like start)
 #   ./emulator.sh restart --daemon    # Restart in background (do not attach)
 #
 # Lifecycle:
