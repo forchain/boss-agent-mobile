@@ -173,6 +173,18 @@ if command -v adb >/dev/null 2>&1; then
         BOOT_STATUS="$(adb -s "${RUNNING_AVD_SERIAL}" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r\n' || true)"
         if [[ "${BOOT_STATUS}" == "1" ]]; then
             log_pass "专用 Android AVD '${TARGET_AVD}' 已开机并就绪 (${RUNNING_AVD_SERIAL}, 日志: .boss_agent/emulator.log)"
+
+            # A booted AVD whose bridge has died is the outage that looks healthy from the
+            # console and only shows up as "cannot connect" for a remote client, so it is
+            # called out separately -- with the command that repairs it, because the obvious
+            # reflex (restart the emulator) throws away the running session for nothing.
+            BRIDGE_PORT="${REMOTE_ADB_PORT:-6555}"
+            BRIDGE_PID="$(runner_port_listener_pid "${BRIDGE_PORT}")"
+            if [[ -n "${BRIDGE_PID}" ]]; then
+                log_pass "Remote ADB Bridge 正在运行 (PID: ${BRIDGE_PID}, 端口: ${BRIDGE_PORT})"
+            else
+                log_warn "Remote ADB Bridge 未运行 (端口 ${BRIDGE_PORT})，远程客户端将无法连接" "运行: ./emulator.sh reconnect（无需重启模拟器即可恢复局域网 ADB 访问）"
+            fi
         else
             log_warn "专用 Android AVD '${TARGET_AVD}' 正在启动中..." "请等待模拟器启动完毕: ./emulator.sh status"
         fi

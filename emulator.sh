@@ -11,16 +11,23 @@
 #   ./emulator.sh start --daemon      # Start dedicated AVD in background (do not attach)
 #   ./emulator.sh start --foreground  # Start dedicated AVD in foreground
 #   ./emulator.sh status              # Check if dedicated AVD is online and booted
+#   ./emulator.sh status --fix        # Same check, but repair the ADB bridge if it is down
 #   ./emulator.sh list                # List all installed local AVDs
 #   ./emulator.sh logs                # Attach to live log stream of running AVD
 #   ./emulator.sh stop                # Stop the running dedicated AVD and its ADB bridge
 #   ./emulator.sh restart             # Stop, then start, then attach to logs (like start)
 #   ./emulator.sh restart --daemon    # Restart in background (do not attach)
+#   ./emulator.sh reconnect           # Restore LAN ADB access without restarting the AVD
 #
 # Lifecycle:
 #   The AVD is machine-wide infrastructure, not a child of this script. It is started in a
 #   session and process group of its own, so it keeps running after this script exits, after
 #   Ctrl+C detaches the log stream, and after a group- or session-wide cleanup.
+#
+#   Repair, not restart: a dead Remote ADB Bridge is the common failure that *looks* healthy
+#   from the console while every remote client is locked out. `reconnect` fixes that without
+#   disturbing a running AVD, so it is the answer whenever the AVD itself is fine and only
+#   reachability is not.
 #
 # Environment:
 #   ADB_QUERY_TIMEOUT_SEC      Wall-clock bound for a single adb query (default 2).
@@ -391,6 +398,127 @@ get_primary_lan_ip() {
     echo "${LAN_IP}"
 }
 
+# The `<lan-ip>:<port>` transport the Remote ADB Bridge publishes, or empty when this host has
+# no non-loopback address to publish it on. One definition, so every caller agrees on which
+# transport "the LAN connection" means.
+lan_serial() {
+    local LAN_IP
+    LAN_IP="$(get_primary_lan_ip)"
+    if [[ -z "${LAN_IP}" || "${LAN_IP}" == "127.0.0.1" ]]; then
+        return 0
+    fi
+    printf '%s:%s\n' "${LAN_IP}" "${REMOTE_ADB_PORT:-6555}"
+}
+
+# `adb connect` the transport, then wait for it to answer. Idempotent: connecting a
+# transport that is already up is a no-op on a real adb server, and the readiness wait is
+# what actually decides whether it worked.
+connect_lan_adb() {
+    local SERIAL="$1"
+    adb_query connect "${SERIAL}" >/dev/null 2>&1 || true
+    for _ in {1..20}; do
+        if [[ "$(adb_getprop "${SERIAL}" sys.boot_completed)" == "1" ]]; then
+            return 0
+        fi
+        sleep 0.5
+    done
+    return 1
+}
+
+# Whether the transport is currently listed by adb as usable. A bridge that is listening but
+# not connected leaves remote management silently broken, so presence in the device list is
+# the question -- not whether the port is open.
+lan_adb_connected() {
+    local SERIAL="$1"
+    adb_query devices 2>/dev/null \
+        | awk -v s="${SERIAL}" '$1 == s && $2 == "device" { found = 1 } END { exit !found }'
+}
+
+# A one-word verdict on the LAN path from facts the caller already holds: the bridge PID and
+# whether the transport is listed. Kept pure, and shared, so `status` and `reconnect` cannot
+# drift into disagreeing about what "healthy" means -- a diagnostic that reports a different
+# verdict from the repair it recommends is worse than no diagnostic.
+#
+# Both halves matter because either one alone hides a real outage: a bridge that is down
+# cannot carry a connection, and a bridge that is up but unconnected looks perfectly healthy
+# from the console while every remote client is locked out.
+lan_verdict() {
+    local BRIDGE_PID="${1:-}"
+    local CONNECTED="${2:-0}"
+    if [[ -z "${BRIDGE_PID}" ]]; then
+        echo "bridge-down"
+    elif [[ "${CONNECTED}" != "1" ]]; then
+        echo "lan-disconnected"
+    else
+        echo "ok"
+    fi
+}
+
+# `lan_verdict` for callers that have to gather the facts themselves.
+lan_health() {
+    local SERIAL
+    SERIAL="$(lan_serial)"
+    if [[ -z "${SERIAL}" ]]; then
+        echo "no-lan-address"
+        return 0
+    fi
+    local BRIDGE_PID CONNECTED=0
+    BRIDGE_PID="$(get_running_bridge_pid)"
+    if [[ -n "${BRIDGE_PID}" ]] && lan_adb_connected "${SERIAL}"; then
+        CONNECTED=1
+    fi
+    lan_verdict "${BRIDGE_PID}" "${CONNECTED}"
+}
+
+# Bring the LAN path back without touching an AVD that is already healthy.
+#
+# This is the cheap repair, and it is deliberately the *only* one: restarting the AVD would
+# also restore connectivity, at the cost of the run the operator was trying to protect. So
+# when there is no AVD to serve, it refuses rather than starting a bridge that cannot work.
+cmd_reconnect() {
+    echo "🔌 Checking the LAN path to dedicated AVD '${TARGET_AVD}'..."
+
+    local SERIAL
+    SERIAL="$(get_running_device_serial)"
+    if [[ -z "${SERIAL}" ]]; then
+        echo "🔴 Dedicated AVD '${TARGET_AVD}' is NOT RUNNING; there is nothing to reconnect to."
+        echo "💡 Start it first: ./emulator.sh start --daemon"
+        return 1
+    fi
+
+    local BOOT
+    BOOT="$(adb_getprop "${SERIAL}" sys.boot_completed)"
+    if [[ "${BOOT}" != "1" ]]; then
+        echo "🟡 Dedicated AVD '${TARGET_AVD}' is still BOOTING (${SERIAL}, sys.boot_completed='${BOOT}')."
+        echo "💡 Wait for the boot to finish, then retry: ./emulator.sh status"
+        return 1
+    fi
+
+    local LAN_SERIAL
+    LAN_SERIAL="$(lan_serial)"
+    if [[ -z "${LAN_SERIAL}" ]]; then
+        echo "⚠️ No non-loopback LAN IP detected; the AVD cannot be reached over the network."
+        return 1
+    fi
+
+    local HEALTH
+    HEALTH="$(lan_health)"
+    if [[ "${HEALTH}" == "ok" ]]; then
+        echo "🟢 LAN ADB connection is already healthy (${LAN_SERIAL}); nothing to repair."
+        return 0
+    fi
+
+    echo "⚠️ LAN path is unhealthy (${HEALTH}); repairing it without restarting the AVD..."
+    # Idempotent by construction: a bridge that is already listening is left alone.
+    start_remote_bridge
+    if connect_lan_adb "${LAN_SERIAL}"; then
+        echo "🟢 LAN ADB connection restored: ${LAN_SERIAL} (ONLINE and READY)!"
+        return 0
+    fi
+    echo "⚠️ Could not verify ${LAN_SERIAL} after repair. Check ${BRIDGE_LOG_FILE}."
+    return 1
+}
+
 get_running_bridge_pid() {
     local PORT="${REMOTE_ADB_PORT:-6555}"
     if [[ -f "${BRIDGE_PID_FILE}" ]]; then
@@ -506,33 +634,18 @@ stop_remote_bridge() {
 
 ensure_lan_adb_connected() {
     start_remote_bridge
-    local PORT="${REMOTE_ADB_PORT:-6555}"
-    local LAN_IP
-    LAN_IP="$(get_primary_lan_ip)"
-    if [[ -z "${LAN_IP}" || "${LAN_IP}" == "127.0.0.1" ]]; then
+    local SERIAL
+    SERIAL="$(lan_serial)"
+    if [[ -z "${SERIAL}" ]]; then
         echo "⚠️ No non-loopback LAN IP detected; skipping auto-connect over LAN."
         return 0
     fi
 
-    local LAN_SERIAL="${LAN_IP}:${PORT}"
-    echo "🔌 Auto-connecting ADB to dedicated AVD via LAN (${LAN_SERIAL})..."
-    adb_query connect "${LAN_SERIAL}" >/dev/null 2>&1 || true
-
-    local CONNECTED=0
-    for _ in {1..20}; do
-        local BOOT
-        BOOT="$(adb_getprop "${LAN_SERIAL}" sys.boot_completed)"
-        if [[ "${BOOT}" == "1" ]]; then
-            CONNECTED=1
-            break
-        fi
-        sleep 0.5
-    done
-
-    if [[ ${CONNECTED} -eq 1 ]]; then
-        echo "🟢 Dedicated AVD connected via LAN: ${LAN_SERIAL} (ONLINE and READY)!"
+    echo "🔌 Auto-connecting ADB to dedicated AVD via LAN (${SERIAL})..."
+    if connect_lan_adb "${SERIAL}"; then
+        echo "🟢 Dedicated AVD connected via LAN: ${SERIAL} (ONLINE and READY)!"
     else
-        echo "⚠️ Unable to verify LAN connection to ${LAN_SERIAL}. Check ${BRIDGE_LOG_FILE}."
+        echo "⚠️ Unable to verify LAN connection to ${SERIAL}. Check ${BRIDGE_LOG_FILE}."
     fi
 }
 
@@ -566,6 +679,12 @@ cmd_list() {
 }
 
 cmd_status() {
+    # `status` is polled by supervisors, so it stays read-only unless explicitly told to act.
+    local FIX=0
+    if [[ "${1:-}" == "--fix" ]]; then
+        FIX=1
+    fi
+
     echo "🔍 Checking Dedicated Android AVD ('${TARGET_AVD}') status..."
 
     if [[ -z "${ADB_BIN}" ]]; then
@@ -604,14 +723,31 @@ cmd_status() {
         echo "⚪ Remote ADB Bridge is NOT RUNNING (Port: ${PORT})"
     fi
 
-    if [[ -n "${LAN_IP}" && "${LAN_IP}" != "127.0.0.1" ]]; then
-        local LAN_SERIAL="${LAN_IP}:${PORT}"
-        local LAN_DEV_STATE
-        LAN_DEV_STATE="$(adb_query devices || true)"
-        if printf '%s\n' "${LAN_DEV_STATE}" | awk -v s="${LAN_SERIAL}" '$1 == s && $2 == "device" {found=1} END {exit !found}'; then
+    local LAN_SERIAL CONNECTED=0
+    LAN_SERIAL="$(lan_serial)"
+    if [[ -n "${LAN_SERIAL}" ]]; then
+        if lan_adb_connected "${LAN_SERIAL}"; then
             echo "🟢 LAN ADB Connection is CONNECTED and READY (${LAN_SERIAL})"
+            CONNECTED=1
         else
             echo "⚪ LAN ADB Connection is DISCONNECTED (${LAN_SERIAL})"
+        fi
+    fi
+
+    # The AVD can be perfectly healthy while remote management is locked out, so a broken
+    # LAN path gets a lever rather than just a report.
+    local LAN_STATE
+    LAN_STATE="$(lan_verdict "${BRIDGE_PID}" "${CONNECTED}")"
+    if [[ "${LAN_STATE}" != "ok" ]]; then
+        if [[ ${FIX} -eq 1 ]]; then
+            echo "🛠️ Self-heal requested (--fix): repairing the LAN path (${LAN_STATE})..."
+            if cmd_reconnect; then
+                echo "🟢 LAN path repaired."
+            else
+                echo "⚠️ Self-heal could not confirm the LAN path; see ${BRIDGE_LOG_FILE}."
+            fi
+        else
+            echo "💡 Repair without restarting the AVD: ./emulator.sh reconnect  (or re-run with --fix)"
         fi
     fi
 
@@ -845,7 +981,11 @@ case "${ACTION}" in
         cmd_restart "$@"
         ;;
     status)
-        cmd_status
+        shift || true
+        cmd_status "$@"
+        ;;
+    reconnect|repair)
+        cmd_reconnect
         ;;
     list|ls)
         cmd_list
