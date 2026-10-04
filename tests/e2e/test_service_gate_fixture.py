@@ -4,7 +4,7 @@ tests/e2e/test_service_gate_fixture.py
 Verifies the opt-in E2E pre-test teardown gate wiring in `tests/e2e/conftest.py`
 (spec #218 ticket #222; revised by spec #247 tickets #249/#250).
 
-Each scenario assembles a throwaway repository root (a copy of `web.sh`, the real conftest,
+Each scenario assembles a throwaway repository root (a copy of `dashboard.sh`, the real conftest,
 and a dummy test module) and runs a nested pytest session against it. The gate inside that
 session therefore manages the temporary `.boss_agent` runtime directory only, never the
 services used by other worktrees.
@@ -64,7 +64,7 @@ def e2e_project(tmp_path: Path) -> Path:
     project = tmp_path / "repo"
     (project / ".boss_agent").mkdir(parents=True)
     (project / "tests" / "e2e").mkdir(parents=True)
-    shutil.copy2(REPO_ROOT / "web.sh", project / "web.sh")
+    shutil.copy2(REPO_ROOT / "dashboard.sh", project / "dashboard.sh")
     shutil.copy2(REPO_ROOT / "runner_lib.sh", project / "runner_lib.sh")
     shutil.copy2(CONFTEST_SOURCE, project / "tests" / "e2e" / "conftest.py")
     (project / "tests" / "e2e" / "test_placeholder.py").write_text(DUMMY_TEST, encoding="utf-8")

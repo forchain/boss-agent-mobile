@@ -6,13 +6,16 @@
 # auto-attach to live log stream if already running.
 #
 # Usage:
-#   ./pocketbase.sh                   # Start or attach to PocketBase in foreground (alias: ./pb.sh)
+#   ./pocketbase.sh                   # Start or attach to PocketBase in foreground
 #   ./pocketbase.sh start             # Start or attach to PocketBase in foreground
 #   ./pocketbase.sh start --daemon    # Start PocketBase in background
 #   ./pocketbase.sh stop              # Stop running background PocketBase
 #   ./pocketbase.sh status            # Check PocketBase health and status
 #   ./pocketbase.sh provision         # Re-apply schema definitions to SQLite DB
-#   ./pb.sh <cmd>                     # Short symlink alias for ./pocketbase.sh
+#   ./run.sh pb <cmd>                 # Short orchestrator route for ./pocketbase.sh
+#
+# There is no root-level `pb.sh` alias script: a short alias in the project root collided
+# with the full name under shell tab-completion, and `./run.sh pb` reaches the same runner.
 # ==============================================================================
 
 set -euo pipefail

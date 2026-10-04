@@ -74,10 +74,10 @@ JD 输入 → AI 契合度评分 → 自动生成招呼语草稿
 - `src/boss_agent/`: Boss 直聘业务领域实现（Page Object 模型、双锚点检索工作流、候选人结构化画像、LangGraph 筛选流水线、PocketBase 状态流适配器与守护进程 Worker）。
 - `web/`: 现代化 SvelteKit Web 管理控制台（职位流看板、实时任务管理、候选人结构化简历编辑、SavedSearch 策略库与系统配置面板）。
 - `doctor.sh`: 系统全栈健康检查与自动诊断修复工具（[System Doctor](CONTEXT.md)）。
-- `pocketbase.sh` (`pb.sh`): PocketBase 状态流持久化与实时 SSE Broker 服务管理脚本。
-- `emulator.sh` (`emu.sh`): 专用 Android Virtual Device (AVD) 模拟器生命周期管理工具。
-- `appium.sh` (`app.sh`): 独立 Appium 自动化服务启动与日志挂载工具。
-- `web.sh`: Web 控制台一键启动管理工具。
+- `pocketbase.sh`: PocketBase 状态流持久化与实时 SSE Broker 服务管理脚本。
+- `emulator.sh`: 专用 Android Virtual Device (AVD) 模拟器生命周期管理工具。
+- `appium.sh`: 独立 Appium 自动化服务启动与日志挂载工具。
+- `dashboard.sh`: Web 控制台一键启动管理工具。
 - `run.sh`: 真实设备/模拟器冒烟与 Worker 任务执行入口。
 - `config/`: 声明式系统配置（`greeting_prompt.local.md`, `settings.local.yaml`, `locators.yaml`）。
 - `docs/adr/`: 核心架构决策记录（ADR 0001 - 0012，含决策总览索引 [docs/adr/README.md](docs/adr/README.md)）。
@@ -115,7 +115,7 @@ uv run python scripts/bootstrap.py
 ./appium.sh start --daemon
 
 # 启动 Web 管理控制台（访问 http://127.0.0.1:5173）
-./web.sh
+./dashboard.sh
 ```
 
 ### 4. 运行自动化与测试

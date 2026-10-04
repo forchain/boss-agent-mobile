@@ -6,21 +6,23 @@
 # services, or delegating directly to dedicated subsystem runners.
 #
 # Usage:
-#   ./run.sh                              # Start application services (worker + web)
-#   ./run.sh start                        # Start application services (worker + web)
-#   ./run.sh restart                      # Restart application services (worker + web)
-#   ./run.sh stop                         # Stop application services (worker + web)
+#   ./run.sh                              # Start application services (worker + dashboard) & attach logs
+#   ./run.sh start                        # Start application services (worker + dashboard)
+#   ./run.sh restart                      # Restart application services (worker + dashboard) & attach logs
+#   ./run.sh restart --daemon             # Restart application services in background (no attach)
+#   ./run.sh stop                         # Stop application services (worker + dashboard)
 #   ./run.sh status                       # Service status dashboard (infra + app)
 #
 # Service Group Orchestration:
-#   ./run.sh app [start|stop|restart|status]   # Manage application layer (worker + web)
+#   ./run.sh app [start|stop|restart|status]   # Manage application layer (worker + dashboard)
 #   ./run.sh infra [start|stop|restart|status] # Manage infrastructure (pb + emu + appium)
 #   ./run.sh all [start|stop|restart|status]   # Manage full stack (infra + app)
 #
 # Single Service Routing:
 #   ./run.sh worker [args...]             # Dedicated Automation Worker (./worker.sh)
-#   ./run.sh web [args...]                # SvelteKit Web Dashboard (./web.sh)
-#   ./run.sh pb [args...]                 # PocketBase State Stream (./pb.sh)
+#   ./run.sh dashboard [args...]          # SvelteKit Web Dashboard (./dashboard.sh)
+#   ./run.sh web [args...]                # Compatibility route for ./run.sh dashboard
+#   ./run.sh pb [args...]                 # PocketBase State Stream (./pocketbase.sh)
 #   ./run.sh emu [args...]                # Dedicated Android AVD (./emulator.sh)
 #   ./run.sh appium [args...]             # Appium Server (./appium.sh)
 #   ./run.sh doctor [args...]             # Diagnostic Health Check (./doctor.sh)
@@ -51,32 +53,35 @@ Boss Agent Mobile - Unified Master Runner & Service Orchestrator
 Usage:
   ./run.sh [command] [action] [options]
 
-Default Actions (operates on Application services: worker + web):
+Default Actions (operates on Application services: worker + dashboard):
   ./run.sh                            Start application services & auto-attach to worker logs
   ./run.sh start                      Start application services in background
   ./run.sh stop                       Stop application services
-  ./run.sh restart                    Restart application services
+  ./run.sh restart                    Restart application services & auto-attach to worker logs
+  ./run.sh restart --daemon           Restart application services in background (no attach)
   ./run.sh status                     Show overall system status dashboard
   ./run.sh attach                     Attach to live Automation Worker logs
 
 Service Group Orchestration:
-  ./run.sh app [action]               Manage application services (worker, web)
+  ./run.sh app [action]               Manage application services (worker, dashboard)
   ./run.sh infra [action]             Manage infrastructure (pb, emulator, appium)
   ./run.sh all [action]               Manage all services (infra + app)
 
 Single Service Delegation:
   ./run.sh worker [action]            Manage Automation Worker (./worker.sh)
-  ./run.sh web [action]               Manage Web Dashboard (./web.sh)
-  ./run.sh pb [action]                Manage PocketBase (./pb.sh)
+  ./run.sh dashboard [action]         Manage Web Dashboard (./dashboard.sh)
+  ./run.sh web [action]               Alias for ./run.sh dashboard (kept for muscle memory)
+  ./run.sh pb [action]                Manage PocketBase (./pocketbase.sh)
   ./run.sh emu [action]               Manage Android Emulator (./emulator.sh)
   ./run.sh appium [action]            Manage Appium Server (./appium.sh)
   ./run.sh doctor                     Run system diagnostic check (./doctor.sh)
   ./run.sh live [args...]             Run live mobile test harness
 
 Examples:
-  ./run.sh restart                    Restart worker + web to test current worktree
+  ./run.sh restart                    Restart worker + dashboard and watch the new run
+  ./run.sh restart --daemon           Restart worker + dashboard and return to the prompt
   ./run.sh infra start                Start PocketBase, Emulator, and Appium in background
-  ./run.sh app status                 Check status of worker and web
+  ./run.sh app status                 Check status of worker and dashboard
   ./run.sh live --keyword "AI"        Run live harness with test arguments
 EOF
 }
@@ -88,31 +93,31 @@ cmd_app() {
         start)
             echo "🚀 Starting Application Services (Worker + Web Dashboard)..."
             ./worker.sh start --daemon "$@"
-            ./web.sh start --daemon "$@"
+            ./dashboard.sh start --daemon "$@"
             echo "✅ Application services started in background."
             echo "   Worker Logs: .boss_agent/worker.log"
-            echo "   Web Logs   : .boss_agent/web.log"
+            echo "   Dashboard Logs: .boss_agent/web.log"
             ;;
         stop)
             echo "🛑 Stopping Application Services..."
             ./worker.sh stop
-            ./web.sh stop
+            ./dashboard.sh stop
             ;;
         restart)
             echo "🔄 Restarting Application Services..."
             ./worker.sh stop || true
-            ./web.sh stop || true
+            ./dashboard.sh stop || true
             sleep 0.5
             ./worker.sh start --daemon "$@"
-            ./web.sh start --daemon "$@"
+            ./dashboard.sh start --daemon "$@"
             echo "✅ Application services restarted in background."
             echo "   Worker Logs: .boss_agent/worker.log"
-            echo "   Web Logs   : .boss_agent/web.log"
+            echo "   Dashboard Logs: .boss_agent/web.log"
             ;;
         status)
             echo "📊 Application Services Status:"
             ./worker.sh status || true
-            ./web.sh status || true
+            ./dashboard.sh status || true
             ;;
         *)
             echo "❌ Unknown app action: ${ACTION}. Valid actions: start, stop, restart, status" >&2
@@ -121,14 +126,68 @@ cmd_app() {
     esac
 }
 
+cmd_restart_app() {
+    # `restart` mirrors bare `./run.sh`: restarting mid-development is a "watch what the new
+    # code does" action, so it lands on the live Worker log stream. `--daemon` / `-d` is the
+    # explicit opt-out for supervisors and scripts, which have no terminal to follow.
+    #
+    # The flag is consumed here rather than forwarded: the runners already get `--daemon`
+    # from `cmd_app restart`, so passing a second copy down would be noise.
+    local RESTART_ARGS=()
+    local ATTACH_WORKER=1
+    for arg in "$@"; do
+        case "${arg}" in
+            --daemon|-d) ATTACH_WORKER=0 ;;
+            *) RESTART_ARGS+=("${arg}") ;;
+        esac
+    done
+
+    if [[ ${#RESTART_ARGS[@]} -gt 0 ]]; then
+        cmd_app restart "${RESTART_ARGS[@]}"
+    else
+        cmd_app restart
+    fi
+
+    if [[ ${ATTACH_WORKER} -eq 1 ]]; then
+        exec ./worker.sh attach
+    fi
+}
+
+# Restart the dedicated AVD only when it is not already usable.
+#
+# `./emulator.sh stop` issues `emu kill`, and a cold AVD boot costs 30-60s. Restarting
+# PocketBase and Appium is cheap, so killing a perfectly healthy device to bring the rest
+# of the infrastructure back up made every restart pay a full cold boot.
+#
+# `emulator.sh status` is the single bounded authority on whether the AVD is online and
+# booted (the drift ticket #242 removed from this file), so the decision is made from the
+# runner's own verdict rather than a second adb probe here. When the device is up, it is
+# left running and `./emulator.sh start` re-validates the ADB and remote-bridge connection
+# on the reuse path.
+restart_emulator_reusing_if_online() {
+    local STATUS_OUT=""
+    if STATUS_OUT="$(./emulator.sh status 2>&1)"; then
+        echo "♻️  Reusing the online dedicated AVD — skipping the cold restart."
+        printf '%s\n' "${STATUS_OUT}" | sed 's/^/   /'
+        return 0
+    fi
+
+    # The verdict and its reason are printed on both paths: "absent", "still booting" and
+    # "adb is missing" all mean "cold restart", and without the reason the operator cannot
+    # tell which of the three they are looking at.
+    echo "🌙 No online dedicated AVD found — performing a cold restart."
+    printf '%s\n' "${STATUS_OUT}" | sed 's/^/   /'
+    ./emulator.sh stop || true
+}
+
 cmd_infra() {
     local ACTION="${1:-start}"
     shift || true
     case "${ACTION}" in
         start)
             echo "🚀 Starting Infrastructure Services (PocketBase + Emulator + Appium)..."
-            ./pb.sh start --daemon "$@"
-            ./emulator.sh start
+            ./pocketbase.sh start --daemon "$@"
+            ./emulator.sh start --daemon
             ./appium.sh start --daemon "$@"
             echo "✅ Infrastructure services started."
             ;;
@@ -136,23 +195,26 @@ cmd_infra() {
             echo "🛑 Stopping Infrastructure Services..."
             ./appium.sh stop || true
             ./emulator.sh stop || true
-            ./pb.sh stop || true
+            ./pocketbase.sh stop || true
             echo "✅ Infrastructure services stopped."
             ;;
         restart)
             echo "🔄 Restarting Infrastructure Services..."
             ./appium.sh stop || true
-            ./emulator.sh stop || true
-            ./pb.sh stop || true
+            restart_emulator_reusing_if_online
+            ./pocketbase.sh stop || true
             sleep 0.5
-            ./pb.sh start --daemon "$@"
-            ./emulator.sh start
+            ./pocketbase.sh start --daemon "$@"
+            # `--daemon` keeps the emulator in the background: the AVD boots for tens of
+            # seconds and this command is a batch operation, so it must return. The runner
+            # reuses an already-booted device instead of starting a second one.
+            ./emulator.sh start --daemon
             ./appium.sh start --daemon "$@"
             echo "✅ Infrastructure services restarted."
             ;;
         status)
             echo "📊 Infrastructure Services Status:"
-            ./pb.sh status || true
+            ./pocketbase.sh status || true
             ./emulator.sh status || true
             ./appium.sh status || true
             ;;
@@ -200,13 +262,15 @@ case "${SUBCOMMAND}" in
         shift
         exec ./worker.sh "$@"
         ;;
-    web|svelte)
+    # `web` stays routed to the same runner: the script was renamed to match the `web/`
+    # source directory, but every existing muscle-memory invocation keeps working.
+    dashboard|web|svelte)
         shift
-        exec ./web.sh "$@"
+        exec ./dashboard.sh "$@"
         ;;
     pb|pocketbase)
         shift
-        exec ./pb.sh "$@"
+        exec ./pocketbase.sh "$@"
         ;;
     emu|emulator)
         shift
@@ -262,7 +326,7 @@ case "${SUBCOMMAND}" in
         ;;
     restart)
         shift || true
-        cmd_app restart "$@"
+        cmd_restart_app "$@"
         ;;
     stop)
         shift || true

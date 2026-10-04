@@ -23,7 +23,7 @@ from pathlib import Path
 from boss_agent.worker.daemon import SHUTDOWN_ACK_MARKER
 
 # The worker's acknowledgment is owned by the producer; the dashboard's is emitted by
-# `web.sh` (see its `log_web_event` call in `cmd_stop`) and can only be mirrored here.
+# `dashboard.sh` (see its `log_web_event` call in `cmd_stop`) and can only be mirrored here.
 WORKER_SHUTDOWN_ACK: str = SHUTDOWN_ACK_MARKER
 WEB_SHUTDOWN_ACK: str = "Received stop command"
 
@@ -43,7 +43,7 @@ class TeardownGateError(RuntimeError):
 class ServiceTeardownGate:
     """Stops residual Automation Worker / Web Dashboard instances before E2E tests run.
 
-    `repo_root` must contain `web.sh` alongside the `.boss_agent` runtime directory it
+    `repo_root` must contain `dashboard.sh` alongside the `.boss_agent` runtime directory it
     manages, matching the production layout.
     """
 
@@ -256,16 +256,16 @@ class ServiceTeardownGate:
 
         bash = shutil.which("bash")
         if bash is None:
-            raise TeardownGateError("bash is required to stop the Web Dashboard via web.sh")
+            raise TeardownGateError("bash is required to stop the Web Dashboard via dashboard.sh")
 
         log_offset = self._log_size(self.web_log_file)
-        # web.sh may spend its graceful budget three times over (process exit, orphan reclaim,
+        # dashboard.sh may spend its graceful budget three times over (process exit, orphan reclaim,
         # port release), so the watchdog must allow for that rather than killing the runner
         # mid-recovery and reporting an unexplained timeout.
         watchdog_timeout = self.web_stop_timeout_sec * 3 + 15.0
         try:
             result = subprocess.run(
-                [bash, "web.sh", "stop"],
+                [bash, "dashboard.sh", "stop"],
                 cwd=str(self.repo_root),
                 env=self._web_stop_env(),
                 capture_output=True,
@@ -278,13 +278,13 @@ class ServiceTeardownGate:
             if isinstance(captured, bytes):
                 captured = captured.decode(errors="replace")
             raise TeardownGateError(
-                f"web.sh stop did not finish within {watchdog_timeout:.0f}s (PID {pid}); the "
+                f"dashboard.sh stop did not finish within {watchdog_timeout:.0f}s (PID {pid}); the "
                 f"dashboard on port {self.web_port} may still be wedged:\n{captured}"
             ) from e
 
         if result.returncode != 0:
             raise TeardownGateError(
-                f"web.sh stop failed (exit {result.returncode}):\n{result.stdout}\n{result.stderr}"
+                f"dashboard.sh stop failed (exit {result.returncode}):\n{result.stdout}\n{result.stderr}"
             )
 
         self._require_shutdown_feedback(
@@ -300,7 +300,7 @@ class ServiceTeardownGate:
         remaining = self._port_listener_pid()
         if remaining is not None:
             raise TeardownGateError(
-                f"Port {self.web_port} is still held by PID {remaining} after web.sh stop."
+                f"Port {self.web_port} is still held by PID {remaining} after dashboard.sh stop."
             )
 
         return [

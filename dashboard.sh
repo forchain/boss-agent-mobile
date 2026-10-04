@@ -6,14 +6,20 @@
 # persistent logging and auto-attach if already running.
 #
 # Usage:
-#   ./web.sh
-#   ./web.sh start
-#   ./web.sh start --daemon
-#   ./web.sh stop
-#   ./web.sh restart
-#   ./web.sh restart --daemon
-#   ./web.sh status
-#   POCKETBASE_URL=http://192.168.1.100:8090 ./web.sh
+#   ./dashboard.sh
+#   ./dashboard.sh start
+#   ./dashboard.sh start --daemon
+#   ./dashboard.sh stop
+#   ./dashboard.sh restart
+#   ./dashboard.sh restart --daemon
+#   ./dashboard.sh status
+#   POCKETBASE_URL=http://192.168.1.100:8090 ./dashboard.sh
+#   ./run.sh web <cmd>                 # Short orchestrator route for ./dashboard.sh
+#
+# The runner is named `dashboard.sh` rather than `web.sh` because the project root also
+# holds the `web/` frontend source directory: under one name, `./web<Tab>` stalled on two
+# candidates. The runtime files stay `.boss_agent/web.pid` / `.boss_agent/web.log`, which
+# is the on-disk contract the teardown gate and the `WEB_PORT` env var already speak.
 # ==============================================================================
 
 set -euo pipefail
@@ -102,7 +108,7 @@ cmd_status() {
         STALE_CWD="$(runner_process_cwd "${PORT_PID}")"
         echo "🔴 SvelteKit Web Dashboard port ${WEB_PORT} is held by a STALE process (PID: ${PORT_PID})"
         echo "   Deleted CWD: ${STALE_CWD:-unknown}"
-        echo "   Run './web.sh restart' to reclaim port and start a fresh server."
+        echo "   Run './dashboard.sh restart' to reclaim port and start a fresh server."
         return 1
     fi
 
@@ -255,7 +261,7 @@ cmd_start() {
         echo "❌ Error: PocketBase is not reachable at ${HEALTH_URL}" >&2
         echo "" >&2
         echo "💡 PocketBase State Stream broker must be running first:" >&2
-        echo "   - Local PocketBase: run './pb.sh' or './run.sh pb' in another terminal" >&2
+        echo "   - Local PocketBase: run './pocketbase.sh' or './run.sh pb' in another terminal" >&2
         echo "   - Remote PocketBase: export POCKETBASE_URL=\"http://<remote-ip>:<port>\"" >&2
         echo "" >&2
         exit 1

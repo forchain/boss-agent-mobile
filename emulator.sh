@@ -15,6 +15,11 @@
 #   ./emulator.sh logs                # Attach to live log stream of running AVD
 #   ./emulator.sh stop                # Stop the running dedicated AVD
 #
+# Lifecycle:
+#   The AVD is machine-wide infrastructure, not a child of this script. It is started in a
+#   session and process group of its own, so it keeps running after this script exits, after
+#   Ctrl+C detaches the log stream, and after a group- or session-wide cleanup.
+#
 # Environment:
 #   ADB_QUERY_TIMEOUT_SEC      Wall-clock bound for a single adb query (default 2).
 #                              The knob only tightens it: clamped to 1-2 seconds, and
@@ -86,6 +91,60 @@ find_python_binary() {
 EMULATOR_BIN="$(find_emulator_binary)"
 ADB_BIN="$(find_adb_binary)"
 PYTHON_BIN="$(find_python_binary)"
+
+# --- Terminal signal isolation -------------------------------------------------
+# The AVD is machine-wide infrastructure that must outlive the script that started it, but
+# a background job started with plain `nohup ... &` stays in the *runner's* process group
+# and session, and keeps the terminal as its controlling terminal.
+#
+# Note that `nohup` alone is not the gap it looks like, and the distinction matters when
+# reasoning about what this protects. POSIX already makes a background job started from a
+# non-interactive shell ignore SIGINT and SIGQUIT, so Ctrl+C was never the hazard here. The
+# real exposure is everything that acts on the *group* or the *session*: supervisor and CI
+# teardown that sweeps a process group, a harness that reaps what it spawned, and terminal
+# hangup delivered to the session. A process group of its own is out of reach of all of them.
+
+# Start "$2" (with "$@"[2:]) in a brand-new session, detached from this process's terminal
+# group, logging to the file given as "$1".
+#
+# The new session is made with the setsid(2) syscall rather than a `setsid` binary, because
+# macOS ships no setsid(1) and this script has to behave identically on every developer's
+# machine. `nohup` still wraps the call so the child additionally ignores SIGHUP.
+#
+# The child is launched with its own PID and then `exec`s the target, so the PID printed
+# here is the PID of the emulator (or bridge) itself — not a wrapper that could die first
+# and leave a stale pidfile pointing at a recycled PID.
+detached_spawn() {
+    local SPAWN_LOG="$1"
+    shift
+    if [[ -z "${PYTHON_BIN}" ]]; then
+        # No Python available: fall back to the old behaviour rather than refusing to
+        # start. `nohup` still covers the SIGHUP case. This does *not* restore session
+        # isolation, and a call site that needs Python anyway (the remote ADB bridge) will
+        # simply fail to exec, which it already degraded around before this helper existed.
+        nohup "$@" </dev/null >> "${SPAWN_LOG}" 2>&1 &
+        disown $! 2>/dev/null || true
+        echo "$!"
+        return 0
+    fi
+
+    nohup "${PYTHON_BIN}" -c \
+        'import os, sys
+try:
+    os.setsid()
+except OSError:
+    # setsid() only fails when this child is already a process-group leader, which takes
+    # job control to be on — not the case for a background job in this non-interactive
+    # script. Even if it were reached, only the process group would be new: the session and
+    # the controlling terminal are still shared with the runner, so this is degraded
+    # isolation rather than none at all.
+    pass
+os.execvp(sys.argv[1], sys.argv[1:])' \
+        "$@" </dev/null >> "${SPAWN_LOG}" 2>&1 &
+    local SPAWNED_PID=$!
+    disown "${SPAWNED_PID}" 2>/dev/null || true
+    echo "${SPAWNED_PID}"
+}
 
 # --- Bounded ADB inspection ---------------------------------------------------
 # A wedged adb server, a device stuck in `offline`, or an unresponsive adbd must never
@@ -378,17 +437,23 @@ start_remote_bridge() {
 
     rm -f "${BRIDGE_READY_FILE}"
     echo "🌉 Starting Remote ADB Bridge daemon (0.0.0.0:${PORT} -> 127.0.0.1:${TARGET_PORT})..."
-    local PY_BIN
-    PY_BIN="$(find_python_binary)"
-    PYTHONPATH="${ROOT_DIR}/src:${PYTHONPATH:-}" nohup "${PY_BIN}" -m boss_agent.services.remote_adb_bridge \
+    # Session-isolated for the same reason as the emulator: a bridge that dies with the
+    # terminal leaves the AVD unreachable over LAN even though the device is still up.
+    # `env` rather than a `PYTHONPATH=…` prefix, because a variable assignment applied to
+    # the `detached_spawn` *function* call is how the override reaches the helper's own
+    # commands, and keeping it on the exec chain instead makes the intent explicit and
+    # independent of how a given bash version scopes assignments around function calls.
+    local BRIDGE_PID
+    BRIDGE_PID="$(detached_spawn \
+        "${BRIDGE_LOG_FILE}" \
+        env "PYTHONPATH=${ROOT_DIR}/src:${PYTHONPATH:-}" "${PYTHON_BIN}" \
+        -m boss_agent.services.remote_adb_bridge \
         --host 0.0.0.0 \
         --port "${PORT}" \
         --target-host 127.0.0.1 \
         --target-port "${TARGET_PORT}" \
         --pid-file "${BRIDGE_PID_FILE}" \
-        --ready-file "${BRIDGE_READY_FILE}" >> "${BRIDGE_LOG_FILE}" 2>&1 &
-    local BRIDGE_PID=$!
-    disown "${BRIDGE_PID}" 2>/dev/null || true
+        --ready-file "${BRIDGE_READY_FILE}")"
 
     local READY=0
     for _ in {1..30}; do
@@ -609,9 +674,13 @@ cmd_start() {
         exec "${EMULATOR_BIN}" @"${TARGET_AVD}" -no-snapshot-load 2>&1 | tee -a "${LOG_FILE}"
     else
         echo "🚀 Starting Dedicated AVD '${TARGET_AVD}' in background..."
-        nohup "${EMULATOR_BIN}" @"${TARGET_AVD}" -no-snapshot-load </dev/null >> "${LOG_FILE}" 2>&1 &
-        local EMU_PID=$!
-        disown "${EMU_PID}" 2>/dev/null || true
+        # Session-isolated: the AVD is machine-wide infrastructure that must survive this
+        # script exiting and the terminal being interrupted, so it is started outside the
+        # runner's process group rather than merely SIGHUP-proofed.
+        local EMU_PID
+        EMU_PID="$(detached_spawn \
+            "${LOG_FILE}" \
+            "${EMULATOR_BIN}" @"${TARGET_AVD}" -no-snapshot-load)"
         echo "${EMU_PID}" > "${PID_FILE}"
 
         echo "⏳ Waiting for Android system boot completion (AVD: ${TARGET_AVD})..."
