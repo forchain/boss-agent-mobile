@@ -13,7 +13,9 @@
 #   ./emulator.sh status              # Check if dedicated AVD is online and booted
 #   ./emulator.sh list                # List all installed local AVDs
 #   ./emulator.sh logs                # Attach to live log stream of running AVD
-#   ./emulator.sh stop                # Stop the running dedicated AVD
+#   ./emulator.sh stop                # Stop the running dedicated AVD and its ADB bridge
+#   ./emulator.sh restart             # Stop, then start the dedicated AVD again
+#   ./emulator.sh restart --daemon    # Restart in background (do not attach)
 #
 # Lifecycle:
 #   The AVD is machine-wide infrastructure, not a child of this script. It is started in a
@@ -319,12 +321,24 @@ get_running_device_serial() {
     RAW_DEVICES="$(adb_query devices || true)"
     # Only devices in the `device` state are queried: an `offline` (or otherwise broken)
     # transport cannot report its AVD name and blocks the adb client until it times out.
+    #
+    # Candidates are ordered, not merely filtered: the Remote ADB Bridge forwards to the same
+    # adbd, so its `<lan-ip>:<port>` transport reports the same AVD name as the local emulator
+    # and both match. The native `emulator-<port>` transport is probed first because it is the
+    # only one carrying the emulator console — `emu kill` is meaningless on a TCP transport,
+    # so resolving the bridge endpoint turns `stop` into a no-op and leaves the AVD running.
+    # `adb devices` order is not a contract, so the priority is made explicit here rather
+    # than left to whichever transport the server happened to list first.
     DEV_LIST="$(printf '%s\n' "${RAW_DEVICES}" \
-        | awk '($1 ~ /^emulator-[0-9]+$/ || $1 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:[0-9]+$/) && $2 == "device" { print $1 }')"
+        | awk '($1 ~ /^emulator-[0-9]+$/ || $1 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:[0-9]+$/) && $2 == "device" {
+            print ($1 ~ /^emulator-[0-9]+$/ ? 0 : 1) "\t" $1 }' \
+        | LC_ALL=C sort -k1,1n -k2,2 \
+        | cut -f2-)"
 
     # Every candidate is probed, however slow: giving up on the scan early could miss the
     # dedicated AVD sitting behind unresponsive siblings. The per-query bound, not a global
     # budget, is what keeps this responsive.
+    local dev
     for dev in ${DEV_LIST}; do
         local AVD_NAME_FOUND
         AVD_NAME_FOUND="$(adb_avd_name "${dev}")"
@@ -604,12 +618,91 @@ cmd_status() {
     return 0
 }
 
+# The PIDs currently running the dedicated AVD, as a space-separated list.
+#
+# Two argv shapes have to be matched, because the Android emulator is only a front-end over a
+# QEMU backend: `emulator ... @<avd>` is what this script launches, while the process that
+# actually owns the AVD is `qemu-system-<arch>` carrying `-avd <name>` (or `avd_name=<name>`)
+# in its argv. Matching only the front-end's spelling is what left the QEMU process behind,
+# holding the hardware resources the next `start` needs.
+#
+# `pgrep -f` reads a process's real argv (not a `ps` rendering, which truncates to the
+# terminal width), so a long emulator command line is matched in full.
+emulator_process_pids() {
+    local AVD="${1:-${TARGET_AVD}}"
+    local PATTERNS=(
+        "emulator.*@${AVD}([[:space:]]|\$)"
+        "qemu-system-.*(avd_name=|-avd)[[:space:]=]*${AVD}([[:space:]]|\$)"
+    )
+    local PIDS="" PID FOUND
+
+    # The pidfile is the most precise handle on the process this script launched, so it is
+    # asked first — but only after confirming it still names an emulator for *this* AVD,
+    # because signalling a recycled PID would turn `stop` into a machine-wide hazard.
+    PID="$(cat "${PID_FILE}" 2>/dev/null || true)"
+    if [[ -n "${PID}" ]] && runner_process_alive "${PID}" \
+        && [[ "$(ps -p "${PID}" -o args= 2>/dev/null || true)" == *"${AVD}"* ]]; then
+        PIDS="${PID}"
+    fi
+
+    local PATTERN
+    for PATTERN in "${PATTERNS[@]}"; do
+        FOUND="$(pgrep -f "${PATTERN}" 2>/dev/null || true)"
+        for PID in ${FOUND}; do
+            [[ " ${PIDS} " == *" ${PID} "* ]] || PIDS="${PIDS} ${PID}"
+        done
+    done
+
+    printf '%s\n' "${PIDS}"
+}
+
+emulator_processes_gone() {
+    [[ -z "$(emulator_process_pids "${1:-${TARGET_AVD}}")" ]]
+}
+
+# Terminate the dedicated AVD's host processes and wait for them to actually be gone.
+#
+# `emu kill` is a request, not a guarantee: a wedged emulator never acknowledges it, and a
+# successful one still leaves the QEMU backend to wind down. So the process sweep is not a
+# fallback that only runs on failure — it is the step that makes "stopped" mean the AVD is no
+# longer running, which is the precondition for the bridge teardown that follows.
+reap_emulator_processes() {
+    local AVD="${1:-${TARGET_AVD}}"
+    local PIDS
+    PIDS="$(emulator_process_pids "${AVD}")"
+    if [[ -z "${PIDS}" ]]; then
+        rm -f "${PID_FILE}"
+        return 0
+    fi
+
+    local PID
+    for PID in ${PIDS}; do
+        kill -TERM "${PID}" 2>/dev/null || true
+    done
+
+    # Let the guest shut down on its own first; only escalate for a process that outlives it.
+    if ! runner_wait_until 3 emulator_processes_gone "${AVD}"; then
+        for PID in $(emulator_process_pids "${AVD}"); do
+            echo "⚠️ Emulator PID ${PID} ignored SIGTERM; sending SIGKILL."
+            kill -KILL "${PID}" 2>/dev/null || true
+        done
+        runner_wait_until 2 emulator_processes_gone "${AVD}" || true
+    fi
+
+    local REMAINING
+    REMAINING="$(emulator_process_pids "${AVD}")"
+    if [[ -n "${REMAINING}" ]]; then
+        echo "⚠️ Emulator processes for ${AVD} survived the kill: ${REMAINING}."
+    else
+        echo "ℹ️ Reaped emulator process(es) for ${AVD} (PIDs:${PIDS})."
+    fi
+    rm -f "${PID_FILE}"
+}
+
 cmd_stop() {
     echo "🛑 Stopping Dedicated AVD '${TARGET_AVD}'..."
     local SERIAL
     SERIAL="$(get_running_device_serial)"
-
-    stop_remote_bridge
 
     if [[ -n "${SERIAL}" ]] && adb_query -s "${SERIAL}" emu kill >/dev/null; then
         echo "✅ Sent emu kill to ${SERIAL} (${TARGET_AVD})."
@@ -619,10 +712,15 @@ cmd_stop() {
             # fall back to the same process cleanup the "no device found" path uses.
             echo "⚠️ ${SERIAL} did not acknowledge the kill within ${ADB_QUERY_TIMEOUT_SEC}s."
         fi
-        pkill -f "emulator.*@${TARGET_AVD}" 2>/dev/null || true
         echo "ℹ️ Stopped emulator processes for ${TARGET_AVD}."
     fi
-    rm -f "${PID_FILE}"
+
+    # The AVD must be gone before the bridge is: the bridge publishes one of the transports
+    # this stop negotiates over, so tearing it down first severs the very path the kill needs
+    # and leaves a "stopped" AVD still running.
+    reap_emulator_processes
+
+    stop_remote_bridge
 }
 
 cmd_start() {
@@ -714,6 +812,18 @@ cmd_start() {
     fi
 }
 
+# `restart` is a stop followed by a start, in that order and in one invocation.
+#
+# It used to fall through the dispatcher's catch-all arm to `cmd_start`, which found the
+# running instance, reported it as already running and stopped nothing: the old AVD and its
+# bridge both survived, so a "restart" was a no-op wearing a restart's name. The flags are
+# forwarded so `--daemon` (and `--foreground`) still mean what they mean to `start`.
+cmd_restart() {
+    echo "🔄 Restarting Dedicated AVD '${TARGET_AVD}'..."
+    cmd_stop
+    cmd_start "$@"
+}
+
 ACTION="${1:-start}"
 case "${ACTION}" in
     start)
@@ -722,6 +832,10 @@ case "${ACTION}" in
         ;;
     stop)
         cmd_stop
+        ;;
+    restart)
+        shift || true
+        cmd_restart "$@"
         ;;
     status)
         cmd_status
