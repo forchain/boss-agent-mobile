@@ -244,6 +244,27 @@ def test_stop_never_reaps_an_emulator_belonging_to_another_avd(
     )
 
 
+def test_stop_never_trusts_a_recycled_pid_in_the_pidfile(runner: RunnerScriptHarness):
+    """`emulator.pid` outlives the process it names, so its PID gets reused.
+
+    The tempting shortcut — trust the pidfile because "we wrote it" — turns `stop` into a
+    machine-wide hazard the moment the emulator has been gone long enough for the OS to hand
+    its PID to something else. The bystander here mentions the AVD name in its command line,
+    which is exactly the case a loose substring test would get wrong.
+    """
+    runner.script(devices=[])
+    # A real process, wearing the AVD name in its argv, that is emphatically not an emulator.
+    bystander = spawn_wearing(runner, ("grep", "-r", HARNESS_AVD, "/tmp"))
+    pid_file = runner.runtime_root / ".boss_agent" / "emulator.pid"
+    pid_file.write_text(f"{bystander.pid}\n", encoding="utf-8")
+
+    result = runner.run("stop", env={"ANDROID_AVD": HARNESS_AVD})
+
+    assert bystander.poll() is None, (
+        f"`stop` signalled a recycled PID from emulator.pid:\n{result.stdout}"
+    )
+
+
 def test_stop_lets_the_emulator_go_before_tearing_the_bridge_down(
     runner: RunnerScriptHarness,
 ):

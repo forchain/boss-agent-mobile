@@ -634,18 +634,25 @@ emulator_process_pids() {
         "emulator.*@${AVD}([[:space:]]|\$)"
         "qemu-system-.*(avd_name=|-avd)[[:space:]=]*${AVD}([[:space:]]|\$)"
     )
-    local PIDS="" PID FOUND
+    local PIDS="" PID FOUND PATTERN ARGS
 
     # The pidfile is the most precise handle on the process this script launched, so it is
-    # asked first — but only after confirming it still names an emulator for *this* AVD,
-    # because signalling a recycled PID would turn `stop` into a machine-wide hazard.
+    # asked first — but only after its command line matches the *same* patterns the scan
+    # below uses. A recycled PID is a real hazard here: `emulator.pid` outlives the process
+    # it names, so a bare "does the command line mention this AVD" test would happily
+    # SIGTERM whatever inherited that PID, a developer's `grep boss_avd_arm64` among them.
+    # The test is deliberately the same strict one, so the two paths cannot disagree.
     PID="$(cat "${PID_FILE}" 2>/dev/null || true)"
-    if [[ -n "${PID}" ]] && runner_process_alive "${PID}" \
-        && [[ "$(ps -p "${PID}" -o args= 2>/dev/null || true)" == *"${AVD}"* ]]; then
-        PIDS="${PID}"
+    if [[ -n "${PID}" ]] && runner_process_alive "${PID}"; then
+        ARGS="$(ps -p "${PID}" -o args= 2>/dev/null || true)"
+        for PATTERN in "${PATTERNS[@]}"; do
+            if [[ -n "${ARGS}" && "${ARGS}" =~ ${PATTERN} ]]; then
+                PIDS="${PID}"
+                break
+            fi
+        done
     fi
 
-    local PATTERN
     for PATTERN in "${PATTERNS[@]}"; do
         FOUND="$(pgrep -f "${PATTERN}" 2>/dev/null || true)"
         for PID in ${FOUND}; do
