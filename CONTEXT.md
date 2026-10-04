@@ -372,12 +372,16 @@ The first-class shell lifecycle scripts managing process states (start, stop, re
 _Avoid_: helper scripts, launcher utils, batch scripts
 
 **Master Service Orchestrator (`run.sh`)**:
-The top-level orchestration entrypoint coordinating service groups (`infra`, `app`, `all`) and dispatching subsystem commands (`worker`, `web`, `pb`, `emu`, `appium`, `doctor`, `live`) without implementing inline process management. Default bare execution (`./run.sh`) boots application services in the background and automatically attaches to the live Automation Worker log stream.
+The top-level orchestration entrypoint coordinating service groups (`infra`, `app`, `all`) and dispatching subsystem commands (`worker`, `dashboard`, `pb`, `emu`, `appium`, `doctor`, `live`) without implementing inline process management. Default bare execution (`./run.sh`) and the default `restart` both boot or recycle application services in the background and automatically attach to the live Automation Worker log stream, with `--daemon` as the explicit background-only opt-out.
 _Avoid_: monolithic runner, kitchen-sink script
 
 **Infrastructure Services (基础服务)**:
 The machine-shared backend services (`pocketbase.sh`, `emulator.sh`, `appium.sh`) that maintain persistent state, device emulation, and OS automation bridges, remaining running across multiple parallel worktree switches.
 _Avoid_: worker services, client tier, host daemons
+
+**AVD Lifecycle Isolation**:
+The contract whereby a Virtual Device Session started by `emulator.sh` outlives the runner that started it: it is launched into a session and process group of its own, so neither the runner exiting nor a terminal interrupt nor a group-wide cleanup can take the device down. Because the AVD is machine-wide infrastructure, `run.sh infra restart` and `run.sh all restart` reuse an already-online device — re-validating the ADB and remote-bridge connection instead of paying a 30-60s cold boot — while an explicit `stop` always tears it down.
+_Avoid_: child process of the runner, cold restart on every restart
 
 **Application Services (应用服务)**:
 The per-worktree operational components (`worker.sh`, `dashboard.sh`) that execute automation tasks and render the user dashboard, subject to worktree-level preemption and restart.

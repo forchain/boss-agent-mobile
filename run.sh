@@ -153,6 +153,29 @@ cmd_restart_app() {
     fi
 }
 
+# Restart the dedicated AVD only when it is not already usable.
+#
+# `./emulator.sh stop` issues `emu kill`, and a cold AVD boot costs 30-60s. Restarting
+# PocketBase and Appium is cheap, so killing a perfectly healthy device to bring the rest
+# of the infrastructure back up made every restart pay a full cold boot.
+#
+# `emulator.sh status` is the single bounded authority on whether the AVD is online and
+# booted (the drift ticket #242 removed from this file), so the decision is made from the
+# runner's own verdict rather than a second adb probe here. When the device is up, it is
+# left running and `./emulator.sh start` re-validates the ADB and remote-bridge connection
+# on the reuse path.
+restart_emulator_reusing_if_online() {
+    local STATUS_OUT=""
+    if STATUS_OUT="$(./emulator.sh status 2>&1)"; then
+        echo "♻️  Reusing the online dedicated AVD — skipping the cold restart."
+        printf '%s\n' "${STATUS_OUT}" | sed 's/^/   /'
+        return 0
+    fi
+
+    echo "🌙 No online dedicated AVD found — performing a cold restart."
+    ./emulator.sh stop || true
+}
+
 cmd_infra() {
     local ACTION="${1:-start}"
     shift || true
@@ -160,7 +183,7 @@ cmd_infra() {
         start)
             echo "🚀 Starting Infrastructure Services (PocketBase + Emulator + Appium)..."
             ./pocketbase.sh start --daemon "$@"
-            ./emulator.sh start
+            ./emulator.sh start --daemon
             ./appium.sh start --daemon "$@"
             echo "✅ Infrastructure services started."
             ;;
@@ -174,11 +197,14 @@ cmd_infra() {
         restart)
             echo "🔄 Restarting Infrastructure Services..."
             ./appium.sh stop || true
-            ./emulator.sh stop || true
+            restart_emulator_reusing_if_online
             ./pocketbase.sh stop || true
             sleep 0.5
             ./pocketbase.sh start --daemon "$@"
-            ./emulator.sh start
+            # `--daemon` keeps the emulator in the background: the AVD boots for tens of
+            # seconds and this command is a batch operation, so it must return. The runner
+            # reuses an already-booted device instead of starting a second one.
+            ./emulator.sh start --daemon
             ./appium.sh start --daemon "$@"
             echo "✅ Infrastructure services restarted."
             ;;

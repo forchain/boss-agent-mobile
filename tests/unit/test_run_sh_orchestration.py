@@ -31,6 +31,7 @@ def orchestrator_runtime(tmp_path: Path) -> Path:
 
     # Create mock runner scripts that record their invocations
     calls_log = runtime_root / "calls.log"
+    avd_online_marker = runtime_root / "avd_online"
 
     def _make_mock_script(name: str):
         script_path = runtime_root / name
@@ -49,11 +50,33 @@ exit 0
         "worker.sh",
         "dashboard.sh",
         "pocketbase.sh",
-        "emulator.sh",
         "appium.sh",
         "doctor.sh",
     ):
         _make_mock_script(script)
+
+    # The AVD mock keeps the real runner's status contract: exit 0 only when the device is
+    # online *and* booted, exit 1 otherwise. That is the signal `run.sh` uses to decide
+    # between reusing a healthy AVD and cold-restarting it, so a mock that always exited 0
+    # would make the reuse path untestable. Touching `avd_online` in the runtime root flips
+    # the device to online.
+    emulator_sh = runtime_root / "emulator.sh"
+    emulator_sh.write_text(
+        f"""#!/usr/bin/env bash
+echo "emulator.sh $*" >> "{calls_log}"
+if [[ "${{1:-}}" == "status" ]]; then
+    if [[ -f "{avd_online_marker}" ]]; then
+        echo "🟢 Dedicated AVD 'boss_avd_arm64' is ONLINE and READY (emulator-5554)."
+        exit 0
+    fi
+    echo "🔴 Dedicated AVD 'boss_avd_arm64' is NOT RUNNING."
+    exit 1
+fi
+exit 0
+""",
+        encoding="utf-8",
+    )
+    emulator_sh.chmod(0o755)
 
     return runtime_root
 
@@ -80,6 +103,11 @@ def test_run_sh_help_displays_orchestration_guide(orchestrator_runtime: Path):
 
 def test_run_sh_delegates_to_single_services(orchestrator_runtime: Path):
     calls_log = orchestrator_runtime / "calls.log"
+
+    # `run.sh` delegates with `exec`, so each runner's own exit status is what the caller
+    # sees. The AVD mock reports "not running" unless this marker exists, and a `status`
+    # probe of a stopped device legitimately fails.
+    (orchestrator_runtime / "avd_online").touch()
 
     # Delegate worker
     res = _run(orchestrator_runtime, "worker", "status")
@@ -240,6 +268,111 @@ def test_run_sh_infra_group_orchestration(orchestrator_runtime: Path):
     assert "pocketbase.sh stop" in content
     assert "emulator.sh stop" in content
     assert "appium.sh stop" in content
+
+
+# ---------------------------------------------------------------------------
+# Infra restart reuses a healthy AVD instead of cold-restarting it (#363)
+# ---------------------------------------------------------------------------
+# `./emulator.sh stop` issues `emu kill` and a cold AVD boot costs 30-60s. Restarting
+# PocketBase and Appium is instant, so killing an already-online device just to bring the
+# rest of the infrastructure back up charged every restart a full cold boot.
+
+
+def test_infra_restart_reuses_an_online_avd(orchestrator_runtime: Path):
+    """An online, booted AVD is reused — no `emu kill`, no cold boot (#363)."""
+    (orchestrator_runtime / "avd_online").touch()
+    calls_log = orchestrator_runtime / "calls.log"
+
+    res = _run(orchestrator_runtime, "infra", "restart")
+
+    assert res.returncode == 0
+    content = calls_log.read_text(encoding="utf-8")
+    assert "emulator.sh status" in content, (
+        "the decision must come from emulator.sh, the single bounded AVD authority"
+    )
+    assert "emulator.sh stop" not in content, (
+        "a healthy AVD must not be killed on restart; that is the 30-60s cold boot"
+    )
+    # `start` is still invoked, and it is what re-validates ADB and the remote bridge.
+    assert "emulator.sh start --daemon" in content
+    assert "Reusing" in res.stdout, res.stdout
+
+
+def test_infra_restart_cold_restarts_when_no_avd_is_online(orchestrator_runtime: Path):
+    """With no usable AVD, restart falls back to the full stop/start cycle."""
+    calls_log = orchestrator_runtime / "calls.log"
+
+    res = _run(orchestrator_runtime, "infra", "restart")
+
+    assert res.returncode == 0
+    content = calls_log.read_text(encoding="utf-8")
+    assert "emulator.sh status" in content
+    assert "emulator.sh stop" in content, "an absent AVD still has to be stopped cleanly"
+    assert "emulator.sh start --daemon" in content
+    assert "cold restart" in res.stdout.lower(), res.stdout
+
+
+def test_infra_restart_stops_the_avd_when_it_is_still_booting(orchestrator_runtime: Path):
+    """`status` returning non-zero (booting is not ready) must not be mistaken for reuse.
+
+    The real `emulator.sh status` exits non-zero for a device that is up but still booting,
+    so a non-zero verdict has to mean "not usable", not "unknown".
+    """
+    calls_log = orchestrator_runtime / "calls.log"
+
+    # No marker file: the mock reports NOT RUNNING and exits 1.
+    res = _run(orchestrator_runtime, "infra", "restart")
+
+    assert res.returncode == 0
+    assert "emulator.sh stop" in calls_log.read_text(encoding="utf-8")
+
+
+def test_infra_start_never_waits_on_the_avd_log_stream(orchestrator_runtime: Path):
+    """`infra start` / `restart` must return instead of following the AVD logs (#363).
+
+    The AVD boots for tens of seconds, and the orchestrator is a batch command: without
+    `--daemon` the runner attaches to the log stream and never returns, so `restart` could
+    not report that it finished.
+    """
+    calls_log = orchestrator_runtime / "calls.log"
+
+    res = _run(orchestrator_runtime, "infra", "start")
+
+    assert res.returncode == 0
+    content = calls_log.read_text(encoding="utf-8")
+    assert "emulator.sh start --daemon" in content
+    assert "emulator.sh start\n" not in content, (
+        "a bare `emulator.sh start` follows the log stream and would hang the orchestrator"
+    )
+
+
+def test_all_restart_reuses_an_online_avd(orchestrator_runtime: Path):
+    """`./run.sh all restart` inherits the reuse behaviour from `infra restart` (#363)."""
+    (orchestrator_runtime / "avd_online").touch()
+    calls_log = orchestrator_runtime / "calls.log"
+
+    res = _run(orchestrator_runtime, "all", "restart")
+
+    assert res.returncode == 0
+    content = calls_log.read_text(encoding="utf-8")
+    assert "emulator.sh stop" not in content
+    assert "emulator.sh start --daemon" in content
+
+
+def test_infra_stop_still_stops_the_avd(orchestrator_runtime: Path):
+    """An explicit `stop` is a user request and must keep tearing the AVD down.
+
+    Reuse belongs to restart only: `stop` exists precisely to release the device session.
+    """
+    (orchestrator_runtime / "avd_online").touch()
+    calls_log = orchestrator_runtime / "calls.log"
+
+    res = _run(orchestrator_runtime, "infra", "stop")
+
+    assert res.returncode == 0
+    content = calls_log.read_text(encoding="utf-8")
+    assert "emulator.sh stop" in content, "`infra stop` must always stop the AVD"
+    assert "emulator.sh start" not in content
 
 
 def test_run_sh_status_dashboard(orchestrator_runtime: Path):

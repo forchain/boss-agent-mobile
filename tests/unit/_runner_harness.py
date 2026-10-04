@@ -103,6 +103,36 @@ fi
 exit 1
 """
 
+# A fake `emulator` for the launch-path tests. A real AVD process runs until it is killed,
+# so this one records who launched it, which session and process group it ended up in, and
+# every signal it receives. Those facts are what the isolation tests assert on: a process in
+# the runner's own process group is reachable from a terminal Ctrl+C, and one in a session of
+# its own is not.
+_FAKE_EMULATOR = """#!/usr/bin/env bash
+# Fake `emulator`: reports its own process identity, then stays alive like a real AVD.
+set -u
+STATE="${FAKE_ADB_SCENARIO}/emulator"
+
+printf '%s\\n' "$$" > "${STATE}/pid"
+# Sessions and process groups are inherited across fork/exec, so a child reporting its own
+# ids reports this script's too. Asked of Python rather than `ps` because macOS `ps` has no
+# `sid` keyword and silently answers with the wrong columns. The first field is the
+# reporting child's own pid and is ignored; only the two ids are read back.
+"${FAKE_ADB_PYTHON}" -c 'import os; print(os.getpid(), os.getsid(0), os.getpgid(0))' \\
+    > "${STATE}/session"
+printf 'fake emulator launched: %s\\n' "$*" >> "${STATE}/log"
+
+# Record the signal, then stay alive. The suite asserts on the absence of these lines, so
+# a regression that lets the terminal signal through cannot pass silently.
+trap 'printf "INT\\n" >> "${STATE}/signals"' INT
+trap 'printf "TERM\\n" >> "${STATE}/signals"' TERM
+trap 'printf "HUP\\n" >> "${STATE}/signals"' HUP
+
+while true; do
+    sleep 0.2
+done
+"""
+
 
 class Result(NamedTuple):
     returncode: int
@@ -136,6 +166,40 @@ class RunnerScriptHarness:
             _FAKE_ADB.replace("__HANG_SECONDS__", str(HANG_SECONDS)), encoding="utf-8"
         )
         fake_adb.chmod(0o755)
+
+    # --- fake emulator --------------------------------------------------------
+    def install_fake_emulator(self) -> Path:
+        """Put a fake `emulator` on PATH and return the state directory it reports into.
+
+        `emulator.sh` resolves the binary through `command -v emulator`, so a stand-in on
+        PATH is enough to drive the real launch path — including the session isolation
+        that keeps a running AVD alive after the runner exits (#363).
+        """
+        state_dir = self.scenario / "emulator"
+        state_dir.mkdir(exist_ok=True)
+        fake_emulator = self.bin_dir / "emulator"
+        fake_emulator.write_text(_FAKE_EMULATOR, encoding="utf-8")
+        fake_emulator.chmod(0o755)
+        return state_dir
+
+    def emulator_pid(self, state_dir: Path) -> int:
+        """PID the fake emulator recorded for itself when it was launched."""
+        return int((state_dir / "pid").read_text(encoding="utf-8").strip())
+
+    def emulator_session(self, state_dir: Path) -> tuple[int, int]:
+        """`(sid, pgid)` of the launched emulator.
+
+        The signal isolation under test is exactly "is this process reachable from the
+        runner's terminal group", so the session and group ids are the evidence. Compare
+        them against `emulator_pid`, which is the emulator's own PID.
+        """
+        fields = (state_dir / "session").read_text(encoding="utf-8").split()
+        return int(fields[1]), int(fields[2])
+
+    def emulator_received_signal(self, state_dir: Path) -> str:
+        """The signal the fake emulator observed, or empty when it was left alone."""
+        signal_log = state_dir / "signals"
+        return signal_log.read_text(encoding="utf-8").strip() if signal_log.exists() else ""
 
     # --- scenario scripting -------------------------------------------------
     def script(
@@ -172,6 +236,35 @@ class RunnerScriptHarness:
         return int((self.scenario / f"{key}.hangpid").read_text(encoding="utf-8").strip())
 
     # --- execution ----------------------------------------------------------
+    def command_env(self, env: dict[str, str] | None = None) -> dict[str, str]:
+        command_env = dict(os.environ)
+        command_env["PATH"] = f"{self.bin_dir}{os.pathsep}{command_env.get('PATH', '')}"
+        command_env["FAKE_ADB_SCENARIO"] = str(self.scenario)
+        command_env["FAKE_ADB_PYTHON"] = sys.executable
+        command_env["ANDROID_AVD"] = TARGET_AVD
+        # The scripts must be exercised with their own defaults, not this machine's exports.
+        for inherited in ("ADB_QUERY_TIMEOUT_SEC", "TARGET_AVD_OVERRIDE"):
+            command_env.pop(inherited, None)
+        command_env.update(env or {})
+        return command_env
+
+    def spawn_script(self, script: str, *args: str, env: dict[str, str] | None = None):
+        """Start a runner script without waiting for it, so a test can act while it runs.
+
+        The script is placed in a session of its own (`start_new_session=True`), which
+        makes its PID also its process-group id. Signalling that group is therefore exactly
+        what a terminal Ctrl+C does to the script's foreground group — the situation the
+        AVD isolation has to survive (#363).
+        """
+        return subprocess.Popen(
+            [BASH, script, *args],
+            cwd=str(self.runtime_root),
+            env=self.command_env(env),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+
     def run(
         self,
         *args: str,
@@ -188,15 +281,7 @@ class RunnerScriptHarness:
         budget: float = STATUS_BUDGET_SEC,
         env: dict[str, str] | None = None,
     ) -> Result:
-        command_env = dict(os.environ)
-        command_env["PATH"] = f"{self.bin_dir}{os.pathsep}{command_env.get('PATH', '')}"
-        command_env["FAKE_ADB_SCENARIO"] = str(self.scenario)
-        command_env["FAKE_ADB_PYTHON"] = sys.executable
-        command_env["ANDROID_AVD"] = TARGET_AVD
-        # The scripts must be exercised with their own defaults, not this machine's exports.
-        for inherited in ("ADB_QUERY_TIMEOUT_SEC", "TARGET_AVD_OVERRIDE"):
-            command_env.pop(inherited, None)
-        command_env.update(env or {})
+        command_env = self.command_env(env)
 
         started = time.monotonic()
         process = subprocess.Popen(
