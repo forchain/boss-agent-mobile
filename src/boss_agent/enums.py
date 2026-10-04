@@ -7,6 +7,7 @@ Domain enumerations and rank mappings for the Boss Application Layer (Issue #311
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Any
 
 
 class AuthStatus(StrEnum):
@@ -82,6 +83,29 @@ class ChannelPreference(StrEnum):
     ALL = "all"
     DIRECT_ONLY = "direct_only"
     HEADHUNTER_ONLY = "headhunter_only"
+
+
+#: The channel a *strategy* states when it names none: defer to the global setting
+#: (issue #368). Not a ``ChannelPreference`` member, because "no preference of my own" is
+#: a state the wire has to be able to express and the screening rules have no use for.
+INHERIT_CHANNEL = ""
+
+
+def normalize_channel_preference(value: Any, default: str = ChannelPreference.ALL.value) -> str:
+    """Coerce a channel preference to a valid value, or to ``default`` if unrecognized.
+
+    One coercion with two defaults, because the two callers need genuinely different
+    ones and neither can be derived from the other: a *policy* that is never configured
+    must be restrictive enough to matter (``all`` — a screening rule with no target
+    would be inert), while a *strategy* that says nothing must defer to whatever the
+    operator configured globally (``INHERIT_CHANNEL``). Reading an unknown strategy value
+    as ``all`` would silently widen a search to every channel — the one outcome an
+    operator who typed a preference would never expect.
+    """
+    try:
+        return ChannelPreference(str(value or "").strip().lower()).value
+    except ValueError:
+        return default
 
 
 #: How a task payload answered the one depth question (issue #302), recorded so a run can

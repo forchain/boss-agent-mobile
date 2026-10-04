@@ -9,6 +9,7 @@ and runs offline migrations requiring pocketbase binary.
 """
 
 import asyncio
+import os
 import shutil
 import sqlite3
 import subprocess
@@ -152,19 +153,44 @@ def test_worktree_common_root_consistency():
     assert (common_root / ".boss_agent").exists() or (common_root / ".git").exists()
 
 
-def test_pocketbase_script_and_pb_symlink():
-    """Verify that pocketbase.sh is a regular executable script and pb.sh is a symlink pointing to it."""
+def test_pocketbase_script_is_canonical_and_has_no_root_alias():
+    """Verify `pocketbase.sh` is the one canonical script and no short alias shadows it.
+
+    The root-level `pb.sh` symlink used to exist as a convenience, but it made
+    `./pb<Tab>` ambiguous in the terminal and left two names for one runner. The
+    `./run.sh pb` route covers the short form, so the root must stay free of aliases.
+    """
     repo_root = Path(__file__).resolve().parent.parent.parent
     pocketbase_sh = repo_root / "pocketbase.sh"
-    pb_sh = repo_root / "pb.sh"
 
     assert pocketbase_sh.exists(), "pocketbase.sh must exist"
     assert pocketbase_sh.is_file(), "pocketbase.sh must be a regular file"
     assert not pocketbase_sh.is_symlink(), "pocketbase.sh must not be a symlink"
+    assert os.access(pocketbase_sh, os.X_OK), "pocketbase.sh must stay executable"
 
-    assert pb_sh.exists(), "pb.sh must exist"
-    assert pb_sh.is_symlink(), "pb.sh must be a symlink"
-    assert pb_sh.resolve() == pocketbase_sh.resolve(), "pb.sh must point to pocketbase.sh"
+    assert not (repo_root / "pb.sh").exists(), (
+        "pb.sh must be gone: a root-level alias collides with the canonical name under "
+        "shell tab-completion (issue #360)"
+    )
+
+
+def test_no_root_level_script_aliases_survive():
+    """Verify every runner is reachable under exactly one name.
+
+    A root-level short alias (`app.sh`, `emu.sh`, `pb.sh`, `wk.sh`) shared a prefix with
+    its canonical script, so tab-completing that prefix stalled on two candidates instead
+    of completing (issue #360).
+    """
+    repo_root = Path(__file__).resolve().parent.parent.parent
+
+    removed_aliases = ("app.sh", "emu.sh", "pb.sh", "wk.sh")
+    still_present = [name for name in removed_aliases if (repo_root / name).exists()]
+    assert not still_present, f"root-level script aliases must be removed: {still_present}"
+
+    # Positive control: the canonical scripts are still there, so this guard cannot pass
+    # by finding an empty or wrong project root.
+    for canonical in ("appium.sh", "emulator.sh", "pocketbase.sh", "worker.sh"):
+        assert (repo_root / canonical).is_file(), f"{canonical} must exist"
 
 
 def test_provision_sqlite_database_offline_structure(tmp_path: Path, pb_bin: str):

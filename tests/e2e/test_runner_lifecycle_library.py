@@ -4,7 +4,7 @@ tests/unit/test_runner_lifecycle_library.py
 The shared runner lifecycle library, and the LISTEN-only hazard it exists to close.
 
 Five runner scripts each hand-rolled the same process lifecycle, and the copies
-drifted into a live hazard: `web.sh` probed port ownership LISTEN-only, while
+drifted into a live hazard: `dashboard.sh` probed port ownership LISTEN-only, while
 `pocketbase.sh` and `appium.sh` resolved "who owns the port" with a bare `lsof -ti`
 and then signalled that PID. A dashboard merely *connected* to PocketBase — holding an
 SSE stream — could be killed by an unrelated `pb restart` and adopted as the service's
@@ -374,7 +374,7 @@ def test_stop_never_signals_a_client_merely_connected_to_the_port(
 ) -> None:
     """The hazard's two live sites, proven closed.
 
-    `web.sh` had this regression test; `pocketbase.sh` and `appium.sh` had none, which
+    `dashboard.sh` had this regression test; `pocketbase.sh` and `appium.sh` had none, which
     is why the bare `lsof -ti` sit in them survived. The acceptance bar is the same
     test running against every service's stop path.
     """
@@ -429,11 +429,11 @@ def test_the_shutdown_acknowledgment_has_one_definition_per_service() -> None:
 
 
 def test_the_dashboard_runner_no_longer_restates_the_ack_literal() -> None:
-    """web.sh references the shared definition rather than carrying a copy."""
+    """dashboard.sh references the shared definition rather than carrying a copy."""
     from boss_agent.services.teardown import WEB_SHUTDOWN_ACK
 
-    web = (REPO_ROOT / "web.sh").read_text(encoding="utf-8")
-    assert "RUNNER_WEB_SHUTDOWN_ACK" in web, "web.sh must use the library's definition"
+    web = (REPO_ROOT / "dashboard.sh").read_text(encoding="utf-8")
+    assert "RUNNER_WEB_SHUTDOWN_ACK" in web, "dashboard.sh must use the library's definition"
     assert f'"[Web] {WEB_SHUTDOWN_ACK}, shutting down' not in web, (
-        "web.sh restates the ack literal again; reference the shared constant instead"
+        "dashboard.sh restates the ack literal again; reference the shared constant instead"
     )

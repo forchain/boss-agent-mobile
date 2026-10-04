@@ -2,9 +2,9 @@
 # ==============================================================================
 # Boss Agent Mobile - Dedicated Runner Script lifecycle library
 # ==============================================================================
-# Sourced by worker.sh, web.sh, pocketbase.sh, appium.sh and emulator.sh. Each of
+# Sourced by worker.sh, dashboard.sh, pocketbase.sh, appium.sh and emulator.sh. Each of
 # them used to hand-roll the same process lifecycle — roughly 250-300 duplicated
-# lines — and the copies drifted into a live hazard: web.sh probed port ownership
+# lines — and the copies drifted into a live hazard: dashboard.sh probed port ownership
 # LISTEN-only, while pocketbase.sh and appium.sh resolved "who owns the port" with a
 # bare `lsof -ti` and then signalled that PID. A dashboard merely *connected* to
 # PocketBase (holding an SSE stream) could therefore be killed and adopted as the

@@ -413,3 +413,37 @@ def test_resume_memory_manager_default_client_uses_realm(monkeypatch):
     manager = ResumeMemoryManager()
     assert manager.llm_client is not None
     assert manager.llm_client.config.model == "memory-realm-model"
+
+
+def test_profile_normalizer_self_heals_education():
+    """Verify ProfileNormalizer extracts and normalizes education from markdown and raw text."""
+    from boss_agent.memory import ProfileNormalizer
+
+    raw_text = (
+        "硕⼠毕业于沙迦美国⼤学计算机⼯程专业，有⼀定的⼯程研究和论⽂转化能⼒\n"
+        "沙迦美国⼤学 | 硕⼠ | 计算机⼯程\n"
+        "湘潭大学 | 本科 | 计算机科学与技术\n"
+    )
+
+    data = {
+        "name": "周黄金",
+        "years_of_experience": 19,
+        "education": [],
+        "profile_document": "- **教育背景**:\n  - 沙迦美国大学（American University of Sharjah）| 硕士 | 计算机工程（2019 - 2022）\n  - 湘潭大学 | 本科 | 计算机科学与技术（2004 - 2008）",
+    }
+
+    normalized = ProfileNormalizer.normalize(data, raw_text=raw_text)
+    edus = normalized["education"]
+    assert len(edus) >= 2
+    assert any(e["degree"] == "硕士" and "沙迦美国大学" in e["school"] for e in edus)
+    assert any(e["degree"] == "本科" and "湘潭大学" in e["school"] for e in edus)
+
+    # Verify StructuredCandidateProfile.from_dict propagates healed education
+    profile = StructuredCandidateProfile.from_dict(data)
+    assert len(profile.education) >= 2
+    assert any(e["degree"] == "硕士" and "沙迦美国大学" in e["school"] for e in profile.education)
+
+    prompt = profile.format_for_prompt()
+    assert "教育背景: 未注明" not in prompt
+    assert "硕士" in prompt
+    assert "沙迦美国大学" in prompt

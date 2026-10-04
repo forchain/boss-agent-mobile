@@ -37,8 +37,11 @@ def test_enums_isolated_ast():
         elif isinstance(node, ast.ImportFrom) and node.module:
             imported_modules.add(node.module)
 
-    # Allowed modules: __future__, enum
-    assert imported_modules <= {"__future__", "enum"}, (
+    # Standard library only, so this module stays a leaf nothing can reach it through.
+    # `typing` joins `enum` and `__future__` for the shared channel coercion helper's
+    # parameter annotation: a stdlib name carries no import cycle, which is the property
+    # this guard exists to protect. Domain modules remain the thing it forbids.
+    assert imported_modules <= {"__future__", "enum", "typing"}, (
         f"enums.py must not import domain modules: {imported_modules}"
     )
 

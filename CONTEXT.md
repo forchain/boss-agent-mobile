@@ -141,6 +141,26 @@ _Avoid_: Crontab daemon, task timer, periodic runner
 The unified web operational command center (`/`) coordinating real-time active task telemetry, historical task audit logs, and scheduled automation jobs without duplicate entity widgets.
 _Avoid_: Control panel, home view, main dashboard
 
+**Console Focus Decision (控制台焦点决策)**:
+The single ranked rule deciding which active task the Task Management Dashboard's console displays: a Monitor Pin outranks everything, executing work holds the console, a task awaiting human takeover outranks running work, and ties break oldest-first to match the Automation Worker's claim order. Implemented in `web/src/lib/taskConsole.ts`; import it rather than re-deriving the ranking in the page.
+_Avoid_: Focus logic, active task selection, newest task focus
+
+**Monitor Pin (监视 pin)**:
+The operator's explicit choice to hold the dashboard console on one task, outranking every automatic rule, and released either on request or once its task has left the active set.
+_Avoid_: Manual selection, sticky task, locked task
+
+**Console Notice (控制台提示行)**:
+The single `[System]` line recorded when a task is dispatched and held until the Console Focus Decision actually adopts that task, so a merely queued task never takes the viewport and one task's context never leaks onto another's.
+_Avoid_: Toast, notification, log line
+
+**Silent History Sync (静默历史同步)**:
+A history-table refresh that updates the rows on screen without raising the loading flag or swapping in the 正在加载历史任务... placeholder, so an appended log line — told apart from a lifecycle transition by the page's task status tracker — cannot strobe the table.
+_Avoid_: Background refresh, quiet reload, load-without-spinner
+
+**Follow-the-Tail Log Viewport (跟随日志尾部)**:
+The two-state scroll rule shared by the dashboard console's log box and `TaskLogModal` (`web/src/lib/logFollow.ts`): pinned to the newest line until the operator scrolls back to read, re-armed within 48px of the bottom, and reset to pinned when a different task is shown.
+_Avoid_: Auto-scroll, scroll-to-bottom, sticky log
+
 **Settings Panel**:
 The dedicated, extensible system configuration view (`/settings`) housing LLM parameters, connectivity testing, and modular placeholders for future device bindings and notification rules.
 _Avoid_: Config tab, options modal, preference page
@@ -199,8 +219,12 @@ The token-optimized LLM stage of `CandidateScreener.evaluate_job`, evaluating ex
 _Avoid_: Deep filter, JD checker, prompt screener
 
 **Greeting Drafter Agent**:
-The high-context LLM stage of `CandidateScreener.evaluate_job`, generating anti-template, tailored ice-breaking messages combining full candidate profile highlights with extracted JD pain points. The active Screening Policy's blacklists are dynamically injected into its matching judgement, so a job that fits the resume on paper but centers on a blacklisted subject matter (e.g. a Java role when Java is blacklisted) is disqualified at draft time even when neither the resume nor card text reveals the conflict. It only runs when a JD carries enough substance to greet from; a thin JD yields no greeting rather than a fabricated one.
+The high-context LLM stage of `CandidateScreener.evaluate_job`, generating anti-template, tailored ice-breaking messages combining full candidate profile highlights with multi-dimensional job context: Search Filter Context (e.g. target education '硕士'), card requirement tags, card digest, and full extracted JD. When search filters or card tags specify preferences (e.g. master's degree or master preferred), the agent elevates them to strong preferences even if the JD body only lists a lower minimum requirement (e.g. bachelor's), naturally highlighting the candidate's academic research fit and engineering achievements in the match reasons and greeting draft. The active Screening Policy's blacklists are dynamically injected into its matching judgement, so a job that fits the resume on paper but centers on a blacklisted subject matter (e.g. a Java role when Java is blacklisted) is disqualified at draft time even when neither the resume nor card text reveals the conflict. It only runs when a JD carries enough substance to greet from; a thin JD yields no greeting rather than a fabricated one.
 _Avoid_: Greeting generator, ice breaker, message writer
+
+**Search Filter Context (`search_filter`)**:
+The structured multi-dimensional search parameters (target education, salary range, experience, activity, company scales, industries) configured in `FilterConfig` and threaded through `JobPosting` and `CandidateScreener.evaluate_job`. It conveys top-of-funnel recruiter intent to downstream evaluation and greeting drafting stages, allowing LLM matching to recognize elevated candidate qualifications (such as master's degree fit) that may not be explicitly repeated in the JD body.
+_Avoid_: query params, filter payload, raw search dict
 
 **Greeting Prompt (`greeting_prompt.local.md`)**:
 The single living Markdown document encoding how the Greeting Drafter Agent should write ice-breakers — the one and only long-term greeting memory surface. Seeded from a default, directly human-editable, and applied verbatim by every generation path. Supersedes the retired Greeting Style Rules list (ADR 0010).
@@ -360,24 +384,28 @@ _Avoid_: infinite scroll, unconstrained sweep, opening-screen only scan
 The holistic health diagnostic and remediation CLI tool that inspects end-to-end operational readiness across PocketBase State Stream, SvelteKit Web Dashboard, Python Worker, Appium automation server, Android Virtual Device, and LLM configuration with actionable remediation steps.
 _Avoid_: sanity script, health checker, debug helper
 
-**Dedicated Runner Scripts (`emulator.sh`, `appium.sh`, `pocketbase.sh`, `web.sh`, `worker.sh`)**:
+**Dedicated Runner Scripts (`emulator.sh`, `appium.sh`, `pocketbase.sh`, `dashboard.sh`, `worker.sh`)**:
 The first-class shell lifecycle scripts managing process states (start, stop, restart, status, daemon mode) with persistent logging and auto-attach log streaming across all operational infrastructure tiers.
 _Avoid_: helper scripts, launcher utils, batch scripts
 
 **Master Service Orchestrator (`run.sh`)**:
-The top-level orchestration entrypoint coordinating service groups (`infra`, `app`, `all`) and dispatching subsystem commands (`worker`, `web`, `pb`, `emu`, `appium`, `doctor`, `live`) without implementing inline process management. Default bare execution (`./run.sh`) boots application services in the background and automatically attaches to the live Automation Worker log stream.
+The top-level orchestration entrypoint coordinating service groups (`infra`, `app`, `all`) and dispatching subsystem commands (`worker`, `pb`, `emu`, `appium`, `doctor`, `live`, and `dashboard` — the last also reachable as `web`) without implementing inline process management. Default bare execution (`./run.sh`) and the default `restart` both boot or recycle application services in the background and automatically attach to the live Automation Worker log stream, with `--daemon` as the explicit background-only opt-out.
 _Avoid_: monolithic runner, kitchen-sink script
 
 **Infrastructure Services (基础服务)**:
 The machine-shared backend services (`pocketbase.sh`, `emulator.sh`, `appium.sh`) that maintain persistent state, device emulation, and OS automation bridges, remaining running across multiple parallel worktree switches.
 _Avoid_: worker services, client tier, host daemons
 
+**AVD Lifecycle Isolation**:
+The contract whereby a Virtual Device Session started by `emulator.sh` outlives the runner that started it: it is launched into a session and process group of its own, so neither the runner exiting nor a terminal interrupt nor a group-wide cleanup can take the device down. Because the AVD is machine-wide infrastructure, `run.sh infra restart` and `run.sh all restart` reuse an already-online device — re-validating the ADB and remote-bridge connection instead of paying a 30-60s cold boot — while an explicit `stop` always tears it down.
+_Avoid_: child process of the runner, cold restart on every restart
+
 **Application Services (应用服务)**:
-The per-worktree operational components (`worker.sh`, `web.sh`) that execute automation tasks and render the user dashboard, subject to worktree-level preemption and restart.
+The per-worktree operational components (`worker.sh`, `dashboard.sh`) that execute automation tasks and render the user dashboard, subject to worktree-level preemption and restart.
 _Avoid_: backend services, shared infra, base daemons
 
 **Cross-Worktree Service Preemption**:
-The operational contract whereby executing `restart` on an application service (`web.sh restart`, `worker.sh restart`, or `run.sh restart`) gracefully stops lingering processes from other worktrees per the Graceful Shutdown Protocol and binds the port or mobile device session exclusively to the active worktree.
+The operational contract whereby executing `restart` on an application service (`dashboard.sh restart`, `worker.sh restart`, or `run.sh restart`) gracefully stops lingering processes from other worktrees per the Graceful Shutdown Protocol and binds the port or mobile device session exclusively to the active worktree.
 _Avoid_: port clash, session steal, silent conflict
 
 

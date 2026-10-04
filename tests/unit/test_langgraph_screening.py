@@ -589,7 +589,7 @@ def test_semantic_screener_prompt_has_zero_whitelist_veto():
     """JD semantic screening prompt must be stripped of the legacy whitelist rejection rule:
     whitelist tokens never appear as judging criteria at the JD stage."""
     policy = ScreeningPolicy(
-        title_whitelist=["Agent", "大模型"],
+        title_whitelist=["Agent", "量子计算"],
         jd_blacklist=["Java"],
     )
     mock_llm = MagicMock()
@@ -611,7 +611,7 @@ def test_semantic_screener_prompt_has_zero_whitelist_veto():
     assert "白名单目标关键词" not in system_prompt, (
         "legacy whitelist criteria line must be stripped from the JD screening prompt"
     )
-    assert "大模型" not in system_prompt, (
+    assert "量子计算" not in system_prompt, (
         "whitelist tokens must not leak into the JD screening prompt"
     )
     assert "与目标方向完全无关" not in system_prompt, (

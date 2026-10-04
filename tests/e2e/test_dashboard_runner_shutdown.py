@@ -1,9 +1,9 @@
 """
-tests/unit/test_web_runner_shutdown.py
-======================================
+tests/e2e/test_dashboard_runner_shutdown.py
+==========================================
 Integration tests for the Web Dashboard teardown seam (spec #218, ticket #221).
 
-`web.sh` is copied into a temporary runtime root so `cmd_stop` operates on throwaway
+`dashboard.sh` is copied into a temporary runtime root so `cmd_stop` operates on throwaway
 `.boss_agent/web.pid` and `.boss_agent/web.log` files — the shared Web Dashboard used by
 other worktrees is never signalled by this suite.
 """
@@ -21,7 +21,7 @@ from _service_harness import REPO_ROOT, free_port, is_port_free, wait_for_port_b
 
 pytestmark = pytest.mark.e2e
 
-WEB_SH = REPO_ROOT / "web.sh"
+WEB_SH = REPO_ROOT / "dashboard.sh"
 SHUTDOWN_RECORD = "🛑 [Web] Received stop command, shutting down Web Dashboard..."
 SHUTDOWN_COMPLETE_RECORD = "Web Dashboard stopped"
 STOP_BUDGET_SEC = 20.0
@@ -63,10 +63,10 @@ time.sleep(600)
 
 @pytest.fixture
 def web_runtime(tmp_path: Path) -> Path:
-    """A throwaway repository root containing a copy of the real web.sh."""
+    """A throwaway repository root containing a copy of the real dashboard.sh."""
     runtime_root = tmp_path / "repo"
     (runtime_root / ".boss_agent").mkdir(parents=True)
-    shutil.copy2(WEB_SH, runtime_root / "web.sh")
+    shutil.copy2(WEB_SH, runtime_root / "dashboard.sh")
     shutil.copy2(WEB_SH.parent / "runner_lib.sh", runtime_root / "runner_lib.sh")
     return runtime_root
 
@@ -152,7 +152,7 @@ def _run_web_stop(runtime_root: Path, port: int) -> subprocess.CompletedProcess:
     env["WEB_STOP_TIMEOUT_SEC"] = "2"
     bash = shutil.which("bash") or "/bin/bash"
     return subprocess.run(
-        [bash, "web.sh", "stop"],
+        [bash, "dashboard.sh", "stop"],
         cwd=str(runtime_root),
         env=env,
         capture_output=True,
@@ -276,7 +276,7 @@ def test_restart_stops_existing_server_and_reclaims_port(web_runtime: Path, dumm
     bash = shutil.which("bash") or "/bin/bash"
 
     result = subprocess.run(
-        [bash, "web.sh", "restart"],
+        [bash, "dashboard.sh", "restart"],
         cwd=str(web_runtime),
         env=env,
         capture_output=True,
@@ -285,7 +285,7 @@ def test_restart_stops_existing_server_and_reclaims_port(web_runtime: Path, dumm
     )
 
     # Process holding the port must be dead
-    assert process.poll() is not None, "process holding port survived web.sh restart"
+    assert process.poll() is not None, "process holding port survived dashboard.sh restart"
     assert "Stopping SvelteKit Web Dashboard" in result.stdout
     assert "Restarting SvelteKit Web Dashboard" in result.stdout
 
@@ -298,7 +298,7 @@ def test_start_daemon_when_already_running_does_not_attach(web_runtime: Path, du
     bash = shutil.which("bash") or "/bin/bash"
 
     result = subprocess.run(
-        [bash, "web.sh", "start", "--daemon"],
+        [bash, "dashboard.sh", "start", "--daemon"],
         cwd=str(web_runtime),
         env=env,
         capture_output=True,
@@ -314,7 +314,7 @@ def test_start_daemon_when_already_running_does_not_attach(web_runtime: Path, du
 def test_start_reclaims_port_when_held_by_process_with_deleted_cwd(
     web_runtime: Path, tmp_path: Path
 ):
-    """When a server from a deleted worktree holds the port, web.sh must reclaim it on start."""
+    """When a server from a deleted worktree holds the port, dashboard.sh must reclaim it on start."""
     stale_root = tmp_path / "stale_worktree"
     stale_root.mkdir()
     port = free_port()
@@ -334,7 +334,7 @@ def test_start_reclaims_port_when_held_by_process_with_deleted_cwd(
         bash = shutil.which("bash") or "/bin/bash"
 
         status_res = subprocess.run(
-            [bash, "web.sh", "status"],
+            [bash, "dashboard.sh", "status"],
             cwd=str(web_runtime),
             env=env,
             capture_output=True,
@@ -344,7 +344,7 @@ def test_start_reclaims_port_when_held_by_process_with_deleted_cwd(
         assert "STALE" in status_res.stdout
 
         start_res = subprocess.run(
-            [bash, "web.sh", "start", "--daemon"],
+            [bash, "dashboard.sh", "start", "--daemon"],
             cwd=str(web_runtime),
             env=env,
             capture_output=True,

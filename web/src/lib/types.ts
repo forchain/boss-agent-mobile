@@ -156,6 +156,7 @@ export interface MatchEvaluateResponse {
 // Import & re-export generated entity types from collection schema seam (Issues #314, #315)
 import type {
 	AutomationTask,
+	ChannelPreference,
 	JobRecord,
 	JobRecordStatus,
 	SavedSearch,
@@ -168,6 +169,7 @@ import type {
 
 export type {
 	AutomationTask,
+	ChannelPreference,
 	JobRecord,
 	JobRecordStatus,
 	SavedSearch,
@@ -196,7 +198,6 @@ export interface CommunicationSummary {
 	companies: AppliedCompanySummary[];
 	error?: string;
 }
-
 
 /**
  * True for strategies that run 仅沟通 rejection cleanup (issue #208)

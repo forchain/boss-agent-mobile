@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from typing import Any
 
 from boss_agent.identifier_helpers import (
     clean_job_title,
@@ -257,6 +258,7 @@ class JobPosting:
     # (spec #209). None means unknown/absent — screening must fail open on it.
     commute_distance_km: float | None = None
     commute_distance_text: str = ""
+    search_filter: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if self.title:
@@ -269,6 +271,8 @@ class JobPosting:
         self.is_headhunter = resolve_headhunter_channel(
             self.is_headhunter, self.recruiter_name, self.recruiter_title
         )
+        if hasattr(self.search_filter, "to_dict"):
+            self.search_filter = self.search_filter.to_dict()
         if not self.digest and self.job_description:
             self.digest = extract_digest_from_jd(self.job_description)
         self.tags = sanitize_tags(

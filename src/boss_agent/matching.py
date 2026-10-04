@@ -138,6 +138,51 @@ def offline_match_result(
     )
 
 
+def format_search_filter(search_filter: dict[str, Any] | Any | None) -> str:
+    """Format search filter conditions into a readable structured text block."""
+    if not search_filter:
+        return "无"
+    if hasattr(search_filter, "to_dict"):
+        search_filter = search_filter.to_dict()
+    if not isinstance(search_filter, dict):
+        return str(search_filter)
+
+    parts: list[str] = []
+    edu = search_filter.get("education")
+    if edu and str(edu).strip() and str(edu).strip() != "不限":
+        parts.append(f"目标学历: {edu}")
+    sal = search_filter.get("salary")
+    if sal and str(sal).strip() and str(sal).strip() != "不限":
+        parts.append(f"薪资要求: {sal}")
+    exp = search_filter.get("experience")
+    if exp and str(exp).strip() and str(exp).strip() != "不限":
+        parts.append(f"经验要求: {exp}")
+    act = search_filter.get("activity")
+    if act and str(act).strip() and str(act).strip() != "不限":
+        parts.append(f"活跃度: {act}")
+    scales = search_filter.get("company_scales")
+    if isinstance(scales, list) and scales:
+        parts.append(f"公司规模: {', '.join(str(s) for s in scales)}")
+    inds = search_filter.get("industries")
+    if isinstance(inds, list) and inds:
+        parts.append(f"行业要求: {', '.join(str(i) for i in inds)}")
+
+    handled_keys = {
+        "education",
+        "salary",
+        "experience",
+        "activity",
+        "company_scales",
+        "industries",
+        "enable_filter",
+    }
+    for k, v in search_filter.items():
+        if k not in handled_keys and v:
+            parts.append(f"{k}: {v}")
+
+    return "；".join(parts) if parts else "无"
+
+
 class JobMatchGreetingService:
     """Service evaluating job fit and generating tailored greeting message using LLM."""
 
@@ -237,13 +282,26 @@ class JobMatchGreetingService:
         if job.recruiter_title:
             recruiter_info += f" ({job.recruiter_title})"
 
+        filter_str = format_search_filter(job.search_filter)
+        tags_str = ", ".join(job.tags) if job.tags else "无"
+        digest_str = job.digest or "无"
+
         user_prompt = (
-            "请深入分析以下招聘岗位(JD)，提炼其核心诉求，评估契合度并生成针对该 JD 定制的破冰打招呼文案：\n\n"
+            "请深入分析以下招聘岗位信息(含检索过滤条件、卡片标签、摘要及JD全文)，提炼其核心诉求，评估契合度并生成针对该岗位定制的破冰打招呼文案：\n\n"
             f"职位名称: {job.title}\n"
             f"招聘公司: {job.company_name}\n"
             f"招聘人员: {recruiter_info}\n"
-            f"薪资范围: {job.salary_range}\n"
-            f"岗位描述(JD):\n{job.job_description or '暂无详细描述'}\n\n"
+            f"薪资范围: {job.salary_range}\n\n"
+            f"【检索与筛选过滤条件】:\n{filter_str}\n\n"
+            f"【卡片要求标签】:\n{tags_str}\n\n"
+            f"【卡片岗位摘要】:\n{digest_str}\n\n"
+            f"【岗位描述(JD)】:\n{job.job_description or '暂无详细描述'}\n\n"
+            "【匹配评估与打招呼任务指引】:\n"
+            "1. 学历与要求偏好升维：招聘方的真实偏好常体现在检索过滤条件（如目标学历：硕士）、卡片标签（如包含“硕士”或“硕士优先”）、或 JD 正文任职要求中（如包含“硕士或博士优先”、“硕士优先”、“硕士及以上”等）。即使 JD 最低门槛标注“本科及以上”，只要检索条件、卡片标签或任职要求中明确提到硕士要求或优先，均必须将其升维判定为关键核心偏好与诉求：\n"
+            "   - 在【JD核心诉求提炼 (jd_key_requirements)】中，必须明确提炼并包含该学历与学术/研发背景偏好（例如：'相关专业硕士或博士优先，要求扎实的学术背景与算法/工程转化能力'）；\n"
+            "   - 在【契合度评估 (match_reasons)】中，必须结合求职者的硕士学历及院校/专业背景，正面论述其与该岗位偏好的精准对齐与核心亮点；\n"
+            "   - 在【定制破冰打招呼语 (greeting_message)】中，自然融入求职者的硕士专业研究背景与生产工程落地成果（展现学术底蕴与实战落地的复合优势，杜绝生硬空洞报学历门槛）。\n"
+            "2. 紧扣核心痛点：直击 JD 核心业务痛点或技术栈，突出求职者最匹配的项目实战与架构交付能力。\n\n"
             f"【打招呼开头称谓硬性要求】：\n"
             f"打招呼文案 (greeting_message) 必须严格以“{prefix}”开头（请勿遗漏或改写该称谓前缀）。\n\n"
             "请严格以 JSON 格式输出以下结构：\n"
@@ -306,12 +364,19 @@ class JobMatchGreetingService:
             '请严格以 JSON 格式输出：{"revised_greeting": "重写后的破冰招呼语全文"}'
         )
 
+        filter_str = format_search_filter(job.search_filter)
+        tags_str = ", ".join(job.tags) if job.tags else "无"
+        digest_str = job.digest or "无"
+
         user_content = (
             f"职位名称: {job.title}\n"
             f"招聘公司: {job.company_name}\n"
             f"招聘人员: {recruiter_info}\n"
-            f"薪资范围: {job.salary_range}\n"
-            f"岗位描述(JD):\n{job.job_description or '暂无详细描述'}\n\n"
+            f"薪资范围: {job.salary_range}\n\n"
+            f"【检索与筛选过滤条件】:\n{filter_str}\n\n"
+            f"【卡片要求标签】:\n{tags_str}\n\n"
+            f"【卡片岗位摘要】:\n{digest_str}\n\n"
+            f"【岗位描述(JD)】:\n{job.job_description or '暂无详细描述'}\n\n"
             f"【打招呼开头称谓硬性要求】:\n"
             f"修改后的招呼语必须严格以“{prefix}”开头。\n\n"
             f"【当前打招呼语】:\n{current_greeting}\n\n"

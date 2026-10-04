@@ -15,6 +15,9 @@ export const POST: RequestHandler = async ({ request }) => {
 			job_description = '',
 			recruiter_name = '',
 			recruiter_title = '',
+			tags = [],
+			digest = '',
+			search_filter = null,
 			candidate_profile = null,
 			llmSettings = null
 		} = body;
@@ -25,7 +28,10 @@ export const POST: RequestHandler = async ({ request }) => {
 			salary_range,
 			job_description,
 			recruiter_name,
-			recruiter_title
+			recruiter_title,
+			tags,
+			digest,
+			search_filter
 		};
 
 		const args = ['--job', JSON.stringify(jobPayload)];

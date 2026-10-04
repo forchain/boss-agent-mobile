@@ -116,6 +116,9 @@ def main() -> None:
             job_description=job_dict.get("job_description") or job_dict.get("description") or "",
             recruiter_name=job_dict.get("recruiter_name") or job_dict.get("recruiter") or None,
             recruiter_title=job_dict.get("recruiter_title") or None,
+            tags=job_dict.get("tags") or [],
+            digest=job_dict.get("digest") or "",
+            search_filter=job_dict.get("search_filter") or None,
         )
     except Exception as e:
         sys.stdout.write(json.dumps({"error": f"Invalid job JSON: {e}"}, ensure_ascii=False) + "\n")
@@ -125,7 +128,10 @@ def main() -> None:
     if args.profile:
         try:
             profile_dict = json.loads(args.profile)
-            candidate_profile = StructuredCandidateProfile.from_dict(profile_dict)
+            from boss_agent.memory import ProfileNormalizer
+
+            norm_dict = ProfileNormalizer.normalize(profile_dict)
+            candidate_profile = StructuredCandidateProfile.from_dict(norm_dict)
         except Exception as e:
             sys.stderr.write(f"Warning: Failed to parse candidate profile JSON ({e})\n")
 

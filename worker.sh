@@ -15,7 +15,10 @@
 #   ./worker.sh status            # Check Worker daemon status
 #   ./worker.sh attach            # Attach to live Worker daemon log stream
 #   ./worker.sh logs              # Alias for attach
-#   ./wk.sh <cmd>                 # Symlink alias for ./worker.sh
+#   ./run.sh worker <cmd>           # Short orchestrator route for ./worker.sh
+#
+# There is no root-level `wk.sh` alias script: a short alias in the project root collided
+# with the full name under shell tab-completion, and `./run.sh worker` reaches the same runner.
 # ==============================================================================
 
 set -euo pipefail
@@ -42,6 +45,7 @@ fi
 WORKER_PID_FILE=".boss_agent/worker.pid"
 WORKER_LOG_FILE=".boss_agent/worker.log"
 WORKER_STOP_TIMEOUT_SEC="${WORKER_STOP_TIMEOUT_SEC:-10}"
+
 
 get_running_worker_pid() {
     if [[ -f "${WORKER_PID_FILE}" ]]; then
@@ -146,7 +150,7 @@ check_pocketbase_health() {
         echo "❌ Error: PocketBase State Stream is not reachable at ${HEALTH_URL}" >&2
         echo "" >&2
         echo "💡 PocketBase State Stream broker must be running first:" >&2
-        echo "   - Local PocketBase: run './pb.sh' or './run.sh pb' in another terminal" >&2
+        echo "   - Local PocketBase: run './pocketbase.sh' or './run.sh pb' in another terminal" >&2
         echo "   - Remote PocketBase: export POCKETBASE_URL=\"http://<remote-ip>:<port>\"" >&2
         echo "" >&2
         exit 1

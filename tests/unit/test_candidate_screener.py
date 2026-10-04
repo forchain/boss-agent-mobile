@@ -16,6 +16,7 @@ from boss_agent.matching import MatchGreetingResult
 from boss_agent.memory import StructuredCandidateProfile
 from boss_agent.screening import (
     CandidateScreener,
+    CardFacets,
     CardVerdictStage,
     JobVerdictStage,
 )
@@ -419,7 +420,7 @@ def test_jd_screen_prompt_carries_no_whitelist_veto():
     llm = MagicMock()
     llm.chat_completion_json.return_value = {"pass": True, "reason": "未触犯黑名单"}
     screener = CandidateScreener(llm_client=llm)
-    policy = ScreeningPolicy(title_whitelist=["Agent", "大模型"], jd_blacklist=["Java"])
+    policy = ScreeningPolicy(title_whitelist=["Agent", "量子计算"], jd_blacklist=["Java"])
 
     screener.evaluate_job(
         _card(),
@@ -432,7 +433,7 @@ def test_jd_screen_prompt_carries_no_whitelist_veto():
     messages = llm.chat_completion_json.call_args_list[0].args[0]
     system_prompt = next(m["content"] for m in messages if m["role"] == "system")
     assert "白名单目标关键词" not in system_prompt
-    assert "大模型" not in system_prompt, "whitelist tokens must not leak into the JD prompt"
+    assert "量子计算" not in system_prompt, "whitelist tokens must not leak into the JD prompt"
     assert "Java" in system_prompt, "blacklist criteria must remain"
     assert "核心职责" in system_prompt or "主技术栈" in system_prompt
 
@@ -589,3 +590,50 @@ def test_evaluate_card_business_district_blacklist_disabled_when_enable_screenin
 
     verdict = screener.evaluate_card(_card(location="上海 崇明区"), policy)
     assert verdict.passed is True
+
+
+def test_card_facets_to_job_posting_retains_digest():
+    """CardFacets.to_job_posting must preserve digest (issue #352)."""
+    facets = CardFacets.from_card(
+        {
+            "title": "大模型架构师",
+            "company_name": "创新工场",
+            "digest": "急聘算法工程专家，硕士优先",
+            "tags": ["硕士优先", "Python"],
+        }
+    )
+    posting = facets.to_job_posting("岗位职责：负责智能体系统设计研发，要求本科及以上。")
+    assert posting.digest == "急聘算法工程专家，硕士优先"
+    assert posting.tags == ["硕士优先", "Python"]
+
+
+def test_evaluate_job_forwards_search_filter_to_greeting_service():
+    """evaluate_job passes search_filter into JobPosting and down to greeting service."""
+    screener = CandidateScreener(llm_client=MagicMock())
+    mock_greeting = MagicMock()
+    mock_greeting.evaluate_and_draft_greeting.return_value = MagicMock(
+        match_score=90,
+        match_reasons=["硕士学历与岗位强偏好吻合"],
+        jd_key_requirements=["多Agent系统研发"],
+        greeting_message="张总您好,幸会!我具备硕士背景与工程落地经验。",
+    )
+    screener._greeting_service = MagicMock(return_value=mock_greeting)
+
+    card = _card(
+        title="Agent 架构师",
+        company_name="智能未来",
+        digest="大模型端侧团队直招，硕士优先",
+        tags=["硕士优先"],
+    )
+    search_filter = {"education": "硕士", "salary": "5万元以上"}
+    res = screener.evaluate_job(
+        card=card,
+        jd_text=GOOD_JD,
+        search_filter=search_filter,
+    )
+    assert res.passed is True
+    assert res.match_score == 90
+
+    passed_job = mock_greeting.evaluate_and_draft_greeting.call_args.kwargs["job"]
+    assert passed_job.digest == "大模型端侧团队直招，硕士优先"
+    assert passed_job.search_filter == search_filter

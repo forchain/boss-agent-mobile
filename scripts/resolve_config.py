@@ -6,7 +6,7 @@ Print resolved Configuration Realm values as ``key=value`` lines.
 
 The runner scripts resolved `POCKETBASE_URL`, the Appium URL and the AVD name by
 mining YAML with `grep -E "^[[:space:]]*key:" | awk '{print $2}' | tr -d '"' | tr -d "'"`
-— the same pipeline, copied about a dozen times across `worker.sh`, `web.sh`,
+— the same pipeline, copied about a dozen times across `worker.sh`, `dashboard.sh`,
 `appium.sh`, `emulator.sh`, `pocketbase.sh` and `doctor.sh`. Every copy silently
 returned nothing the moment the file layout changed, and none of them knew about the
 precedence chain or the environment.

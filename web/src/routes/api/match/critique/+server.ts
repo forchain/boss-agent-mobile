@@ -54,7 +54,10 @@ export const POST: RequestHandler = async ({ request }) => {
 			// The salutation prefix is derived from the recruiter name on the Python
 			// side; dropping it here silently degrades every greeting to "您好,幸会!".
 			recruiter_name: job.recruiter_name || '',
-			recruiter_title: job.recruiter_title || ''
+			recruiter_title: job.recruiter_title || '',
+			tags: job.tags || [],
+			digest: job.digest || '',
+			search_filter: job.search_filter || null
 		};
 
 		// Both document-driven actions consume the Greeting Prompt and must

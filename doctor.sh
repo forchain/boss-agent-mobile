@@ -80,16 +80,16 @@ if curl -s -f "${HEALTH_URL}" >/dev/null 2>&1; then
     if curl -s -f "${POCKETBASE_URL%/}/api/collections/automation_tasks/records?perPage=1" >/dev/null 2>&1; then
         log_pass "PocketBase 集合 'automation_tasks' 已就绪"
     else
-        log_warn "PocketBase 缺少 'automation_tasks' 集合或规则未开放" "./pb.sh provision 或重启 ./pb.sh"
+        log_warn "PocketBase 缺少 'automation_tasks' 集合或规则未开放" "./pocketbase.sh provision 或重启 ./pocketbase.sh"
     fi
 
     if curl -s -f "${POCKETBASE_URL%/}/api/collections/candidate_profiles/records?perPage=1" >/dev/null 2>&1; then
         log_pass "PocketBase 集合 'candidate_profiles' 已就绪"
     else
-        log_warn "PocketBase 缺少 'candidate_profiles' 集合或规则未开放" "./pb.sh provision 或重启 ./pb.sh"
+        log_warn "PocketBase 缺少 'candidate_profiles' 集合或规则未开放" "./pocketbase.sh provision 或重启 ./pocketbase.sh"
     fi
 else
-    log_fail "PocketBase 服务未启动或不可达 (${POCKETBASE_URL})" "运行 './pb.sh' (前台) 或 './pb.sh start --daemon' (后台启动)"
+    log_fail "PocketBase 服务未启动或不可达 (${POCKETBASE_URL})" "运行 './pocketbase.sh' (前台) 或 './pocketbase.sh start --daemon' (后台启动)"
 fi
 
 echo ""
@@ -117,12 +117,12 @@ if curl -s -f "http://127.0.0.1:5173" >/dev/null 2>&1; then
     WEB_PID="$(cat .boss_agent/web.pid 2>/dev/null || lsof -ti :5173 2>/dev/null | head -n 1 || echo '')"
     if [[ -n "${WEB_PID}" ]] && ! runner_process_cwd_alive "${WEB_PID}"; then
         WEB_CWD="$(runner_process_cwd "${WEB_PID}")"
-        log_fail "SvelteKit Web 服务运行于已删除的旧目录 (${WEB_CWD:-未知})，无法加载页面模块！" "运行: ./web.sh restart"
+        log_fail "SvelteKit Web 服务运行于已删除的旧目录 (${WEB_CWD:-未知})，无法加载页面模块！" "运行: ./dashboard.sh restart"
     else
         log_pass "SvelteKit Web 服务正在运行 (http://127.0.0.1:5173${WEB_PID:+, PID: ${WEB_PID}}, 日志: .boss_agent/web.log)"
     fi
 else
-    log_warn "SvelteKit Web 服务尚未启动" "运行: ./web.sh"
+    log_warn "SvelteKit Web 服务尚未启动" "运行: ./dashboard.sh"
 fi
 
 echo ""
@@ -173,6 +173,28 @@ if command -v adb >/dev/null 2>&1; then
         BOOT_STATUS="$(adb -s "${RUNNING_AVD_SERIAL}" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r\n' || true)"
         if [[ "${BOOT_STATUS}" == "1" ]]; then
             log_pass "专用 Android AVD '${TARGET_AVD}' 已开机并就绪 (${RUNNING_AVD_SERIAL}, 日志: .boss_agent/emulator.log)"
+
+            # A booted AVD whose bridge has died is the outage that looks healthy from the
+            # console and only shows up as "cannot connect" for a remote client, so it is
+            # called out separately -- with the command that repairs it, because the obvious
+            # reflex (restart the emulator) throws away the running session for nothing.
+            #
+            # The port is not the whole story: a bridge can be listening while its transport
+            # has dropped, and that state must not be reported as healthy when
+            # `emulator.sh status` calls it DISCONNECTED.
+            BRIDGE_PORT="${REMOTE_ADB_PORT:-6555}"
+            BRIDGE_PID="$(runner_port_listener_pid "${BRIDGE_PORT}")"
+            LAN_SERIAL=""
+            if [[ -n "${HOST_LAN_IP:-}" && "${HOST_LAN_IP}" != "127.0.0.1" ]]; then
+                LAN_SERIAL="${HOST_LAN_IP}:${BRIDGE_PORT}"
+            fi
+            if [[ -z "${BRIDGE_PID}" ]]; then
+                log_warn "Remote ADB Bridge 未运行 (端口 ${BRIDGE_PORT})，远程客户端将无法连接" "运行: ./emulator.sh reconnect（无需重启模拟器即可恢复局域网 ADB 访问）"
+            elif [[ -n "${LAN_SERIAL}" ]] && ! adb devices 2>/dev/null | awk -v s="${LAN_SERIAL}" '$1 == s && $2 == "device" {found=1} END {exit !found}'; then
+                log_warn "Remote ADB Bridge 在运行，但局域网 ADB 连接已断开 (${LAN_SERIAL})" "运行: ./emulator.sh reconnect（无需重启模拟器即可恢复局域网 ADB 访问）"
+            else
+                log_pass "Remote ADB Bridge 正在运行 (PID: ${BRIDGE_PID}, 端口: ${BRIDGE_PORT})"
+            fi
         else
             log_warn "专用 Android AVD '${TARGET_AVD}' 正在启动中..." "请等待模拟器启动完毕: ./emulator.sh status"
         fi
@@ -232,8 +254,8 @@ echo -e "${BOLD}诊断结果汇总:${NC} ${GREEN}${TOTAL_PASS} 项通过${NC} | 
 if [[ ${TOTAL_FAIL} -eq 0 ]]; then
     echo -e "\n${GREEN}${BOLD}🎉 核心组件全部正常！系统已处于就绪状态。${NC}"
     echo -e "常用指令推荐:"
-    echo -e "  - 启动 PocketBase : ${CYAN}./pb.sh start --daemon${NC}"
-    echo -e "  - 启动 Web 控制台 : ${CYAN}./web.sh${NC}"
+    echo -e "  - 启动 PocketBase : ${CYAN}./pocketbase.sh start --daemon${NC}"
+    echo -e "  - 启动 Web 控制台 : ${CYAN}./dashboard.sh${NC}"
     echo -e "  - 启动 Worker 进程 : ${CYAN}./run.sh${NC}"
     echo -e "  - 执行全量自检     : ${CYAN}./doctor.sh${NC}\n"
     exit 0

@@ -33,6 +33,11 @@ from boss_agent.errors import (
 
 logger = logging.getLogger("boss_agent.candidate_memory_store")
 
+#: Cap for the legacy ``raw_summary`` mirror. PocketBase's default text field holds 5000
+#: characters, so the mirror is trimmed to fit; ``profile_document`` is the field that keeps
+#: the whole document (see ``LONG_TEXT_MAX_CHARS`` in ``broker.collection_schema``).
+RAW_SUMMARY_MAX_CHARS = 4990
+
 #: Columns the profile stores as JSON text and reads back as Python values.
 PROFILE_JSON_COLUMNS: tuple[str, ...] = (
     "education",
@@ -442,12 +447,16 @@ class PocketBaseCandidateMemoryStore(CandidateMemoryStore):
                     "raw_summary"
                 )
                 if incoming_doc:
-                    merged_body["raw_summary"] = incoming_doc
+                    # profile_document is the single source of truth and carries the whole
+                    # document (LONG_TEXT_MAX_CHARS). raw_summary stays its legacy mirror and
+                    # must respect PocketBase's 5000-char default text limit, so it is the
+                    # only one of the two that gets truncated.
                     merged_body["profile_document"] = incoming_doc
+                    merged_body["raw_summary"] = incoming_doc[:RAW_SUMMARY_MAX_CHARS]
                 elif existing.get("profile_document") or existing.get("raw_summary"):
                     doc = existing.get("profile_document") or existing.get("raw_summary", "")
-                    merged_body["raw_summary"] = doc
                     merged_body["profile_document"] = doc
+                    merged_body["raw_summary"] = str(doc)[:RAW_SUMMARY_MAX_CHARS]
                 merged_body["user_id"] = user_id
                 resp = await execute_broker_request(
                     lambda: self.session.patch(
@@ -462,8 +471,8 @@ class PocketBaseCandidateMemoryStore(CandidateMemoryStore):
                     "raw_summary"
                 )
                 if incoming_doc:
-                    body["raw_summary"] = incoming_doc
                     body["profile_document"] = incoming_doc
+                    body["raw_summary"] = incoming_doc[:RAW_SUMMARY_MAX_CHARS]
                 resp = await execute_broker_request(
                     lambda: self.session.post(url, json=body, headers=self._headers()),
                     expected_statuses=(200, 201),

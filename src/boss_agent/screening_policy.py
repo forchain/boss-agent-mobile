@@ -6,11 +6,15 @@ Screening policy domain entity and card-level keyword evaluation (Issue #311, Sp
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-from boss_agent.enums import ChannelPreference
+from boss_agent.enums import (
+    INHERIT_CHANNEL,
+    ChannelPreference,
+    normalize_channel_preference,
+)
 from boss_agent.identifier_helpers import (
     is_headhunter_agency_name,
     is_masked_company_name,
@@ -44,16 +48,8 @@ class ScreeningPolicy:
     source_path: str | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        self.channel_preference = self._normalize_channel_preference(self.channel_preference)
+        self.channel_preference = normalize_channel_preference(self.channel_preference)
         self.max_commute_distance_km = self._normalize_commute_limit(self.max_commute_distance_km)
-
-    @staticmethod
-    def _normalize_channel_preference(value: Any) -> str:
-        """Coerce a channel preference value to a valid ChannelPreference, defaulting to 'all'."""
-        try:
-            return ChannelPreference(str(value).strip().lower()).value
-        except ValueError:
-            return ChannelPreference.ALL.value
 
     @staticmethod
     def _normalize_commute_limit(value: Any) -> float | None:
@@ -388,7 +384,7 @@ class ScreeningPolicy:
             business_district_blacklist=list(data.get("business_district_blacklist") or []),
             business_district_inspect_list=list(data.get("business_district_inspect_list") or []),
             enable_screening=bool(data.get("enable_screening", True)),
-            channel_preference=cls._normalize_channel_preference(
+            channel_preference=normalize_channel_preference(
                 data.get("channel_preference", ChannelPreference.ALL.value)
             ),
             # Absent key keeps the 40km default; an explicit null/blank means "disabled".
@@ -417,3 +413,30 @@ class ScreeningPolicy:
         from boss_agent import screening_config
 
         return screening_config.save_policy(self, config_path=config_path)
+
+
+def resolve_screening_policy(
+    policy: ScreeningPolicy,
+    *,
+    channel_preference: Any = None,
+) -> ScreeningPolicy:
+    """The policy a strategy's channel preference produces. The input is never mutated.
+
+    One rule, two callers, because a strategy's recruitment channel has to mean the same
+    thing no matter who runs it: the worker feed pipeline
+    (``FeedStreamConfig.from_payload``) and the interactive ``SmokeHarness`` both start
+    from a preset's policy and then apply whatever the strategy itself stated. Resolved
+    separately, the same preset screened one channel under a cron run and another under
+    the local runner — the "same SavedSearch, two meanings" divergence this codebase has
+    already paid for twice (PR #297, issue #302).
+
+    A new policy is returned rather than the caller's being edited in place, because the
+    caller's policy is often shared: ``SavedSearchRegistry.get`` hands back the object it
+    stores, so mutating it would overwrite the global screening configuration for the
+    rest of the process. A strategy that states nothing — absent, empty or unrecognized —
+    yields the policy unchanged, which is the whole meaning of "inherit global".
+    """
+    stated = normalize_channel_preference(channel_preference, default=INHERIT_CHANNEL)
+    if not stated:
+        return policy
+    return replace(policy, channel_preference=stated)
