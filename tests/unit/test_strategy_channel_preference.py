@@ -20,6 +20,7 @@ preference into the policy those verdicts read, which is what this suite covers.
 """
 
 import json
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -30,6 +31,7 @@ from boss_agent.models import (
     SavedSearch,
     ScreeningPolicy,
     SearchConfig,
+    resolve_screening_policy,
 )
 from boss_agent.task_launch import LaunchSource, build_search_launch
 
@@ -205,18 +207,37 @@ def test_from_payload_empty_channel_preserves_the_global_policy():
 
 
 @pytest.mark.parametrize(
-    "payload", [None, {}, {"filter": {}}, {"filter": {"channel_preference": ""}}]
+    "filter_shape", [{}, {"channel_preference": ""}, {"channel_preference": None}]
 )
-def test_from_payload_without_any_channel_keeps_the_loaded_policy(payload):
+def test_from_payload_without_a_stated_channel_keeps_the_loaded_policy(filter_shape):
+    """A filter that names no channel leaves the policy exactly as the payload stated it.
+
+    Asserted against the *same payload with no filter at all*, so a regression that
+    narrowed the policy while parsing would fail here — an assertion that merely accepted
+    any valid channel would not.
+    """
+    stated = {
+        "screening_policy": {"channel_preference": "direct_only"},
+        "enable_filter": True,
+    }
+
+    with_filter = FeedStreamConfig.from_payload({**stated, "filter": filter_shape})
+    without_filter = FeedStreamConfig.from_payload(stated)
+
+    assert with_filter.screening_policy.channel_preference == "direct_only"
+    assert with_filter.screening_policy.channel_preference == (
+        without_filter.screening_policy.channel_preference
+    )
+
+
+@pytest.mark.parametrize("payload", [None, {}, {"filter": {}}])
+def test_from_payload_with_no_policy_resolves_the_configured_global_one(payload):
+    """No policy and no channel: the run is governed by the operator's global setting."""
     config = FeedStreamConfig.from_payload(payload)
 
-    # No policy in the payload means the worker resolves the configured global one, whose
-    # own default is `all`. What matters is that nothing narrowed it on the way through.
-    assert config.screening_policy.channel_preference in {
-        ChannelPreference.ALL.value,
-        ChannelPreference.DIRECT_ONLY.value,
-        ChannelPreference.HEADHUNTER_ONLY.value,
-    }
+    assert config.screening_policy.channel_preference == (
+        ScreeningPolicy.load_default().channel_preference
+    )
 
 
 def test_from_payload_carries_the_channel_onto_the_filter_config_too():
@@ -236,10 +257,18 @@ def test_from_payload_reads_a_stringified_filter_for_the_channel():
     assert config.screening_policy.channel_preference == "headhunter_only"
 
 
-def test_from_payload_ignores_an_unrecognized_channel_and_inherits():
-    payload = _launch_payload("vip_only")
+def test_from_payload_ignores_a_hand_edited_channel_and_inherits():
+    """A row edited outside the dashboard can hold anything; an unknown one inherits.
 
-    config = FeedStreamConfig.from_payload(payload)
+    The payload is written literally rather than through ``_launch_payload``, which would
+    normalize the bad value away before the worker ever saw it.
+    """
+    config = FeedStreamConfig.from_payload(
+        {
+            "screening_policy": {"channel_preference": "direct_only"},
+            "filter": {"channel_preference": "vip_only"},
+        }
+    )
 
     assert config.screening_policy.channel_preference == "direct_only"
 
@@ -251,8 +280,6 @@ def test_resolved_channel_actually_governs_card_screening():
     the verdict cannot pass this suite. The headhunter card is read from its recruiter's
     title, so it resolves to a headhunter channel even though the company is a direct hire.
     """
-    from unittest.mock import MagicMock
-
     from boss_agent.screening import CandidateScreener, CardVerdictStage
 
     card = {
@@ -282,8 +309,6 @@ def test_resolved_channel_keeps_whitelist_relaxation_available():
     The relaxation is what keeps a niche headhunter posting from being dropped purely for
     arriving through an agency, so a strategy-level override must not disable it.
     """
-    from unittest.mock import MagicMock
-
     from boss_agent.screening import CandidateScreener, CardVerdictStage
 
     payload = _launch_payload("direct_only")
@@ -303,3 +328,90 @@ def test_resolved_channel_keeps_whitelist_relaxation_available():
     assert verdict.stage is CardVerdictStage.RELAXED
     assert verdict.relaxed_by_whitelist is True
     assert "大模型" in verdict.relaxation_reason
+
+
+# ---------------------------------------------------------------------------
+# Seam 5 — one rule, every caller
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("stated", ["all", "direct_only", "headhunter_only"])
+def test_resolve_screening_policy_applies_a_stated_channel(stated):
+    policy = ScreeningPolicy(channel_preference="direct_only")
+
+    assert resolve_screening_policy(policy, channel_preference=stated).channel_preference == stated
+
+
+@pytest.mark.parametrize("stated", [None, "", "   ", "vip_only"])
+def test_resolve_screening_policy_inherits_when_a_strategy_says_nothing(stated):
+    """The function returns the policy it was handed, unchanged, for an inheriting strategy."""
+    policy = ScreeningPolicy(channel_preference="headhunter_only", title_whitelist=["大模型"])
+
+    resolved = resolve_screening_policy(policy, channel_preference=stated)
+
+    assert resolved.channel_preference == "headhunter_only"
+    assert resolved.title_whitelist == ["大模型"]
+
+
+def test_interactive_runner_agrees_with_the_worker_on_the_same_strategy():
+    """One preset must not screen one channel under a cron run and another under the CLI.
+
+    The SmokeHarness is the second caller of this rule, and it used to pass the preset's
+    stored policy straight through — so a direct-only strategy silently widened itself
+    whenever a person ran it instead of scheduling it.
+    """
+    from boss_agent.workflows import SmokeHarness
+
+    strategy = SavedSearch(
+        id="s_two_paths",
+        search=SearchConfig(keyword="agent"),
+        filter=FilterConfig(channel_preference="direct_only"),
+        screening_policy=ScreeningPolicy(channel_preference="all"),
+    )
+
+    # The harness only needs a driver-shaped object to construct its page objects; the
+    # channel resolution happens in __init__ and never touches the device.
+    harness = SmokeHarness(driver=MagicMock(), saved_search=strategy)
+    worker_policy = FeedStreamConfig.from_payload(
+        build_search_launch(strategy, source=LaunchSource.SCHEDULER).payload
+    ).screening_policy
+
+    assert harness.screening_policy.channel_preference == "direct_only"
+    assert harness.screening_policy.channel_preference == worker_policy.channel_preference
+
+
+def test_resolve_screening_policy_does_not_edit_the_policy_it_was_given():
+    """The caller's policy is often shared, so the override must not overwrite it.
+
+    ``SavedSearchRegistry.get`` hands back the object the registry stores, so an
+    in-place override would replace the operator's global screening configuration for the
+    rest of the process — a run that pinned a channel would leak it into every strategy
+    that inherits.
+    """
+    shared = ScreeningPolicy(channel_preference="all", title_whitelist=["大模型"])
+
+    resolved = resolve_screening_policy(shared, channel_preference="direct_only")
+
+    assert resolved.channel_preference == "direct_only"
+    assert shared.channel_preference == "all"
+    assert resolved.title_whitelist == ["大模型"]
+    assert resolved is not shared
+
+
+def test_registry_stored_policy_survives_a_strategy_run():
+    """End of the blast radius: running one direct-only strategy must not narrow the rest."""
+    from boss_agent.searches import SavedSearchRegistry
+    from boss_agent.workflows import SmokeHarness
+
+    strategy = SavedSearch(
+        id="s_leak",
+        search=SearchConfig(keyword="agent"),
+        filter=FilterConfig(channel_preference="direct_only"),
+        screening_policy=ScreeningPolicy(channel_preference="all"),
+    )
+    registry = SavedSearchRegistry()
+    registry.register(strategy)
+
+    SmokeHarness(driver=MagicMock(), saved_search=registry.get(strategy.id))
+
+    assert registry.get(strategy.id).screening_policy.channel_preference == "all"

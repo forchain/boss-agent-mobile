@@ -55,6 +55,7 @@ from .models import (
     is_communication_expired,
     is_direct_hire_company,
     jd_is_usable_on_file,
+    resolve_screening_policy,
 )
 from .pages import (
     ChatPage,
@@ -281,16 +282,17 @@ class FeedStreamConfig:
             data.get("daily_greeting_limit") or load_settings().get("daily_greeting_limit", 20)
         )
 
-        screening_policy = (
+        base_policy = (
             ScreeningPolicy.from_dict(raw_policy) if raw_policy else ScreeningPolicy.load_default()
         )
         # A strategy may pin its own recruitment channel; saying nothing means inherit the
-        # policy resolved above (issue #368). Resolution happens here rather than in either
-        # handler because a task's channel has to be settled before the screener reads it —
-        # and the two handlers share this parser precisely so they cannot disagree.
-        strategy_channel = _strategy_channel_preference(data.get("filter"))
-        if strategy_channel:
-            screening_policy.channel_preference = strategy_channel
+        # policy resolved above (issue #368). The rule itself belongs to
+        # ``models.resolve_screening_policy``, which the interactive SmokeHarness also
+        # goes through — two callers, one answer.
+        screening_policy = resolve_screening_policy(
+            base_policy,
+            channel_preference=_strategy_channel_preference(data.get("filter")),
+        )
 
         return cls(
             target_action=target_action,
@@ -324,10 +326,9 @@ def _strategy_channel_preference(raw_filter: Any) -> str:
 
     Read the same two shapes ``SavedSearch.from_dict`` reads for the same PocketBase
     column, so a task queued before the value was normalized cannot resolve a different
-    channel than the preset it was launched from. Normalization itself belongs to
-    ``FilterConfig`` — this asks it the question rather than owning a second rule, which
-    is how the dashboard's selector and the worker's runtime policy would otherwise
-    come to accept different spellings of the same value.
+    channel than the preset it was launched from. The value is normalized by the caller
+    (``resolve_screening_policy``) rather than here — this only says where in the payload
+    the answer lives, and the two halves of the question are not allowed to disagree.
     """
     if isinstance(raw_filter, str):
         try:
@@ -338,9 +339,7 @@ def _strategy_channel_preference(raw_filter: Any) -> str:
             return ""
     if not isinstance(raw_filter, dict):
         return ""
-    return FilterConfig(
-        channel_preference=raw_filter.get("channel_preference", "")
-    ).channel_preference
+    return raw_filter.get("channel_preference", "") or ""
 
 
 @dataclass

@@ -5,7 +5,7 @@ Domain dataclasses for Boss 直聘 entities.
 """
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
@@ -843,6 +843,31 @@ class ChannelPreference(StrEnum):
     HEADHUNTER_ONLY = "headhunter_only"
 
 
+#: The channel a *strategy* states when it names none: defer to the global setting
+#: (issue #368). Not a ``ChannelPreference`` member, because "no preference of my own" is
+#: a state the wire has to be able to express and the screening rules have no use for.
+INHERIT_CHANNEL = ""
+
+
+def normalize_channel_preference(
+    value: Any, default: str = ChannelPreference.ALL.value
+) -> str:
+    """Coerce a channel preference to a valid value, or to ``default`` if unrecognized.
+
+    One coercion with two defaults, because the two callers need genuinely different
+    ones and neither can be derived from the other: a *policy* that is never configured
+    must be restrictive enough to matter (``all`` — a screening rule with no target
+    would be inert), while a *strategy* that says nothing must defer to whatever the
+    operator configured globally (``INHERIT_CHANNEL``). Reading an unknown strategy value
+    as ``all`` would silently widen a search to every channel — the one outcome an
+    operator who typed a preference would never expect.
+    """
+    try:
+        return ChannelPreference(str(value or "").strip().lower()).value
+    except ValueError:
+        return default
+
+
 STATE_RANK: dict[str, int] = {
     JobRecordStatus.IGNORED: -1,
     JobRecordStatus.DIGEST_ONLY: 1,
@@ -1178,24 +1203,9 @@ class FilterConfig:
     channel_preference: str = ""
 
     def __post_init__(self) -> None:
-        self.channel_preference = self._normalize_channel_preference(self.channel_preference)
-
-    @staticmethod
-    def _normalize_channel_preference(value: Any) -> str:
-        """Coerce a strategy's channel preference, defaulting to '' (inherit global).
-
-        The counterpart to ``ScreeningPolicy._normalize_channel_preference``, and the
-        difference between the two defaults is the whole point of the field: a policy
-        that is never configured must be *restrictive enough to matter* (``all``),
-        while a strategy that says nothing must defer to whatever the operator configured
-        globally. So an unknown value here reads as "inherit" rather than as "all" —
-        silently widening a search to every channel is the one outcome an operator who
-        typed a preference would never expect.
-        """
-        try:
-            return ChannelPreference(str(value or "").strip().lower()).value
-        except ValueError:
-            return ""
+        self.channel_preference = normalize_channel_preference(
+            self.channel_preference, default=INHERIT_CHANNEL
+        )
 
     @property
     def has_filters(self) -> bool:
@@ -1376,16 +1386,8 @@ class ScreeningPolicy:
     source_path: str | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        self.channel_preference = self._normalize_channel_preference(self.channel_preference)
+        self.channel_preference = normalize_channel_preference(self.channel_preference)
         self.max_commute_distance_km = self._normalize_commute_limit(self.max_commute_distance_km)
-
-    @staticmethod
-    def _normalize_channel_preference(value: Any) -> str:
-        """Coerce a channel preference value to a valid ChannelPreference, defaulting to 'all'."""
-        try:
-            return ChannelPreference(str(value).strip().lower()).value
-        except ValueError:
-            return ChannelPreference.ALL.value
 
     @staticmethod
     def _normalize_commute_limit(value: Any) -> float | None:
@@ -1721,7 +1723,7 @@ class ScreeningPolicy:
             business_district_blacklist=list(data.get("business_district_blacklist") or []),
             business_district_inspect_list=list(data.get("business_district_inspect_list") or []),
             enable_screening=bool(data.get("enable_screening", True)),
-            channel_preference=cls._normalize_channel_preference(
+            channel_preference=normalize_channel_preference(
                 data.get("channel_preference", ChannelPreference.ALL.value)
             ),
             # Absent key keeps the 40km default; an explicit null/blank means "disabled".
@@ -1839,6 +1841,33 @@ class ScreeningPolicy:
         from . import screening_config
 
         return screening_config.save_policy(self, config_path=config_path)
+
+
+def resolve_screening_policy(
+    policy: ScreeningPolicy,
+    *,
+    channel_preference: Any = None,
+) -> ScreeningPolicy:
+    """The policy a strategy's channel preference produces. The input is never mutated.
+
+    One rule, two callers, because a strategy's recruitment channel has to mean the same
+    thing no matter who runs it: the worker feed pipeline
+    (``FeedStreamConfig.from_payload``) and the interactive ``SmokeHarness`` both start
+    from a preset's policy and then apply whatever the strategy itself stated. Resolved
+    separately, the same preset screened one channel under a cron run and another under
+    the local runner — the "same SavedSearch, two meanings" divergence this codebase has
+    already paid for twice (PR #297, issue #302).
+
+    A new policy is returned rather than the caller's being edited in place, because the
+    caller's policy is often shared: ``SavedSearchRegistry.get`` hands back the object it
+    stores, so mutating it would overwrite the global screening configuration for the
+    rest of the process. A strategy that states nothing — absent, empty or unrecognized —
+    yields the policy unchanged, which is the whole meaning of "inherit global".
+    """
+    stated = normalize_channel_preference(channel_preference, default=INHERIT_CHANNEL)
+    if not stated:
+        return policy
+    return replace(policy, channel_preference=stated)
 
 
 def _saved_search_max_jobs_default() -> int:

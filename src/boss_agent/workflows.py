@@ -21,6 +21,7 @@ from .models import (
     SavedSearch,
     ScreeningPolicy,
     SearchConfig,
+    resolve_screening_policy,
 )
 from .pages import (
     ChatPage,
@@ -143,7 +144,14 @@ class SmokeHarness:
         if saved_search:
             self.search_config = saved_search.search
             self.filter_config = saved_search.filter
-            self.screening_policy = saved_search.screening_policy
+            # A strategy's own recruitment channel overrides the preset's stored global
+            # policy here too, through the same resolver the worker feed pipeline uses
+            # (issue #368). Resolving it only on the task path would make one preset mean
+            # two things: direct-only under a cron run, unrestricted under this runner.
+            self.screening_policy = resolve_screening_policy(
+                saved_search.screening_policy,
+                channel_preference=saved_search.filter.channel_preference,
+            )
         elif saved_search_id:
             from .searches import get_global_search_registry
 
@@ -151,7 +159,10 @@ class SmokeHarness:
             loaded_search = reg.get(saved_search_id)
             self.search_config = loaded_search.search
             self.filter_config = loaded_search.filter
-            self.screening_policy = loaded_search.screening_policy
+            self.screening_policy = resolve_screening_policy(
+                loaded_search.screening_policy,
+                channel_preference=loaded_search.filter.channel_preference,
+            )
         else:
             self.search_config = search_config or SearchConfig()
             self.filter_config = filter_config or FilterConfig()
