@@ -158,6 +158,7 @@ async def test_worker_preserves_cancelled_status(broker, mock_driver):
 async def test_worker_logs_task_claiming_progress_and_success(broker, mock_driver, caplog):
     """Verify worker logs task claiming, progress mirroring, and successful completion with duration."""
     import logging
+
     mock_home_elem = MagicMock()
 
     def mock_find(by, value):
@@ -167,7 +168,9 @@ async def test_worker_logs_task_claiming_progress_and_success(broker, mock_drive
 
     mock_driver.find_elements.side_effect = mock_find
 
-    config = WorkerConfig(worker_id="worker-log-test", device_id="emulator-5554", poll_interval_sec=0.01)
+    config = WorkerConfig(
+        worker_id="worker-log-test", device_id="emulator-5554", poll_interval_sec=0.01
+    )
     context = WorkerContext(config=config, driver=mock_driver)
     worker = AutomationWorker(
         config=config,
@@ -176,9 +179,7 @@ async def test_worker_logs_task_claiming_progress_and_success(broker, mock_drive
         handlers=[CheckLoginHandler()],
     )
 
-    task = await broker.create_task(
-        task_type=TaskType.CHECK_LOGIN, payload={"keyword": "python"}
-    )
+    task = await broker.create_task(task_type=TaskType.CHECK_LOGIN, payload={"keyword": "python"})
 
     with caplog.at_level(logging.INFO, logger="boss_agent.worker"):
         executed = await worker.run_once()
@@ -194,13 +195,16 @@ async def test_worker_logs_task_claiming_progress_and_success(broker, mock_drive
     # 2. Must mirror handler progress logs (append_log calls)
     assert any("📝 [Task" in msg and task.id in msg for msg in log_records)
     # 3. Must log task completion with duration in seconds
-    assert any(task.id in msg and "completed successfully in" in msg and "s" in msg for msg in log_records)
+    assert any(
+        task.id in msg and "completed successfully in" in msg and "s" in msg for msg in log_records
+    )
 
 
 @pytest.mark.asyncio
 async def test_worker_logs_task_failure(broker, mock_driver, caplog):
     """Verify worker logs error message and duration when a task fails."""
     import logging
+
     mock_login_elem = MagicMock()
 
     def mock_find(by, value):
@@ -210,7 +214,9 @@ async def test_worker_logs_task_failure(broker, mock_driver, caplog):
 
     mock_driver.find_elements.side_effect = mock_find
 
-    config = WorkerConfig(worker_id="worker-fail-test", device_id="emulator-5554", poll_interval_sec=0.01)
+    config = WorkerConfig(
+        worker_id="worker-fail-test", device_id="emulator-5554", poll_interval_sec=0.01
+    )
     context = WorkerContext(config=config, driver=mock_driver)
     worker = AutomationWorker(
         config=config,
@@ -228,7 +234,10 @@ async def test_worker_logs_task_failure(broker, mock_driver, caplog):
     log_records = [r.message for r in caplog.records if r.name == "boss_agent.worker"]
 
     # Must log task failure with duration and error message
-    assert any(task.id in msg and "failed in" in msg and "not logged in" in msg.lower() for msg in log_records)
+    assert any(
+        task.id in msg and "failed in" in msg and "not logged in" in msg.lower()
+        for msg in log_records
+    )
 
 
 @pytest.mark.asyncio
@@ -246,7 +255,9 @@ async def test_worker_logs_task_cancellation_and_exceptions(broker, mock_driver,
         async def handle(self, task, broker, context) -> HandlerResult:
             raise RuntimeError("Simulated crash during automation")
 
-    config = WorkerConfig(worker_id="worker-crash-test", device_id="emulator-5554", poll_interval_sec=0.01)
+    config = WorkerConfig(
+        worker_id="worker-crash-test", device_id="emulator-5554", poll_interval_sec=0.01
+    )
     context = WorkerContext(config=config, driver=mock_driver)
     worker = AutomationWorker(
         config=config,
@@ -262,7 +273,10 @@ async def test_worker_logs_task_cancellation_and_exceptions(broker, mock_driver,
 
     assert executed is True
     log_records = [r.message for r in caplog.records if r.name == "boss_agent.worker"]
-    assert any(task.id in msg and "uncaught exception in" in msg and "Simulated crash" in msg for msg in log_records)
+    assert any(
+        task.id in msg and "uncaught exception in" in msg and "Simulated crash" in msg
+        for msg in log_records
+    )
 
 
 @pytest.mark.asyncio
@@ -271,7 +285,9 @@ async def test_worker_start_logs_readiness(broker, mock_driver, caplog):
     import asyncio
     import logging
 
-    config = WorkerConfig(worker_id="worker-start-test", device_id="emulator-5554", poll_interval_sec=0.01)
+    config = WorkerConfig(
+        worker_id="worker-start-test", device_id="emulator-5554", poll_interval_sec=0.01
+    )
     context = WorkerContext(config=config, driver=mock_driver)
     worker = AutomationWorker(
         config=config,
@@ -329,7 +345,9 @@ async def test_worker_logs_truncated_payload_on_task_claim(broker, mock_driver, 
     """Verify claimed task logs output truncated payload instead of raw massive blobs."""
     import logging
 
-    config = WorkerConfig(worker_id="worker-trunc-test", device_id="emulator-5554", poll_interval_sec=0.01)
+    config = WorkerConfig(
+        worker_id="worker-trunc-test", device_id="emulator-5554", poll_interval_sec=0.01
+    )
     context = WorkerContext(config=config, driver=mock_driver)
     worker = AutomationWorker(
         config=config,
@@ -356,7 +374,8 @@ async def test_worker_logs_truncated_payload_on_task_claim(broker, mock_driver, 
         await worker.run_once()
 
     claim_logs = [
-        r.message for r in caplog.records
+        r.message
+        for r in caplog.records
         if r.name == "boss_agent.worker" and "Claimed task" in r.message
     ]
     assert len(claim_logs) == 1
@@ -449,11 +468,6 @@ async def test_worker_survives_uncaught_exception_with_vanished_record(broker, m
     assert any(task.id in msg and "no longer exists" in msg for msg in log_records)
 
 
-
-
-
-
-
 @pytest.mark.asyncio
 async def test_worker_reopens_a_dead_device_session_before_the_handler_runs(broker):
     """A session the Appium server terminated between tasks must be replaced, not used.
@@ -491,9 +505,7 @@ async def test_worker_reopens_a_dead_device_session_before_the_handler_runs(brok
 
     config = WorkerConfig(worker_id="worker-session-reopen", poll_interval_sec=0.01)
     dead = DeadDriver()
-    context = WorkerContext(
-        config=config, driver=dead, driver_factory=lambda: fresh_driver
-    )
+    context = WorkerContext(config=config, driver=dead, driver_factory=lambda: fresh_driver)
     worker = AutomationWorker(
         config=config, broker=broker, context=context, handlers=[RecordingHandler()]
     )

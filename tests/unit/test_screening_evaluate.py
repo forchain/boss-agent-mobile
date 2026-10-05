@@ -10,8 +10,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from boss_agent.models import JobPosting, ScreeningPolicy
+from boss_agent.job_entities import JobPosting
 from boss_agent.screening import CandidateScreener, ScreeningVerdict
+from boss_agent.screening_policy import ScreeningPolicy
 
 
 def _sample_job() -> JobPosting:

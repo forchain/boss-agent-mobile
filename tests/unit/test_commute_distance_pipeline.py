@@ -15,13 +15,10 @@ import pytest
 
 from boss_agent.graph import (
     JobApplicationState,
-    app_enforced_filter_node,
-    apply_relaxation_node,
     run_job_application_graph,
-    whitelist_relaxer,
 )
-from boss_agent.models import ScreeningPolicy
 from boss_agent.pages import JobCardBrief
+from boss_agent.screening_policy import ScreeningPolicy
 
 DISTANT = 52.0
 NEARBY = 18.5
@@ -57,62 +54,3 @@ def test_graph_carries_probed_distance_into_the_state():
     assert state["commute_distance_km"] == pytest.approx(DISTANT)
     assert state["app_rule_pass"] is False
     assert "超过通勤上限" in state["app_rule_violation"]
-
-
-def test_app_enforced_filter_node_flags_distance_beyond_ceiling():
-    state: JobApplicationState = {
-        "card": {"title": "大模型 Agent 平台架构师", "company_name": "某科技公司", "commute_distance_km": DISTANT},
-        "screening_policy": ScreeningPolicy(max_commute_distance_km=40.0).to_dict(),
-    }
-
-    result = app_enforced_filter_node(state)
-
-    assert result["app_rule_pass"] is False
-    assert "距离家庭住址 52.0km" in result["app_rule_violation"]
-    assert "通勤上限 40.0km" in result["app_rule_violation"]
-
-
-def test_app_enforced_filter_node_passes_distance_within_ceiling():
-    state: JobApplicationState = {
-        "card": {"title": "Agent 工程师", "company_name": "某科技公司", "commute_distance_km": NEARBY},
-        "screening_policy": ScreeningPolicy(max_commute_distance_km=40.0).to_dict(),
-    }
-
-    assert app_enforced_filter_node(state)["app_rule_pass"] is True
-
-
-def test_app_enforced_filter_node_fails_open_without_distance():
-    state: JobApplicationState = {
-        "card": {"title": "远程 Agent 工程师", "company_name": "某科技公司"},
-        "screening_policy": ScreeningPolicy(max_commute_distance_km=20.0).to_dict(),
-    }
-
-    assert app_enforced_filter_node(state)["app_rule_pass"] is True
-
-
-def test_distant_job_without_whitelist_hit_is_rejected_by_router():
-    state: JobApplicationState = {
-        "card": {"title": "Java 后端开发工程师", "company_name": "某银行", "commute_distance_km": DISTANT},
-        "screening_policy": ScreeningPolicy(
-            max_commute_distance_km=40.0, title_whitelist=["大模型"]
-        ).to_dict(),
-        "app_rule_pass": False,
-    }
-
-    assert whitelist_relaxer(state) == "reject"
-
-
-def test_distant_job_is_rescued_by_whitelist_relaxation():
-    state: JobApplicationState = {
-        "card": {"title": "大模型 Agent 平台架构师", "company_name": "某科技", "commute_distance_km": DISTANT},
-        "screening_policy": ScreeningPolicy(
-            max_commute_distance_km=40.0, title_whitelist=["大模型"]
-        ).to_dict(),
-        "app_rule_pass": False,
-        "app_rule_violation": "【App端强制过滤】距离家庭住址 52.0km 超过通勤上限 40.0km",
-    }
-
-    assert whitelist_relaxer(state) == "relax"
-    relaxed = apply_relaxation_node(state)
-    assert relaxed["relaxed_by_whitelist"] is True
-    assert "白名单放宽" in relaxed["relaxation_reason"]

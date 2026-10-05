@@ -23,9 +23,17 @@ from typing import Any
 
 import requests
 
+from boss_agent.async_bridge import execute_broker_request
 from boss_agent.broker.collection_schema import JOB_RECORDS, wire_payload
-from boss_agent.models import (
-    JobRecordStatus,
+from boss_agent.enums import STATE_RANK, JobRecordStatus
+from boss_agent.errors import (
+    BrokerError,
+    ConflictError,
+    RecordNotFoundError,
+    TransportError,
+    ValidationError,
+)
+from boss_agent.identifier_helpers import (
     compute_job_fingerprint,
     is_communication_expired,
     is_direct_hire_company,
@@ -40,10 +48,18 @@ INVALID_JOB_TITLES: frozenset[str] = frozenset(
 )
 INVALID_COMPANY_NAMES: frozenset[str] = frozenset({"", "未注明公司", "未知公司"})
 
-# Same trade-off as the web dashboard's MAX_PAGES walk: enough pages for any realistic
-# contact history, bounded so a runaway collection cannot stall the worker.
+#: Page size when walking applied direct-hire records from PocketBase.
+#: The query is bounded by the cooldown time window rather than an arbitrary
+#: record count, and the walk continues until the relevant records are exhausted.
 APPLIED_POOL_PAGE_SIZE = 200
-APPLIED_POOL_MAX_PAGES = 25
+
+#: Availability backstop for the exclusion-pool walk — not a semantic cap.
+#: With a permanent cool-down (``cooldown_days <= 0``) the query carries no time bound, so a
+#: pathological ``status='applied'`` collection could otherwise page forever on the hot path.
+#: 200 pages × 200 rows = 40,000 records is far past any realistic history; tripping it is
+#: logged loudly rather than silently truncating the pool, so a real 40k-record history is a
+#: signal to raise this (or stop suppressing permanently), not a quiet under-count.
+APPLIED_POOL_MAX_PAGES = 200
 
 
 def _advanced_status(current: str | None, incoming: Any) -> str | None:
@@ -54,8 +70,6 @@ def _advanced_status(current: str | None, incoming: Any) -> str | None:
     an explicit rejection always wins, and a freshly extracted JD lifts a record out of
     its pre-JD limbo.
     """
-    from boss_agent.models import STATE_RANK
-
     status_val = incoming.value if hasattr(incoming, "value") else incoming
     if not status_val:
         return None
@@ -172,8 +186,16 @@ class JobRecordStore(ABC):
     """Repository interface for Job Records, exclusion pools and quota accounting."""
 
     @abstractmethod
-    async def upsert_job_record(self, record_data: dict[str, Any]) -> dict[str, Any]:
-        """Insert a new job record or merge new information into the existing one."""
+    async def upsert_job_record(self, record_data: dict[str, Any]) -> dict[str, Any] | None:
+        """Insert a new job record or merge new information into the existing one.
+
+        Returns the stored record, or ``None`` when the input is incomplete or placeholder
+        junk that is deliberately skipped ("宁可不录入"). A *rejected write* is never absorbed
+        into an empty value: the persistence seam raises its typed broker error
+        (``ValidationError`` for a 400, ``TransportError`` for a transport fault) so an
+        under-counted quota or exclusion pool surfaces instead of looking like a saved record
+        (Spec #303, story #8).
+        """
 
     @abstractmethod
     async def get_job_record_by_fingerprint(self, fingerprint: str) -> dict[str, Any] | None:
@@ -300,7 +322,7 @@ class InMemoryJobRecordStore(JobRecordStore):
                     return cand_id
         return None
 
-    async def upsert_job_record(self, record_data: dict[str, Any]) -> dict[str, Any]:
+    async def upsert_job_record(self, record_data: dict[str, Any]) -> dict[str, Any] | None:
         title = (record_data.get("title") or "").strip()
         comp_name = (record_data.get("company_name") or "").strip()
         fingerprint = record_data.get("fingerprint") or (
@@ -326,7 +348,7 @@ class InMemoryJobRecordStore(JobRecordStore):
                 title,
                 comp_name,
             )
-            return {}
+            return None
 
         r_name = record_data.get("recruiter_name", "")
         r_title = record_data.get("recruiter_title", "")
@@ -533,12 +555,8 @@ class PocketBaseJobRecordStore(JobRecordStore):
         self, fingerprint: str, record_data: dict[str, Any]
     ) -> dict[str, Any] | None:
         """Look the record up by fingerprint, then by company + title for generic recruiters."""
-        import asyncio
-
         url = self._jobs_collection_url()
-        loop = asyncio.get_running_loop()
-        resp = await loop.run_in_executor(
-            None,
+        resp = await execute_broker_request(
             lambda: self.session.get(
                 url,
                 params={
@@ -547,8 +565,11 @@ class PocketBaseJobRecordStore(JobRecordStore):
                 },
                 headers=self._headers(),
             ),
+            expected_statuses=(200,),
+            allow_404=True,
+            error_prefix="PocketBase check fingerprint failed",
         )
-        if resp.status_code != 200:
+        if resp.status_code == 404:
             return None
         items = resp.json().get("items", [])
         comp_name = (record_data.get("company_name") or "").strip()
@@ -559,8 +580,7 @@ class PocketBaseJobRecordStore(JobRecordStore):
             and title
             and record_data.get("recruiter_name") in ("", "招聘者")
         ):
-            fb_resp = await loop.run_in_executor(
-                None,
+            fb_resp = await execute_broker_request(
                 lambda: self.session.get(
                     url,
                     params={
@@ -572,6 +592,9 @@ class PocketBaseJobRecordStore(JobRecordStore):
                     },
                     headers=self._headers(),
                 ),
+                expected_statuses=(200,),
+                allow_404=True,
+                error_prefix="PocketBase check company+title fallback failed",
             )
             if fb_resp.status_code == 200:
                 items = fb_resp.json().get("items", [])
@@ -579,15 +602,11 @@ class PocketBaseJobRecordStore(JobRecordStore):
 
     async def _write_job_record(
         self, send: Callable[..., Any], url: str, body: dict[str, Any]
-    ) -> Any:
+    ) -> requests.Response:
         """Write a job record, truncating an over-long ``job_description`` and retrying once.
 
         ``send`` is the bound session method to write with (``session.patch`` or
-        ``session.post``). A collection still carrying PocketBase's implicit text cap rejects
-        the whole write for a full expanded JD, and the caller then reports an empty upsert —
-        the enriched record is lost for exactly the comprehensive postings the JD matters most
-        for. One retry at the server's own reported boundary keeps the record; the truncation
-        is logged as a warning because the tail is genuinely lost.
+        ``session.post``).
         """
         import asyncio
 
@@ -598,33 +617,46 @@ class PocketBaseJobRecordStore(JobRecordStore):
         )
 
         loop = asyncio.get_running_loop()
-        response = await loop.run_in_executor(
-            None, lambda: send(url, json=body, headers=self._headers())
-        )
+        try:
+            resp = await loop.run_in_executor(
+                None, lambda: send(url, json=body, headers=self._headers())
+            )
+        except (requests.RequestException, ConnectionError, TimeoutError, OSError) as e:
+            raise TransportError(f"Job record write failed: {e}") from e
 
-        rejection_text = getattr(response, "text", None)
-        if not is_length_rejection_for_job_description(rejection_text):
-            return response
+        rejection_text = getattr(resp, "text", None)
+        if is_length_rejection_for_job_description(rejection_text):
+            description = body.get(LENGTH_RECOVERY_FIELD)
+            limit = resolve_text_constraint_limit(rejection_text)
+            if isinstance(description, str) and len(description) > limit:
+                logger.warning(
+                    "PocketBase rejected %s: job_description is %d chars, over the server's %d-char "
+                    "text cap. Retrying with a truncated description; the tail is dropped.",
+                    url,
+                    len(description),
+                    limit,
+                )
+                retry_body = {**body, LENGTH_RECOVERY_FIELD: description[:limit]}
+                try:
+                    resp = await loop.run_in_executor(
+                        None, lambda: send(url, json=retry_body, headers=self._headers())
+                    )
+                except (requests.RequestException, ConnectionError, TimeoutError, OSError) as e:
+                    raise TransportError(f"Job record write retry failed: {e}") from e
 
-        description = body.get(LENGTH_RECOVERY_FIELD)
-        limit = resolve_text_constraint_limit(rejection_text)
-        if not isinstance(description, str) or len(description) <= limit:
-            # The rejected field is not the one we can shrink: report the original failure.
-            return response
+        if resp.status_code in (200, 201):
+            return resp
+        if resp.status_code == 400:
+            raise ValidationError(f"PocketBase write rejected (400 Bad Request): {resp.text}")
+        if resp.status_code == 404:
+            raise RecordNotFoundError(f"PocketBase record not found (404): {resp.text}")
+        if resp.status_code == 409:
+            raise ConflictError(f"PocketBase write conflict (409 Conflict): {resp.text}")
+        if resp.status_code >= 500:
+            raise TransportError(f"PocketBase server error ({resp.status_code}): {resp.text}")
+        raise BrokerError(f"PocketBase write failed (HTTP {resp.status_code}): {resp.text}")
 
-        logger.warning(
-            "PocketBase rejected %s: job_description is %d chars, over the server's %d-char "
-            "text cap. Retrying with a truncated description; the tail is dropped.",
-            url,
-            len(description),
-            limit,
-        )
-        retry_body = {**body, LENGTH_RECOVERY_FIELD: description[:limit]}
-        return await loop.run_in_executor(
-            None, lambda: send(url, json=retry_body, headers=self._headers())
-        )
-
-    async def upsert_job_record(self, record_data: dict[str, Any]) -> dict[str, Any]:
+    async def upsert_job_record(self, record_data: dict[str, Any]) -> dict[str, Any] | None:
         title = (record_data.get("title") or "").strip()
         comp_name = (record_data.get("company_name") or "").strip()
         fingerprint = record_data.get("fingerprint") or (
@@ -648,32 +680,26 @@ class PocketBaseJobRecordStore(JobRecordStore):
                 title,
                 comp_name,
             )
-            return {}
+            return None
 
         self._normalize(record_data, title, comp_name)
 
         url = self._jobs_collection_url()
         now = datetime.now(UTC).isoformat()
 
-        try:
-            existing = await self._get_existing(fingerprint, record_data)
-            if existing:
-                patch_body = self._patch_body(existing, record_data, now)
-                patch_resp = await self._write_job_record(
-                    self.session.patch,
-                    f"{url}/{existing['id']}",
-                    patch_body,
-                )
-                if patch_resp.status_code == 200:
-                    return patch_resp.json()
-                logger.error(
-                    "Failed to patch job record %s in PocketBase (%d): %s",
-                    existing["id"],
-                    patch_resp.status_code,
-                    patch_resp.text,
-                )
-        except Exception as e:
-            logger.warning("PocketBase check fingerprint exception: %s", e)
+        existing = await self._get_existing(fingerprint, record_data)
+        if existing:
+            patch_body = self._patch_body(existing, record_data, now)
+            # A rejected write raises its typed broker error out of ``_write_job_record``
+            # rather than being absorbed here: swallowing a 400 would let a record that was
+            # never written pass for a saved one, under-counting the daily greeting quota and
+            # the direct-hire exclusion pool (Spec #303, story #8).
+            patch_resp = await self._write_job_record(
+                self.session.patch,
+                f"{url}/{existing['id']}",
+                patch_body,
+            )
+            return patch_resp.json()
 
         body: dict[str, Any] = {
             **_record_fields(record_data, fingerprint, now),
@@ -681,68 +707,46 @@ class PocketBaseJobRecordStore(JobRecordStore):
             "id": record_data.get("id") or uuid.uuid4().hex[:15],
         }
 
-        try:
-            resp = await self._write_job_record(self.session.post, url, body)
-            if resp.status_code in (200, 201):
-                return resp.json()
-            logger.error(
-                "Failed to insert job record to PocketBase (%d): %s",
-                resp.status_code,
-                resp.text,
-            )
-        except Exception as e:
-            logger.warning("PocketBase insert job record exception: %s", e)
-
-        return {}
+        resp = await self._write_job_record(self.session.post, url, body)
+        return resp.json()
 
     async def get_job_record_by_fingerprint(self, fingerprint: str) -> dict[str, Any] | None:
-        import asyncio
-
         url = self._jobs_collection_url()
         filter_expr = f"fingerprint={_quote_filter_value(fingerprint)}"
-        loop = asyncio.get_running_loop()
-        try:
-            resp = await loop.run_in_executor(
-                None,
-                lambda: self.session.get(
-                    url,
-                    params={"filter": filter_expr, "perPage": "1"},
-                    headers=self._headers(),
-                ),
-            )
-            if resp.status_code == 200:
-                items = resp.json().get("items", [])
-                if items:
-                    return items[0]
-        except Exception as e:
-            logger.warning("PocketBase get_job_record_by_fingerprint failed: %s", e)
-        return None
+        resp = await execute_broker_request(
+            lambda: self.session.get(
+                url,
+                params={"filter": filter_expr, "perPage": "1"},
+                headers=self._headers(),
+            ),
+            expected_statuses=(200,),
+            allow_404=True,
+            error_prefix="PocketBase get_job_record_by_fingerprint failed",
+        )
+        if resp.status_code == 404:
+            return None
+        items = resp.json().get("items", [])
+        return items[0] if items else None
 
     async def has_job_fingerprint(self, fingerprint: str) -> bool:
         return await self.get_job_record_by_fingerprint(fingerprint) is not None
 
     async def get_job_record(self, record_id: str) -> dict[str, Any] | None:
-        import asyncio
-
-        loop = asyncio.get_running_loop()
-        try:
-            resp = await loop.run_in_executor(
-                None,
-                lambda: self.session.get(
-                    f"{self._jobs_collection_url()}/{record_id}", headers=self._headers()
-                ),
-            )
-            if resp.status_code == 200:
-                return resp.json()
-        except Exception as e:
-            logger.warning("PocketBase get_job_record failed: %s", e)
-        return None
+        resp = await execute_broker_request(
+            lambda: self.session.get(
+                f"{self._jobs_collection_url()}/{record_id}", headers=self._headers()
+            ),
+            expected_statuses=(200,),
+            allow_404=True,
+            error_prefix=f"PocketBase get_job_record {record_id} failed",
+        )
+        if resp.status_code == 404:
+            return None
+        return resp.json()
 
     async def list_job_records(
         self, status: str | None = None, limit: int = 50
     ) -> list[dict[str, Any]]:
-        import asyncio
-
         params: dict[str, Any] = {"sort": "-created", "perPage": str(limit)}
         if status:
             if status == "unmatched":
@@ -751,19 +755,17 @@ class PocketBaseJobRecordStore(JobRecordStore):
                 )
             else:
                 params["filter"] = f"status='{status}'"
-        loop = asyncio.get_running_loop()
-        try:
-            resp = await loop.run_in_executor(
-                None,
-                lambda: self.session.get(
-                    self._jobs_collection_url(), params=params, headers=self._headers()
-                ),
-            )
-            if resp.status_code == 200:
-                return resp.json().get("items", [])
-        except Exception as e:
-            logger.warning("PocketBase list_job_records failed: %s", e)
-        return []
+        resp = await execute_broker_request(
+            lambda: self.session.get(
+                self._jobs_collection_url(), params=params, headers=self._headers()
+            ),
+            expected_statuses=(200,),
+            allow_404=True,
+            error_prefix="PocketBase list_job_records failed",
+        )
+        if resp.status_code == 404:
+            return []
+        return resp.json().get("items", [])
 
     async def update_job_record_status(
         self,
@@ -771,96 +773,92 @@ class PocketBaseJobRecordStore(JobRecordStore):
         status: str,
         match_data: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        import asyncio
-
         body: dict[str, Any] = {"status": status}
         if match_data:
             body.update(match_data)
-        loop = asyncio.get_running_loop()
-        try:
-            resp = await loop.run_in_executor(
-                None,
-                lambda: self.session.patch(
-                    f"{self._jobs_collection_url()}/{record_id}",
-                    json=body,
-                    headers=self._headers(),
-                ),
-            )
-        except Exception as e:
-            raise RuntimeError(f"Failed to update job record {record_id}: {e}") from e
-        if resp.status_code == 200:
-            return resp.json()
+        resp = await execute_broker_request(
+            lambda: self.session.patch(
+                f"{self._jobs_collection_url()}/{record_id}",
+                json=body,
+                headers=self._headers(),
+            ),
+            expected_statuses=(200,),
+            allow_404=True,
+            error_prefix=f"PocketBase update_job_record_status {record_id} failed",
+        )
         if resp.status_code == 404:
             raise KeyError(f"Job record {record_id} not found")
-        # Never hand back a plausible-looking record for a write that did not land: the
-        # caller cannot tell the difference, and the next quota or cool-down read cannot either.
-        raise RuntimeError(
-            f"Failed to update job record {record_id} in PocketBase "
-            f"({resp.status_code}): {resp.text}"
-        )
+        return resp.json()
 
     async def delete_job_record(self, record_id: str) -> bool:
-        import asyncio
-
-        loop = asyncio.get_running_loop()
-        try:
-            resp = await loop.run_in_executor(
-                None,
-                lambda: self.session.delete(
-                    f"{self._jobs_collection_url()}/{record_id}", headers=self._headers()
-                ),
-            )
-            if resp.status_code in (200, 204):
-                return True
-            if resp.status_code != 404:
-                logger.warning(
-                    "PocketBase delete_job_record returned %s: %s", resp.status_code, resp.text
-                )
-            return False
-        except Exception as e:
-            logger.warning("PocketBase delete_job_record failed: %s", e)
-            return False
+        resp = await execute_broker_request(
+            lambda: self.session.delete(
+                f"{self._jobs_collection_url()}/{record_id}", headers=self._headers()
+            ),
+            expected_statuses=(200, 204),
+            allow_404=True,
+            error_prefix=f"PocketBase delete_job_record {record_id} failed",
+        )
+        return resp.status_code in (200, 204)
 
     async def get_applied_direct_companies(self, cooldown_days: int = 0) -> set[str]:
         """Collect every direct-hire company with an unexpired communication.
 
-        The pool is walked page by page: a candidate with more than one page of lifetime
-        contacts would otherwise lose the older anchors and be re-contacted at a company
-        they have already approached.
-        """
-        import asyncio
+        The cooldown bound is expressed directly in the broker query so the walk is
+        bounded by the relevant communication window rather than by an arbitrary record
+        count cap. The collection is walked page by page until exhausted (removing the
+        previous 5,000-record ceiling), ensuring long-lived candidates never lose their
+        oldest relevant contacts.
 
+        Removing that ceiling does not mean "unbounded": a permanent cool-down
+        (``cooldown_days <= 0``) leaves the filter with no time bound at all, so the walk is
+        still protected by ``APPLIED_POOL_MAX_PAGES`` — an availability backstop, not a
+        semantic cap, that logs loudly when it trips.
+        """
         url = self._jobs_collection_url()
-        loop = asyncio.get_running_loop()
+        base_filter = "status='applied' && is_headhunter!=true"
+        if cooldown_days > 0:
+            cutoff = datetime.now(UTC) - timedelta(days=cooldown_days)
+            cutoff_str = cutoff.strftime("%Y-%m-%d %H:%M:%S.000Z")
+            filter_expr = (
+                f"{base_filter} && (applied_at >= '{cutoff_str}' || "
+                f"((applied_at = '' || applied_at = null) && created >= '{cutoff_str}'))"
+            )
+        else:
+            filter_expr = base_filter
 
         items: list[dict[str, Any]] = []
-        try:
-            for page in range(1, APPLIED_POOL_MAX_PAGES + 1):
-                params = {
-                    "filter": "status='applied' && is_headhunter!=true",
-                    "page": str(page),
-                    "perPage": str(APPLIED_POOL_PAGE_SIZE),
-                    # is_headhunter has to be projected: the guard below reads it per record.
-                    "fields": "company_name,is_headhunter,applied_at,created",
-                }
-                resp = await loop.run_in_executor(
-                    None,
-                    lambda p=params: self.session.get(url, params=p, headers=self._headers()),
+        page = 1
+        while True:
+            if page > APPLIED_POOL_MAX_PAGES:
+                logger.error(
+                    "Exclusion-pool walk hit the %d-page availability backstop after %d rows "
+                    "for %s; the pool may be truncated. This is not a semantic cap — raise "
+                    "APPLIED_POOL_MAX_PAGES or the cooldown if this history is genuine.",
+                    APPLIED_POOL_MAX_PAGES,
+                    len(items),
+                    url,
                 )
-                if resp.status_code != 200:
-                    logger.warning(
-                        "PocketBase get_applied_direct_companies stopped at page %d (%d)",
-                        page,
-                        resp.status_code,
-                    )
-                    break
-                batch = resp.json().get("items", [])
-                items.extend(batch)
-                if len(batch) < APPLIED_POOL_PAGE_SIZE:
-                    break
-        except Exception as e:
-            logger.warning("PocketBase get_applied_direct_companies failed: %s", e)
-            return set()
+                break
+            params = {
+                "filter": filter_expr,
+                "page": str(page),
+                "perPage": str(APPLIED_POOL_PAGE_SIZE),
+                # is_headhunter has to be projected: the guard below reads it per record.
+                "fields": "company_name,is_headhunter,applied_at,created",
+            }
+            resp = await execute_broker_request(
+                lambda p=params: self.session.get(url, params=p, headers=self._headers()),
+                expected_statuses=(200,),
+                error_prefix=f"PocketBase get_applied_direct_companies failed at page {page}",
+            )
+            data = resp.json()
+            batch = data.get("items", [])
+            items.extend(batch)
+            total_pages = data.get("totalPages", 1)
+            if page >= total_pages or len(batch) < APPLIED_POOL_PAGE_SIZE:
+                break
+            page += 1
 
         companies: set[str] = set()
         for item in items:
@@ -873,61 +871,44 @@ class PocketBaseJobRecordStore(JobRecordStore):
         return companies
 
     async def clear_job_communication(self, record_id: str) -> dict[str, Any]:
-        import asyncio
-
         body = {
             "status": JobRecordStatus.JD_SAVED.value,
             # Empty string is PocketBase's canonical way to clear an optional date field.
             "applied_at": "",
             "applied_source": "",
         }
-        loop = asyncio.get_running_loop()
-        try:
-            resp = await loop.run_in_executor(
-                None,
-                lambda: self.session.patch(
-                    f"{self._jobs_collection_url()}/{record_id}",
-                    json=body,
-                    headers=self._headers(),
-                ),
-            )
-            if resp.status_code == 200:
-                return resp.json()
-            logger.error(
-                "Failed to release job communication %s in PocketBase (%d): %s",
-                record_id,
-                resp.status_code,
-                resp.text,
-            )
-        except Exception as e:
-            logger.warning("PocketBase clear_job_communication failed: %s", e)
-        return {}
+        resp = await execute_broker_request(
+            lambda: self.session.patch(
+                f"{self._jobs_collection_url()}/{record_id}",
+                json=body,
+                headers=self._headers(),
+            ),
+            expected_statuses=(200,),
+            allow_404=True,
+            error_prefix=f"PocketBase clear_job_communication {record_id} failed",
+        )
+        if resp.status_code == 404:
+            raise KeyError(f"Job record {record_id} not found")
+        return resp.json()
 
     async def count_today_applied_jobs(self) -> int:
-        import asyncio
-
         now = datetime.now(UTC)
         today_midnight = now.strftime("%Y-%m-%d 00:00:00.000Z")
         tomorrow_midnight = (now + timedelta(days=1)).strftime("%Y-%m-%d 00:00:00.000Z")
-        loop = asyncio.get_running_loop()
-        try:
-            resp = await loop.run_in_executor(
-                None,
-                lambda: self.session.get(
-                    self._jobs_collection_url(),
-                    params={
-                        # Bounded on both ends so a future-dated stamp cannot consume a
-                        # slot, matching the in-memory adapter's exact-day count.
-                        "filter": (
-                            f"applied_at>='{today_midnight}' && applied_at<'{tomorrow_midnight}'"
-                        ),
-                        "perPage": "1",
-                    },
-                    headers=self._headers(),
-                ),
-            )
-            if resp.status_code == 200:
-                return int(resp.json().get("totalItems", 0))
-        except Exception as e:
-            logger.warning("PocketBase count_today_applied_jobs failed: %s", e)
-        return 0
+        resp = await execute_broker_request(
+            lambda: self.session.get(
+                self._jobs_collection_url(),
+                params={
+                    # Bounded on both ends so a future-dated stamp cannot consume a
+                    # slot, matching the in-memory adapter's exact-day count.
+                    "filter": (
+                        f"applied_at>='{today_midnight}' && applied_at<'{tomorrow_midnight}'"
+                    ),
+                    "perPage": "1",
+                },
+                headers=self._headers(),
+            ),
+            expected_statuses=(200,),
+            error_prefix="PocketBase count_today_applied_jobs failed",
+        )
+        return int(resp.json().get("totalItems", 0))

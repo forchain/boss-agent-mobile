@@ -27,7 +27,8 @@ from boss_agent.card_parser import (
     parse_company_scale_industry,
     parse_recruiter_info,
 )
-from boss_agent.models import PLATFORM_BADGE_MARKERS, normalize_recruiter_name
+from boss_agent.identifier_helpers import normalize_recruiter_name
+from boss_agent.keyword_constants import PLATFORM_BADGE_MARKERS
 
 REPO_ROOT = Path(__file__).parents[2]
 
@@ -69,7 +70,9 @@ def test_a_company_that_is_really_the_title_is_rejected_then_recovered_from_text
     Left alone it poisons the fingerprint — the same job saves twice under different
     keys — and smuggles blacklisted employers past company-name screening.
     """
-    facets = _facets(title="Senior AI Agent Engineer（英语口语）", company="Senior AI Agent Engineer（英语口语）")
+    facets = _facets(
+        title="Senior AI Agent Engineer（英语口语）", company="Senior AI Agent Engineer（英语口语）"
+    )
     assert needs_text_fallback(facets) is True, (
         "the fallback decision must be made on the interpreted reads: the raw company "
         "read looks complete but interprets to nothing"
@@ -101,9 +104,7 @@ def test_an_incomplete_card_is_skipped_rather_than_persisted() -> None:
 
 def test_a_location_read_holding_the_recruiter_title_is_moved_to_the_recruiter() -> None:
     """A known mis-read: the city locator returns the recruiter's title instead."""
-    parsed = parse_card(
-        _facets(title="算法工程师", company="深至科技", location="猎头顾问")
-    )
+    parsed = parse_card(_facets(title="算法工程师", company="深至科技", location="猎头顾问"))
     assert parsed is not None
     assert parsed.location == ""
     assert parsed.recruiter_title == "猎头顾问"
@@ -277,7 +278,7 @@ def test_company_duplicates_card_title(company: str, title: str, expected: bool)
 
 def test_the_recruiter_normalizer_is_the_one_the_fingerprint_uses() -> None:
     """The parser and the Job Fingerprint cannot disagree about the recruiter."""
-    from boss_agent.models import compute_job_fingerprint
+    from boss_agent.identifier_helpers import compute_job_fingerprint
 
     for raw in ("钟先生 · 猎头顾问", "李女士•HR", "王先生・招聘", "赵先生·"):
         assert parse_recruiter_info(raw)[0] == normalize_recruiter_name(raw)
@@ -288,7 +289,13 @@ def test_the_recruiter_normalizer_is_the_one_the_fingerprint_uses() -> None:
 
 
 PURE_DOMAIN_MODULES = (
-    "src/boss_agent/models.py",
+    "src/boss_agent/enums.py",
+    "src/boss_agent/keyword_constants.py",
+    "src/boss_agent/identifier_helpers.py",
+    "src/boss_agent/job_entities.py",
+    "src/boss_agent/candidate_entities.py",
+    "src/boss_agent/search_entities.py",
+    "src/boss_agent/screening_policy.py",
     "src/boss_agent/screening.py",
     "src/boss_agent/feed_records.py",
     "src/boss_agent/graph.py",

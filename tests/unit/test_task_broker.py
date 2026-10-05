@@ -254,29 +254,23 @@ async def test_pocketbase_broker_claim_task_optimistic_lock():
 
 @pytest.mark.asyncio
 async def test_pocketbase_broker_claim_task_conflict():
-    """Verify PocketBaseTaskBroker rejects claiming already running task."""
+    """Verify PocketBaseTaskBroker rejects claiming already running task via atomic CAS."""
     mock_session = MagicMock()
-    get_resp = MagicMock()
-    get_resp.status_code = 200
-    get_resp.json.return_value = {
-        "id": "rec12345",
-        "task_type": "AUTO_APPLY",
-        "status": "running",
-        "worker_id": "worker-other",
-    }
-    mock_session.get.return_value = get_resp
+    patch_resp = MagicMock()
+    patch_resp.status_code = 404  # PocketBase CAS condition fails, returns 404
+    mock_session.patch.return_value = patch_resp
 
     broker = PocketBaseTaskBroker(session=mock_session)
     claimed = await broker.claim_task("rec12345", worker_id="worker-1")
 
     assert claimed is None
-    mock_session.patch.assert_not_called()
+    mock_session.patch.assert_called_once()
 
 
 @pytest.mark.asyncio
 async def test_saved_search_broker_crud():
     """Verify broker supports CRUD for SavedSearch presets."""
-    from boss_agent.models import FilterConfig, SavedSearch, SearchConfig
+    from boss_agent.search_entities import FilterConfig, SavedSearch, SearchConfig
 
     broker = InMemoryTaskBroker()
     search = SavedSearch(
@@ -323,15 +317,17 @@ async def test_list_pending_tasks_handles_404_gracefully():
 
 @pytest.mark.asyncio
 async def test_list_pending_tasks_handles_request_exception():
-    """Verify PocketBaseTaskBroker handles network/connection error gracefully."""
+    """Verify PocketBaseTaskBroker raises TransportError on network/connection error."""
     import requests
+
+    from boss_agent.errors import TransportError
 
     mock_session = MagicMock()
     mock_session.get.side_effect = requests.exceptions.ConnectionError("Connection refused")
 
     broker = PocketBaseTaskBroker(session=mock_session)
-    tasks = await broker.list_pending_tasks()
-    assert tasks == []
+    with pytest.raises(TransportError):
+        await broker.list_pending_tasks()
 
 
 @pytest.mark.asyncio

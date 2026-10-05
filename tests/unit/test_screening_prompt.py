@@ -10,8 +10,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from boss_agent.models import JobCardBrief, ScreeningPolicy
+from boss_agent.job_entities import JobCardBrief
 from boss_agent.screening import CandidateScreener, JobVerdictStage
+from boss_agent.screening_policy import ScreeningPolicy
 from boss_agent.screening_prompt import load_screening_prompt
 
 SEED_TEXT = "# 默认种子精筛提示词\n严禁臆造黑名单外淘汰条件。"

@@ -7,12 +7,13 @@ verifying education fit (Master's candidate matching Bachelor's JD with Master's
 
 from unittest.mock import MagicMock
 
+from boss_agent.job_entities import JobPosting
 from boss_agent.matching import (
     JobMatchGreetingService,
     format_search_filter,
 )
 from boss_agent.memory import StructuredCandidateProfile
-from boss_agent.models import FilterConfig, JobPosting
+from boss_agent.search_entities import FilterConfig
 
 
 def test_format_search_filter_with_dict():
@@ -225,17 +226,26 @@ def test_job_match_prompt_guidance_for_master_in_jd_text():
     user_prompt = call_args[1]["content"]
 
     assert "【卡片要求标签】:\n5-10年, 硕士, agent, AI, 多模态" in user_prompt
-    assert "【卡片岗位摘要】:\n规划多模态大模型、agent系统、健康数据平台等核心技术方向" in user_prompt
+    assert (
+        "【卡片岗位摘要】:\n规划多模态大模型、agent系统、健康数据平台等核心技术方向" in user_prompt
+    )
     assert "硕士或博士优先" in user_prompt
-    assert "在【JD核心诉求提炼 (jd_key_requirements)】中，必须明确提炼并包含该学历与学术/研发背景偏好" in user_prompt
-    assert "在【契合度评估 (match_reasons)】中，必须结合求职者的硕士学历及院校/专业背景" in user_prompt
-    assert "在【定制破冰打招呼语 (greeting_message)】中，自然融入求职者的硕士专业研究背景" in user_prompt
+    assert (
+        "在【JD核心诉求提炼 (jd_key_requirements)】中，必须明确提炼并包含该学历与学术/研发背景偏好"
+        in user_prompt
+    )
+    assert (
+        "在【契合度评估 (match_reasons)】中，必须结合求职者的硕士学历及院校/专业背景" in user_prompt
+    )
+    assert (
+        "在【定制破冰打招呼语 (greeting_message)】中，自然融入求职者的硕士专业研究背景"
+        in user_prompt
+    )
 
 
 def test_evaluate_match_script_preserves_tags_and_digest(monkeypatch):
     """Verify scripts/evaluate_match.py parses tags, digest, and search_filter and feeds to JobPosting."""
     import json
-    import subprocess
     import sys
 
     job_data = {
@@ -252,6 +262,7 @@ def test_evaluate_match_script_preserves_tags_and_digest(monkeypatch):
 
     # Test via importing main and intercepting JobMatchGreetingService
     from unittest.mock import patch
+
     import scripts.evaluate_match as eval_script
 
     captured_job = None
@@ -260,6 +271,7 @@ def test_evaluate_match_script_preserves_tags_and_digest(monkeypatch):
         nonlocal captured_job
         captured_job = job
         from boss_agent.matching import MatchGreetingResult
+
         return MatchGreetingResult(
             match_score=90,
             match_reasons=["硕士学历与AI Agent实战高度吻合"],
@@ -267,7 +279,9 @@ def test_evaluate_match_script_preserves_tags_and_digest(monkeypatch):
             greeting_message="殷先生您好,幸会!我硕士阶段主攻计算机工程，期待深入交流！",
         )
 
-    monkeypatch.setattr(sys, "argv", ["evaluate_match.py", "--job", json.dumps(job_data, ensure_ascii=False)])
+    monkeypatch.setattr(
+        sys, "argv", ["evaluate_match.py", "--job", json.dumps(job_data, ensure_ascii=False)]
+    )
     with patch.object(JobMatchGreetingService, "evaluate_and_draft_greeting", fake_evaluate):
         eval_script.main()
 

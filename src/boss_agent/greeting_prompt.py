@@ -52,6 +52,5 @@ def load_greeting_prompt(config_path: str | Path | None = None) -> str:
         if path.is_file():
             return path.read_text(encoding="utf-8")
     raise FileNotFoundError(
-        "Greeting Prompt document not found. Checked: "
-        + ", ".join(str(p) for p in checked)
+        "Greeting Prompt document not found. Checked: " + ", ".join(str(p) for p in checked)
     )

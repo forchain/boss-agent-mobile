@@ -43,7 +43,9 @@ def test_ensure_keeps_a_live_session_and_never_reopens():
     """A session that answers the probe is kept as-is; the factory stays untouched."""
     driver = _live_driver()
     factory = MagicMock()
-    context = WorkerContext(config=WorkerConfig(worker_id="live"), driver=driver, driver_factory=factory)
+    context = WorkerContext(
+        config=WorkerConfig(worker_id="live"), driver=driver, driver_factory=factory
+    )
 
     assert context.ensure_device_session() is True
 
@@ -57,7 +59,9 @@ def test_ensure_drops_a_dead_session_so_the_factory_reopens_it():
     dead = _DeadDriver()
     fresh = _live_driver()
     factory = MagicMock(return_value=fresh)
-    context = WorkerContext(config=WorkerConfig(worker_id="dead"), driver=dead, driver_factory=factory)
+    context = WorkerContext(
+        config=WorkerConfig(worker_id="dead"), driver=dead, driver_factory=factory
+    )
 
     assert context.ensure_device_session() is False
 
@@ -102,7 +106,9 @@ def test_ensure_treats_any_probe_failure_as_dead(probe_error):
     """The probe must not be exception-type-picky: a wedged transport is as dead as a 404."""
     driver = _ThrowingDriver(probe_error)
     context = WorkerContext(
-        config=WorkerConfig(worker_id="pickye"), driver=driver, driver_factory=MagicMock(return_value=_live_driver())
+        config=WorkerConfig(worker_id="pickye"),
+        driver=driver,
+        driver_factory=MagicMock(return_value=_live_driver()),
     )
 
     assert context.ensure_device_session() is False

@@ -120,6 +120,8 @@ class FakePocketBaseSession:
         # When set, the next patch returns this response instead, so failure paths can be
         # exercised without pretending a write succeeded.
         self.patch_failure: MagicMock | None = None
+        # Same, for the insert path: a rejected ``post`` must be scriptable independently.
+        self.post_failure: MagicMock | None = None
 
     def seed(self, items: list[dict[str, Any]]) -> None:
         for item in items:
@@ -141,7 +143,8 @@ class FakePocketBaseSession:
         if params.get("fields"):
             wanted = [f.strip() for f in params["fields"].split(",")]
             window = [{k: v for k, v in i.items() if k in wanted} for i in window]
-        return {"items": window, "totalItems": len(items)}
+        total_pages = (len(items) + per_page - 1) // per_page if items else 0
+        return {"items": window, "totalItems": len(items), "totalPages": total_pages}
 
     def get(self, url: str, params: dict[str, Any] | None = None, headers=None):
         resp = MagicMock(status_code=200)
@@ -152,6 +155,9 @@ class FakePocketBaseSession:
         return resp
 
     def post(self, url: str, json: dict[str, Any], headers=None):
+        if self.post_failure is not None:
+            failure, self.post_failure = self.post_failure, None
+            return failure
         self._counter += 1
         record = {"id": json.pop("id", None) or f"rec{self._counter}", **json}
         self.records[record["id"]] = record

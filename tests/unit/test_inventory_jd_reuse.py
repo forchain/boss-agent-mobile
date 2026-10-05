@@ -30,17 +30,17 @@ from _feed_harness import (
     _posting,
 )
 
-from boss_agent.feed_pipeline import FeedStreamConfig
-from boss_agent.job_store import InMemoryJobRecordStore
-from boss_agent.models import (
-    GREETING_SOURCE_AGENT,
+from boss_agent.enums import (
     ChatButtonState,
     JobRecordStatus,
-    ScreeningPolicy,
     ScreeningStage,
     TargetAction,
 )
+from boss_agent.feed_pipeline import FeedStreamConfig
+from boss_agent.job_store import InMemoryJobRecordStore
+from boss_agent.keyword_constants import GREETING_SOURCE_AGENT
 from boss_agent.screening import CandidateScreener
+from boss_agent.screening_policy import ScreeningPolicy
 
 SHORT_JD = "岗位职责：负责 Agent 平台相关工作。"  # under MIN_JD_CHARS
 TRUNCATED_JD = GOOD_JD + "\n查看更多"
@@ -191,9 +191,7 @@ async def test_an_unevaluable_jd_still_costs_no_greeting_slot():
     await store.upsert_job_record(_on_file(card, job_description=SHORT_JD))
 
     detail = _detail_page()
-    detail.extract_job_posting.return_value = _posting(
-        card.card.title, card.card.company_name
-    )
+    detail.extract_job_posting.return_value = _posting(card.card.title, card.card.company_name)
     detail.extract_job_posting.return_value.job_description = "无详细岗位描述"
     chat = _sent_chat()
     logs: list[str] = []
@@ -224,7 +222,9 @@ async def test_a_measured_commute_ceiling_still_rejects_on_an_inventory_jd():
     """Reusing the JD does not skip the App-Enforced Filter — the distance is on file too."""
     store = InMemoryJobRecordStore()
     card = _card("AI Agent 平台工程师", "智元创新")
-    await store.upsert_job_record(_on_file(card, commute_distance_km=19.5, commute_distance_text="距离家庭住址19.5千米"))
+    await store.upsert_job_record(
+        _on_file(card, commute_distance_km=19.5, commute_distance_text="距离家庭住址19.5千米")
+    )
 
     policy = ScreeningPolicy(max_commute_distance_km=5.0)
     assert policy.is_commute_filter_active
@@ -398,8 +398,12 @@ async def test_a_save_only_sweep_never_reopens_a_record_it_can_already_read():
         logs.append(line)
 
     pipeline = _pipeline(
-        store, feed=ScriptedFeed([[card]]), detail=detail, chat=_sent_chat(),
-        screener=_screener(), log=log,
+        store,
+        feed=ScriptedFeed([[card]]),
+        detail=detail,
+        chat=_sent_chat(),
+        screener=_screener(),
+        log=log,
     )
 
     result = await pipeline.stream_jobs(
@@ -424,7 +428,7 @@ def test_usability_is_the_existing_rule_applied_to_the_stored_text():
     `jd_is_truncated` — the very check the detail page runs before it spends scrolls and taps
     on 查看更多. One rule, one owner (#301).
     """
-    from boss_agent.models import jd_is_truncated, jd_is_usable_on_file
+    from boss_agent.identifier_helpers import jd_is_truncated, jd_is_usable_on_file
 
     assert jd_is_usable_on_file(GOOD_JD) is True
     assert jd_is_usable_on_file(None) is False

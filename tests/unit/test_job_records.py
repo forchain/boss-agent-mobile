@@ -9,7 +9,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
-from boss_agent.models import compute_job_fingerprint
+from boss_agent.errors import TransportError, ValidationError
+from boss_agent.identifier_helpers import compute_job_fingerprint
 
 
 def test_compute_job_fingerprint_consistency_and_normalization():
@@ -133,7 +134,12 @@ async def test_pocketbase_broker_job_records_mocked(monkeypatch):
     mock_session.patch.return_value = patch_resp
 
     res = await broker.job_store.upsert_job_record(
-        {"title": "Job 1", "company_name": "Comp 1", "recruiter_name": "Rec 1", "fingerprint": "test-fp"}
+        {
+            "title": "Job 1",
+            "company_name": "Comp 1",
+            "recruiter_name": "Rec 1",
+            "fingerprint": "test-fp",
+        }
     )
     assert res["id"] == "rec-123"
     assert mock_session.patch.called
@@ -174,7 +180,9 @@ async def test_pocketbase_broker_job_records_no_fallback_on_404(tmp_path, monkey
     mock_session = MagicMock()
     broker = PocketBaseTaskBroker(base_url="https://remote-pb:4433", session=mock_session)
 
-    get_404 = MagicMock(status_code=404, text='{"message":"Missing or invalid collection context."}')
+    get_404 = MagicMock(
+        status_code=404, text='{"message":"Missing or invalid collection context."}'
+    )
     mock_session.get.return_value = get_404
 
     # 1. has_job_fingerprint returns False and does not create fallback
@@ -243,7 +251,7 @@ async def test_pocketbase_broker_upsert_persists_without_fallback_file(tmp_path,
 @pytest.mark.asyncio
 async def test_job_records_digest_and_job_description_decoupling():
     """Verify that digest and job_description are decoupled across models and broker."""
-    from boss_agent.models import JobPosting, JobRecord
+    from boss_agent.job_entities import JobPosting, JobRecord
     from boss_agent.pages import JobCardBrief
 
     # 1. JobCardBrief supports digest with backward-compatible snippet alias
@@ -383,15 +391,16 @@ async def test_pocketbase_broker_delete_job_record():
     not_found = await broker.job_store.delete_job_record("rec_404")
     assert not_found is False
 
-    # 3. Network / RequestException
+    # 3. Network / RequestException raises TransportError (distinguishable from 404 absence)
     mock_session.delete.side_effect = requests.RequestException("Connection error")
-    err_res = await broker.job_store.delete_job_record("rec_err")
-    assert err_res is False
+    with pytest.raises(TransportError):
+        await broker.job_store.delete_job_record("rec_err")
 
 
 def test_extract_digest_and_tags_from_jd():
     """extract_digest_from_jd extracts concise summary and extract_tags_from_text matches tech tags."""
-    from boss_agent.models import JobRecord, extract_digest_from_jd, extract_tags_from_text
+    from boss_agent.identifier_helpers import extract_digest_from_jd, extract_tags_from_text
+    from boss_agent.job_entities import JobRecord
 
     raw_jd = """岗位职责
 负责公司 后端与前端系统的设计、开发与迭代
@@ -432,7 +441,7 @@ def test_extract_digest_and_tags_from_jd():
 def test_extract_digest_from_jd_english_headers_and_word_boundary():
     """English/bilingual JDs: bracketed section headers must not leak into the digest,
     and the 100-char truncation must not cut a Latin word in half."""
-    from boss_agent.models import extract_digest_from_jd
+    from boss_agent.identifier_helpers import extract_digest_from_jd
 
     raw_jd = """【 Role Summary 】；
 We are seeking a passionate and experienced Senior Engineer to join our team to build the architecture of our shared coding agent platform used in your daily workflow and deeply integrated tooling.
@@ -464,7 +473,7 @@ async def test_broker_rejects_unspecified_or_empty_title_or_company():
                 "recruiter_name": "招聘者",
             }
         )
-        assert res == {}, f"Should have rejected bad title '{bad_title}'"
+        assert res is None, f"Should have rejected bad title '{bad_title}'"
 
     # Rejected companies
     for bad_company in ["", "   ", "未注明公司", "未知公司"]:
@@ -475,7 +484,7 @@ async def test_broker_rejects_unspecified_or_empty_title_or_company():
                 "recruiter_name": "招聘者",
             }
         )
-        assert res == {}, f"Should have rejected bad company '{bad_company}'"
+        assert res is None, f"Should have rejected bad company '{bad_company}'"
 
     assert len(await broker.job_store.list_job_records()) == 0
 
@@ -679,17 +688,17 @@ async def test_pocketbase_upsert_does_not_retry_or_truncate_unrelated_rejections
 
     long_jd = _long_expanded_jd()
 
-    rec = await broker.job_store.upsert_job_record(
-        {
-            "title": "算法工程师",
-            "company_name": "某科技公司",
-            "recruiter_name": "王招聘",
-            "fingerprint": "fp_dup",
-            "job_description": long_jd,
-        }
-    )
+    with pytest.raises(ValidationError, match="400 Bad Request"):
+        await broker.job_store.upsert_job_record(
+            {
+                "title": "算法工程师",
+                "company_name": "某科技公司",
+                "recruiter_name": "王招聘",
+                "fingerprint": "fp_dup",
+                "job_description": long_jd,
+            }
+        )
 
-    assert rec == {}
     assert mock_session.post.call_count == 1
     assert mock_session.post.call_args.kwargs["json"]["job_description"] == long_jd
 
@@ -709,15 +718,15 @@ async def test_pocketbase_upsert_does_not_truncate_when_another_field_is_rejecte
     mock_session.post.return_value = rejected
 
     jd = "岗位职责：负责模型训练与评测。"
-    rec = await broker.job_store.upsert_job_record(
-        {
-            "title": "算法工程师",
-            "company_name": "某科技公司",
-            "recruiter_name": "王招聘",
-            "fingerprint": "fp_other_field",
-            "job_description": jd,
-        }
-    )
+    with pytest.raises(ValidationError, match="400 Bad Request"):
+        await broker.job_store.upsert_job_record(
+            {
+                "title": "算法工程师",
+                "company_name": "某科技公司",
+                "recruiter_name": "王招聘",
+                "fingerprint": "fp_other_field",
+                "job_description": jd,
+            }
+        )
 
-    assert rec == {}
     assert mock_session.post.call_count == 1

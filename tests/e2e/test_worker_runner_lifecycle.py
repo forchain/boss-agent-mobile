@@ -18,6 +18,8 @@ import pytest
 
 from _service_harness import REPO_ROOT
 
+pytestmark = pytest.mark.e2e
+
 WORKER_SH = REPO_ROOT / "worker.sh"
 BUDGET_SEC = 10.0
 
@@ -33,7 +35,9 @@ def worker_runtime(tmp_path: Path) -> Path:
     return runtime_root
 
 
-def _run_worker_cmd(runtime_root: Path, action: str, *args: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
+def _run_worker_cmd(
+    runtime_root: Path, action: str, *args: str, env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess:
     base_env = dict(os.environ)
     if env:
         base_env.update(env)
@@ -130,6 +134,7 @@ def test_worker_preflight_gate_fails_on_unreachable_appium(worker_runtime: Path,
             self.send_response(200)
             self.end_headers()
             self.wfile.write(b"{}")
+
         def log_message(self, *args):
             pass
 
@@ -193,6 +198,7 @@ def test_worker_start_daemon_empty_args_executes_without_unbound_variable(worker
             self.send_response(200)
             self.end_headers()
             self.wfile.write(b"{}")
+
         def log_message(self, *args):
             pass
 
@@ -218,4 +224,3 @@ def test_worker_start_daemon_empty_args_executes_without_unbound_variable(worker
             http_srv.shutdown()
             t.join(timeout=3)
             _run_worker_cmd(worker_runtime, "stop")
-

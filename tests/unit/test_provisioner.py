@@ -10,7 +10,11 @@ from pathlib import Path
 
 import pytest
 
-from boss_agent.broker.provisioner import provision_sqlite_database
+from boss_agent.broker.provisioner import (
+    provision_remote_pocketbase,
+    provision_sqlite_database,
+)
+from boss_agent.errors import TransportError, ValidationError
 
 _COLLECTIONS_DDL = """
     CREATE TABLE _collections (
@@ -271,38 +275,6 @@ def test_provision_remote_pocketbase_mock():
         ]
         assert "job_records" in posted_collections
         assert "resume_revisions" in posted_collections
-
-
-def test_provision_sqlite_database_offline_structure(tmp_path: Path):
-    """Test provisioning on a clean database file initialized with core tables."""
-    import shutil
-    import subprocess
-
-    db_dir = tmp_path / "pb_data"
-    db_dir.mkdir(parents=True, exist_ok=True)
-    db_file = db_dir / "data.db"
-
-    pb_bin = shutil.which("pocketbase")
-    if pb_bin:
-        # Run pocketbase migrate up offline to create initial tables
-        res = subprocess.run([pb_bin, "migrate", "up", "--dir", str(db_dir)], capture_output=True, text=True)
-        assert res.returncode == 0
-        assert db_file.exists()
-
-        # Run provision_sqlite_database
-        assert provision_sqlite_database(db_file) is True
-
-        conn = sqlite3.connect(str(db_file))
-        c = conn.cursor()
-        c.execute("SELECT name FROM _collections")
-        col_names = {r[0] for r in c.fetchall()}
-        conn.close()
-
-        assert "automation_tasks" in col_names
-        assert "candidate_profiles" in col_names
-        assert "job_records" in col_names
-        assert "saved_searches" in col_names
-        assert "resume_revisions" in col_names
 
 
 def test_provision_sqlite_database_adds_digest_column_if_missing(tmp_path: Path):
@@ -630,3 +602,35 @@ def test_provision_remote_pocketbase_skips_upgrade_when_collection_is_new():
         for call in session.post.call_args_list
         if "api/collections" in str(call.args)
     )
+
+
+def test_provision_remote_pocketbase_raises_transport_error_on_connection_failure():
+    from unittest.mock import MagicMock
+    from unittest.mock import patch as mock_patch
+
+    import requests
+
+    mock_sess = MagicMock()
+    mock_sess.post.side_effect = requests.RequestException("connection refused")
+
+    with mock_patch("requests.Session", return_value=mock_sess), pytest.raises(TransportError):
+        provision_remote_pocketbase(
+            "http://127.0.0.1:8090", email="admin@example.com", password="password123"
+        )
+
+
+def test_provision_remote_pocketbase_raises_validation_error_on_bad_credentials():
+    from unittest.mock import MagicMock
+    from unittest.mock import patch as mock_patch
+
+    mock_sess = MagicMock()
+    mock_resp = MagicMock()
+    mock_resp.ok = False
+    mock_resp.status_code = 400
+    mock_resp.text = '{"message": "Invalid admin credentials"}'
+    mock_sess.post.return_value = mock_resp
+
+    with mock_patch("requests.Session", return_value=mock_sess), pytest.raises(ValidationError):
+        provision_remote_pocketbase(
+            "http://127.0.0.1:8090", email="admin@example.com", password="wrongpassword"
+        )

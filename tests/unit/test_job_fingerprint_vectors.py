@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from boss_agent.models import compute_job_fingerprint
+from boss_agent.identifier_helpers import compute_job_fingerprint
 
 FIXTURE_PATH = Path(__file__).parents[2] / "config" / "fingerprint.vectors.json"
 
@@ -41,9 +41,7 @@ def _by_case(case: str) -> dict:
 def test_python_fingerprint_matches_shared_vector(vector: dict) -> None:
     """Every shipped vector is one Python must reproduce exactly."""
     assert (
-        compute_job_fingerprint(
-            vector["company_name"], vector["title"], vector["recruiter_name"]
-        )
+        compute_job_fingerprint(vector["company_name"], vector["title"], vector["recruiter_name"])
         == vector["fingerprint"]
     )
 

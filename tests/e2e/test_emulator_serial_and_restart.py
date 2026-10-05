@@ -1,6 +1,6 @@
 """
-tests/unit/test_emulator_serial_and_restart.py
-==============================================
+tests/e2e/test_emulator_serial_and_restart.py
+============================================
 AVD serial resolution, shutdown ordering and the `restart` lifecycle (ticket #365).
 
 Three defects, one shared root cause. `emulator.sh` resolved *the* serial for the dedicated
@@ -34,6 +34,8 @@ import pytest
 from _runner_harness import FAKE_LAN_IP, TARGET_AVD, RunnerScriptHarness
 
 from _service_harness import wait_until_dead
+
+pytestmark = pytest.mark.e2e
 
 NATIVE_SERIAL = "emulator-5554"
 

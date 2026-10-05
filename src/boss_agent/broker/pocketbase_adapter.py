@@ -17,12 +17,14 @@ from typing import Any
 
 import requests
 
+from boss_agent.async_bridge import execute_broker_request
 from boss_agent.broker.models import AutomationTask, TaskStatus, TaskType
 from boss_agent.candidate_memory_store import (
     CandidateMemoryStore,
     InMemoryCandidateMemoryStore,
     PocketBaseCandidateMemoryStore,
 )
+from boss_agent.errors import ConflictError, ValidationError
 from boss_agent.job_store import (
     InMemoryJobRecordStore,
     JobRecordStore,
@@ -94,7 +96,6 @@ def resolve_text_constraint_limit(response_text: Any) -> int:
     return POCKETBASE_DEFAULT_TEXT_MAX_CHARS
 
 
-
 class BaseTaskBroker(ABC):
     """Abstract interface for the State Stream Task Broker.
 
@@ -151,6 +152,10 @@ class BaseTaskBroker(ABC):
     @abstractmethod
     async def append_log(self, task_id: str, log_line: str) -> bool:
         """Append a single log line to the task."""
+        pass
+
+    async def flush_logs(self, task_id: str | None = None) -> None:  # noqa: B027
+        """Flush any buffered log lines to the persistent broker."""
         pass
 
     @abstractmethod
@@ -377,6 +382,9 @@ class PocketBaseTaskBroker(BaseTaskBroker):
             base_url=self.base_url, session=self.session, headers=self._headers
         )
         self._subscribers: list[Callable[[str, AutomationTask], Any]] = []
+        self.log_buffer_bound = 10
+        self._task_logs: dict[str, list[str]] = {}
+        self._buffered_logs: dict[str, list[str]] = {}
 
         # Ensure obsolete fallback cache files are removed if present
         try:
@@ -421,31 +429,19 @@ class PocketBaseTaskBroker(BaseTaskBroker):
             "logs": [],
             "error_message": None,
         }
-        loop = asyncio.get_running_loop()
-        resp = await loop.run_in_executor(
-            None, lambda: self.session.post(url, json=body, headers=self._headers())
+        resp = await execute_broker_request(
+            lambda: self.session.post(url, json=body, headers=self._headers()),
+            expected_statuses=(200, 201),
+            error_prefix=f"PocketBase create_task({resolved_type.value}) failed",
         )
-        resp.raise_for_status()
         data = resp.json()
         task = self._record_to_task(data)
         await self._notify_subscribers("create", task)
         return task
 
     async def claim_task(self, task_id: str, worker_id: str) -> AutomationTask | None:
-        url = f"{self._collection_url()}/{task_id}"
+        url = f"{self._collection_url()}/{task_id}?expect_status={TaskStatus.PENDING.value}"
         now = datetime.now(UTC).isoformat()
-
-        loop = asyncio.get_running_loop()
-        # Optimistic verify: check if task is currently pending
-        get_resp = await loop.run_in_executor(
-            None, lambda: self.session.get(url, headers=self._headers())
-        )
-        if get_resp.status_code != 200:
-            return None
-
-        record = get_resp.json()
-        if record.get("status") != TaskStatus.PENDING.value:
-            return None
 
         patch_body = {
             "status": TaskStatus.RUNNING.value,
@@ -453,34 +449,56 @@ class PocketBaseTaskBroker(BaseTaskBroker):
             "locked_at": now,
             "last_heartbeat_at": now,
         }
-        resp = await loop.run_in_executor(
-            None, lambda: self.session.patch(url, json=patch_body, headers=self._headers())
-        )
-        if resp.status_code != 200:
+        try:
+            patch_resp = await execute_broker_request(
+                lambda: self.session.patch(url, json=patch_body, headers=self._headers()),
+                expected_statuses=(200,),
+                allow_404=True,
+                error_prefix=f"PocketBase claim_task patch({task_id}) failed",
+            )
+        except (ValidationError, ConflictError):  # persistence-guard: allow
+            # Losing the conditional-update race is the expected outcome of a CAS claim, not a
+            # failure: another worker won, so this one reports "nothing claimed" and moves on.
             return None
 
-        claimed = self._record_to_task(resp.json())
+        if patch_resp.status_code == 404:
+            return None
+
+        record = patch_resp.json()
+        if record.get("worker_id") != worker_id or record.get("status") != TaskStatus.RUNNING.value:
+            return None
+
+        claimed = self._record_to_task(record)
+        self._task_logs[task_id] = list(claimed.logs or [])
+        self._buffered_logs[task_id] = []
+
         await self._notify_subscribers("update", claimed)
         return claimed
 
     async def get_task(self, task_id: str) -> AutomationTask | None:
         url = f"{self._collection_url()}/{task_id}"
-        loop = asyncio.get_running_loop()
-        resp = await loop.run_in_executor(
-            None, lambda: self.session.get(url, headers=self._headers())
+        resp = await execute_broker_request(
+            lambda: self.session.get(url, headers=self._headers()),
+            expected_statuses=(200,),
+            allow_404=True,
+            error_prefix=f"PocketBase get_task({task_id}) failed",
         )
         if resp.status_code == 404:
             return None
-        resp.raise_for_status()
-        return self._record_to_task(resp.json())
+        task = self._record_to_task(resp.json())
+        if task_id in self._task_logs:
+            task.logs = list(self._task_logs[task_id])
+        return task
 
     async def update_heartbeat(self, task_id: str, worker_id: str) -> bool:
         url = f"{self._collection_url()}/{task_id}"
-        loop = asyncio.get_running_loop()
-        get_resp = await loop.run_in_executor(
-            None, lambda: self.session.get(url, headers=self._headers())
+        get_resp = await execute_broker_request(
+            lambda: self.session.get(url, headers=self._headers()),
+            expected_statuses=(200,),
+            allow_404=True,
+            error_prefix=f"PocketBase update_heartbeat check({task_id}) failed",
         )
-        if get_resp.status_code != 200:
+        if get_resp.status_code == 404:
             return False
 
         record = get_resp.json()
@@ -488,11 +506,13 @@ class PocketBaseTaskBroker(BaseTaskBroker):
             return False
 
         now = datetime.now(UTC).isoformat()
-        resp = await loop.run_in_executor(
-            None,
+        resp = await execute_broker_request(
             lambda: self.session.patch(
                 url, json={"last_heartbeat_at": now}, headers=self._headers()
             ),
+            expected_statuses=(200,),
+            allow_404=True,
+            error_prefix=f"PocketBase update_heartbeat patch({task_id}) failed",
         )
         return resp.status_code == 200
 
@@ -507,80 +527,114 @@ class PocketBaseTaskBroker(BaseTaskBroker):
         url = f"{self._collection_url()}/{task_id}"
         body: dict[str, Any] = {"status": status.value}
         if logs is not None:
+            self._task_logs[task_id] = list(logs)
+            self._buffered_logs[task_id] = []
             body["logs"] = logs
+        elif self._buffered_logs.get(task_id) or task_id in self._task_logs:
+            # Guarantee flush: flush buffered logs within the status update payload
+            body["logs"] = self._task_logs[task_id]
+            self._buffered_logs[task_id] = []
+
         if error_message is not None:
             body["error_message"] = error_message
         if worker_id is not None:
             body["worker_id"] = worker_id
 
-        loop = asyncio.get_running_loop()
-        resp = await loop.run_in_executor(
-            None, lambda: self.session.patch(url, json=body, headers=self._headers())
+        resp = await execute_broker_request(
+            lambda: self.session.patch(url, json=body, headers=self._headers()),
+            expected_statuses=(200,),
+            error_prefix=f"PocketBase update_task_status({task_id}) failed",
         )
-        resp.raise_for_status()
         updated = self._record_to_task(resp.json())
+
+        if status.is_terminal():
+            self._task_logs.pop(task_id, None)
+            self._buffered_logs.pop(task_id, None)
+
         await self._notify_subscribers("update", updated)
         return updated
 
     async def append_log(self, task_id: str, log_line: str) -> bool:
-        task = await self.get_task(task_id)
-        if not task:
-            return False
         now = datetime.now(UTC)
         formatted = f"[{now.isoformat()}] {log_line}"
-        new_logs = task.logs + [formatted]
-        await self.update_task_status(task_id, status=task.status, logs=new_logs)
+
+        if task_id not in self._task_logs:
+            task = await self.get_task(task_id)
+            if not task:
+                return False
+            self._task_logs[task_id] = list(task.logs or [])
+            self._buffered_logs[task_id] = []
+
+        self._task_logs[task_id].append(formatted)
+        self._buffered_logs.setdefault(task_id, []).append(formatted)
+
+        if len(self._buffered_logs[task_id]) >= self.log_buffer_bound:
+            await self.flush_logs(task_id)
         return True
+
+    async def flush_logs(self, task_id: str | None = None) -> None:
+        target_ids = [task_id] if task_id else list(self._buffered_logs.keys())
+        for tid in target_ids:
+            pending = self._buffered_logs.get(tid)
+            if not pending:
+                continue
+            all_logs = self._task_logs.get(tid, [])
+            url = f"{self._collection_url()}/{tid}"
+            await execute_broker_request(
+                lambda u=url, logs=all_logs: self.session.patch(
+                    u, json={"logs": logs}, headers=self._headers()
+                ),
+                expected_statuses=(200,),
+                allow_404=True,
+                error_prefix=f"PocketBase flush_logs patch({tid}) failed",
+            )
+            self._buffered_logs[tid] = []
 
     async def list_pending_tasks(self, limit: int = 10) -> list[AutomationTask]:
         url = f"{self._collection_url()}?filter=(status='pending')&sort=created&perPage={limit}"
-        loop = asyncio.get_running_loop()
-        try:
-            resp = await loop.run_in_executor(
-                None, lambda: self.session.get(url, headers=self._headers())
+        resp = await execute_broker_request(
+            lambda: self.session.get(url, headers=self._headers()),
+            expected_statuses=(200,),
+            allow_404=True,
+            error_prefix="PocketBase list_pending_tasks failed",
+        )
+        if resp.status_code == 404:
+            logger.warning(
+                "PocketBase query for pending tasks returned 404: collection '%s' may not be provisioned or cached yet: %s",
+                self.collection_name,
+                url,
             )
-            if resp.status_code == 404:
-                logger.warning(
-                    "PocketBase query for pending tasks returned 404: collection '%s' may not be provisioned or cached yet: %s",
-                    self.collection_name,
-                    url,
-                )
-                return []
-            resp.raise_for_status()
-            items = resp.json().get("items", [])
-            return [self._record_to_task(item) for item in items]
-        except requests.exceptions.RequestException as e:
-            logger.warning("Network or HTTP error fetching pending tasks: %s", e)
             return []
+        items = resp.json().get("items", [])
+        return [self._record_to_task(item) for item in items]
 
     async def list_stale_running_tasks(
         self, lease_timeout_sec: float = 60.0
     ) -> list[AutomationTask]:
         url = f"{self._collection_url()}?filter=(status='running')&perPage=50"
-        loop = asyncio.get_running_loop()
-        try:
-            resp = await loop.run_in_executor(
-                None, lambda: self.session.get(url, headers=self._headers())
-            )
-            if resp.status_code == 404:
-                return []
-            resp.raise_for_status()
-            items = resp.json().get("items", [])
-            tasks = [self._record_to_task(item) for item in items]
-            now = datetime.now(UTC)
-            stale: list[AutomationTask] = []
-            for t in tasks:
-                hb = t.last_heartbeat_at or t.locked_at or t.created
-                if hb.tzinfo is None:
-                    hb = hb.replace(tzinfo=UTC)
-                if (now - hb).total_seconds() > lease_timeout_sec:
-                    stale.append(t)
-            return stale
-        except requests.exceptions.RequestException as e:
-            logger.warning("Error fetching stale running tasks: %s", e)
+        resp = await execute_broker_request(
+            lambda: self.session.get(url, headers=self._headers()),
+            expected_statuses=(200,),
+            allow_404=True,
+            error_prefix="PocketBase list_stale_running_tasks failed",
+        )
+        if resp.status_code == 404:
             return []
+        items = resp.json().get("items", [])
+        tasks = [self._record_to_task(item) for item in items]
+        now = datetime.now(UTC)
+        stale: list[AutomationTask] = []
+        for t in tasks:
+            hb = t.last_heartbeat_at or t.locked_at or t.created
+            if hb.tzinfo is None:
+                hb = hb.replace(tzinfo=UTC)
+            if (now - hb).total_seconds() > lease_timeout_sec:
+                stale.append(t)
+        return stale
 
     async def requeue_task(self, task_id: str, retry_count: int) -> AutomationTask:
+        self._task_logs.pop(task_id, None)
+        self._buffered_logs.pop(task_id, None)
         url = f"{self._collection_url()}/{task_id}"
         body = {
             "status": TaskStatus.PENDING.value,
@@ -589,11 +643,11 @@ class PocketBaseTaskBroker(BaseTaskBroker):
             "last_heartbeat_at": None,
             "retry_count": retry_count,
         }
-        loop = asyncio.get_running_loop()
-        resp = await loop.run_in_executor(
-            None, lambda: self.session.patch(url, json=body, headers=self._headers())
+        resp = await execute_broker_request(
+            lambda: self.session.patch(url, json=body, headers=self._headers()),
+            expected_statuses=(200,),
+            error_prefix=f"PocketBase requeue_task({task_id}) failed",
         )
-        resp.raise_for_status()
         return self._record_to_task(resp.json())
 
     def subscribe_tasks(self, callback: Callable[[str, AutomationTask], Any]) -> None:
@@ -613,14 +667,14 @@ class PocketBaseTaskBroker(BaseTaskBroker):
         if isinstance(payload, str):
             try:
                 payload = json.loads(payload)
-            except Exception:
+            except (json.JSONDecodeError, TypeError, ValueError):
                 payload = {}
 
         logs = record.get("logs") or []
         if isinstance(logs, str):
             try:
                 logs = json.loads(logs)
-            except Exception:
+            except (json.JSONDecodeError, TypeError, ValueError):
                 logs = []
 
         return AutomationTask(
@@ -647,7 +701,7 @@ class PocketBaseTaskBroker(BaseTaskBroker):
             return val
         try:
             return datetime.fromisoformat(str(val).replace("Z", "+00:00"))
-        except Exception:
+        except (ValueError, TypeError):  # persistence-guard: allow
             return None
 
 

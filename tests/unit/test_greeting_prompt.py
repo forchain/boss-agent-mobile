@@ -11,9 +11,9 @@ from unittest.mock import MagicMock
 import pytest
 
 from boss_agent.greeting_prompt import load_greeting_prompt
+from boss_agent.job_entities import JobPosting
 from boss_agent.matching import JobMatchGreetingService
 from boss_agent.memory import StructuredCandidateProfile
-from boss_agent.models import JobPosting
 
 SEED_TEXT = "# 默认种子提示词\n严禁模板化套话。"
 LOCAL_TEXT = "# 沉淀后的最终记忆\n第一句直击 JD 痛点，并突出海外留学与英文面试意愿。"
@@ -242,3 +242,16 @@ def test_evaluate_lazy_loads_prompt_file(tmp_path, monkeypatch):
     service.evaluate_and_draft_greeting(job=_job())
     system_prompt = mock_llm.chat_completion_json.call_args[0][0][0]["content"]
     assert LOCAL_TEXT in system_prompt
+
+
+def test_seeded_example_prompt_prose_content():
+    """Per ADR 0010 division of labour: code keeps structural scaffolding, while
+    the full writing guidance (persona and anti-template iron laws) moves into the
+    seeded default document (greeting_prompt.example.md). Literal prose assertions over
+    the living prompt belong strictly against this repository-tracked seed, never against
+    living or local configuration.
+    """
+    seed_path = Path(__file__).resolve().parents[2] / "config" / "greeting_prompt.example.md"
+    content = seed_path.read_text(encoding="utf-8")
+    assert "【打招呼破冰铁律与原则】" in content
+    assert "【严禁模板化套话】" in content

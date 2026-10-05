@@ -16,6 +16,8 @@ import pytest
 
 from _service_harness import REPO_ROOT
 
+pytestmark = pytest.mark.e2e
+
 RUN_SH = REPO_ROOT / "run.sh"
 BUDGET_SEC = 10.0
 
@@ -224,8 +226,7 @@ def test_run_sh_restart_attaches_to_worker_logs_by_default(orchestrator_runtime:
     content = calls_log.read_text(encoding="utf-8")
     assert "worker.sh start --daemon" in content, "restart must still background the services"
     assert "worker.sh attach" in content, (
-        "a bare `./run.sh restart` must attach to the Worker logs the same way bare "
-        "`./run.sh` does"
+        "a bare `./run.sh restart` must attach to the Worker logs the same way bare `./run.sh` does"
     )
 
 
@@ -331,9 +332,7 @@ def test_infra_restart_stops_the_avd_when_it_is_still_booting(orchestrator_runti
 
     assert res.returncode == 0
     content = calls_log.read_text(encoding="utf-8")
-    assert "emulator.sh stop" in content, (
-        "a booting AVD must still be stopped rather than reused"
-    )
+    assert "emulator.sh stop" in content, "a booting AVD must still be stopped rather than reused"
     assert "emulator.sh start --daemon" in content
     assert "cold restart" in res.stdout.lower(), res.stdout
     # The verdict is not swallowed: an operator has to be able to tell "still booting" from
@@ -441,4 +440,3 @@ def test_run_sh_app_start_does_not_attach(orchestrator_runtime: Path):
     assert "worker.sh start --daemon" in content
     assert "dashboard.sh start --daemon" in content
     assert "worker.sh attach" not in content
-

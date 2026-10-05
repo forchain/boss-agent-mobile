@@ -12,6 +12,19 @@ _Avoid_: Boss automation engine, base scripts, appium helper
 The Boss-specific application module implementing page objects, candidate profiles, matching rules, greeting templates, and application workflows on top of `droid_agent_core`.
 _Avoid_: Core app, main module
 
+**Decomposed Entity Modules**:
+The focused, independently importable domain entity modules replacing the retired monolithic `models.py`:
+- `boss_agent.enums`: Pure enumerations and rank mappings (`JobRecordStatus`, `TargetAction`, etc.).
+- `boss_agent.keyword_constants`: Keyword lists, company blacklist regexes, and domain constants.
+- `boss_agent.identifier_helpers`: Pure string parsing, recruiter name normalization, and job fingerprint calculations with zero entity imports.
+- `boss_agent.job_entities`: Job data models (`JobCardBrief`, `JobRecord`, `JobPosting`).
+- `boss_agent.candidate_entities`: Candidate profile data models (`CandidateProfile`).
+- `boss_agent.search_entities`: Search and filter configuration models (`SearchConfig`, `FilterConfig`, `SavedSearch`).
+- `boss_agent.screening_policy`: Deterministic card and posting screening policies (`ScreeningPolicy`).
+- `boss_agent.screening_config`: Configuration Realm file persistence and loader for screening policies.
+- `boss_agent.entities`: Facade re-exporting the seven core domain entities.
+_Avoid_: `boss_agent.models`, monolithic models module, God model
+
 **Environment Provisioner**:
 The idempotent multi-tier detection and setup lifecycle that verifies and configures Java, Android SDK tools, AVD emulators, Appium server, and target APKs.
 _Avoid_: Install script, setup helper, env checker
@@ -89,7 +102,7 @@ The session-scoped, opt-in test fixture (`BOSS_AGENT_ENFORCE_TEARDOWN=1`) that s
 _Avoid_: test cleanup hook, pre-test reset script, teardown helper
 
 **Fast Unit Test**:
-The in-memory verification tier (`tests/unit/`) that exercises module interfaces against mocked collaborators — no Automation Worker, no Appium session, no bound host port, and no live LLM endpoint. It is the tier an unadorned `pytest` runs, and the one that must finish in tens of seconds with zero side effects on the machine.
+The in-memory verification tier (`tests/unit/`) that exercises module interfaces against mocked collaborators — no Automation Worker, no Appium session, no bound host port, and no live LLM endpoint. It is the tier an unadorned `pytest` runs, and the one that must finish in under 60 seconds with zero side effects on the machine — a budget CI enforces.
 _Avoid_: quick check, small spec, unit suite
 
 **Service Integration Test (`@pytest.mark.e2e`)**:

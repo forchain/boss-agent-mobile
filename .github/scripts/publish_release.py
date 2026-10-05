@@ -9,11 +9,10 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 COLLISION_NOTE = (
     "\n\n> ⚠️ **Note**: This release tag overwrites a legacy tag under the "
@@ -21,7 +20,7 @@ COLLISION_NOTE = (
 )
 
 
-def run_cmd(cmd: List[str], dry_run: bool = False) -> subprocess.CompletedProcess[str]:
+def run_cmd(cmd: list[str], dry_run: bool = False) -> subprocess.CompletedProcess[str]:
     """Run a shell command or simulate in dry-run mode."""
     print(f"[{'DRY-RUN' if dry_run else 'EXEC'}] {' '.join(cmd)}")
     if dry_run:
@@ -32,7 +31,9 @@ def run_cmd(cmd: List[str], dry_run: bool = False) -> subprocess.CompletedProces
 def tag_exists_locally(tag_name: str) -> bool:
     """Check if a git tag exists locally."""
     try:
-        proc = subprocess.run(["git", "tag", "-l", tag_name], capture_output=True, text=True, check=True)
+        proc = subprocess.run(
+            ["git", "tag", "-l", tag_name], capture_output=True, text=True, check=True
+        )
         return tag_name in proc.stdout.splitlines()
     except Exception:
         return False
@@ -52,26 +53,40 @@ def _upsert_release(
 
     if is_collision:
         try:
-            run_cmd(["gh", "release", "edit", tag_name, "--title", title, "--notes", release_notes], dry_run=dry_run)
+            run_cmd(
+                ["gh", "release", "edit", tag_name, "--title", title, "--notes", release_notes],
+                dry_run=dry_run,
+            )
             print(f"✓ Overwrote existing GitHub release {tag_name}")
             return
         except subprocess.CalledProcessError as exc:
             err_msg = exc.stderr.strip() if exc.stderr else ""
-            print(f"Warning: Release edit failed ({err_msg}), attempting recreation...", file=sys.stderr)
+            print(
+                f"Warning: Release edit failed ({err_msg}), attempting recreation...",
+                file=sys.stderr,
+            )
 
     try:
-        run_cmd(["gh", "release", "create", tag_name, "--title", title, "--notes", release_notes], dry_run=dry_run)
+        run_cmd(
+            ["gh", "release", "create", tag_name, "--title", title, "--notes", release_notes],
+            dry_run=dry_run,
+        )
         print(f"✓ Created GitHub release {tag_name}")
     except subprocess.CalledProcessError as exc:
         err_msg = exc.stderr.strip() if exc.stderr else ""
-        print(f"Release create failed ({err_msg}), attempting overwrite via edit...", file=sys.stderr)
+        print(
+            f"Release create failed ({err_msg}), attempting overwrite via edit...", file=sys.stderr
+        )
         if COLLISION_NOTE.strip() not in release_notes:
             release_notes = f"{release_notes.rstrip()}{COLLISION_NOTE}"
-        run_cmd(["gh", "release", "edit", tag_name, "--title", title, "--notes", release_notes], dry_run=dry_run)
+        run_cmd(
+            ["gh", "release", "edit", tag_name, "--title", title, "--notes", release_notes],
+            dry_run=dry_run,
+        )
         print(f"✓ Overwrote existing GitHub release {tag_name}")
 
 
-def execute_release_plan(plan: Dict[str, Any], dry_run: bool = False) -> None:
+def execute_release_plan(plan: dict[str, Any], dry_run: bool = False) -> None:
     """Execute tag creation and GitHub release with force-overwrite support."""
     current = plan.get("current_pr", {})
     tag_name = current.get("tag_name")
@@ -116,7 +131,9 @@ def execute_release_plan(plan: Dict[str, Any], dry_run: bool = False) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Publish release based on calculated plan.")
     parser.add_argument("--plan", help="Path to plan JSON file", required=True)
-    parser.add_argument("--dry-run", action="store_true", help="Simulate without executing API calls")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Simulate without executing API calls"
+    )
     args = parser.parse_args()
 
     plan_path = Path(args.plan)

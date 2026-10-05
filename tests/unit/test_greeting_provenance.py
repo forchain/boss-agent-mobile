@@ -29,15 +29,14 @@ from _feed_harness import (
     _posting,
 )
 
+from boss_agent.enums import JobRecordStatus, TargetAction
 from boss_agent.feed_pipeline import FeedStreamConfig
+from boss_agent.job_entities import JobCardBrief
 from boss_agent.job_store import InMemoryJobRecordStore
-from boss_agent.models import (
+from boss_agent.keyword_constants import (
     APPLIED_SOURCE_AGENT,
     GREETING_SOURCE_AGENT,
     GREETING_SOURCE_HUMAN,
-    JobCardBrief,
-    JobRecordStatus,
-    TargetAction,
 )
 from boss_agent.screening import CandidateScreener
 
@@ -99,8 +98,9 @@ async def test_a_human_greeting_is_sent_verbatim_with_zero_model_calls():
     async def log(line: str) -> None:
         logs.append(line)
 
-    pipeline = _pipeline(store, feed=ScriptedFeed([[card]]), detail=detail, chat=chat,
-                         screener=screener, log=log)
+    pipeline = _pipeline(
+        store, feed=ScriptedFeed([[card]]), detail=detail, chat=chat, screener=screener, log=log
+    )
 
     result = await pipeline.stream_jobs(_outreach())
 
@@ -136,8 +136,9 @@ async def test_the_salutation_of_a_human_copy_is_left_alone():
     chat.click_send.return_value = True
     screener, _ = _screener()
 
-    pipeline = _pipeline(store, feed=ScriptedFeed([[card]]), detail=detail, chat=chat,
-                         screener=screener)
+    pipeline = _pipeline(
+        store, feed=ScriptedFeed([[card]]), detail=detail, chat=chat, screener=screener
+    )
     await pipeline.stream_jobs(_outreach())
 
     sent = chat.type_greeting_message.call_args[0][0]
@@ -162,8 +163,9 @@ async def test_an_agent_draft_is_still_generated_and_score_gated():
     async def log(line: str) -> None:
         logs.append(line)
 
-    pipeline = _pipeline(store, feed=ScriptedFeed([[card]]), detail=detail, chat=chat,
-                         screener=screener, log=log)
+    pipeline = _pipeline(
+        store, feed=ScriptedFeed([[card]]), detail=detail, chat=chat, screener=screener, log=log
+    )
     result = await pipeline.stream_jobs(_outreach())
 
     assert llm.chat_completion_json.call_count == 1
@@ -189,8 +191,9 @@ async def test_a_legacy_record_with_no_known_source_is_not_treated_as_human():
     chat.click_send.return_value = True
     screener, llm = _screener()
 
-    pipeline = _pipeline(store, feed=ScriptedFeed([[card]]), detail=detail, chat=chat,
-                         screener=screener)
+    pipeline = _pipeline(
+        store, feed=ScriptedFeed([[card]]), detail=detail, chat=chat, screener=screener
+    )
     await pipeline.stream_jobs(_outreach())
 
     assert llm.chat_completion_json.call_count == 1
@@ -211,8 +214,9 @@ async def test_an_empty_human_greeting_falls_back_to_drafting():
     chat.click_send.return_value = True
     screener, llm = _screener()
 
-    pipeline = _pipeline(store, feed=ScriptedFeed([[card]]), detail=detail, chat=chat,
-                         screener=screener)
+    pipeline = _pipeline(
+        store, feed=ScriptedFeed([[card]]), detail=detail, chat=chat, screener=screener
+    )
     await pipeline.stream_jobs(_outreach())
 
     assert llm.chat_completion_json.call_count == 1
@@ -248,8 +252,9 @@ async def test_repeated_runs_over_a_human_copy_never_re_generate():
     chat = MagicMock()
     chat.click_send.return_value = True
     screener, llm = _screener()
-    pipeline = _pipeline(store, feed=ScriptedFeed([[card]]), detail=detail, chat=chat,
-                         screener=screener)
+    pipeline = _pipeline(
+        store, feed=ScriptedFeed([[card]]), detail=detail, chat=chat, screener=screener
+    )
 
     await pipeline.stream_jobs(_outreach())
     assert chat.click_send.call_count == 0
@@ -313,8 +318,9 @@ async def test_a_targeted_application_greeting_outranks_the_record():
     async def log(line: str) -> None:
         logs.append(line)
 
-    pipeline = _pipeline(store, feed=ScriptedFeed([]), detail=detail, chat=chat,
-                         screener=screener, log=log)
+    pipeline = _pipeline(
+        store, feed=ScriptedFeed([]), detail=detail, chat=chat, screener=screener, log=log
+    )
 
     result = await pipeline.stream_jobs(config)
 
@@ -345,8 +351,9 @@ async def test_a_human_copy_does_not_bypass_the_quota_or_the_company_guard():
     async def log(line: str) -> None:
         logs.append(line)
 
-    pipeline = _pipeline(store, feed=ScriptedFeed([[card]]), detail=detail, chat=chat,
-                         screener=screener, log=log)
+    pipeline = _pipeline(
+        store, feed=ScriptedFeed([[card]]), detail=detail, chat=chat, screener=screener, log=log
+    )
 
     await pipeline.stream_jobs(_outreach(daily_greeting_limit=0))
     chat.click_send.assert_not_called()

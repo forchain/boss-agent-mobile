@@ -23,6 +23,8 @@
 	import { formatCommuteDistance } from '$lib/commute';
 	import JobDetailStudio from '$lib/components/JobDetailStudio.svelte';
 	import JobDetailModal from '$lib/components/JobDetailModal.svelte';
+	import { apiGet } from '$lib/apiClient';
+	import { confirmAction, alertAction } from '$lib/stores/confirm';
 
 	// State
 	let jobs = $state<JobRecord[]>([]);
@@ -32,6 +34,7 @@
 	let channelFilter = $state<'all' | 'direct' | 'headhunter'>('all');
 	let searchQuery = $state('');
 	let isLoading = $state(true);
+	let loadError = $state<string | null>(null);
 
 	// Responsive Modal State (Issue #290)
 	let isModalOpen = $state(false);
@@ -110,6 +113,7 @@
 				limit: pageSize
 			});
 			jobs = res.items;
+			loadError = null;
 			totalJobs = res.totalItems;
 			totalPages = res.totalPages;
 			if (res.counts) {
@@ -121,6 +125,8 @@
 				selectedJobId = jobs[0].id;
 			}
 		} catch (e) {
+			// A broker outage must read as an error, not as an empty workbench (Spec #303, story #8).
+			loadError = e instanceof Error ? e.message : String(e);
 			console.error('Failed to load jobs', e);
 		} finally {
 			isLoading = false;
@@ -203,7 +209,13 @@
 		const targetId = job.id;
 		const targetTitle = job.title;
 
-		if (!window.confirm(`确定要删除职位【${targetTitle}】吗？\n删除后该职位指纹将被释放，后续抓取可重新入库。`)) {
+		const confirmed = await confirmAction({
+			title: '删除职位',
+			message: `确定要删除职位【${targetTitle}】吗？\n删除后该职位指纹将被释放，后续抓取可重新入库。`,
+			danger: true,
+			confirmText: '删除'
+		});
+		if (!confirmed) {
 			return;
 		}
 
@@ -216,7 +228,7 @@
 			}
 			handleJobDeleted(targetId);
 		} catch (err: any) {
-			alert(`删除职位失败: ${err?.message || '网络或数据库异常'}`);
+			await alertAction(`删除职位失败: ${err?.message || '网络或数据库异常'}`, '删除失败');
 		} finally {
 			isDeleting = false;
 		}
@@ -305,10 +317,7 @@
 
 		// Load LLM settings
 		try {
-			const res = await fetch('/api/llm/settings');
-			if (res.ok) {
-				llmSettings = await res.json();
-			}
+			llmSettings = await apiGet<LLMSettings>('/api/llm/settings');
 		} catch (e) {}
 
 		// Realtime SSE updates, through the shared module: health-gated, retried, and
@@ -356,6 +365,16 @@
 </svelte:head>
 
 <div class="space-y-6">
+	{#if loadError}
+		<div
+			class="bg-rose-950/60 border border-rose-800 text-rose-200 rounded-2xl px-4 py-3 text-sm flex items-center space-x-2"
+			data-testid="jobs-load-error"
+		>
+			<span>⚠️</span>
+			<span>加载职位失败：{loadError}。当前显示的可能不是最新数据。</span>
+		</div>
+	{/if}
+
 	<!-- Top Summary Banner -->
 	<div class="bg-gradient-to-r from-slate-900 via-slate-900/90 to-cyan-950/40 border border-slate-800 rounded-2xl p-6 shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-4">
 		<div>

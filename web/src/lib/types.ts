@@ -64,22 +64,7 @@ export interface ResumeRevision {
 }
 
 
-export interface ScreeningPolicy {
-	title_whitelist: string[];
-	title_blacklist: string[];
-	company_blacklist: string[];
-	jd_blacklist: string[];
-	business_district_blacklist: string[];
-	/**
-	 * Borderline districts whose direct-hire postings are worth measuring against the
-	 * commute ceiling (spec #328). Empty means nothing is probed.
-	 */
-	business_district_inspect_list: string[];
-	enable_screening: boolean;
-	channel_preference?: 'all' | 'direct_only' | 'headhunter_only';
-	/** Commute ceiling in km; null, blank or <= 0 disables distance filtering. */
-	max_commute_distance_km?: number | null;
-}
+
 
 export interface LLMSettings {
 	provider: 'openai' | 'minimax' | 'deepseek' | string;
@@ -168,97 +153,33 @@ export interface MatchEvaluateResponse {
 	greeting_message: string;
 }
 
-export type TaskStatus =
-	| 'pending'
-	| 'running'
-	| 'paused_for_takeover'
-	| 'resuming'
-	| 'success'
-	| 'failed'
-	| 'cancelled';
+// Import & re-export generated entity types from collection schema seam (Issues #314, #315)
+import type {
+	AutomationTask,
+	ChannelPreference,
+	JobRecord,
+	JobRecordStatus,
+	SavedSearch,
+	SavedSearchFilter,
+	ScreeningPolicy,
+	TargetAction,
+	TaskStatus,
+	TaskType,
+} from './types.generated';
 
-export type TaskType = 'AUTO_APPLY' | 'SCRAPE_JOBS' | 'CHECK_LOGIN' | 'CHECK_CHAT';
-
-/** The task types the worker's handler strategy accepts, in one place. */
-export const TASK_TYPES: readonly TaskType[] = [
-	'AUTO_APPLY',
-	'SCRAPE_JOBS',
-	'CHECK_LOGIN',
-	'CHECK_CHAT'
-];
-
-export interface AutomationTask {
-	id: string;
-	task_type: TaskType;
-	status: TaskStatus;
-	payload: Record<string, any>;
-	/** Task Provenance (CONTEXT.md): manual | test | scheduler. */
-	source?: 'manual' | 'test' | 'scheduler' | string;
-	logs: string[];
-	error_message?: string;
-	/** The Automation Worker holding this task's lease — the column the worker writes. */
-	worker_id?: string | null;
-	created?: string;
-	updated?: string;
-}
-
-export type TargetAction = 'save_jd' | 'auto_apply';
-
-export type JobRecordStatus = 'jd_saved' | 'unmatched' | 'matched' | 'applied' | 'ignored' | 'digest_only';
-
-export interface JobRecord {
-	id: string;
-	fingerprint: string;
-	title: string;
-	company_name: string;
-	recruiter_name: string;
-	recruiter_title?: string;
-	is_headhunter?: boolean;
-	company_scale?: string;
-	industry?: string;
-	tags?: string[];
-	digest?: string;
-	salary_range?: string;
-	location?: string;
-	job_description?: string;
-	status: JobRecordStatus;
-	match_score?: number | null;
-	jd_key_requirements?: string[];
-	greeting_message?: string;
-	/** Who wrote that greeting: `human` or `agent_draft`; empty when unknown (#300). */
-	greeting_source?: 'human' | 'agent_draft' | '' | null;
-	search_keywords?: string[];
-	screened_reason?: string;
-	/**
-	 * Which stage made the rejection (see `ScreeningStage` in `$lib/screening`). Empty on
-	 * legacy/manual records, so the label falls back to a neutral 「已忽略」 (#340/#342).
-	 */
-	screening_stage?: string;
-	relaxed_by_whitelist?: boolean;
-	screening_audit?: string;
-	applied_at?: string | null;
-	applied_source?: 'agent_auto_send' | 'platform_historical' | '' | null;
-	/** App-probed commute distance in km (spec #209); null when unknown. */
-	commute_distance_km?: number | null;
-	/** Raw widget text, e.g. "距离家庭住址19.5千米". */
-	commute_distance_text?: string;
-	/**
-	 * The detail page's own location line, e.g.
-	 * "上海·浦东新区·张江(近13/16号线华夏中路地铁站)" (issue #332). The card facet
-	 * `location` carries a district only, so this is the full string both screening
-	 * lists match over.
-	 */
-	location_line?: string;
-	/** Metro lines naming the station, e.g. "13/16号线". */
-	metro_lines?: string;
-	/** Nearest metro station, e.g. "华夏中路地铁站". */
-	metro_station?: string;
-	source_task_id?: string;
-	first_seen_at?: string;
-	last_seen_at?: string;
-	created?: string;
-	updated?: string;
-}
+export type {
+	AutomationTask,
+	ChannelPreference,
+	JobRecord,
+	JobRecordStatus,
+	SavedSearch,
+	SavedSearchFilter,
+	ScreeningPolicy,
+	TargetAction,
+	TaskStatus,
+	TaskType,
+};
+export { TASK_TYPES } from './types.generated';
 
 /** Per-employer view of the direct-hire communication exclusion pool (Issue #203). */
 export interface AppliedCompanySummary {
@@ -276,45 +197,6 @@ export interface CommunicationSummary {
 	expired_count: number;
 	companies: AppliedCompanySummary[];
 	error?: string;
-}
-
-/**
- * Recruitment channel a strategy targets (issue #368).
- *
- * `''` is a real fourth state, not a missing key: it means "inherit the system-wide
- * `ScreeningPolicy` setting", which is what every preset written before channel
- * filtering existed has always done. `all` is the deliberate widening override, and it
- * is distinct from `''` precisely so a strategy can say "search both channels" over a
- * global setting of `direct_only`.
- */
-export type ChannelPreference = '' | 'all' | 'direct_only' | 'headhunter_only';
-
-export interface SavedSearchFilter {
-	education?: string;
-	salary?: string;
-	experience?: string;
-	activity?: string;
-	company_scales?: string[];
-	industries?: string[];
-	channel_preference?: ChannelPreference;
-}
-
-export interface SavedSearch {
-	id: string;
-	name: string;
-	description?: string;
-	keyword?: string;
-	enable_search?: boolean;
-	enable_filter?: boolean;
-	filter?: SavedSearchFilter;
-	target_action?: TargetAction;
-	max_jobs?: number;
-	cron_expression?: string;
-	is_enabled?: boolean;
-	last_run_at?: string | null;
-	target_task_type?: 'AUTO_APPLY' | 'SCRAPE_JOBS' | string;
-	created?: string;
-	updated?: string;
 }
 
 /**

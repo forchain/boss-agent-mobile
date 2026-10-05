@@ -1,6 +1,6 @@
 """
-tests/unit/test_emulator_reconnect_selfheal.py
-==============================================
+tests/e2e/test_emulator_reconnect_selfheal.py
+============================================
 Connection self-healing for the dedicated AVD (ticket #367).
 
 The failure this covers is the one that looks healthy from the console: the AVD is booted
@@ -28,6 +28,8 @@ import pytest
 from _runner_harness import FAKE_LAN_IP, TARGET_AVD, RunnerScriptHarness
 
 from _service_harness import REPO_ROOT
+
+pytestmark = pytest.mark.e2e
 
 NATIVE_SERIAL = "emulator-5554"
 DOCTOR_SH = REPO_ROOT / "doctor.sh"

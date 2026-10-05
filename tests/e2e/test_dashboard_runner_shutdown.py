@@ -1,6 +1,6 @@
 """
-tests/unit/test_web_runner_shutdown.py
-======================================
+tests/e2e/test_dashboard_runner_shutdown.py
+==========================================
 Integration tests for the Web Dashboard teardown seam (spec #218, ticket #221).
 
 `dashboard.sh` is copied into a temporary runtime root so `cmd_stop` operates on throwaway
@@ -18,6 +18,8 @@ from pathlib import Path
 import pytest
 
 from _service_harness import REPO_ROOT, free_port, is_port_free, wait_for_port_bound
+
+pytestmark = pytest.mark.e2e
 
 WEB_SH = REPO_ROOT / "dashboard.sh"
 SHUTDOWN_RECORD = "🛑 [Web] Received stop command, shutting down Web Dashboard..."

@@ -10,19 +10,11 @@ from typing import Any
 
 from rich.console import Console
 
+from .enums import AuthStatus
 from .graph import run_job_application_graph
+from .job_entities import JobCardBrief, JobPosting
 from .matching import JobMatchGreetingService, MatchGreetingResult
 from .memory import ResumeMemoryManager, StructuredCandidateProfile
-from .models import (
-    AuthStatus,
-    FilterConfig,
-    JobCardBrief,
-    JobPosting,
-    SavedSearch,
-    ScreeningPolicy,
-    SearchConfig,
-    resolve_screening_policy,
-)
 from .pages import (
     ChatPage,
     FilterDialogPage,
@@ -33,6 +25,8 @@ from .pages import (
     SearchPage,
     StartupDialogPage,
 )
+from .screening_policy import ScreeningPolicy, resolve_screening_policy
+from .search_entities import FilterConfig, SavedSearch, SearchConfig
 
 console = Console()
 

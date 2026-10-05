@@ -15,14 +15,15 @@ from rich.panel import Panel
 from droid_agent_core.llm import LLMDecisionClient
 
 from .greeting_prompt import load_greeting_prompt
-from .llm_config import create_llm_client
-from .memory import StructuredCandidateProfile
-from .models import (
-    JobPosting,
-    ScreeningPolicy,
+from .identifier_helpers import (
+    extract_tags_from_text,
     format_recruiter_greeting_prefix,
     is_substantive_jd,
 )
+from .job_entities import JobPosting
+from .llm_config import create_llm_client
+from .memory import StructuredCandidateProfile
+from .screening_policy import ScreeningPolicy
 
 console = Console(stderr=True)
 
@@ -82,6 +83,61 @@ class MatchGreetingResult:
         )
 
 
+# The offline path scores a JD the way the dashboard's own fallback does — a fixed floor plus
+# a per-requirement bonus, capped — so the two layers of the same fallback ladder agree on
+# what a degraded evaluation looks like. What it adds is that the requirements are the ones
+# the JD actually names, drawn from the shared `COMMON_TECH_TAGS` taxonomy rather than a
+# handful of hardcoded sentences.
+_OFFLINE_SCORE_FLOOR = 85
+_OFFLINE_SCORE_PER_REQUIREMENT = 4
+_OFFLINE_SCORE_CEILING = 98
+_GENERIC_REQUIREMENT = "具备扎实的工程研发能力与快速业务落地实战经验"
+
+
+def offline_match_result(
+    job: JobPosting, profile: StructuredCandidateProfile | None = None
+) -> MatchGreetingResult:
+    """Evaluate a JD deterministically, with no LLM call and no credentials.
+
+    Every caller of the match evaluation degrades to *something* when the model is
+    unreachable — an unset key, a CI runner, a provider outage. A constant score plus a
+    placeholder requirement is the one answer that helps nobody: it tells the operator the
+    posting scored 50 for a reason that has nothing to do with the posting. This reads the
+    JD instead, so the degraded answer is at least true about the JD it was given.
+    """
+    prefix = format_recruiter_greeting_prefix(job.recruiter_name)
+    tags = extract_tags_from_text(job.job_description or "")
+
+    requirements = [f"JD 明确要求：{tag}" for tag in tags] or [_GENERIC_REQUIREMENT]
+    score = min(
+        _OFFLINE_SCORE_FLOOR + _OFFLINE_SCORE_PER_REQUIREMENT * len(tags),
+        _OFFLINE_SCORE_CEILING,
+    )
+
+    reasons = ["按 JD 关键词离线评估，未调用大模型"]
+    if profile is not None:
+        skills = {str(s).strip().lower() for s in (profile.core_skills or []) if s}
+        covered = [t for t in tags if t.lower() in skills]
+        if covered:
+            reasons.append(f"候选人技能覆盖 JD 要点：{'、'.join(covered)}")
+        else:
+            reasons.append("候选人技能未覆盖 JD 识别出的要点，本结论仅供参考")
+
+    focus = tags[0] if tags else "核心工程能力"
+    greeting = (
+        f"{prefix}看到贵司正在招聘【{job.title}】，JD 中对“{focus}”的明确诉求正是我过往"
+        f"深耕的方向，已有从需求拆解到落地交付的完整实战经验。期待能就该岗位的具体挑战"
+        f"与您进一步沟通！"
+    )
+
+    return MatchGreetingResult(
+        match_score=score,
+        match_reasons=reasons,
+        jd_key_requirements=requirements,
+        greeting_message=greeting,
+    )
+
+
 def format_search_filter(search_filter: dict[str, Any] | Any | None) -> str:
     """Format search filter conditions into a readable structured text block."""
     if not search_filter:
@@ -111,7 +167,15 @@ def format_search_filter(search_filter: dict[str, Any] | Any | None) -> str:
     if isinstance(inds, list) and inds:
         parts.append(f"行业要求: {', '.join(str(i) for i in inds)}")
 
-    handled_keys = {"education", "salary", "experience", "activity", "company_scales", "industries", "enable_filter"}
+    handled_keys = {
+        "education",
+        "salary",
+        "experience",
+        "activity",
+        "company_scales",
+        "industries",
+        "enable_filter",
+    }
     for k, v in search_filter.items():
         if k not in handled_keys and v:
             parts.append(f"{k}: {v}")
@@ -269,16 +333,9 @@ class JobMatchGreetingService:
             return result
         except Exception as e:
             console.print(f"[bold red]❌ LLM match evaluation error:[/bold red] {e}")
-            fallback_msg = (
-                f"{prefix}看到贵公司正在招聘【{job.title}】，我对该方向有深入的实战落地经验，"
-                f"希望能与您进一步沟通交流！"
-            )
-            return MatchGreetingResult(
-                match_score=50,
-                match_reasons=[f"自动降级生成打招呼 (LLM调用异常: {e})"],
-                jd_key_requirements=["岗位要求分析降级"],
-                greeting_message=fallback_msg,
-            )
+            result = offline_match_result(job, profile=profile)
+            result.match_reasons.insert(0, f"自动降级为离线评估 (LLM调用异常: {e})")
+            return result
 
     @traceable(name="JobMatchGreetingService.refine_with_critique", run_type="chain")
     def refine_with_critique(

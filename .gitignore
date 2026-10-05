@@ -39,6 +39,9 @@ web/node_modules/
 web/.svelte-kit/
 web/build/
 
+# Local Agent Session Logs (machine-local, never part of the tree)
+codex-session-*.md
+
 # macOS
 .DS_Store
 

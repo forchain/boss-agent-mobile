@@ -5,7 +5,8 @@ Unit tests verifying the Masked Company Guardrail (is_masked_company_name)
 and direct-only rejection blacklist protection in ScreeningPolicy.
 """
 
-from boss_agent.models import ScreeningPolicy, is_masked_company_name
+from boss_agent.identifier_helpers import is_masked_company_name
+from boss_agent.screening_policy import ScreeningPolicy
 
 
 def test_is_masked_company_name_positive_cases():
@@ -27,7 +28,9 @@ def test_is_masked_company_name_positive_cases():
         "头部互联网公司",
     ]
     for name in masked_names:
-        assert is_masked_company_name(name) is True, f"Expected '{name}' to be identified as masked."
+        assert is_masked_company_name(name) is True, (
+            f"Expected '{name}' to be identified as masked."
+        )
 
 
 def test_is_masked_company_name_negative_cases():
@@ -44,7 +47,9 @@ def test_is_masked_company_name_negative_cases():
         "商汤科技",
     ]
     for name in authentic_names:
-        assert is_masked_company_name(name) is False, f"Expected '{name}' to NOT be flagged as masked."
+        assert is_masked_company_name(name) is False, (
+            f"Expected '{name}' to NOT be flagged as masked."
+        )
 
 
 def test_is_masked_company_name_empty_or_invalid():
@@ -58,7 +63,9 @@ def test_guardrail_blocks_masked_company_blacklisting():
     """Verify attempting to add a masked company to company_blacklist is blocked with notice."""
     policy = ScreeningPolicy()
 
-    allowed, notice = policy.validate_can_blacklist_company("某中型人工智能公司", is_headhunter=False)
+    allowed, notice = policy.validate_can_blacklist_company(
+        "某中型人工智能公司", is_headhunter=False
+    )
     assert allowed is False
     assert "黑名单保护生效" in notice
     assert "保密/占位公司名称" in notice

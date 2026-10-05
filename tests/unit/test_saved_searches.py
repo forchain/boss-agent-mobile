@@ -4,7 +4,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from boss_agent.models import FilterConfig, JobPosting, SavedSearch, SearchConfig
+from boss_agent.job_entities import JobPosting
+from boss_agent.search_entities import FilterConfig, SavedSearch, SearchConfig
 from boss_agent.searches import (
     SavedSearchRegistry,
 )
@@ -32,8 +33,10 @@ def test_saved_search_model_serialization():
     d = s.to_dict()
     assert d["id"] == "test_ai_agent"
     assert d["search"]["keyword"] == "AI 算法"
-    assert d["enable_search"] is True
-    assert d["enable_filter"] is True
+    assert "enable_search" not in d
+    assert "enable_filter" not in d
+    assert d["search"]["enable_search"] is True
+    assert d["filter"]["enable_filter"] is True
     assert d["filter"]["industries"] == ["在线教育", "游戏", "人工智能"]
 
     restored = SavedSearch.from_dict("test_ai_agent", d)
@@ -61,14 +64,59 @@ def test_saved_search_disabled_search_and_filter():
     assert s.filter.has_industry_filters is False
 
     d = s.to_dict()
-    assert d["enable_search"] is False
-    assert d["enable_filter"] is False
+    assert "enable_search" not in d
+    assert "enable_filter" not in d
+    assert d["search"]["enable_search"] is False
+    assert d["filter"]["enable_filter"] is False
 
     restored = SavedSearch.from_dict("test_recommendations_only", d)
     assert restored.enable_search is False
     assert restored.enable_filter is False
     assert restored.search.should_search is False
     assert restored.filter.has_filters is False
+
+
+def test_saved_search_dual_shape_migration_nested_is_authoritative():
+    """When nested and legacy top-level flags conflict, nested spelling is authoritative (Issue #321)."""
+    # 1. Nested False, Top-level True -> Nested False wins
+    dual_data = {
+        "id": "search_conflict",
+        "name": "Conflict Strategy",
+        "enable_search": True,
+        "enable_filter": True,
+        "search": {"keyword": "Python", "enable_search": False},
+        "filter": {"education": "本科", "enable_filter": False},
+    }
+    restored = SavedSearch.from_dict(dual_data["id"], dual_data)
+    assert restored.enable_search is False
+    assert restored.search.enable_search is False
+    assert restored.enable_filter is False
+    assert restored.filter.enable_filter is False
+
+    # Rewriting emits the single nested shape without top-level flags
+    rewritten = restored.to_dict()
+    assert "enable_search" not in rewritten
+    assert "enable_filter" not in rewritten
+    assert rewritten["search"]["enable_search"] is False
+    assert rewritten["filter"]["enable_filter"] is False
+
+    # 2. Legacy top-level only -> Read correctly and migrated on next write
+    legacy_data = {
+        "id": "legacy_search",
+        "name": "Legacy Strategy",
+        "enable_search": False,
+        "enable_filter": False,
+        "search": {"keyword": "Rust"},
+        "filter": {"education": "硕士"},
+    }
+    legacy_restored = SavedSearch.from_dict(legacy_data["id"], legacy_data)
+    assert legacy_restored.enable_search is False
+    assert legacy_restored.enable_filter is False
+    migrated = legacy_restored.to_dict()
+    assert "enable_search" not in migrated
+    assert "enable_filter" not in migrated
+    assert migrated["search"]["enable_search"] is False
+    assert migrated["filter"]["enable_filter"] is False
 
 
 def test_saved_search_registry_default_initialization():

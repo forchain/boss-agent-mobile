@@ -17,7 +17,9 @@ from _card_fixtures import located
 
 from boss_agent.broker.models import TaskType
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker, PocketBaseTaskBroker
-from boss_agent.models import ChatButtonState, JobCardBrief, is_communication_expired
+from boss_agent.enums import ChatButtonState
+from boss_agent.identifier_helpers import is_communication_expired
+from boss_agent.job_entities import JobCardBrief
 from boss_agent.worker.config import WorkerConfig
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.daemon import AutomationWorker
@@ -71,15 +73,11 @@ def test_is_communication_expired_zero_cooldown_is_permanent():
 def test_is_communication_expired_falls_back_to_created_for_historical_contacts():
     """Platform historical contacts carry no applied_at, so their ingestion date governs expiry."""
     assert (
-        is_communication_expired(
-            {"applied_at": "", "created": _iso_days_ago(45)}, cooldown_days=30
-        )
+        is_communication_expired({"applied_at": "", "created": _iso_days_ago(45)}, cooldown_days=30)
         is True
     )
     assert (
-        is_communication_expired(
-            {"applied_at": "", "created": _iso_days_ago(3)}, cooldown_days=30
-        )
+        is_communication_expired({"applied_at": "", "created": _iso_days_ago(3)}, cooldown_days=30)
         is False
     )
 
@@ -172,7 +170,10 @@ async def test_applied_direct_companies_honours_cooldown_window(broker):
     )
 
     assert await broker.job_store.get_applied_direct_companies(cooldown_days=30) == {"商汤科技"}
-    assert await broker.job_store.get_applied_direct_companies(cooldown_days=0) == {"商汤科技", "小红书"}
+    assert await broker.job_store.get_applied_direct_companies(cooldown_days=0) == {
+        "商汤科技",
+        "小红书",
+    }
 
 
 # --------------------------------------------------------------------------------------
@@ -199,7 +200,10 @@ async def test_scrape_skips_card_already_recorded_as_applied(broker, mock_driver
     config = WorkerConfig(worker_id="test-worker-applied-skip", poll_interval_sec=0.01)
     context = WorkerContext(config=config, driver=mock_driver)
     worker = AutomationWorker(
-        config=config, broker=broker, context=context, handlers=[ScrapeJobsHandler(llm_client=MagicMock())]
+        config=config,
+        broker=broker,
+        context=context,
+        handlers=[ScrapeJobsHandler(llm_client=MagicMock())],
     )
 
     task = await broker.create_task(
@@ -249,7 +253,10 @@ async def test_scrape_skips_other_roles_from_communicated_direct_hire_company(br
     config = WorkerConfig(worker_id="test-worker-company-exclusion", poll_interval_sec=0.01)
     context = WorkerContext(config=config, driver=mock_driver)
     worker = AutomationWorker(
-        config=config, broker=broker, context=context, handlers=[ScrapeJobsHandler(llm_client=MagicMock())]
+        config=config,
+        broker=broker,
+        context=context,
+        handlers=[ScrapeJobsHandler(llm_client=MagicMock())],
     )
 
     task = await broker.create_task(
@@ -298,7 +305,10 @@ async def test_scrape_admits_headhunter_roles_from_same_company_name(broker, moc
     config = WorkerConfig(worker_id="test-worker-hh-exempt", poll_interval_sec=0.01)
     context = WorkerContext(config=config, driver=mock_driver)
     worker = AutomationWorker(
-        config=config, broker=broker, context=context, handlers=[ScrapeJobsHandler(llm_client=MagicMock())]
+        config=config,
+        broker=broker,
+        context=context,
+        handlers=[ScrapeJobsHandler(llm_client=MagicMock())],
     )
 
     task = await broker.create_task(
@@ -348,7 +358,10 @@ async def test_masked_company_names_never_join_the_exclusion_pool(broker, mock_d
     config = WorkerConfig(worker_id="test-worker-masked-exempt", poll_interval_sec=0.01)
     context = WorkerContext(config=config, driver=mock_driver)
     worker = AutomationWorker(
-        config=config, broker=broker, context=context, handlers=[ScrapeJobsHandler(llm_client=MagicMock())]
+        config=config,
+        broker=broker,
+        context=context,
+        handlers=[ScrapeJobsHandler(llm_client=MagicMock())],
     )
 
     await broker.create_task(
@@ -384,7 +397,10 @@ async def test_newly_communicated_company_is_cached_within_the_same_run(broker, 
     config = WorkerConfig(worker_id="test-worker-dynamic-cache", poll_interval_sec=0.01)
     context = WorkerContext(config=config, driver=mock_driver)
     worker = AutomationWorker(
-        config=config, broker=broker, context=context, handlers=[ScrapeJobsHandler(llm_client=MagicMock())]
+        config=config,
+        broker=broker,
+        context=context,
+        handlers=[ScrapeJobsHandler(llm_client=MagicMock())],
     )
 
     task = await broker.create_task(
@@ -400,7 +416,10 @@ async def test_newly_communicated_company_is_cached_within_the_same_run(broker, 
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_list = mock_list_cls.return_value
         mock_list.get_feed_bottom_boundary.return_value = None
-        mock_list.extract_visible_job_cards.return_value = [located(first_role), located(second_role)]
+        mock_list.extract_visible_job_cards.return_value = [
+            located(first_role),
+            located(second_role),
+        ]
         mock_search_cls.return_value.is_search_page.return_value = True
 
         mock_detail = mock_detail_cls.return_value
@@ -435,7 +454,10 @@ async def test_expired_communication_releases_card_for_reevaluation(broker, mock
     config = WorkerConfig(worker_id="test-worker-cooldown-release", poll_interval_sec=0.01)
     context = WorkerContext(config=config, driver=mock_driver)
     worker = AutomationWorker(
-        config=config, broker=broker, context=context, handlers=[ScrapeJobsHandler(llm_client=MagicMock())]
+        config=config,
+        broker=broker,
+        context=context,
+        handlers=[ScrapeJobsHandler(llm_client=MagicMock())],
     )
 
     await broker.create_task(
@@ -510,7 +532,10 @@ async def test_expired_communication_releases_record_back_to_candidate_pool(brok
     config = WorkerConfig(worker_id="test-worker-cooldown-transition", poll_interval_sec=0.01)
     context = WorkerContext(config=config, driver=mock_driver)
     worker = AutomationWorker(
-        config=config, broker=broker, context=context, handlers=[ScrapeJobsHandler(llm_client=MagicMock())]
+        config=config,
+        broker=broker,
+        context=context,
+        handlers=[ScrapeJobsHandler(llm_client=MagicMock())],
     )
 
     await broker.create_task(
@@ -692,7 +717,10 @@ async def test_permanent_cooldown_keeps_excluding_old_communications(broker, moc
     config = WorkerConfig(worker_id="test-worker-permanent-cooldown", poll_interval_sec=0.01)
     context = WorkerContext(config=config, driver=mock_driver)
     worker = AutomationWorker(
-        config=config, broker=broker, context=context, handlers=[ScrapeJobsHandler(llm_client=MagicMock())]
+        config=config,
+        broker=broker,
+        context=context,
+        handlers=[ScrapeJobsHandler(llm_client=MagicMock())],
     )
 
     await broker.create_task(
@@ -778,3 +806,49 @@ async def test_applied_companies_request_projects_is_headhunter():
     fields = session.get.call_args_list[0].kwargs["params"]["fields"]
     assert "is_headhunter" in fields
     assert companies == {"深至科技"}
+
+
+@pytest.mark.asyncio
+async def test_applied_companies_query_filter_includes_cooldown_cutoff():
+    """Verify that cooldown bound is pushed directly into the broker query filter."""
+    session = _paged_session([[_applied("深至科技")]])
+    broker = PocketBaseTaskBroker(base_url="http://mock-pb:8090", session=session)
+
+    # Cooldown > 0 pushes cutoff timestamp into broker query filter
+    await broker.job_store.get_applied_direct_companies(cooldown_days=30)
+    filter_expr = session.get.call_args_list[0].kwargs["params"]["filter"]
+    assert "status='applied'" in filter_expr
+    assert "is_headhunter!=true" in filter_expr
+    assert "applied_at >=" in filter_expr
+    assert "created >=" in filter_expr
+
+    session.get.reset_mock()
+
+    # Cooldown == 0 uses unconstrained permanent suppression filter
+    await broker.job_store.get_applied_direct_companies(cooldown_days=0)
+    filter_expr_zero = session.get.call_args_list[0].kwargs["params"]["filter"]
+    assert filter_expr_zero == "status='applied' && is_headhunter!=true"
+
+
+@pytest.mark.asyncio
+async def test_applied_companies_walk_stops_at_the_availability_backstop(monkeypatch, caplog):
+    """A permanent cool-down carries no time bound, so the walk is still bounded — loudly.
+
+    Removing the old 5,000-record ceiling must not turn the hot path into an unbounded walk.
+    The backstop is an availability guard, not a semantic cap: it protects a run from a
+    pathological collection and says so in the log rather than silently truncating.
+    """
+    from boss_agent import job_store as job_store_module
+
+    monkeypatch.setattr(job_store_module, "APPLIED_POOL_PAGE_SIZE", 1)
+    monkeypatch.setattr(job_store_module, "APPLIED_POOL_MAX_PAGES", 2)
+    session = _paged_session(
+        [[_applied("甲企业")], [_applied("乙企业")], [_applied("丙企业")]], per_page=1
+    )
+    broker = PocketBaseTaskBroker(base_url="http://mock-pb:8090", session=session)
+
+    companies = await broker.job_store.get_applied_direct_companies(cooldown_days=0)
+
+    assert session.get.call_count == 2, "The walk must stop at the backstop, not page forever."
+    assert companies == {"甲企业", "乙企业"}
+    assert "availability backstop" in caplog.text

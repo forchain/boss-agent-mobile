@@ -16,11 +16,19 @@ So this tier removes the waiting, not the logic behind it:
   remaining-budget arithmetic, the `TimeoutError` a never-satisfied condition raises, and
   the value a satisfied one returns are all untouched;
 * the pause `HumanizedGestureExecutor` takes between gestures — jitter, tap duration, and
-  every action it performs are untouched.
+  every action it performs are untouched;
+* the fixed settling pauses `boss_agent.pages` and `boss_agent.workflows` take between an
+  action and the read that confirms it landed. These are the same dead time as the two
+  above: a mocked driver never paints the element the pause is waiting for, so the wait can
+  only expire. They are worth more than they look — dropping them took the tier from ~64s to
+  ~9s, because a handful of smoke-harness tests walk the same settle-then-read sequence
+  dozens of times.
 
-Everything else keeps real time, including the short fixed pauses in `boss_agent.pages` and
-the shutdown budgets the lifecycle suites measure. `tests/unit/test_ui_wait_polling.py`
-pins both halves of the contract.
+Everything else keeps real time, and that includes the shutdown budgets the lifecycle suites
+measure: those sleep from the test module and read the test module's own clock, neither of
+which this fixture touches. `tests/unit/test_ui_wait_polling.py` pins all three halves of
+the contract — the waits and pauses are free, the behaviour they wrap is unchanged, and the
+clock they do read is still the real one.
 
 One thing pacing cannot fix is a test that reaches for a *live* LLM: the JD semantic screener
 and the greeting drafter build a real client whenever a handler is handed none, and the
@@ -30,6 +38,8 @@ into the handler under test — and to audit the tier, run it against a poisoned
 `droid_agent_core.llm.OpenAIChatClient`.
 """
 
+import socket
+import subprocess
 import time
 from typing import Any
 
@@ -79,5 +89,36 @@ def any_job_store(request) -> Any:
 @pytest.fixture(autouse=True)
 def instant_ui_pacing(monkeypatch: pytest.MonkeyPatch) -> None:
     """Let UI wait loops exhaust their budget, and gestures play out, without waiting."""
-    for module in (locators, gestures):
+    from boss_agent import pages, workflows
+
+    for module in (locators, gestures, workflows, pages):
         monkeypatch.setattr(module, "time", _InstantPacingTime(time))
+
+
+@pytest.fixture(autouse=True)
+def fast_unit_boundary_guard(
+    monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> None:
+    """Enforce the Fast Unit tier boundary (ticket #306, Spec #303).
+
+    No test in ``tests/unit/`` may spawn a process or bind a port. There is deliberately no
+    exemption: the subprocess-driven tier-selection suite now lives in ``tests/e2e``, so a
+    unit test that reaches for a process or a socket is always a tier violation. This is what
+    keeps the fast tier's "under 60 seconds, no side effects" claim honest.
+    """
+
+    def _guarded_popen(*args, **kwargs):
+        cmd_args = args[0] if args else kwargs.get("args")
+        raise RuntimeError(
+            f"Fast Unit tier boundary violation in {request.node.nodeid}: "
+            f"subprocess execution is forbidden in the fast tier: {cmd_args!r}"
+        )
+
+    def _guarded_bind(self, *args, **kwargs):
+        raise RuntimeError(
+            f"Fast Unit tier boundary violation in {request.node.nodeid}: "
+            f"socket binding is forbidden in the fast tier: {args!r}"
+        )
+
+    monkeypatch.setattr(subprocess, "Popen", _guarded_popen)
+    monkeypatch.setattr(socket.socket, "bind", _guarded_bind)

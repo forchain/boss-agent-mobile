@@ -16,6 +16,16 @@ import JobDetailModal from '$lib/components/JobDetailModal.svelte';
 import JobsPage from '../routes/jobs/+page.svelte';
 import type { JobRecord } from '$lib/types';
 
+// These tests exercise the modal's action lifecycle, not the confirmation widget (which has
+// its own suite). Production mounts the dialog once in +layout.svelte and the user clicks it;
+// here we stand in for that click. Native window.confirm is gone — the shared dialog replaced it.
+vi.mock('$lib/stores/confirm', () => ({
+	confirmAction: vi.fn(async () => true),
+	alertAction: vi.fn(async () => true),
+	confirmDialogState: { subscribe: () => () => {} },
+	isConfirmDialogMounted: () => true
+}));
+
 const TEST_JOB: JobRecord = {
 	id: 'job_test_1',
 	fingerprint: 'fp_test_1',
@@ -204,7 +214,6 @@ describe('Action lifecycle auto-dismissal (Issue #290)', () => {
 	it('auto-dismisses modal when delete action is confirmed', async () => {
 		const calls = stubFetch(TEST_JOB);
 		const onClose = vi.fn();
-		vi.stubGlobal('confirm', () => true);
 
 		render(JobDetailModal, {
 			props: { isOpen: true, job: TEST_JOB, onClose }
@@ -223,7 +232,6 @@ describe('Action lifecycle auto-dismissal (Issue #290)', () => {
 	it('auto-dismisses modal when blacklist action is confirmed', async () => {
 		const calls = stubFetch(EVALUATED_JOB);
 		const onClose = vi.fn();
-		vi.stubGlobal('confirm', () => true);
 
 		render(JobDetailModal, {
 			props: { isOpen: true, job: EVALUATED_JOB, onClose }

@@ -76,9 +76,7 @@ class WorkerContext:
         if probed is not missing:
             return True
 
-        logger.warning(
-            "ℹ️ Device session exposes no liveness probe; keeping it as-is."
-        )
+        logger.warning("ℹ️ Device session exposes no liveness probe; keeping it as-is.")
         return True
 
     def release_device_session(self) -> bool:

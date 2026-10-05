@@ -18,7 +18,7 @@ from typing import Any
 from rich.console import Console
 from rich.table import Table
 
-from boss_agent.models import FilterConfig, SearchConfig
+from boss_agent.search_entities import FilterConfig, SearchConfig
 from boss_agent.searches import get_global_search_registry
 from boss_agent.settings import load_settings
 from boss_agent.workflows import SmokeHarness, TakeoverHandler
@@ -198,8 +198,6 @@ def load_runner_settings(config_path: str | Path | None = None) -> dict[str, Any
     return load_settings(config_path=config_path)
 
 
-
-
 def main():
     parser = argparse.ArgumentParser(
         description="Boss Agent Mobile Smoke Harness on Virtual Device Session (Config-First)"
@@ -293,9 +291,17 @@ def main():
         except Exception:
             saved_search = None
 
-    enable_search = False if args.no_search else (saved_search.enable_search if saved_search else True)
-    enable_filter = False if args.no_filter else (saved_search.enable_filter if saved_search else True)
-    keyword = args.keyword if args.keyword is not None else (saved_search.keyword if saved_search else None)
+    enable_search = (
+        False if args.no_search else (saved_search.enable_search if saved_search else True)
+    )
+    enable_filter = (
+        False if args.no_filter else (saved_search.enable_filter if saved_search else True)
+    )
+    keyword = (
+        args.keyword
+        if args.keyword is not None
+        else (saved_search.keyword if saved_search else None)
+    )
 
     device_udid = args.device or cfg.get("device", "emulator-5554")
     server_url = args.server_url or cfg.get("server_url", "http://127.0.0.1:4723")

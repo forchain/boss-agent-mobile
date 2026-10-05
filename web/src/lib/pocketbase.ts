@@ -16,7 +16,7 @@
  * Errors surface. There is no fallback tier to swallow one.
  */
 
-import { BACKGROUND_REQUEST_HEADER } from '$lib/apiClient';
+import { apiGet } from '$lib/apiClient';
 
 export {
 	clearJobCommunication,
@@ -100,12 +100,7 @@ export function getPocketBaseUrl(): string {
  */
 export async function checkPocketBaseHealth(): Promise<boolean> {
 	try {
-		const res = await fetch('/api/health', {
-			signal: AbortSignal.timeout(6000),
-			headers: { [BACKGROUND_REQUEST_HEADER]: '1' }
-		});
-		if (!res.ok) return false;
-		const data = await res.json().catch(() => ({}));
+		const data = await apiGet<{ healthy?: boolean }>('/api/health', { background: true });
 		return data.healthy === true;
 	} catch {
 		return false;

@@ -3,7 +3,8 @@ from pathlib import Path
 
 import yaml
 
-from boss_agent.models import JobRecord, ScreeningPolicy
+from boss_agent.job_entities import JobRecord
+from boss_agent.screening_policy import ScreeningPolicy
 
 
 def test_screening_policy_load_from_example():
@@ -146,9 +147,10 @@ def test_relaxation_inspects_all_card_facets():
     """Relaxation matches against title, tags, company and digest facets alike."""
     policy = ScreeningPolicy(title_whitelist=["RAG", "字节跳动"])
     # tags facet
-    assert policy.evaluate_whitelist_relaxation(
-        title="平台工程师", tags=["RAG", "Python"]
-    ) == (True, "RAG")
+    assert policy.evaluate_whitelist_relaxation(title="平台工程师", tags=["RAG", "Python"]) == (
+        True,
+        "RAG",
+    )
     # company facet
     assert policy.evaluate_whitelist_relaxation(
         title="平台工程师", company_name="北京字节跳动科技有限公司"
@@ -240,14 +242,20 @@ def test_matches_card_keywords_business_district_blacklist_rejection():
         location="上海 崇明区 城桥",
     )
     assert passed_district is False
-    assert reason_district == "【商圈黑名单过滤】岗位所在区域/商圈 '上海 崇明区 城桥' 命中黑名单 '崇明区'"
+    assert (
+        reason_district
+        == "【商圈黑名单过滤】岗位所在区域/商圈 '上海 崇明区 城桥' 命中黑名单 '崇明区'"
+    )
 
     passed_quarter, reason_quarter = policy.matches_card_keywords(
         title="AI Agent 工程师",
         location="上海 浦东新区 临港",
     )
     assert passed_quarter is False
-    assert reason_quarter == "【商圈黑名单过滤】岗位所在区域/商圈 '上海 浦东新区 临港' 命中黑名单 '临港'"
+    assert (
+        reason_quarter
+        == "【商圈黑名单过滤】岗位所在区域/商圈 '上海 浦东新区 临港' 命中黑名单 '临港'"
+    )
 
 
 def test_screening_policy_business_district_blacklist_dict_roundtrip():

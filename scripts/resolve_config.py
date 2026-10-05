@@ -23,6 +23,7 @@ required setting without parsing anything.
 """
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -36,11 +37,12 @@ from boss_agent import config_realm  # noqa: E402
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Print resolved Configuration Realm values as key=value lines."
+        description="Print resolved Configuration Realm values as key=value lines or JSON."
     )
     parser.add_argument(
         "keys",
-        nargs="+",
+        nargs="*",
+        default=[],
         help="Realm keys to resolve, e.g. pocketbase_url avd_name server_url",
     )
     parser.add_argument(
@@ -49,9 +51,28 @@ def main(argv: list[str] | None = None) -> int:
         default=[],
         help="Print only this key's value (repeatable); for command substitution",
     )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print all resolved Configuration Realm values as a JSON object",
+    )
+    parser.add_argument(
+        "--config-path",
+        type=Path,
+        default=None,
+        help="Explicit config file to load instead of the standard chain",
+    )
     args = parser.parse_args(argv)
 
-    settings = config_realm.load_settings()
+    settings = config_realm.load_settings(config_path=args.config_path)
+
+    if args.json:
+        print(json.dumps(settings))
+        return 0
+
+    if not args.keys and not args.key:
+        parser.error("At least one key or --json is required")
+
     output = config_realm.format_resolved_values(args.keys, settings=settings)
 
     if args.key:
@@ -62,9 +83,7 @@ def main(argv: list[str] | None = None) -> int:
         print(output)
 
     missing = [
-        key
-        for key in args.keys
-        if not (settings.get(key) or settings.get("chat", {}).get(key))
+        key for key in args.keys if not (settings.get(key) or settings.get("chat", {}).get(key))
     ]
     return 1 if missing else 0
 

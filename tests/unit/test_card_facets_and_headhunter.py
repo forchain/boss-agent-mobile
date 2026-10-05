@@ -15,7 +15,8 @@ from boss_agent.card_parser import (
     parse_company_scale_industry,
     parse_recruiter_info,
 )
-from boss_agent.models import JobCardBrief, JobPosting, JobRecord, clean_job_title
+from boss_agent.identifier_helpers import clean_job_title
+from boss_agent.job_entities import JobCardBrief, JobPosting, JobRecord
 from boss_agent.pages import JobListPage
 
 
@@ -72,7 +73,9 @@ def test_parse_company_scale_industry():
     assert ind2 == "人工智能"
 
     # 3. Already split parameters passed explicitly
-    comp3, scale3, ind3 = parse_company_scale_industry("游族网络", explicit_scale="1000-9999人", explicit_industry="游戏")
+    comp3, scale3, ind3 = parse_company_scale_industry(
+        "游族网络", explicit_scale="1000-9999人", explicit_industry="游戏"
+    )
     assert comp3 == "游族网络"
     assert scale3 == "1000-9999人"
     assert ind3 == "游戏"
@@ -356,8 +359,13 @@ def test_job_list_page_rejects_title_as_company_and_recovers_from_card_text():
 
 def test_clean_job_title_removes_placeholders_and_badges():
     """clean_job_title must remove trailing '&@', '&@ &@', whitespace and tags."""
-    assert clean_job_title("技术负责人-CTO级别｜pre-ipo公司｜医疗AI &@") == "技术负责人-CTO级别｜pre-ipo公司｜医疗AI"
-    assert clean_job_title("CTO，外企AI Startup，可远程办公 &@") == "CTO，外企AI Startup，可远程办公"
+    assert (
+        clean_job_title("技术负责人-CTO级别｜pre-ipo公司｜医疗AI &@")
+        == "技术负责人-CTO级别｜pre-ipo公司｜医疗AI"
+    )
+    assert (
+        clean_job_title("CTO，外企AI Startup，可远程办公 &@") == "CTO，外企AI Startup，可远程办公"
+    )
     assert clean_job_title("算法高级工程师-DataAgent &@  &@") == "算法高级工程师-DataAgent"
     assert clean_job_title("资深架构师 &@") == "资深架构师"
     assert clean_job_title("【MLBB】AI开发工程师 &@") == "【MLBB】AI开发工程师"
@@ -484,6 +492,7 @@ def test_job_list_page_skips_cards_without_company_name_or_unknown_company():
                 if "tv_company_name" in val_str:
                     return [mock_comp3]
             return []
+
         return _find
 
     mock_card_valid.find_elements.side_effect = mock_card_find(mock_card_valid)
@@ -534,7 +543,20 @@ def test_backfill_purges_unknown_company_records(tmp_path: Path):
     conn.commit()
     conn.close()
 
+    # Ordinary provisioning is declarative and does not mutate/backfill legacy records
     assert provision_sqlite_database(db_file) is True
+
+    conn = sqlite3.connect(str(db_file))
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, title, company_name FROM job_records")
+    remaining_before_migration = cursor.fetchall()
+    conn.close()
+    assert len(remaining_before_migration) == 4
+
+    # Dedicated migration purges invalid records
+    from boss_agent.broker.provisioner import run_legacy_record_migration
+
+    assert run_legacy_record_migration(db_file) is True
 
     conn = sqlite3.connect(str(db_file))
     cursor = conn.cursor()
@@ -549,7 +571,7 @@ def test_backfill_purges_unknown_company_records(tmp_path: Path):
 
 def test_sanitize_tags_filters_recruiter_and_location():
     """sanitize_tags must filter out recruiter name, recruiter title, location, scale, and duplicates."""
-    from boss_agent.models import sanitize_tags
+    from boss_agent.identifier_helpers import sanitize_tags
 
     # Scenario 1: Recruiter info and location mixed in tags
     raw_tags = ["3-5年", "硕士", "王琳 · 猎头顾问", "上海"]
@@ -590,7 +612,7 @@ def test_sanitize_tags_filters_recruiter_and_location():
 
 def test_is_invalid_company_name():
     """is_invalid_company_name must detect education, experience, recruiter, location, and scale strings."""
-    from boss_agent.models import is_invalid_company_name
+    from boss_agent.identifier_helpers import is_invalid_company_name
 
     # Education / Experience keywords
     assert is_invalid_company_name("硕士") is True
@@ -642,10 +664,17 @@ def test_job_models_post_init_sanitizes_tags():
         recruiter_name="张瑞娟",
         recruiter_title="猎头顾问",
         location="上海",
-        tags=["经验不限", "本科", "全栈侧重前端", "全栈侧重后端", "全栈侧重前端", "全栈侧重后端", "张瑞娟 · 猎头顾问", "上海"],
+        tags=[
+            "经验不限",
+            "本科",
+            "全栈侧重前端",
+            "全栈侧重后端",
+            "全栈侧重前端",
+            "全栈侧重后端",
+            "张瑞娟 · 猎头顾问",
+            "上海",
+        ],
         jd_key_requirements=["经验不限", "本科", "张瑞娟 · 猎头顾问", "上海"],
     )
     assert rec.tags == ["经验不限", "本科", "全栈侧重前端", "全栈侧重后端"]
     assert rec.jd_key_requirements == ["经验不限", "本科"]
-
-

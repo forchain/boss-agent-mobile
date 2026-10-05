@@ -83,14 +83,26 @@ export function normalizeSearch(record: any): SavedSearch {
 	const targetAction =
 		record.target_action ||
 		(record.target_task_type === 'AUTO_APPLY' ? 'auto_apply' : 'save_jd');
+	const filter = record.filter || {};
+	const enableFilter =
+		filter.enable_filter !== undefined
+			? filter.enable_filter !== false
+			: record.enable_filter !== false;
+	const enableSearch =
+		record.search?.enable_search !== undefined
+			? record.search.enable_search !== false
+			: record.enable_search !== false;
 	return {
 		id: String(record.id),
 		name: record.name || String(record.id),
 		description: record.description || '',
 		keyword: record.keyword || '',
-		enable_search: record.enable_search !== false,
-		enable_filter: record.enable_filter !== false,
-		filter: record.filter || {},
+		enable_search: enableSearch,
+		enable_filter: enableFilter,
+		filter: {
+			...filter,
+			enable_filter: enableFilter
+		},
 		target_action: targetAction,
 		max_jobs: record.max_jobs ?? 30,
 		cron_expression: record.cron_expression || '',
@@ -121,14 +133,26 @@ export function searchBody(
 	const targetAction =
 		search.target_action ??
 		(search.target_task_type === 'AUTO_APPLY' ? 'auto_apply' : 'save_jd');
+	const filter = (search.filter || {}) as Record<string, unknown>;
+	const enableFilter =
+		filter.enable_filter !== undefined
+			? filter.enable_filter !== false
+			: search.enable_filter !== false;
+	const enableSearch =
+		(search as any).search?.enable_search !== undefined
+			? (search as any).search.enable_search !== false
+			: search.enable_search !== false;
 	return {
 		...(existingId ? {} : { id: search.id || undefined }),
 		name: search.name,
 		description: search.description || '',
 		keyword: search.keyword || '',
-		enable_search: search.enable_search !== false,
-		enable_filter: search.enable_filter !== false,
-		filter: search.filter || {},
+		enable_search: enableSearch,
+		enable_filter: enableFilter,
+		filter: {
+			...filter,
+			enable_filter: enableFilter
+		},
 		target_action: targetAction,
 		max_jobs: search.max_jobs ?? 30,
 		cron_expression: search.cron_expression || '',

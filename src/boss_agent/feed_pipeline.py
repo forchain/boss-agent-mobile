@@ -21,6 +21,18 @@ from enum import StrEnum
 from typing import Any
 
 from .broker.models import TaskType
+from .enums import (
+    DEPTH_DECLARED,
+    DEPTH_LEGACY_HALF_PAIR,
+    DEPTH_LEGACY_PAIR,
+    DEPTH_UNSTATED,
+    ChatButtonState,
+    JobRecordStatus,
+    ScreeningStage,
+    TargetAction,
+    depth_already_reached,
+)
+from .errors import BrokerError, TransportError
 from .feed_records import (
     card_facets_record,
     card_record,
@@ -29,34 +41,24 @@ from .feed_records import (
     enriched_record,
     posting_from_record,
 )
+from .identifier_helpers import (
+    greeting_is_human,
+    is_communication_expired,
+    is_direct_hire_company,
+    jd_is_usable_on_file,
+)
+from .job_entities import JobCardBrief
 from .job_store import INVALID_JOB_TITLES, JobRecordStore
-from .memory import StructuredCandidateProfile
-from .models import (
+from .keyword_constants import (
     APPLIED_SOURCE_AGENT,
     APPLIED_SOURCE_PLATFORM_HISTORICAL,
-    DEPTH_DECLARED,
-    DEPTH_LEGACY_HALF_PAIR,
-    DEPTH_LEGACY_PAIR,
-    DEPTH_UNSTATED,
     EXPIRED_POSTING_REASON,
     GREETING_SOURCE_AGENT,
     GREETING_SOURCE_HUMAN,
     HEADHUNTER_COMMUTE_PROBE_SKIP_REASON,
     NOT_INSPECTED_DISTRICT_SKIP_REASON,
-    ChatButtonState,
-    FilterConfig,
-    JobCardBrief,
-    JobRecordStatus,
-    ScreeningPolicy,
-    ScreeningStage,
-    TargetAction,
-    depth_already_reached,
-    greeting_is_human,
-    is_communication_expired,
-    is_direct_hire_company,
-    jd_is_usable_on_file,
-    resolve_screening_policy,
 )
+from .memory import StructuredCandidateProfile
 from .pages import (
     ChatPage,
     FilterDialogPage,
@@ -74,6 +76,8 @@ from .screening import (
     JobEvaluationResult,
     JobVerdictStage,
 )
+from .screening_policy import ScreeningPolicy, resolve_screening_policy
+from .search_entities import FilterConfig
 from .settings import resolve_communication_cooldown_days
 
 logger = logging.getLogger(__name__)
@@ -512,9 +516,15 @@ class JobFeedPipeline:
             )
 
         await self._apply_filters(config)
-        self._excluded_companies = await self.store.get_applied_direct_companies(
-            cooldown_days=config.cooldown_days
-        )
+        try:
+            self._excluded_companies = await self.store.get_applied_direct_companies(
+                cooldown_days=config.cooldown_days
+            )
+        except (BrokerError, TransportError) as e:
+            await self._log(
+                f"⚠️ [持久化降级] 直招避嫌池读取遇到持久化异常（{e}），中断投递以避免重复沟通"
+            )
+            raise
         if self._excluded_companies:
             await self._log(
                 f"🏢 [避嫌池] 已加载 {len(self._excluded_companies)} 家已沟通直招企业"
@@ -732,6 +742,11 @@ class JobFeedPipeline:
             existing_record=existing_record,
         )
         persisted = await self.store.upsert_job_record(dict(run.card_record))
+        if persisted is None:
+            # Incomplete/placeholder card: nothing was written, so there is no record to
+            # inspect, index, or count. Appending the empty result would inflate the run's
+            # job list and hand ``_inspect_detail`` a record with no id (Spec #303, story #8).
+            return
         # The card itself is already a result: a detail-page failure must not lose it.
         run.result.jobs.append(persisted)
         run.jobs_index = len(run.result.jobs) - 1
@@ -781,7 +796,9 @@ class JobFeedPipeline:
                 f"{config.cooldown_days} 天，已释放回待评估流"
             )
 
-        if not is_released and depth_already_reached(config.target_action, existing_status, existing_record):
+        if not is_released and depth_already_reached(
+            config.target_action, existing_status, existing_record
+        ):
             result.skipped += 1
             await self._log(
                 f"⏭️ [State Machine] '{card.title}' already at '{existing_status}' "
@@ -1015,9 +1032,7 @@ class JobFeedPipeline:
                 if card_is_headhunter
                 else NOT_INSPECTED_DISTRICT_SKIP_REASON
             )
-            await self._log(
-                f"📍 [App端强制过滤] '{card.title}' @ '{card.company_name}' {reason}"
-            )
+            await self._log(f"📍 [App端强制过滤] '{card.title}' @ '{card.company_name}' {reason}")
 
         try:
             posting = self.detail_page.extract_job_posting(
@@ -1026,9 +1041,7 @@ class JobFeedPipeline:
                 fallback_title=card.title,
                 probe_commute_distance=should_probe,
                 is_headhunter=card_is_headhunter,
-                commute_probe_upgrade=station_probe_upgrade(
-                    resolved_policy, card_is_headhunter
-                ),
+                commute_probe_upgrade=station_probe_upgrade(resolved_policy, card_is_headhunter),
             )
         except Exception as e:
             logger.error("Failed to extract detail for '%s': %s", card.title, e)
@@ -1397,7 +1410,11 @@ class JobFeedPipeline:
         The count is read here once per card and kept on the run so the callers that only
         need it for a log line reuse this read rather than issuing their own.
         """
-        run.applied_today = await self.store.count_today_applied_jobs()
+        try:
+            run.applied_today = await self.store.count_today_applied_jobs()
+        except TransportError as e:
+            await self._log(f"⚠️ [持久化降级] 今日投递额度查询遇到持久化异常（{e}），无法确认配额")
+            raise
         if run.applied_today >= run.config.daily_greeting_limit:
             run.result.quota_exhausted = True
             return True
@@ -1471,7 +1488,11 @@ class JobFeedPipeline:
         }
         if match_score is not None:
             payload["match_score"] = match_score
-        saved = await self.store.upsert_job_record(dict(payload)) or {}
+        try:
+            saved = await self.store.upsert_job_record(dict(payload)) or {}
+        except TransportError as e:
+            await self._log(f"⚠️ [持久化降级] 岗位记录写入遇到持久化异常（{e}）")
+            saved = dict(payload)
         if match_score is None:
             # Nothing was scored this run, so the run reports what the record says rather
             # than a 0 that would read as judged-and-rejected.

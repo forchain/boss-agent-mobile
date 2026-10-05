@@ -43,19 +43,15 @@ describe('Chat acknowledgment settings (issue #208)', () => {
 	});
 
 	it('parses the nested chat block from the shipped settings template', async () => {
-		const { parseSimpleYaml } = await import('../lib/server/settings');
-		const example = fs.readFileSync(
-			path.join(getProjectRoot(), 'config', 'settings.example.yaml'),
-			'utf-8'
-		);
-		const parsed = parseSimpleYaml(example);
+		const { loadMergedSettings } = await import('../lib/server/settings');
+		const settings = loadMergedSettings();
 
-		expect(parsed.chat).toBeTruthy();
-		expect(parsed.chat.rejection_reply_text).toBe('收到 谢谢');
-		expect(parsed.chat.max_scan_depth).toBe(30);
+		expect(settings.chat).toBeTruthy();
+		expect(settings.chat?.rejection_reply_text).toBe('收到 谢谢');
+		expect(settings.chat?.max_scan_depth).toBe(30);
 		// The nested keys must not leak into the flat namespace.
-		expect(parsed.rejection_reply_text).toBeUndefined();
-		expect(parsed.max_scan_depth).toBeUndefined();
+		expect((settings as any).rejection_reply_text).toBeUndefined();
+		expect((settings as any).max_scan_depth).toBeUndefined();
 	});
 
 	it('exposes chat acknowledgment defaults through loadMergedSettings', async () => {
@@ -153,27 +149,21 @@ describe('Chat acknowledgment settings (issue #208)', () => {
 		expect(reloaded.chat?.max_scan_depth).toBe(30);
 	});
 
-	it('still coerces quoted scalars and flat lists (pre-existing parser contract)', async () => {
-		const { parseSimpleYaml } = await import('../lib/server/settings');
+	it('still coerces quoted scalars and flat lists via the Configuration Realm resolver', async () => {
+		const { saveSettingsToLocalYaml, loadMergedSettings } = await import('../lib/server/settings');
 
-		const scalars = parseSimpleYaml('max_tokens: "262144"\ntemperature: "0.2"\nflag: "true"\nempty: ""\n');
-		expect(scalars.max_tokens).toBe(262144);
-		expect(scalars.temperature).toBeCloseTo(0.2);
-		expect(scalars.flag).toBe(true);
-		expect(scalars.empty).toBe('');
+		saveSettingsToLocalYaml({
+			max_tokens: '262144' as any,
+			temperature: '0.2' as any,
+			title_blacklist: ['销售', '电销'],
+			chat: { max_scan_depth: '30' as any } as any
+		});
 
-		const list = parseSimpleYaml('title_blacklist:\n  - "销售"\n  - 电销\n');
-		expect(list.title_blacklist).toEqual(['销售', '电销']);
-
-		// A bare key followed by indented `k: v` is a map, not an empty list.
-		const nested = parseSimpleYaml('chat:\n  max_scan_depth: 9\n');
-		expect(nested.chat).toEqual({ max_scan_depth: 9 });
-
-		// A quoted nested scalar coerces like an unquoted one. The save path
-		// interpolates the value straight back into YAML, so `"30"` landing as the
-		// string '30' would round-trip as a quoted scalar rather than a number.
-		const nestedQuoted = parseSimpleYaml('chat:\n  max_scan_depth: "30"\n');
-		expect(nestedQuoted.chat).toEqual({ max_scan_depth: 30 });
+		const reloaded = loadMergedSettings();
+		expect(reloaded.max_tokens).toBe(262144);
+		expect(reloaded.temperature).toBeCloseTo(0.2);
+		expect(reloaded.title_blacklist).toEqual(['销售', '电销']);
+		expect(reloaded.chat?.max_scan_depth).toBe(30);
 	});
 
 	it('left the real settings file untouched', () => {

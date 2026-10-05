@@ -20,12 +20,12 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 TAG_PATTERN = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
 
 
-def parse_major_version(content: Optional[str]) -> int:
+def parse_major_version(content: str | None) -> int:
     """Parse major version integer from string content or file."""
     if not content:
         return 0
@@ -42,7 +42,7 @@ def parse_major_version(content: Optional[str]) -> int:
 
 
 def count_merged_prs(
-    merged_prs: List[Dict[str, Any]],
+    merged_prs: list[dict[str, Any]],
     current_pr_id: int,
 ) -> int:
     """Calculate the sequential merged PR count including the current PR."""
@@ -61,8 +61,8 @@ def count_merged_prs(
 
 def check_tag_collision(
     tag_name: str,
-    existing_releases: List[Dict[str, Any]],
-    existing_git_tags: Optional[List[str]] = None,
+    existing_releases: list[dict[str, Any]],
+    existing_git_tags: list[str] | None = None,
 ) -> bool:
     """Check if the tag name already exists in releases or git tags."""
     target = tag_name.strip()
@@ -87,7 +87,7 @@ def calculate_current_release(
     pr_author: str,
     repo_name: str,
     is_collision: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Calculate tag name and release notes for the current PR."""
     tag_name = f"v{major}.{pr_count}.{commits}"
     release_title = f"{tag_name} - {pr_title}"
@@ -109,8 +109,8 @@ def calculate_current_release(
 
     if is_collision:
         release_body += (
-            f"\n> ⚠️ **Note**: This release tag overwrites a legacy tag under the "
-            f"sequential merged PR count rule.\n"
+            "\n> ⚠️ **Note**: This release tag overwrites a legacy tag under the "
+            "sequential merged PR count rule.\n"
         )
 
     return {
@@ -121,12 +121,12 @@ def calculate_current_release(
 
 
 def plan_release(
-    major_str: Optional[str],
-    event_payload: Dict[str, Any],
-    existing_releases: List[Dict[str, Any]],
-    merged_prs: Optional[List[Dict[str, Any]]] = None,
-    existing_git_tags: Optional[List[str]] = None,
-) -> Dict[str, Any]:
+    major_str: str | None,
+    event_payload: dict[str, Any],
+    existing_releases: list[dict[str, Any]],
+    merged_prs: list[dict[str, Any]] | None = None,
+    existing_git_tags: list[str] | None = None,
+) -> dict[str, Any]:
     """Build the complete execution plan."""
     major = parse_major_version(major_str)
     pr = event_payload.get("pull_request", {})
@@ -172,7 +172,7 @@ def plan_release(
     }
 
 
-def _load_json_data(file_or_raw: Optional[str]) -> List[Any]:
+def _load_json_data(file_or_raw: str | None) -> list[Any]:
     """Load JSON from a file path if exists, else parse as raw JSON string."""
     if not file_or_raw:
         return []
@@ -204,7 +204,7 @@ def main() -> int:
 
     # Read Event Path
     event_path = args.event_path or os.environ.get("GITHUB_EVENT_PATH")
-    event_payload: Dict[str, Any] = {}
+    event_payload: dict[str, Any] = {}
     if event_path and Path(event_path).exists():
         event_payload = json.loads(Path(event_path).read_text(encoding="utf-8"))
 

@@ -15,15 +15,17 @@ import pytest
 
 from boss_agent.broker.models import TaskStatus, TaskType
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
-from boss_agent.models import (
+from boss_agent.enums import (
     STATE_RANK,
     TARGET_ACTION_RANK,
     JobRecordStatus,
-    SavedSearch,
-    SearchConfig,
     TargetAction,
 )
 from boss_agent.pages import JobListPage
+from boss_agent.search_entities import (
+    SavedSearch,
+    SearchConfig,
+)
 from boss_agent.worker.config import WorkerConfig
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.daemon import AutomationWorker

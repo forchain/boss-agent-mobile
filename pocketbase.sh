@@ -49,19 +49,7 @@ PB_HTTP="${PB_HTTP:-0.0.0.0:8090}"
 PID_FILE="${RUNTIME_DIR}/pocketbase.pid"
 LOG_FILE="${RUNTIME_DIR}/pocketbase.log"
 
-find_pb_binary() {
-    if command -v pocketbase >/dev/null 2>&1; then
-        echo "pocketbase"
-    elif [[ -x "/opt/homebrew/bin/pocketbase" ]]; then
-        echo "/opt/homebrew/bin/pocketbase"
-    elif [[ -x "/usr/local/bin/pocketbase" ]]; then
-        echo "/usr/local/bin/pocketbase"
-    else
-        echo ""
-    fi
-}
-
-PB_BIN="$(find_pb_binary)"
+PB_BIN="$(runner_find_binary pocketbase /opt/homebrew/bin/pocketbase /usr/local/bin/pocketbase)"
 
 run_provisioner() {
     local TARGET_DB="${1:-${PB_DATA_DIR}/data.db}"
@@ -72,46 +60,11 @@ run_provisioner() {
     fi
 }
 
-get_running_pb_pid() {
-    if [[ -f "${PID_FILE}" ]]; then
-        local PID
-        PID="$(cat "${PID_FILE}" 2>/dev/null || true)"
-        if [[ -n "${PID}" ]] && ps -p "${PID}" >/dev/null 2>&1; then
-            echo "${PID}"
-            return 0
-        fi
-    fi
-
-    # Fallback to the port's *listener* — never a bare `lsof -ti`. A dashboard holding
-    # an SSE stream to PocketBase is connected to this port, not listening on it, and
-    # adopting it here is what let `pb restart` kill a live dashboard.
-    local PORT="${PB_HTTP##*:}"
-    runner_resolve_pid "${PID_FILE}" "${PORT}"
-}
-
-attach_logs() {
-    local PID="$1"
-    local ENDPOINT="http://${PB_HTTP}"
-
-    echo "ℹ️ PocketBase is already running (PID: ${PID}) at ${ENDPOINT}"
-    echo "👀 Attaching to live log stream (${LOG_FILE})... (Press Ctrl+C to detach)"
-    echo "----------------------------------------------------------------------"
-
-    # Trap Ctrl+C to exit cleanly without killing the background PocketBase daemon
-    trap 'echo -e "\n👋 Detached from PocketBase logs (PocketBase is still running in background)."; exit 0' INT TERM
-
-    if [[ ! -f "${LOG_FILE}" ]]; then
-        touch "${LOG_FILE}"
-    fi
-
-    tail -n 30 -f "${LOG_FILE}"
-}
-
 cmd_status() {
     echo "🔍 Checking PocketBase status..."
     local HEALTH_URL="http://${PB_HTTP}/api/health"
     local PID
-    PID="$(get_running_pb_pid)"
+    PID="$(runner_resolve_pid "${PID_FILE}" "${PB_HTTP##*:}")"
 
     if curl -s -f "${HEALTH_URL}" >/dev/null 2>&1; then
         echo "🟢 PocketBase is RUNNING and HEALTHY at ${HEALTH_URL}"
@@ -134,7 +87,7 @@ cmd_stop() {
     echo "🛑 Stopping local PocketBase instance..."
     local STOPPED=0
     local PID
-    PID="$(get_running_pb_pid)"
+    PID="$(runner_resolve_pid "${PID_FILE}" "${PB_HTTP##*:}")"
 
     if [[ -n "${PID}" ]]; then
         runner_graceful_stop "${PID}" "${PB_STOP_TIMEOUT_SEC}" "PocketBase"
@@ -204,12 +157,12 @@ cmd_start() {
     # Check if already running
     if curl -s -f "${HEALTH_URL}" >/dev/null 2>&1; then
         local RUNNING_PID
-        RUNNING_PID="$(get_running_pb_pid)"
+        RUNNING_PID="$(runner_resolve_pid "${PID_FILE}" "${PB_HTTP##*:}")"
         if [[ ${DAEMON} -eq 1 ]]; then
             echo "ℹ️ PocketBase is already running in background (PID: ${RUNNING_PID:-unknown}) at ${HEALTH_URL}"
             exit 0
         else
-            attach_logs "${RUNNING_PID:-unknown}"
+            runner_attached_logs "${RUNNING_PID:-unknown}" "${LOG_FILE}" "PocketBase" "http://${PB_HTTP}"
             exit 0
         fi
     fi

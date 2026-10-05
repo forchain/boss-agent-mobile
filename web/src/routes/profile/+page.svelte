@@ -14,6 +14,7 @@
 		EducationItem,
 		ResumeRevision
 	} from "$lib/types";
+	import { apiPostForm } from "$lib/apiClient";
 
 	let loading = $state(true);
 	let saving = $state(false);
@@ -213,18 +214,12 @@
 		formData.append("userId", "default");
 
 		try {
-			const res = await fetch("/api/candidate/resume", {
-				method: "POST",
-				body: formData
-			});
+			const data = await apiPostForm<{
+				profile: Partial<CandidateProfile>;
+				diff_summary?: string;
+			}>("/api/candidate/resume", formData);
 
-			if (!res.ok) {
-				const errorData = await res.json().catch(() => ({}));
-				throw new Error(errorData.message || errorData.error || `HTTP ${res.status}`);
-			}
-
-			const data = await res.json();
-			const parsed = data.profile as Partial<CandidateProfile>;
+			const parsed = data.profile;
 			incomingParsedProfile = parsed;
 			incomingDiffSummary = data.diff_summary || "";
 

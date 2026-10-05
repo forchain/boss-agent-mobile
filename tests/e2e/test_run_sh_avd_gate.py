@@ -23,6 +23,8 @@ from _runner_harness import STATUS_BUDGET_SEC, TARGET_AVD, RunnerScriptHarness
 
 from _service_harness import REPO_ROOT, free_port
 
+pytestmark = pytest.mark.e2e
+
 RUN_SH = REPO_ROOT / "run.sh"
 
 # A direct adb query, as opposed to the word "adb" appearing in a hint or a script path.

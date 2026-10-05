@@ -24,15 +24,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from boss_agent.enums import ChannelPreference
 from boss_agent.feed_pipeline import FeedStreamConfig
-from boss_agent.models import (
-    ChannelPreference,
-    FilterConfig,
-    SavedSearch,
-    ScreeningPolicy,
-    SearchConfig,
-    resolve_screening_policy,
-)
+from boss_agent.screening_policy import ScreeningPolicy, resolve_screening_policy
+from boss_agent.search_entities import FilterConfig, SavedSearch, SearchConfig
 from boss_agent.task_launch import LaunchSource, build_search_launch
 
 

@@ -16,19 +16,18 @@ from pathlib import Path
 from typing import Any
 
 from boss_agent.chat_triage import (
-    MAX_INSPECTED_CARDS,
     ChatActorAdapter,
     ChatTriage,
     CommunicationListAdapter,
     TriagePages,
 )
-from boss_agent.models import ScreeningPolicy
 from boss_agent.pages import CommunicationCard
 from boss_agent.rejection import (
     DISINTEREST_REASON,
     ChatAcknowledgmentSettings,
     RejectionVerdict,
 )
+from boss_agent.screening_policy import ScreeningPolicy
 
 REJECTION_TEXT = "我们感谢您的投递，但您的专业技能与我们目前的职位需求并不完全吻合。"
 INVITATION_TEXT = "您好，方便约个时间聊聊吗？"

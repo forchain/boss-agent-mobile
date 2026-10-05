@@ -95,7 +95,8 @@ def test_smoke_harness_runs_matching_and_types_greeting():
 
 def _headhunter_smoke_harness(channel_policy, whitelist=None):
     """Build a SmokeHarness whose detail page yields a headhunter posting."""
-    from boss_agent.models import JobPosting, ScreeningPolicy
+    from boss_agent.job_entities import JobPosting
+    from boss_agent.screening_policy import ScreeningPolicy
 
     mock_driver = MagicMock()
     mock_driver.get_window_size.return_value = {"width": 1080, "height": 2400}

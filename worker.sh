@@ -46,26 +46,12 @@ WORKER_PID_FILE=".boss_agent/worker.pid"
 WORKER_LOG_FILE=".boss_agent/worker.log"
 WORKER_STOP_TIMEOUT_SEC="${WORKER_STOP_TIMEOUT_SEC:-10}"
 
-# The library's primitives, under this script's historical names. They were identical
-# copies of dashboard.sh's — including the zombie guard — which is exactly the drift the
-# library exists to end.
-process_alive() {
-    runner_process_alive "${1:-}"
-}
-
-wait_until() {
-    runner_wait_until "$@"
-}
-
-process_gone() {
-    runner_process_gone "${1:-}"
-}
 
 get_running_worker_pid() {
     if [[ -f "${WORKER_PID_FILE}" ]]; then
         local PID
         PID="$(cat "${WORKER_PID_FILE}" 2>/dev/null || true)"
-        if [[ -n "${PID}" ]] && process_alive "${PID}" && runner_process_cwd_alive "${PID}"; then
+        if [[ -n "${PID}" ]] && runner_process_alive "${PID}" && runner_process_cwd_alive "${PID}"; then
             echo "${PID}"
             return 0
         fi
@@ -75,7 +61,7 @@ get_running_worker_pid() {
     local FOUND_PID
     while IFS= read -r FOUND_PID; do
         [[ -z "${FOUND_PID}" ]] && continue
-        if process_alive "${FOUND_PID}" && runner_process_cwd_alive "${FOUND_PID}"; then
+        if runner_process_alive "${FOUND_PID}" && runner_process_cwd_alive "${FOUND_PID}"; then
             echo "${FOUND_PID}" > "${WORKER_PID_FILE}"
             echo "${FOUND_PID}"
             return 0
@@ -84,30 +70,15 @@ get_running_worker_pid() {
     echo ""
 }
 
-attach_worker_logs() {
-    local PID="$1"
-    echo "👀 Attaching to live log stream (${WORKER_LOG_FILE})... (Press Ctrl+C to detach)"
-    echo "----------------------------------------------------------------------"
-
-    trap 'echo -e "\n👋 Detached from Worker logs (Worker daemon is still running in background)."; exit 0' INT TERM
-
-    if [[ ! -f "${WORKER_LOG_FILE}" ]]; then
-        touch "${WORKER_LOG_FILE}"
-    fi
-
-    exec tail -n 30 -f "${WORKER_LOG_FILE}"
-}
-
 cmd_attach() {
     local PID
     PID="$(get_running_worker_pid)"
-    if [[ -z "${PID}" ]] || ! process_alive "${PID}"; then
+    if [[ -z "${PID}" ]] || ! runner_process_alive "${PID}"; then
         echo "🔴 Automation Worker daemon is NOT RUNNING." >&2
         echo "   Cannot attach to log stream. Start worker first via: ./worker.sh" >&2
         return 1
     fi
-    echo "ℹ️ Automation Worker daemon is running (PID: ${PID})."
-    attach_worker_logs "${PID}"
+    runner_attached_logs "${PID}" "${WORKER_LOG_FILE}" "Automation Worker daemon"
 }
 
 
@@ -116,7 +87,7 @@ cmd_status() {
     local PID
     PID="$(get_running_worker_pid)"
 
-    if [[ -n "${PID}" ]] && process_alive "${PID}"; then
+    if [[ -n "${PID}" ]] && runner_process_alive "${PID}"; then
         echo "🟢 Automation Worker daemon is RUNNING (PID: ${PID})."
         echo "   Log File: ${WORKER_LOG_FILE}"
         return 0
@@ -136,10 +107,10 @@ cmd_stop() {
     if [[ -n "${PID}" ]]; then
         kill "${PID}" 2>/dev/null || true
         pkill -P "${PID}" 2>/dev/null || true
-        if ! wait_until "${WORKER_STOP_TIMEOUT_SEC}" process_gone "${PID}"; then
+        if ! runner_wait_until "${WORKER_STOP_TIMEOUT_SEC}" runner_process_gone "${PID}"; then
             echo "⚠️ Graceful shutdown timed out after ${WORKER_STOP_TIMEOUT_SEC}s; sending SIGKILL."
             kill -9 "${PID}" 2>/dev/null || true
-            wait_until 2 process_gone "${PID}" || true
+            runner_wait_until 2 runner_process_gone "${PID}" || true
         fi
         STOPPED=1
     fi
@@ -150,7 +121,7 @@ cmd_stop() {
     if [[ -n "${RESIDUAL_PIDS}" ]]; then
         for r_pid in ${RESIDUAL_PIDS}; do
             kill "${r_pid}" 2>/dev/null || true
-            if ! wait_until 2 process_gone "${r_pid}"; then
+            if ! runner_wait_until 2 runner_process_gone "${r_pid}"; then
                 kill -9 "${r_pid}" 2>/dev/null || true
             fi
             STOPPED=1
@@ -236,14 +207,13 @@ cmd_start() {
 
     local RUNNING_PID
     RUNNING_PID="$(get_running_worker_pid)"
-    if [[ -n "${RUNNING_PID}" ]] && process_alive "${RUNNING_PID}"; then
+    if [[ -n "${RUNNING_PID}" ]] && runner_process_alive "${RUNNING_PID}"; then
         if [[ "${IS_DAEMON}" -eq 1 || "${DAEMON:-0}" -eq 1 ]]; then
             echo "ℹ️ Automation Worker daemon is already running in background (PID: ${RUNNING_PID})."
             echo "   Logs: ${WORKER_LOG_FILE}"
             return 0
         else
-            echo "ℹ️ Automation Worker daemon is already running (PID: ${RUNNING_PID})."
-            attach_worker_logs "${RUNNING_PID}"
+            runner_attached_logs "${RUNNING_PID}" "${WORKER_LOG_FILE}" "Automation Worker daemon"
             return 0
         fi
     fi

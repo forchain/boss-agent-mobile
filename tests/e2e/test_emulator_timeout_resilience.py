@@ -39,6 +39,8 @@ from _runner_harness import (
 
 from _service_harness import REPO_ROOT, wait_until_dead_pid
 
+pytestmark = pytest.mark.e2e
+
 EMULATOR_SH = REPO_ROOT / "emulator.sh"
 
 # An AVD name no real emulator can carry, for tests that reach `cmd_stop`'s `pkill` fallback.
@@ -433,9 +435,9 @@ def test_pidfile_records_the_emulator_itself(launched_avd):
     """
     runner, state_dir, _process = launched_avd
 
-    recorded = (runner.runtime_root / ".boss_agent" / "emulator.pid").read_text(
-        encoding="utf-8"
-    ).strip()
+    recorded = (
+        (runner.runtime_root / ".boss_agent" / "emulator.pid").read_text(encoding="utf-8").strip()
+    )
 
     assert recorded == str(runner.emulator_pid(state_dir)), (
         "emulator.pid must name the emulator process itself so `stop` can still reach it "

@@ -27,3 +27,9 @@ Previously, resume parsing was handled by ad-hoc scripts and procedural web endp
    Backwards compatibility is preserved in PocketBase by storing this document seamlessly in `raw_summary` while keeping `raw_resume_text` as the ground-truth text backup.
 3. **Streamlined Web Console Experience**:
    Refactor the profile management UI from brittle nested form inputs into a developer-centric layout featuring top-level metadata tags, a full markdown profile previewer/editor, and an interactive incremental revision drawer.
+
+## Amendment (2026-09-30, Spec #303 / #322): Retirement of Unreachable App-Enforced Filter Nodes
+The historical standalone LangGraph rule nodes (`app_enforced_filter_node`, `whitelist_relaxer`, `apply_relaxation_node`, `record_rejection_node`) in `boss_agent.graph` have been retired. Production execution of card-level screening (keyword matching, App-Enforced Filters, and Whitelist Relaxation) is unified behind `CandidateScreener.evaluate_card`, invoked in the graph exclusively via `make_card_screener_node`. The surviving seams in `boss_agent.graph` are:
+1. `ResumeLifecycleGraph`: Active stateful pipeline governing candidate resume parsing, normalization, and persistence.
+2. `JobApplicationGraph`: Traced adapter over `CandidateScreener` consisting strictly of `card_screener` and `job_evaluation`.
+Standalone rule nodes must not be reintroduced into the graph.

@@ -22,12 +22,13 @@ from boss_agent.candidate_memory_store import (
     InMemoryCandidateMemoryStore,
     PocketBaseCandidateMemoryStore,
 )
-from boss_agent.models import FilterConfig, SavedSearch, SearchConfig
+from boss_agent.errors import TransportError
 from boss_agent.saved_search_store import (
     InMemorySavedSearchStore,
     PocketBaseSavedSearchStore,
     SavedSearchStore,
 )
+from boss_agent.search_entities import FilterConfig, SavedSearch, SearchConfig
 
 
 class FakeResponse:
@@ -316,6 +317,9 @@ class _RejectingSession(FakePocketBaseSession):
             raise RuntimeError("connection reset")
         return FakeResponse(500, {"message": "boom"})
 
+    def get(self, url: str, **kwargs: Any) -> FakeResponse:
+        return self._reject("GET", url)
+
     def post(self, url: str, **kwargs: Any) -> FakeResponse:
         return self._reject("POST", url)
 
@@ -340,8 +344,10 @@ async def test_a_failed_search_write_reports_failure_rather_than_a_phantom(
         session=_RejectingSession(raise_instead=raise_instead),
         headers=_headers,
     )
-    assert await store.save_saved_search(_search()) is None
-    assert await store.list_saved_searches() == []
+    with pytest.raises(TransportError):
+        await store.save_saved_search(_search())
+    with pytest.raises(TransportError):
+        await store.list_saved_searches()
 
 
 @pytest.mark.parametrize("index", [0, 1], ids=["in-memory", "pocketbase"])
@@ -373,9 +379,7 @@ async def test_deleting_a_search_revokes_its_schedule(pb_session: FakePocketBase
 async def test_the_pocketbase_store_saves_the_collections_field_spellings() -> None:
     """The store is the one place that knows how a SavedSearch maps onto the record."""
     session = FakePocketBaseSession()
-    store = PocketBaseSavedSearchStore(
-        base_url="http://pb.test", session=session, headers=_headers
-    )
+    store = PocketBaseSavedSearchStore(base_url="http://pb.test", session=session, headers=_headers)
     await store.save_saved_search(_search())
 
     stored = session.collections["saved_searches"]["s1"]
