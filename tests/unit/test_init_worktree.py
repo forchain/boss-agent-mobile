@@ -760,4 +760,3 @@ def test_config_symlink_manager_node_modules_missing_in_main(tmp_path):
     manager = ConfigSymlinkManager(main_repo_root=main_repo)
     entry = manager.link_node_modules(target_worktree=target_wt)
     assert entry is None
-

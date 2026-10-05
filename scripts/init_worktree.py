@@ -590,7 +590,9 @@ class ConfigSymlinkManager:
                 details=str(e),
             )
 
-    def link_node_modules(self, target_worktree: Path, dry_run: bool = False) -> SymlinkEntry | None:
+    def link_node_modules(
+        self, target_worktree: Path, dry_run: bool = False
+    ) -> SymlinkEntry | None:
         """Symlink web/node_modules so worktree shares the main repo's frontend dependencies."""
         target_worktree = target_worktree.resolve()
         if target_worktree == self.main_repo_root:
@@ -687,7 +689,9 @@ class ConfigSymlinkManager:
         if boss_agent_entry:
             results.append(boss_agent_entry)
 
-        node_modules_entry = self.link_node_modules(target_worktree=target_worktree, dry_run=dry_run)
+        node_modules_entry = self.link_node_modules(
+            target_worktree=target_worktree, dry_run=dry_run
+        )
         if node_modules_entry:
             results.append(node_modules_entry)
 
