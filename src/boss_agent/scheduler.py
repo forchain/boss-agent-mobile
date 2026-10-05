@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import UTC, datetime, timedelta
+import os
+import zoneinfo
+from datetime import UTC, datetime, timedelta, tzinfo
 
 from boss_agent.broker.models import AutomationTask
 from boss_agent.broker.pocketbase_adapter import BaseTaskBroker
@@ -24,6 +26,22 @@ from boss_agent.task_launch import (
 )
 
 logger = logging.getLogger("boss_agent.scheduler")
+
+
+def get_scheduler_timezone() -> tzinfo:
+    """Get the timezone for cron schedule evaluation.
+
+    Defaults to the local system timezone. Can be overridden by
+    SCHEDULER_TIMEZONE environment variable (e.g. 'Asia/Shanghai').
+    """
+    tz_env = os.getenv("SCHEDULER_TIMEZONE")
+    if tz_env and tz_env.strip():
+        try:
+            return zoneinfo.ZoneInfo(tz_env.strip())
+        except Exception as e:
+            logger.warning("Invalid SCHEDULER_TIMEZONE '%s': %s", tz_env, e)
+    local_tz = datetime.now().astimezone().tzinfo
+    return local_tz if local_tz is not None else UTC
 
 
 def parse_cron_field(field_str: str, min_val: int, max_val: int) -> set[int]:
@@ -117,10 +135,11 @@ def get_next_cron_run(
     cron_expr: str,
     after: datetime | None = None,
     max_days: int = 30,
+    tz: tzinfo | None = None,
 ) -> datetime | None:
     """Compute the next matching datetime for a cron expression."""
     if after is None:
-        after = datetime.now(UTC)
+        after = datetime.now(tz or get_scheduler_timezone())
 
     # Start search at the beginning of the next minute
     cur = after.replace(second=0, microsecond=0) + timedelta(minutes=1)
@@ -142,12 +161,14 @@ class AutomationScheduler:
         broker: BaseTaskBroker,
         poll_interval_sec: float = 30.0,
         startup_gate: StartupCleanupGate | None = None,
+        tz: tzinfo | None = None,
     ) -> None:
         self.broker = broker
         self.poll_interval_sec = poll_interval_sec
         self.startup_gate = startup_gate or StartupCleanupGate(
             broker, enabled=resolve_run_cleanup_on_startup()
         )
+        self.tz = tz or get_scheduler_timezone()
         self._running = False
 
     async def run_once(self, now: datetime | None = None) -> list[AutomationTask]:
@@ -160,7 +181,7 @@ class AutomationScheduler:
         await self.startup_gate.arm()
 
         if now is None:
-            now = datetime.now(UTC)
+            now = datetime.now(self.tz)
 
         saved_searches = await self.broker.saved_searches.list_saved_searches()
         dispatched_tasks: list[AutomationTask] = []
@@ -188,13 +209,19 @@ class AutomationScheduler:
             if search.last_run_at:
                 try:
                     last_run_dt = datetime.fromisoformat(search.last_run_at.replace("Z", "+00:00"))
-                    if (
-                        last_run_dt.year == now.year
-                        and last_run_dt.month == now.month
-                        and last_run_dt.day == now.day
-                        and last_run_dt.hour == now.hour
-                        and last_run_dt.minute == now.minute
-                    ):
+                    if last_run_dt.tzinfo is not None and now.tzinfo is not None:
+                        same_minute = int(last_run_dt.timestamp() // 60) == int(
+                            now.timestamp() // 60
+                        )
+                    else:
+                        same_minute = (
+                            last_run_dt.year == now.year
+                            and last_run_dt.month == now.month
+                            and last_run_dt.day == now.day
+                            and last_run_dt.hour == now.hour
+                            and last_run_dt.minute == now.minute
+                        )
+                    if same_minute:
                         continue
                 except Exception:
                     pass

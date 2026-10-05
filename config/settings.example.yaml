@@ -66,6 +66,10 @@ communication_cooldown_days: 30
 # Set to false to disable LLM match scoring and greeting drafting
 enable_greeting: true
 
+# 是否随 Worker 守护进程一并运行内置的 Cron 周期调度引擎（默认: true）
+# （env: ENABLE_SCHEDULER, cli: --enable-scheduler / --no-scheduler）
+enable_scheduler: true
+
 # ------------------------------------------------------------------------------
 # 6. Preliminary Job Screening Policy & Blacklist/Whitelist Rules
 # ------------------------------------------------------------------------------

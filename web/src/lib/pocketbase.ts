@@ -129,3 +129,38 @@ export function formatCronHuman(cronExpr?: string): string {
 	}
 	return `Cron: ${cronExpr}`;
 }
+
+/**
+ * Format a PocketBase ISO/UTC datetime string into a local datetime string (YYYY-MM-DD HH:mm).
+ */
+export function formatDateTime(isoString?: string | null): string {
+	if (!isoString || !isoString.trim()) return '-';
+	try {
+		const raw = isoString.trim();
+		const withZ = raw.endsWith('Z') || raw.includes('+') ? raw : `${raw.replace(' ', 'T')}Z`;
+		const d = new Date(withZ);
+		if (isNaN(d.getTime())) return isoString;
+		const pad = (n: number) => n.toString().padStart(2, '0');
+		return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+	} catch {
+		return isoString;
+	}
+}
+
+/**
+ * Format a PocketBase ISO/UTC datetime string into local time only (HH:mm:ss).
+ */
+export function formatTimeOnly(isoString?: string | null): string {
+	if (!isoString || !isoString.trim()) return '-';
+	try {
+		const raw = isoString.trim();
+		const withZ = raw.endsWith('Z') || raw.includes('+') ? raw : `${raw.replace(' ', 'T')}Z`;
+		const d = new Date(withZ);
+		if (isNaN(d.getTime())) return isoString;
+		const pad = (n: number) => n.toString().padStart(2, '0');
+		return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+	} catch {
+		return isoString;
+	}
+}
+

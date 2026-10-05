@@ -657,3 +657,40 @@ def test_run_cleanup_on_startup_env_overrides_the_file(monkeypatch):
     monkeypatch.setenv("RUN_CLEANUP_ON_STARTUP", "0")
 
     assert resolve_run_cleanup_on_startup(settings={"run_cleanup_on_startup": True}) is False
+
+
+# ---------------------------------------------------------------------------
+# Integrated Cron Scheduler resolution
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_enable_scheduler_defaults_to_true():
+    """Worker daemon must enable the integrated scheduler by default so configured cron jobs run."""
+    from boss_agent.settings import resolve_enable_scheduler
+
+    with patch.dict("os.environ", {}, clear=True):
+        assert resolve_enable_scheduler(settings={}) is True
+
+
+def test_resolve_enable_scheduler_reads_settings_file():
+    from boss_agent.settings import resolve_enable_scheduler
+
+    with patch.dict("os.environ", {}, clear=True):
+        assert resolve_enable_scheduler(settings={"enable_scheduler": False}) is False
+
+
+def test_resolve_enable_scheduler_env_overrides_settings(monkeypatch):
+    from boss_agent.settings import resolve_enable_scheduler
+
+    monkeypatch.setenv("ENABLE_SCHEDULER", "0")
+    assert resolve_enable_scheduler(settings={"enable_scheduler": True}) is False
+
+    monkeypatch.setenv("ENABLE_SCHEDULER", "1")
+    assert resolve_enable_scheduler(settings={"enable_scheduler": False}) is True
+
+
+def test_resolve_enable_scheduler_explicit_arg_overrides_all(monkeypatch):
+    from boss_agent.settings import resolve_enable_scheduler
+
+    monkeypatch.setenv("ENABLE_SCHEDULER", "1")
+    assert resolve_enable_scheduler(explicit=False, settings={"enable_scheduler": True}) is False

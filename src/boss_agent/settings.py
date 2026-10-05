@@ -121,6 +121,32 @@ def resolve_run_cleanup_on_startup(
     return coerce_bool(raw, default=True)
 
 
+def resolve_enable_scheduler(
+    explicit: bool | None = None,
+    config_path: str | Path | None = None,
+    settings: dict[str, Any] | None = None,
+) -> bool:
+    """Resolve whether the integrated Cron scheduler daemon is enabled.
+
+    Precedence:
+      1. Explicit programmatic/CLI argument (`explicit`, if not None)
+      2. ENABLE_SCHEDULER environment variable
+      3. The `enable_scheduler` settings key
+      4. Built-in default: True.
+    """
+    if explicit is not None:
+        return bool(explicit)
+
+    merged = settings if settings is not None else load_settings(config_path=config_path)
+    raw: Any = merged.get("enable_scheduler")
+
+    env_value = os.getenv("ENABLE_SCHEDULER")
+    if env_value and env_value.strip():
+        raw = env_value.strip()
+
+    return coerce_bool(raw, default=True)
+
+
 def resolve_pocketbase_url(
     explicit_url: str | None = None,
     config_path: str | Path | None = None,

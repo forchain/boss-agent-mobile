@@ -10,7 +10,9 @@
 		cancelTask,
 		listSavedSearches,
 		updateSavedSearch,
-		formatCronHuman
+		formatCronHuman,
+		formatDateTime,
+		formatTimeOnly
 	} from '$lib/pocketbase';
 	import { buildSearchLaunch, DEFAULT_MAX_JOBS } from '$lib/taskLaunch';
 	import { dashboardRealtime } from '$lib/dashboardRealtime';
@@ -582,7 +584,7 @@
 							<button onclick={onUnfocusManualTask} class="text-cyan-400 hover:text-white underline ml-1">恢复自动跟踪</button>
 						</span>
 					{/if}
-					<span>创建: {activeTask.created?.slice(11, 19) || '刚刚'}</span>
+					<span>创建: {activeTask.created ? formatTimeOnly(activeTask.created) : '刚刚'}</span>
 					{#if activeTask.worker_id}
 						<span class="px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-slate-300">
 							Worker: {activeTask.worker_id}
@@ -790,7 +792,7 @@
 										{/if}
 									</td>
 									<td class="py-3 font-mono text-slate-500 text-[10px]">
-										{t.created?.slice(0, 16).replace('T', ' ') || '-'}
+										{formatDateTime(t.created)}
 									</td>
 									<td class="py-3 text-right space-x-1.5 whitespace-nowrap">
 										{#if ['running', 'paused_for_takeover', 'pending', 'resuming'].includes(t.status)}
@@ -934,7 +936,7 @@
 								{/if}
 
 								<div class="text-[10px] text-slate-500">
-									上次执行: {s.last_run_at ? s.last_run_at.slice(0, 16).replace('T', ' ') : '尚未触发'}
+									上次执行: {s.last_run_at ? formatDateTime(s.last_run_at) : '尚未触发'}
 								</div>
 							</div>
 
