@@ -725,3 +725,38 @@ def test_config_symlink_manager_discover_settings_yaml(tmp_path):
         discovered = manager.discover_shared_configs()
         discovered_names = {f.name for f in discovered}
         assert "settings.yaml" in discovered_names
+
+
+def test_config_symlink_manager_node_modules_linking(tmp_path):
+    """Test linking web/node_modules from main repo to worktree."""
+    main_repo = tmp_path / "main_repo"
+    main_node_modules = main_repo / "web" / "node_modules"
+    main_node_modules.mkdir(parents=True)
+    (main_node_modules / "some_pkg").mkdir()
+
+    target_wt = tmp_path / "worktree_web"
+    (target_wt / "web").mkdir(parents=True)
+
+    manager = ConfigSymlinkManager(main_repo_root=main_repo)
+    entry = manager.link_node_modules(target_worktree=target_wt)
+
+    assert entry is not None
+    assert entry.status == "created"
+    assert (target_wt / "web" / "node_modules").is_symlink()
+    assert (target_wt / "web" / "node_modules").resolve() == main_node_modules.resolve()
+
+    # Idempotent second run
+    entry2 = manager.link_node_modules(target_worktree=target_wt)
+    assert entry2 is not None
+    assert entry2.status == "already_linked"
+
+
+def test_config_symlink_manager_node_modules_missing_in_main(tmp_path):
+    """Test link_node_modules returns None when main repo has no web/node_modules."""
+    main_repo = tmp_path / "main_repo"
+    main_repo.mkdir()
+    target_wt = tmp_path / "worktree_web"
+
+    manager = ConfigSymlinkManager(main_repo_root=main_repo)
+    entry = manager.link_node_modules(target_worktree=target_wt)
+    assert entry is None

@@ -107,8 +107,10 @@ else
     log_fail "未找到 Node.js 或 npm 环境" "请安装 Node.js (推荐 v20+): brew install node"
 fi
 
-if [[ -d "web/node_modules" ]]; then
-    log_pass "Web 前端依赖 node_modules 已安装"
+if [[ -d "web/node_modules" ]] && npm --prefix web ls --depth=0 >/dev/null 2>&1; then
+    log_pass "Web 前端依赖 node_modules 已安装且满足 package.json"
+elif [[ -d "web/node_modules" ]]; then
+    log_warn "Web 前端依赖存在缺失或未满足项 (UNMET DEPENDENCIES)" "运行: npm --prefix web install"
 else
     log_fail "Web 前端依赖未安装" "运行: npm --prefix web install"
 fi
