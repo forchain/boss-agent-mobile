@@ -14,7 +14,11 @@ from collections.abc import Coroutine, Sequence
 from typing import Any
 
 from boss_agent.broker.pocketbase_adapter import PocketBaseTaskBroker
-from boss_agent.settings import resolve_pocketbase_url, resolve_server_url
+from boss_agent.settings import (
+    resolve_enable_scheduler,
+    resolve_pocketbase_url,
+    resolve_server_url,
+)
 from boss_agent.startup_cleanup import StartupCleanupGate
 from boss_agent.worker.config import WorkerConfig
 from boss_agent.worker.context import WorkerContext
@@ -114,8 +118,17 @@ def main() -> None:
     )
     parser.add_argument(
         "--enable-scheduler",
+        dest="enable_scheduler",
         action="store_true",
-        help="Enable integrated Cron scheduler daemon alongside the worker",
+        default=None,
+        help="Enable integrated Cron scheduler daemon alongside the worker (default: enabled)",
+    )
+    parser.add_argument(
+        "--no-scheduler",
+        "--disable-scheduler",
+        dest="enable_scheduler",
+        action="store_false",
+        help="Disable integrated Cron scheduler daemon alongside the worker",
     )
     parser.add_argument(
         "--log-level",
@@ -141,6 +154,7 @@ def main() -> None:
         appium_url=resolved_appium_url,
         pocketbase_url=resolved_pb_url,
         poll_interval_sec=args.poll_interval,
+        enable_scheduler=resolve_enable_scheduler(explicit=args.enable_scheduler),
     )
 
     broker = PocketBaseTaskBroker(base_url=resolved_pb_url)
@@ -185,7 +199,7 @@ def main() -> None:
     )
 
     service_coros: list[Coroutine[Any, Any, None]] = []
-    if args.enable_scheduler:
+    if config.enable_scheduler:
         from boss_agent.scheduler import AutomationScheduler
 
         scheduler = AutomationScheduler(

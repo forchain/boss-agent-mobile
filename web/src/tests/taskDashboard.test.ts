@@ -22,6 +22,8 @@ const mocks = vi.hoisted(() => ({
 	cancelTask: vi.fn(),
 	updateSavedSearch: vi.fn(),
 	formatCronHuman: vi.fn(() => 'every day at 09:00'),
+	formatDateTime: vi.fn((s: any) => s || '-'),
+	formatTimeOnly: vi.fn((s: any) => s || '刚刚'),
 	handler: null as null | ((event: { action: string; record: any }) => void)
 }));
 
@@ -34,7 +36,9 @@ vi.mock('$lib/pocketbase', () => ({
 	resumeTask: mocks.resumeTask,
 	cancelTask: mocks.cancelTask,
 	updateSavedSearch: mocks.updateSavedSearch,
-	formatCronHuman: mocks.formatCronHuman
+	formatCronHuman: mocks.formatCronHuman,
+	formatDateTime: mocks.formatDateTime,
+	formatTimeOnly: mocks.formatTimeOnly
 }));
 
 vi.mock('$lib/dashboardRealtime', () => ({

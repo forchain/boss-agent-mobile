@@ -536,6 +536,20 @@ describe('SvelteKit Server Endpoints', () => {
 		expect(formatCronHuman('')).toBe('未设置定时');
 	});
 
+	it('formats PocketBase UTC datetime strings into local datetime and time-only', async () => {
+		const { formatDateTime, formatTimeOnly } = await import('../lib/pocketbase');
+		expect(formatDateTime('')).toBe('-');
+		expect(formatDateTime(null)).toBe('-');
+		expect(formatTimeOnly('')).toBe('-');
+
+		// Valid ISO date string should parse into non-empty formatted strings
+		const dtStr = '2026-10-05 01:58:37.528Z';
+		const formatted = formatDateTime(dtStr);
+		expect(formatted).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
+		const timeOnly = formatTimeOnly(dtStr);
+		expect(timeOnly).toMatch(/^\d{2}:\d{2}:\d{2}$/);
+	});
+
 	it('DELETE /api/jobs/:id validates record id and handles deletion responses', async () => {
 		const { DELETE: handleJobDelete } = await import('../routes/api/jobs/[id]/+server');
 

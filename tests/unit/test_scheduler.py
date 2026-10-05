@@ -323,3 +323,72 @@ async def test_scheduler_respects_is_enabled_toggle_and_nested_authoritative_fla
     # Nested spelling won:
     assert dispatched.payload["enable_search"] is False
     assert dispatched.payload["enable_filter"] is False
+
+
+# ---------------------------------------------------------------------------
+# Timezone awareness & same-minute deduplication
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_scheduler_evaluates_cron_in_local_timezone_when_now_is_none():
+    """When now is None, scheduler evaluates cron in local/configured timezone, not UTC."""
+    from unittest.mock import patch
+    from zoneinfo import ZoneInfo
+
+    broker = InMemoryTaskBroker()
+    search = SavedSearch(
+        id="beijing_search",
+        name="9am Job",
+        cron_expression="0 9 * * *",
+        is_enabled=True,
+    )
+    await broker.saved_searches.save_saved_search(search)
+
+    # 09:00:00 in Asia/Shanghai is 01:00:00 in UTC
+    cst = ZoneInfo("Asia/Shanghai")
+    beijing_9am = datetime(2026, 10, 5, 9, 0, 0, tzinfo=cst)
+
+    scheduler = AutomationScheduler(
+        broker=broker, startup_gate=StartupCleanupGate(broker, enabled=False), tz=cst
+    )
+
+    with patch("boss_agent.scheduler.datetime") as mock_dt:
+        mock_dt.now.side_effect = lambda tz=None: beijing_9am.astimezone(tz) if tz else beijing_9am
+        mock_dt.fromisoformat = datetime.fromisoformat
+        tasks = await scheduler.run_once(now=None)
+
+    assert len(tasks) == 1
+    assert tasks[0].payload["keyword"] == search.search.keyword
+
+
+@pytest.mark.asyncio
+async def test_scheduler_same_minute_guard_handles_pocketbase_utc_timestamp():
+    """PocketBase converts DATE fields to UTC format (e.g. 2026-10-05 01:00:10.000Z).
+
+    Scheduler must recognize that 01:00:10 UTC is the same minute as 09:00:30 CST
+    and suppress re-triggering.
+    """
+    from zoneinfo import ZoneInfo
+
+    broker = InMemoryTaskBroker()
+    search = SavedSearch(
+        id="cst_search",
+        name="CST Deduplication",
+        cron_expression="0 9 * * *",
+        is_enabled=True,
+        # UTC representation of 09:00:10+08:00
+        last_run_at="2026-10-05 01:00:10.000Z",
+    )
+    await broker.saved_searches.save_saved_search(search)
+
+    cst = ZoneInfo("Asia/Shanghai")
+    scheduler = AutomationScheduler(
+        broker=broker, startup_gate=StartupCleanupGate(broker, enabled=False), tz=cst
+    )
+
+    # 20 seconds later in the same minute
+    now_cst = datetime(2026, 10, 5, 9, 0, 30, tzinfo=cst)
+    tasks = await scheduler.run_once(now=now_cst)
+
+    assert len(tasks) == 0, "Same-minute guard should prevent duplicate task dispatch"
