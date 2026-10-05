@@ -590,6 +590,86 @@ class ConfigSymlinkManager:
                 details=str(e),
             )
 
+    def link_node_modules(self, target_worktree: Path, dry_run: bool = False) -> SymlinkEntry | None:
+        """Symlink web/node_modules so worktree shares the main repo's frontend dependencies."""
+        target_worktree = target_worktree.resolve()
+        if target_worktree == self.main_repo_root:
+            return None
+
+        main_node_modules = self.main_repo_root / "web" / "node_modules"
+        if not main_node_modules.exists():
+            return None
+
+        target_web = target_worktree / "web"
+        target_node_modules = target_web / "node_modules"
+
+        try:
+            rel_node_modules_src = os.path.relpath(main_node_modules, target_node_modules.parent)
+        except Exception:
+            rel_node_modules_src = str(main_node_modules)
+
+        if dry_run:
+            return SymlinkEntry(
+                source=str(main_node_modules),
+                target=str(target_node_modules),
+                status="created (dry-run)",
+                details="Would symlink web/node_modules to main repo web/node_modules",
+            )
+
+        if target_node_modules.is_symlink():
+            current_target = target_node_modules.resolve()
+            if current_target == main_node_modules.resolve():
+                return SymlinkEntry(
+                    source=str(main_node_modules),
+                    target=str(target_node_modules),
+                    status="already_linked",
+                    details="Symlink already intact",
+                )
+            else:
+                target_node_modules.unlink()
+                target_node_modules.symlink_to(rel_node_modules_src)
+                return SymlinkEntry(
+                    source=str(main_node_modules),
+                    target=str(target_node_modules),
+                    status="relinked",
+                    details="Re-pointed existing symlink to main repo web/node_modules",
+                )
+
+        if target_node_modules.exists():
+            if target_node_modules.is_dir() and not any(target_node_modules.iterdir()):
+                target_node_modules.rmdir()
+                target_node_modules.symlink_to(rel_node_modules_src)
+                return SymlinkEntry(
+                    source=str(main_node_modules),
+                    target=str(target_node_modules),
+                    status="created",
+                    details="Replaced empty directory with symlink to main repo web/node_modules",
+                )
+            else:
+                return SymlinkEntry(
+                    source=str(main_node_modules),
+                    target=str(target_node_modules),
+                    status="skipped",
+                    details="Regular non-empty directory or file already exists",
+                )
+
+        try:
+            target_web.mkdir(parents=True, exist_ok=True)
+            target_node_modules.symlink_to(rel_node_modules_src)
+            return SymlinkEntry(
+                source=str(main_node_modules),
+                target=str(target_node_modules),
+                status="created",
+                details="Symlink to main repo web/node_modules established successfully",
+            )
+        except Exception as e:
+            return SymlinkEntry(
+                source=str(main_node_modules),
+                target=str(target_node_modules),
+                status="error",
+                details=str(e),
+            )
+
     def link_shared_configs(
         self, target_worktree: Path, dry_run: bool = False
     ) -> list[SymlinkEntry]:
@@ -606,6 +686,10 @@ class ConfigSymlinkManager:
         boss_agent_entry = self.link_boss_agent(target_worktree=target_worktree, dry_run=dry_run)
         if boss_agent_entry:
             results.append(boss_agent_entry)
+
+        node_modules_entry = self.link_node_modules(target_worktree=target_worktree, dry_run=dry_run)
+        if node_modules_entry:
+            results.append(node_modules_entry)
 
         configs = self.discover_shared_configs()
         for src_file in configs:

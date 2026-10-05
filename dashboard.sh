@@ -189,9 +189,9 @@ cmd_start() {
         exit 1
     fi
 
-    # Ensure dependencies are installed
-    if [[ ! -d "web/node_modules" ]]; then
-        echo "📦 Installing web frontend dependencies (web/node_modules missing)..."
+    # Ensure dependencies are installed and in sync with package.json
+    if [[ ! -d "web/node_modules" ]] || ! npm --prefix web ls --depth=0 >/dev/null 2>&1; then
+        echo "📦 Installing web frontend dependencies (missing or unmet dependencies)..."
         npm --prefix web install
     fi
 
