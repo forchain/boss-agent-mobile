@@ -376,11 +376,11 @@
 	{/if}
 
 	<!-- Top Summary Banner -->
-	<div class="bg-gradient-to-r from-slate-900 via-slate-900/90 to-cyan-950/40 border border-slate-800 rounded-2xl p-6 shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-4">
+	<div class="bg-gradient-to-r from-slate-900 via-slate-900/90 to-cyan-950/40 border border-slate-800 rounded-2xl p-4 sm:p-6 shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-4">
 		<div>
-			<div class="flex items-center space-x-3">
-				<span class="text-2xl">💼</span>
-				<h1 class="text-xl font-bold bg-gradient-to-r from-white via-slate-200 to-cyan-300 bg-clip-text text-transparent">
+			<div class="flex items-center space-x-2.5 sm:space-x-3 flex-wrap gap-y-1">
+				<span class="text-xl sm:text-2xl">💼</span>
+				<h1 class="text-base sm:text-xl font-bold bg-gradient-to-r from-white via-slate-200 to-cyan-300 bg-clip-text text-transparent">
 					职位发现与 AI 匹配工作台
 				</h1>
 				<span class="text-xs px-2.5 py-0.5 rounded-full bg-cyan-950 text-cyan-400 border border-cyan-800 font-mono font-medium">
@@ -392,20 +392,20 @@
 			</p>
 		</div>
 
-		<div class="flex items-center space-x-3 text-xs">
-			<div class="bg-slate-950/80 border border-slate-800 px-3.5 py-2 rounded-xl flex items-center space-x-2 font-mono">
+		<div class="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3 text-xs w-full md:w-auto">
+			<div class="bg-slate-950/80 border border-slate-800 px-3 py-2 rounded-xl flex items-center justify-between sm:justify-start space-x-2 font-mono">
 				<span class="text-slate-400">待评估:</span>
 				<span class="font-bold text-cyan-400 text-sm">{counts.jd_saved}</span>
 			</div>
-			<div class="bg-slate-950/80 border border-slate-800 px-3.5 py-2 rounded-xl flex items-center space-x-2 font-mono">
+			<div class="bg-slate-950/80 border border-slate-800 px-3 py-2 rounded-xl flex items-center justify-between sm:justify-start space-x-2 font-mono">
 				<span class="text-slate-400">已评估:</span>
 				<span class="font-bold text-emerald-400 text-sm">{counts.matched}</span>
 			</div>
-			<div class="bg-slate-950/80 border border-slate-800 px-3.5 py-2 rounded-xl flex items-center space-x-2 font-mono">
+			<div class="bg-slate-950/80 border border-slate-800 px-3 py-2 rounded-xl flex items-center justify-between sm:justify-start space-x-2 font-mono">
 				<span class="text-slate-400">已沟通:</span>
 				<span class="font-bold text-blue-400 text-sm">{counts.applied}</span>
 			</div>
-			<div class="bg-slate-950/80 border border-slate-800 px-3.5 py-2 rounded-xl flex items-center space-x-2 font-mono">
+			<div class="bg-slate-950/80 border border-slate-800 px-3 py-2 rounded-xl flex items-center justify-between sm:justify-start space-x-2 font-mono">
 				<span class="text-slate-400">已淘汰:</span>
 				<span class="font-bold text-rose-400 text-sm">{counts.ignored}</span>
 			</div>
@@ -413,40 +413,40 @@
 	</div>
 
 	<!-- Master-Detail 2-Column Responsive Layout -->
-	<div class="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+	<div class="grid grid-cols-1 lg:grid-cols-12 gap-5 lg:gap-8 items-start">
 		<!-- Left Column: Master Job List (5 Cols) -->
 		<div class="lg:col-span-5 space-y-4">
 			<!-- Filter & Search Card -->
-			<div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 shadow-xl space-y-3">
+			<div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-3.5 sm:p-4 shadow-xl space-y-3">
 				<!-- Status Tabs -->
-				<div class="grid grid-cols-2 sm:grid-cols-5 gap-1 p-1 bg-slate-950 border border-slate-800/80 rounded-xl text-xs font-medium">
+				<div class="flex overflow-x-auto no-scrollbar sm:grid sm:grid-cols-5 gap-1 p-1 bg-slate-950 border border-slate-800/80 rounded-xl text-xs font-medium">
 					<button
 						onclick={() => onFilterChange('all')}
-						class="py-1.5 rounded-lg transition text-center {currentFilter === 'all' ? 'bg-cyan-600 text-white shadow font-semibold' : 'text-slate-400 hover:text-slate-200'}"
+						class="py-1.5 px-3 sm:px-1 rounded-lg transition text-center whitespace-nowrap shrink-0 {currentFilter === 'all' ? 'bg-cyan-600 text-white shadow font-semibold' : 'text-slate-400 hover:text-slate-200'}"
 					>
 						全部 ({counts.all})
 					</button>
 					<button
 						onclick={() => onFilterChange('jd_saved')}
-						class="py-1.5 rounded-lg transition text-center {currentFilter === 'jd_saved' ? 'bg-cyan-600 text-white shadow font-semibold' : 'text-slate-400 hover:text-slate-200'}"
+						class="py-1.5 px-3 sm:px-1 rounded-lg transition text-center whitespace-nowrap shrink-0 {currentFilter === 'jd_saved' ? 'bg-cyan-600 text-white shadow font-semibold' : 'text-slate-400 hover:text-slate-200'}"
 					>
 						待评估 ({counts.jd_saved})
 					</button>
 					<button
 						onclick={() => onFilterChange('matched')}
-						class="py-1.5 rounded-lg transition text-center {currentFilter === 'matched' ? 'bg-cyan-600 text-white shadow font-semibold' : 'text-slate-400 hover:text-slate-200'}"
+						class="py-1.5 px-3 sm:px-1 rounded-lg transition text-center whitespace-nowrap shrink-0 {currentFilter === 'matched' ? 'bg-cyan-600 text-white shadow font-semibold' : 'text-slate-400 hover:text-slate-200'}"
 					>
 						已评估 ({counts.matched})
 					</button>
 					<button
 						onclick={() => onFilterChange('applied')}
-						class="py-1.5 rounded-lg transition text-center {currentFilter === 'applied' ? 'bg-cyan-600 text-white shadow font-semibold' : 'text-slate-400 hover:text-slate-200'}"
+						class="py-1.5 px-3 sm:px-1 rounded-lg transition text-center whitespace-nowrap shrink-0 {currentFilter === 'applied' ? 'bg-cyan-600 text-white shadow font-semibold' : 'text-slate-400 hover:text-slate-200'}"
 					>
 						已沟通 ({counts.applied})
 					</button>
 					<button
 						onclick={() => onFilterChange('ignored')}
-						class="py-1.5 rounded-lg transition text-center {currentFilter === 'ignored' ? 'bg-rose-950 text-rose-300 border border-rose-800 shadow font-semibold' : 'text-slate-400 hover:text-slate-200'}"
+						class="py-1.5 px-3 sm:px-1 rounded-lg transition text-center whitespace-nowrap shrink-0 {currentFilter === 'ignored' ? 'bg-rose-950 text-rose-300 border border-rose-800 shadow font-semibold' : 'text-slate-400 hover:text-slate-200'}"
 					>
 						已淘汰 ({counts.ignored})
 					</button>

@@ -161,7 +161,7 @@
 
 {#if isOpen}
 	<div
-		class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm"
+		class="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-sm"
 		role="dialog"
 		aria-modal="true"
 	>
@@ -169,19 +169,19 @@
 			class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95 duration-150"
 		>
 			<!-- Modal Header -->
-			<div class="px-6 py-4 border-b border-slate-800 flex items-center justify-between bg-slate-900/90">
-				<div class="flex items-center space-x-2.5">
-					<div class="w-8 h-8 rounded-xl bg-gradient-to-tr from-cyan-600 to-blue-600 flex items-center justify-center text-sm shadow">
+			<div class="px-4 sm:px-6 py-3.5 sm:py-4 border-b border-slate-800 flex items-center justify-between bg-slate-900/90">
+				<div class="flex items-center space-x-2.5 min-w-0">
+					<div class="w-8 h-8 rounded-xl bg-gradient-to-tr from-cyan-600 to-blue-600 flex items-center justify-center text-sm shadow shrink-0">
 						🚀
 					</div>
-					<div>
-						<h3 class="text-sm font-bold text-slate-100">发起自动化任务 (Launch Task)</h3>
-						<p class="text-[11px] text-slate-400">选择已配置的搜索条件策略发起任务，或下发系统自检任务</p>
+					<div class="min-w-0">
+						<h3 class="text-xs sm:text-sm font-bold text-slate-100 truncate">发起自动化任务 (Launch Task)</h3>
+						<p class="text-[10px] sm:text-[11px] text-slate-400 truncate">选择搜索策略下发任务，或执行系统自检</p>
 					</div>
 				</div>
 				<button
 					onclick={onClose}
-					class="text-slate-400 hover:text-slate-200 p-1.5 rounded-lg hover:bg-slate-800 transition"
+					class="text-slate-400 hover:text-slate-200 p-1.5 rounded-lg hover:bg-slate-800 transition shrink-0 ml-2"
 					aria-label="关闭"
 				>
 					✕
@@ -189,10 +189,10 @@
 			</div>
 
 			<!-- Tab Navigation -->
-			<div class="px-6 pt-3 border-b border-slate-800 bg-slate-950/50 flex space-x-3 text-xs">
+			<div class="px-4 sm:px-6 pt-3 border-b border-slate-800 bg-slate-950/50 flex space-x-2 sm:space-x-3 text-xs overflow-x-auto scrollbar-none">
 				<button
 					onclick={() => (activeTab = 'template')}
-					class="pb-2.5 px-2 font-medium transition border-b-2 {activeTab === 'template'
+					class="pb-2.5 px-2 font-medium whitespace-nowrap transition border-b-2 {activeTab === 'template'
 						? 'border-cyan-400 text-cyan-300 font-semibold'
 						: 'border-transparent text-slate-400 hover:text-slate-200'}"
 				>
@@ -200,7 +200,7 @@
 				</button>
 				<button
 					onclick={() => (activeTab = 'chat_cleanup')}
-					class="pb-2.5 px-2 font-medium transition border-b-2 {activeTab === 'chat_cleanup'
+					class="pb-2.5 px-2 font-medium whitespace-nowrap transition border-b-2 {activeTab === 'chat_cleanup'
 						? 'border-cyan-400 text-cyan-300 font-semibold'
 						: 'border-transparent text-slate-400 hover:text-slate-200'}"
 				>
@@ -208,7 +208,7 @@
 				</button>
 				<button
 					onclick={() => (activeTab = 'diagnostic')}
-					class="pb-2.5 px-2 font-medium transition border-b-2 {activeTab === 'diagnostic'
+					class="pb-2.5 px-2 font-medium whitespace-nowrap transition border-b-2 {activeTab === 'diagnostic'
 						? 'border-cyan-400 text-cyan-300 font-semibold'
 						: 'border-transparent text-slate-400 hover:text-slate-200'}"
 				>
@@ -217,7 +217,7 @@
 			</div>
 
 			<!-- Modal Body -->
-			<div class="p-6 overflow-y-auto space-y-4 text-xs">
+			<div class="p-4 sm:p-6 overflow-y-auto space-y-4 text-xs">
 				{#if errorMessage}
 					<div class="p-3 rounded-xl bg-rose-950/80 border border-rose-800 text-rose-300 text-xs">
 						{errorMessage}
@@ -521,7 +521,7 @@
 			</div>
 
 			<!-- Modal Footer -->
-			<div class="px-6 py-4 border-t border-slate-800 bg-slate-900/90 flex items-center justify-between">
+			<div class="px-4 sm:px-6 py-3 sm:py-4 border-t border-slate-800 bg-slate-900/90 flex items-center justify-between">
 				<button
 					type="button"
 					onclick={onClose}

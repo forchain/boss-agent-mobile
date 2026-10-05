@@ -534,9 +534,9 @@
 	<!-- Page Header -->
 	<div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-5">
 		<div>
-			<div class="flex items-center space-x-2">
-				<span class="text-2xl">🔍</span>
-				<h1 class="text-lg font-bold text-slate-100">搜索策略与预设管理 (Saved Searches)</h1>
+			<div class="flex items-center space-x-2 flex-wrap gap-y-1">
+				<span class="text-xl sm:text-2xl">🔍</span>
+				<h1 class="text-base sm:text-lg font-bold text-slate-100">搜索策略与预设管理 (Saved Searches)</h1>
 				<span class="text-[10px] px-2 py-0.5 rounded bg-cyan-950 text-cyan-400 border border-cyan-800 font-mono">
 					Database Persisted
 				</span>
@@ -546,7 +546,7 @@
 			</p>
 		</div>
 
-		<div class="flex items-center space-x-3">
+		<div class="flex items-center gap-2 sm:gap-3 flex-wrap">
 			<button
 				onclick={loadSearches}
 				type="button"
@@ -573,7 +573,7 @@
 			<span>正在从 PocketBase 数据库加载搜索策略...</span>
 		</div>
 	{:else if searches.length === 0}
-		<div class="bg-slate-900/50 border border-slate-800 rounded-2xl p-12 text-center space-y-3">
+		<div class="bg-slate-900/50 border border-slate-800 rounded-2xl p-6 sm:p-12 text-center space-y-3">
 			<div class="text-4xl">📂</div>
 			<h3 class="text-sm font-semibold text-slate-200">暂无已保存的搜索策略</h3>
 			<p class="text-xs text-slate-400 max-w-md mx-auto">
@@ -600,11 +600,11 @@
 			</div>
 		</div>
 	{:else}
-		<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+		<div class="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
 			{#each searches as search (search.id)}
 				{@const currentAction = resolveTargetAction(search)}
 				{@const isChatCleanup = isChatCleanupStrategy(search)}
-				<div class="bg-slate-900/80 border border-slate-800 hover:border-slate-700 rounded-2xl p-6 shadow-xl space-y-4 flex flex-col justify-between transition-all">
+				<div class="bg-slate-900/80 border border-slate-800 hover:border-slate-700 rounded-2xl p-4 sm:p-6 shadow-xl space-y-4 flex flex-col justify-between transition-all">
 					<div class="space-y-3">
 						<!-- Card Header: Title & Badges -->
 						<div class="flex items-start justify-between gap-2">
@@ -786,7 +786,7 @@
 								</a>
 							</div>
 						{/if}
-						<div class="flex items-center justify-between gap-2">
+						<div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
 							<div class="flex flex-wrap items-center gap-1.5">
 								{#if isChatCleanup}
 									<button
@@ -830,7 +830,7 @@
 								{/if}
 							</div>
 
-							<div class="flex items-center space-x-2 text-xs">
+							<div class="flex items-center space-x-2 text-xs self-end sm:self-auto">
 								<button
 									type="button"
 									onclick={() => openEditModal(search)}
@@ -856,10 +856,10 @@
 
 <!-- Create / Edit Search Strategy Modal -->
 {#if isModalOpen}
-	<div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-fade-in overflow-y-auto">
+	<div class="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/70 backdrop-blur-sm animate-fade-in overflow-y-auto">
 		<div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden my-auto">
 			<!-- Modal Header -->
-			<div class="px-6 py-4 border-b border-slate-800 flex items-center justify-between">
+			<div class="px-4 sm:px-6 py-3.5 sm:py-4 border-b border-slate-800 flex items-center justify-between">
 				<div class="flex items-center space-x-2">
 					<span class="text-xl">{isEditing ? '✏️' : '✨'}</span>
 					<h2 class="text-sm font-bold text-slate-100">
@@ -876,7 +876,7 @@
 			</div>
 
 			<!-- Modal Body (Scrollable) -->
-			<div class="p-6 overflow-y-auto space-y-5 text-xs text-slate-300">
+			<div class="p-4 sm:p-6 overflow-y-auto space-y-5 text-xs text-slate-300">
 				{#if formError}
 					<div class="bg-rose-950/50 border border-rose-900 text-rose-300 px-3 py-2 rounded-xl text-xs">
 						{formError}

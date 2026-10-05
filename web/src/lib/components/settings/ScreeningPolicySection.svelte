@@ -43,13 +43,13 @@
 	}
 </script>
 
-<div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6">
+<div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 sm:p-6 shadow-xl space-y-6">
 	<!-- Section Header -->
 	<div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800/80 pb-4">
 		<div class="flex items-center space-x-2.5">
-			<span class="text-xl">🛡️</span>
+			<span class="text-xl shrink-0">🛡️</span>
 			<div>
-				<div class="flex items-center space-x-2">
+				<div class="flex items-center space-x-2 flex-wrap gap-y-1">
 					<h2 class="font-semibold text-sm text-slate-200">初筛与黑白名单策略 (Screening Policy)</h2>
 					<span class="text-[10px] px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-400 border border-cyan-800/60 font-mono">
 						config/screening.local.yaml
@@ -61,7 +61,7 @@
 			</div>
 		</div>
 
-		<div class="flex items-center space-x-3 self-end sm:self-auto">
+		<div class="flex items-center gap-3 flex-wrap self-start sm:self-auto">
 			<label class="relative inline-flex items-center cursor-pointer">
 				<input
 					type="checkbox"
@@ -69,7 +69,7 @@
 					class="sr-only peer"
 				/>
 				<div class="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-cyan-600"></div>
-				<span class="ml-2 text-xs font-medium text-slate-300">
+				<span class="ml-2 text-xs font-medium text-slate-300 whitespace-nowrap">
 					{$screeningPolicyStore.enable_screening ? '初筛已启用' : '初筛已停用'}
 				</span>
 			</label>
@@ -77,7 +77,7 @@
 				type="button"
 				onclick={handleSave}
 				disabled={$isSavingPolicy}
-				class="px-3.5 py-1.5 text-xs rounded-xl bg-cyan-950/80 text-cyan-300 hover:bg-cyan-900/80 border border-cyan-800/80 transition flex items-center space-x-1.5 disabled:opacity-60"
+				class="px-3.5 py-1.5 text-xs rounded-xl bg-cyan-950/80 text-cyan-300 hover:bg-cyan-900/80 border border-cyan-800/80 transition flex items-center space-x-1.5 disabled:opacity-60 whitespace-nowrap"
 			>
 				{#if $isSavingPolicy}
 					<span class="w-3 h-3 border-2 border-cyan-300 border-t-transparent rounded-full animate-spin"></span>

@@ -453,12 +453,12 @@
 	<title>候选人全景画像中心 - Boss Agent Mobile</title>
 </svelte:head>
 
-<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+<div class="space-y-6 sm:space-y-8 pb-12">
 	<!-- Top Bar -->
-	<div class="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-6">
+	<div class="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-5 sm:pb-6">
 		<div>
-			<div class="flex items-center space-x-3">
-				<h1 class="text-2xl font-bold text-white flex items-center gap-2">
+			<div class="flex items-center space-x-2.5 sm:space-x-3 flex-wrap gap-y-1">
+				<h1 class="text-xl sm:text-2xl font-bold text-white flex items-center gap-2">
 					<span>👤</span> 候选人全景画像中心
 				</h1>
 				<span class="px-2.5 py-0.5 rounded-full text-xs font-medium bg-cyan-950 text-cyan-400 border border-cyan-800/80">
@@ -470,7 +470,7 @@
 			</p>
 		</div>
 
-		<div class="flex items-center space-x-3">
+		<div class="flex items-center gap-2 sm:gap-3 flex-wrap">
 			<button
 				type="button"
 				onclick={() => (showRevisionHistory = !showRevisionHistory)}
@@ -613,7 +613,7 @@
 	{/if}
 
 	<!-- Upload & Resume Parsing Card -->
-	<div class="p-6 rounded-2xl bg-gradient-to-b from-slate-900 to-slate-900/60 border border-slate-800 shadow-xl space-y-4">
+	<div class="p-4 sm:p-6 rounded-2xl bg-gradient-to-b from-slate-900 to-slate-900/60 border border-slate-800 shadow-xl space-y-4">
 		<div class="flex items-center justify-between">
 			<div>
 				<h2 class="text-base font-bold text-white flex items-center gap-2">
@@ -638,7 +638,7 @@
 					class="block w-full text-xs text-slate-400 file:mr-4 file:py-2.5 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-slate-800 file:text-cyan-400 hover:file:bg-slate-700 cursor-pointer bg-slate-950/60 rounded-xl border border-slate-800 px-3 py-2"
 				/>
 			</div>
-			<div class="flex items-end h-full pt-6">
+			<div class="flex items-end h-full pt-2 md:pt-6">
 				<button
 					type="button"
 					onclick={uploadResumeFile}
@@ -739,11 +739,11 @@
 	</div>
 
 	<!-- Primary Core Section: Unabbreviated Profile Document -->
-	<div class="p-6 rounded-2xl bg-slate-900 border border-slate-800 shadow-2xl space-y-4">
+	<div class="p-4 sm:p-6 rounded-2xl bg-slate-900 border border-slate-800 shadow-2xl space-y-4">
 		<div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-4">
 			<div>
-				<div class="flex items-center space-x-2">
-					<h2 class="text-base font-bold text-white flex items-center gap-2">
+				<div class="flex items-center space-x-2 flex-wrap gap-y-1">
+					<h2 class="text-sm sm:text-base font-bold text-white flex items-center gap-2">
 						<span>📑</span> 候选人无损全景画像文档 (Structured Profile Document)
 					</h2>
 					<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-800/80 uppercase tracking-wider">
@@ -755,7 +755,7 @@
 				</p>
 			</div>
 
-			<div class="flex items-center space-x-2">
+			<div class="flex items-center gap-2 flex-wrap">
 				<button
 					type="button"
 					onclick={copyDocumentText}

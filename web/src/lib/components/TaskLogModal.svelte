@@ -32,7 +32,7 @@
 
 {#if isOpen && task}
 	<div
-		class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm"
+		class="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-sm"
 		role="dialog"
 		aria-modal="true"
 	>
@@ -40,14 +40,14 @@
 			class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-3xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh] animate-in fade-in zoom-in-95 duration-150"
 		>
 			<!-- Header -->
-			<div class="px-6 py-4 border-b border-slate-800 flex items-center justify-between bg-slate-900/90">
-				<div class="flex items-center space-x-3">
-					<span class="text-xl">📜</span>
-					<div>
+			<div class="px-4 sm:px-6 py-3 sm:py-4 border-b border-slate-800 flex items-center justify-between bg-slate-900/90">
+				<div class="flex items-center space-x-2.5 sm:space-x-3 min-w-0">
+					<span class="text-xl shrink-0">📜</span>
+					<div class="min-w-0">
 						<div class="flex items-center space-x-2">
-							<h3 class="text-sm font-bold text-slate-100">任务执行日志详情</h3>
+							<h3 class="text-xs sm:text-sm font-bold text-slate-100 truncate">任务执行日志详情</h3>
 							<span
-								class="text-[10px] px-2 py-0.5 rounded-full font-mono font-medium {task.status === 'success'
+								class="text-[10px] px-2 py-0.5 rounded-full font-mono font-medium shrink-0 {task.status === 'success'
 									? 'bg-emerald-950 text-emerald-400 border border-emerald-800'
 									: task.status === 'failed'
 										? 'bg-rose-950 text-rose-400 border border-rose-800'
@@ -58,14 +58,14 @@
 								{task.status.toUpperCase()}
 							</span>
 						</div>
-						<p class="text-[11px] text-slate-400 font-mono mt-0.5">
+						<p class="text-[10px] sm:text-[11px] text-slate-400 font-mono mt-0.5 truncate">
 							ID: {task.id} · 类型: {task.task_type}
 						</p>
 					</div>
 				</div>
 				<button
 					onclick={onClose}
-					class="text-slate-400 hover:text-slate-200 p-1.5 rounded-lg hover:bg-slate-800 transition"
+					class="text-slate-400 hover:text-slate-200 p-1.5 rounded-lg hover:bg-slate-800 transition shrink-0 ml-2"
 					aria-label="关闭"
 				>
 					✕
@@ -73,7 +73,7 @@
 			</div>
 
 			<!-- Metadata Bar -->
-			<div class="px-6 py-2.5 bg-slate-950/70 border-b border-slate-800 text-[11px] flex flex-wrap items-center justify-between gap-3 text-slate-400">
+			<div class="px-4 sm:px-6 py-2.5 bg-slate-950/70 border-b border-slate-800 text-[11px] flex flex-wrap items-center justify-between gap-2.5 text-slate-400">
 				<div>
 					<span>创建时间: </span>
 					<span class="text-slate-200 font-mono">{task.created || '未知'}</span>
@@ -102,7 +102,7 @@
 			<div
 				use:logAutoScroll={() => ({ identity: task?.id ?? null, content: task?.logs?.length ?? 0 })}
 				data-testid="task-log-scroll"
-				class="p-6 overflow-y-auto flex-1 bg-slate-950 font-mono text-xs text-slate-300 space-y-1 select-text leading-relaxed"
+				class="p-4 sm:p-6 overflow-y-auto flex-1 bg-slate-950 font-mono text-xs text-slate-300 space-y-1 select-text leading-relaxed"
 			>
 				{#if task.logs && task.logs.length > 0}
 					{#each task.logs as line}
@@ -114,13 +114,13 @@
 			</div>
 
 			<!-- Footer Actions -->
-			<div class="px-6 py-3.5 border-t border-slate-800 bg-slate-900/90 flex items-center justify-between text-xs">
+			<div class="px-4 sm:px-6 py-3 border-t border-slate-800 bg-slate-900/90 flex flex-wrap items-center justify-between gap-2 text-xs">
 				<button
 					type="button"
 					onclick={copyLogsToClipboard}
 					class="border border-slate-700 bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-1.5 rounded-lg transition flex items-center space-x-1.5"
 				>
-					<span>{copySuccess ? '✅ 已复制到剪贴板' : '📋 复制完整日志'}</span>
+					<span>{copySuccess ? '✅ 已复制' : '📋 复制完整日志'}</span>
 				</button>
 
 				<div class="flex items-center space-x-2">

@@ -2,10 +2,10 @@
 	import { settingsStore } from '$lib/stores/settings';
 </script>
 
-<div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-5">
-	<div class="flex items-center justify-between border-b border-slate-800/80 pb-4">
+<div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 sm:p-6 shadow-xl space-y-5">
+	<div class="flex items-start sm:items-center justify-between gap-3 border-b border-slate-800/80 pb-4">
 		<div class="flex items-center space-x-2.5">
-			<span class="text-xl">📱</span>
+			<span class="text-xl shrink-0">📱</span>
 			<div>
 				<h2 class="font-semibold text-sm text-slate-100">移动端与虚拟设备自动化 (Device & Automation)</h2>
 				<p class="text-[11px] text-slate-400 mt-0.5">
@@ -13,7 +13,7 @@
 				</p>
 			</div>
 		</div>
-		<span class="text-[11px] px-2.5 py-0.5 rounded-full bg-blue-950 text-blue-400 border border-blue-800/80 font-mono">
+		<span class="text-[11px] px-2.5 py-0.5 rounded-full bg-blue-950 text-blue-400 border border-blue-800/80 font-mono shrink-0">
 			执行节点
 		</span>
 	</div>

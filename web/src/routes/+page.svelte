@@ -423,13 +423,13 @@
 	});
 </script>
 
-<div class="space-y-8 pb-12">
+<div class="space-y-6 sm:space-y-8 pb-12">
 	<!-- Top Operation Header -->
-	<div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-slate-800/80 pb-6">
+	<div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-slate-800/80 pb-5 sm:pb-6">
 		<div>
 			<div class="flex items-center space-x-2.5">
-				<span class="text-2xl">📋</span>
-				<h1 class="text-xl font-bold bg-gradient-to-r from-white to-slate-200 bg-clip-text text-transparent">
+				<span class="text-xl sm:text-2xl">📋</span>
+				<h1 class="text-base sm:text-xl font-bold bg-gradient-to-r from-white to-slate-200 bg-clip-text text-transparent">
 					自动化任务管理看板 (Task Operations Center)
 				</h1>
 			</div>
@@ -438,7 +438,7 @@
 			</p>
 		</div>
 
-		<div class="flex items-center space-x-3">
+		<div class="flex items-center gap-2 sm:gap-3 flex-wrap">
 			<button
 				onclick={refreshAllData}
 				class="text-xs text-slate-400 hover:text-slate-200 border border-slate-800 bg-slate-900/60 px-3 py-2 rounded-xl transition flex items-center gap-1.5"
@@ -457,29 +457,29 @@
 	<!-- HITL Takeover Alert Banner -->
 	{#if isPausedForTakeover}
 		<div
-			class="border border-amber-500/70 bg-amber-950/60 p-5 rounded-2xl flex flex-col md:flex-row items-center justify-between shadow-2xl shadow-amber-900/40 animate-pulse gap-4"
+			class="border border-amber-500/70 bg-amber-950/60 p-4 sm:p-5 rounded-2xl flex flex-col md:flex-row items-start md:items-center justify-between shadow-2xl shadow-amber-900/40 animate-pulse gap-4"
 		>
-			<div class="flex items-center space-x-3.5">
-				<span class="text-3xl shrink-0">⚠️</span>
+			<div class="flex items-start sm:items-center space-x-3.5">
+				<span class="text-2xl sm:text-3xl shrink-0 mt-0.5 sm:mt-0">⚠️</span>
 				<div>
-					<h3 class="font-bold text-amber-300 text-sm md:text-base">
+					<h3 class="font-bold text-amber-300 text-xs sm:text-sm md:text-base">
 						检测到安全验证码 / 页面需要人工接管 (HITL Required)
 					</h3>
-					<p class="text-xs text-amber-200/90 mt-0.5 leading-relaxed">
+					<p class="text-[11px] sm:text-xs text-amber-200/90 mt-0.5 leading-relaxed">
 						检测到滑块验证码或安全挑战。请在 Android 模拟器/真机窗口完成验证，完成后点击右侧恢复继续自动化。
 					</p>
 				</div>
 			</div>
-			<div class="flex items-center space-x-2.5 shrink-0">
+			<div class="flex items-center space-x-2.5 shrink-0 w-full sm:w-auto justify-end">
 				<button
 					onclick={onResumeActiveTask}
-					class="bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold px-4 py-2 rounded-xl text-xs shadow-lg transition"
+					class="bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold px-3.5 sm:px-4 py-2 rounded-xl text-xs shadow-lg transition flex-1 sm:flex-initial text-center"
 				>
 					✅ 我已完成验证，恢复执行
 				</button>
 				<button
 					onclick={onCancelActiveTask}
-					class="bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium px-3.5 py-2 rounded-xl text-xs transition border border-slate-700"
+					class="bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium px-3 sm:px-3.5 py-2 rounded-xl text-xs transition border border-slate-700 shrink-0"
 				>
 					取消任务
 				</button>
@@ -488,7 +488,7 @@
 	{/if}
 
 	<!-- Section 1: Active Task Console -->
-	<div id="task-console" class="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
+	<div id="task-console" class="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 sm:p-6 shadow-xl space-y-4">
 		<div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-800/80 pb-4">
 			<div class="flex items-center space-x-2.5">
 				<span class="text-xl">⚡</span>
@@ -505,7 +505,7 @@
 				</div>
 			</div>
 
-			<div class="flex items-center space-x-2.5">
+			<div class="flex items-center space-x-2.5 flex-wrap gap-y-1">
 				{#if activeTask}
 					<span
 						class="text-[11px] px-2.5 py-1 rounded-full font-mono font-medium {activeTask.status === 'running'
@@ -535,58 +535,58 @@
 		</div>
 
 		{#if activeTask}
-			<!-- Active Task Details Bar -->
-			<div class="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs">
-				<div class="flex items-center space-x-4">
-					<div>
+			<!-- Active Task Details Bar (Responsive Grid for Mobile & Desktop) -->
+			<div class="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
+				<div class="grid grid-cols-2 sm:grid-cols-3 md:flex md:flex-wrap md:items-center gap-3 md:gap-x-5 md:gap-y-2">
+					<div class="min-w-0">
 						<span class="text-slate-500 text-[10px] block">任务 ID</span>
-						<span data-testid="console-task-id" class="font-mono text-slate-200">{activeTask.id}</span>
+						<span data-testid="console-task-id" class="font-mono text-slate-200 block truncate" title={activeTask.id}>{activeTask.id}</span>
 					</div>
-					<div>
+					<div class="min-w-0">
 						<span class="text-slate-500 text-[10px] block">任务类型</span>
-						<span class="font-semibold text-cyan-400 font-mono">{activeTask.task_type}</span>
+						<span class="font-semibold text-cyan-400 font-mono block truncate">{activeTask.task_type}</span>
 					</div>
 					{#if getTaskStrategyName(activeTask)}
-						<div>
+						<div class="min-w-0">
 							<span class="text-slate-500 text-[10px] block">策略名</span>
-							<span class="font-bold text-slate-100 flex items-center gap-1">
-								<span class="text-cyan-400">🎯</span>
-								<span class="truncate max-w-[200px]">{getTaskStrategyName(activeTask)}</span>
+							<span class="font-bold text-slate-100 flex items-center gap-1 min-w-0">
+								<span class="text-cyan-400 shrink-0">🎯</span>
+								<span class="truncate max-w-[150px] sm:max-w-[200px]" title={getTaskStrategyName(activeTask)}>{getTaskStrategyName(activeTask)}</span>
 							</span>
 						</div>
 					{/if}
 					{#if activeTask.payload?.keyword}
-						<div>
+						<div class="min-w-0">
 							<span class="text-slate-500 text-[10px] block">关键词</span>
-							<span class="font-mono text-slate-200">"{activeTask.payload.keyword}"</span>
+							<span class="font-mono text-slate-200 block truncate" title={activeTask.payload.keyword}>"{activeTask.payload.keyword}"</span>
 						</div>
 					{/if}
 					{#if activeTask.payload?.target_action}
-						<div>
+						<div class="min-w-0">
 							<span class="text-slate-500 text-[10px] block">目标操作</span>
-							<span class="font-medium text-slate-200">
+							<span class="font-medium text-slate-200 whitespace-nowrap block">
 								{activeTask.payload.target_action === 'auto_apply' ? '🚀 自动打招呼' : '📖 深度存JD'}
 							</span>
 						</div>
 					{/if}
 					{#if activeTask.payload?.min_score && activeTask.task_type === 'AUTO_APPLY'}
-						<div>
+						<div class="min-w-0">
 							<span class="text-slate-500 text-[10px] block">最低匹配分</span>
-							<span class="font-mono text-slate-200">{activeTask.payload.min_score}分</span>
+							<span class="font-mono text-slate-200 whitespace-nowrap block">{activeTask.payload.min_score}分</span>
 						</div>
 					{/if}
 				</div>
 
-				<div class="flex items-center space-x-3 text-[11px] text-slate-400 font-mono">
+				<div class="flex flex-wrap items-center gap-2 sm:gap-3 text-[11px] text-slate-400 font-mono pt-2.5 md:pt-0 border-t border-slate-800/60 md:border-t-0">
 					{#if manuallySelectedTaskId}
-						<span class="px-2 py-0.5 rounded bg-cyan-950/80 border border-cyan-700 text-cyan-300 flex items-center gap-1">
+						<span class="px-2 py-0.5 rounded bg-cyan-950/80 border border-cyan-700 text-cyan-300 flex items-center gap-1 shrink-0">
 							📌 手动固定监视
 							<button onclick={onUnfocusManualTask} class="text-cyan-400 hover:text-white underline ml-1">恢复自动跟踪</button>
 						</span>
 					{/if}
-					<span>创建: {activeTask.created ? formatTimeOnly(activeTask.created) : '刚刚'}</span>
+					<span class="shrink-0">创建: {activeTask.created ? formatTimeOnly(activeTask.created) : '刚刚'}</span>
 					{#if activeTask.worker_id}
-						<span class="px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-slate-300">
+						<span class="px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-slate-300 truncate max-w-[200px]" title={activeTask.worker_id}>
 							Worker: {activeTask.worker_id}
 						</span>
 					{/if}
@@ -648,17 +648,18 @@
 	</div>
 
 	<!-- Section 2: History & Scheduled Jobs Tabs -->
-	<div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-5">
-		<!-- Tab Switcher -->
-		<div class="flex items-center justify-between border-b border-slate-800/80 pb-3">
-			<div class="flex items-center space-x-4">
+	<div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 sm:p-6 shadow-xl space-y-5">
+		<!-- Tab Switcher (Responsive Stacking & Scrolling for Mobile) -->
+		<div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800/80 pb-3">
+			<div class="flex items-center space-x-2 sm:space-x-4 overflow-x-auto no-scrollbar">
 				<button
 					onclick={() => (bottomTab = 'history')}
-					class="font-semibold text-sm transition pb-2 border-b-2 flex items-center space-x-2 {bottomTab === 'history'
+					class="font-semibold text-xs sm:text-sm transition pb-2 border-b-2 flex items-center space-x-1.5 whitespace-nowrap shrink-0 {bottomTab === 'history'
 						? 'border-cyan-400 text-cyan-300 font-bold'
 						: 'border-transparent text-slate-400 hover:text-slate-200'}"
 				>
-					<span>📋 任务执行历史与审计 (Task History)</span>
+					<span class="sm:hidden">📋 任务执行历史</span>
+					<span class="hidden sm:inline">📋 任务执行历史与审计 (Task History)</span>
 					<span class="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-800 text-slate-400 font-mono">
 						{totalTasks}
 					</span>
@@ -666,11 +667,12 @@
 
 				<button
 					onclick={() => (bottomTab = 'scheduled')}
-					class="font-semibold text-sm transition pb-2 border-b-2 flex items-center space-x-2 {bottomTab === 'scheduled'
+					class="font-semibold text-xs sm:text-sm transition pb-2 border-b-2 flex items-center space-x-1.5 whitespace-nowrap shrink-0 {bottomTab === 'scheduled'
 						? 'border-cyan-400 text-cyan-300 font-bold'
 						: 'border-transparent text-slate-400 hover:text-slate-200'}"
 				>
-					<span>⏰ 定时任务与周期触发 (Scheduled Jobs)</span>
+					<span class="sm:hidden">⏰ 定时任务调度</span>
+					<span class="hidden sm:inline">⏰ 定时任务与周期触发 (Scheduled Jobs)</span>
 					<span class="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-800 text-slate-400 font-mono">
 						{scheduledSearches.length}
 					</span>
@@ -679,14 +681,14 @@
 
 			{#if bottomTab === 'history'}
 				<!-- Filter Pills -->
-				<div class="flex items-center space-x-1 text-xs">
+				<div class="flex items-center space-x-1 text-xs overflow-x-auto no-scrollbar py-0.5">
 					{#each ['all', 'success', 'failed', 'cancelled'] as f}
 						<button
 							onclick={() => {
 								historyFilter = f;
 								loadTaskHistory(1);
 							}}
-							class="px-2.5 py-1 rounded-lg text-[11px] font-medium transition {historyFilter === f
+							class="px-2.5 py-1 rounded-lg text-[11px] font-medium transition whitespace-nowrap shrink-0 {historyFilter === f
 								? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
 								: 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'}"
 						>
@@ -697,7 +699,7 @@
 			{:else}
 				<a
 					href="/searches"
-					class="text-xs text-cyan-400 hover:text-cyan-300 font-medium flex items-center gap-1"
+					class="text-xs text-cyan-400 hover:text-cyan-300 font-medium flex items-center gap-1 shrink-0"
 				>
 					管理全部策略库 ↗
 				</a>
@@ -716,8 +718,8 @@
 					暂无符合条件的历史任务记录
 				</div>
 			{:else}
-				<div class="overflow-x-auto">
-					<table class="w-full text-left text-xs">
+				<div class="overflow-x-auto -mx-4 sm:mx-0 px-4 sm:px-0">
+					<table class="w-full text-left text-xs min-w-[620px]">
 						<thead>
 							<tr class="border-b border-slate-800 text-slate-400 text-[11px]">
 								<th class="pb-2.5 font-medium">任务 ID</th>
