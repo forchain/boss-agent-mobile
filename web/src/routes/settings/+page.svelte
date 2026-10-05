@@ -28,13 +28,13 @@
 	}
 </script>
 
-<div class="max-w-5xl mx-auto space-y-8 pb-16">
+<div class="max-w-5xl mx-auto space-y-6 sm:space-y-8 pb-16">
 	<!-- Page Header -->
-	<div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-slate-800/80 pb-6">
+	<div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-slate-800/80 pb-5 sm:pb-6">
 		<div class="space-y-1">
-			<div class="flex items-center space-x-3">
-				<span class="text-2xl">⚙️</span>
-				<h1 class="text-xl font-bold bg-gradient-to-r from-white via-slate-200 to-cyan-300 bg-clip-text text-transparent">
+			<div class="flex items-center space-x-2 sm:space-x-3 flex-wrap gap-y-1">
+				<span class="text-xl sm:text-2xl">⚙️</span>
+				<h1 class="text-base sm:text-xl font-bold bg-gradient-to-r from-white via-slate-200 to-cyan-300 bg-clip-text text-transparent">
 					系统运行与大模型配置
 				</h1>
 				<span class="text-xs px-2.5 py-0.5 rounded-full bg-cyan-950 text-cyan-400 border border-cyan-800 font-mono font-medium">
@@ -46,12 +46,12 @@
 			</p>
 		</div>
 
-		<div class="flex items-center space-x-3">
+		<div class="flex items-center space-x-3 w-full sm:w-auto">
 			<button
 				type="button"
 				onclick={saveSystemSettings}
 				disabled={$isSavingSettings}
-				class="bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-medium px-5 py-2.5 rounded-xl text-xs transition shadow-lg shadow-cyan-900/20 flex items-center space-x-2 disabled:opacity-60 shrink-0"
+				class="w-full sm:w-auto justify-center bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-medium px-5 py-2.5 rounded-xl text-xs transition shadow-lg shadow-cyan-900/20 flex items-center space-x-2 disabled:opacity-60 shrink-0"
 			>
 				{#if $isSavingSettings}
 					<span class="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>

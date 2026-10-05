@@ -48,8 +48,8 @@
 	}
 </script>
 
-<div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6">
-	<div class="flex items-center justify-between border-b border-slate-800/80 pb-4">
+<div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 sm:p-6 shadow-xl space-y-4 sm:space-y-6">
+	<div class="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-800/80 pb-4 gap-2">
 		<div class="flex items-center space-x-2.5">
 			<span class="text-xl">🎯</span>
 			<div>
@@ -61,7 +61,7 @@
 				</p>
 			</div>
 		</div>
-		<span class="text-[11px] px-2.5 py-0.5 rounded-full {$screeningPromptStore.isDefault ? 'bg-amber-950 text-amber-300 border border-amber-800/80' : 'bg-cyan-950 text-cyan-300 border border-cyan-800/80'} font-mono">
+		<span class="self-start sm:self-auto text-[11px] px-2.5 py-0.5 rounded-full {$screeningPromptStore.isDefault ? 'bg-amber-950 text-amber-300 border border-amber-800/80' : 'bg-cyan-950 text-cyan-300 border border-cyan-800/80'} font-mono">
 			{$screeningPromptStore.isDefault ? '默认种子' : '已沉淀记忆'}
 		</span>
 	</div>
