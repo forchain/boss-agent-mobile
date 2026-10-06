@@ -351,9 +351,7 @@ class SavedSearch:
                 "business_district_inspect_list": data.get("business_district_inspect_list"),
             }
 
-        screening_policy = (
-            ScreeningPolicy.from_dict(policy_data) if policy_data else None
-        )
+        screening_policy = ScreeningPolicy.from_dict(policy_data) if policy_data else None
 
         target_task_type = data.get("target_task_type", TargetTaskType.AUTO_APPLY)
         target_action = data.get("target_action")

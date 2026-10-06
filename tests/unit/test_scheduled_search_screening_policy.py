@@ -9,14 +9,12 @@ title_blacklist, company_blacklist, and other screening rules.
 
 from unittest.mock import patch
 
-import pytest
-
 from boss_agent.feed_pipeline import FeedStreamConfig
 from boss_agent.job_entities import JobCardBrief
 from boss_agent.screening import CandidateScreener
 from boss_agent.screening_policy import ScreeningPolicy
 from boss_agent.search_entities import FilterConfig, SavedSearch, SearchConfig
-from boss_agent.task_launch import LaunchSource, TaskKind, build_launch, build_search_launch
+from boss_agent.task_launch import LaunchSource, TaskKind, build_launch
 
 
 def test_saved_search_without_policy_defaults_screening_policy_to_none():
@@ -60,7 +58,9 @@ def test_build_search_launch_without_policy_does_not_stamp_screening_policy():
     launch = build_launch(TaskKind.SEARCH, source=LaunchSource.SCHEDULER, search=search)
 
     # Payload must NOT carry an empty screening_policy dict
-    assert "screening_policy" not in launch.payload or launch.payload.get("screening_policy") is None
+    assert (
+        "screening_policy" not in launch.payload or launch.payload.get("screening_policy") is None
+    )
 
 
 def test_feed_stream_config_inherits_global_policy_when_not_in_payload():
