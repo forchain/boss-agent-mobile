@@ -4,12 +4,24 @@ tests/unit/test_atomic_lease_and_buffered_logs.py
 Unit tests verifying atomic task compare-and-set leasing and buffered task-log flush (Issue #309).
 """
 
+from datetime import timedelta
 from unittest.mock import MagicMock
 
 import pytest
 
 from boss_agent.broker.models import TaskStatus, TaskType
 from boss_agent.broker.pocketbase_adapter import PocketBaseTaskBroker
+
+
+def _running_task_record(task_id: str = "task_stream") -> dict:
+    return {
+        "id": task_id,
+        "task_type": TaskType.SCRAPE_JOBS.value,
+        "status": "running",
+        "worker_id": "w1",
+        "last_heartbeat_at": "2026-10-06T00:00:00Z",
+        "logs": ["[System] Task created and waiting for worker dispatch..."],
+    }
 
 
 @pytest.mark.asyncio
@@ -194,3 +206,94 @@ async def test_abnormal_run_failure_preserves_logs():
     assert "step 1: started browser" in call_json["logs"][0]
     assert "step 2: clicked search" in call_json["logs"][1]
     assert "Uncaught exception: Crash" in call_json["logs"][2]
+
+
+@pytest.mark.asyncio
+async def test_quiet_run_publishes_logs_before_it_ends():
+    """A run that stays under the line bound must still publish its logs while it runs.
+
+    The bound alone bounds *write amplification*, not visibility. A task emitting fewer
+    than `log_buffer_bound` lines stayed entirely in the worker's memory until its
+    terminal transition, so the dashboard's "Realtime Terminal Output" showed nothing
+    for the whole run — the count bound only ever fires once the run is effectively over.
+    A deadline on the oldest buffered line bounds how long a line may be invisible.
+    """
+    mock_session = MagicMock()
+    get_resp = MagicMock()
+    get_resp.status_code = 200
+    get_resp.json.return_value = _running_task_record()
+    mock_session.get.return_value = get_resp
+
+    patch_resp = MagicMock()
+    patch_resp.status_code = 200
+    patch_resp.json.return_value = _running_task_record()
+    mock_session.patch.return_value = patch_resp
+
+    broker = PocketBaseTaskBroker(session=mock_session)
+    broker.log_buffer_bound = 10
+
+    await broker.append_log("task_stream", "line 1")
+    await broker.append_log("task_stream", "line 2")
+    assert mock_session.patch.call_count == 0, "fresh lines stay buffered"
+
+    # The worker goes quiet for an hour before appending again. The wait is stated as a
+    # fixed span rather than "longer than the configured deadline" so this test cannot
+    # satisfy itself: a deadline that is absent, or set beyond any bound a live log
+    # stream could carry, leaves the line unpublished and fails here.
+    broker._log_buffer_since["task_stream"] -= timedelta(hours=1)
+
+    await broker.append_log("task_stream", "line 3")
+
+    assert mock_session.patch.call_count == 1, "an overdue line must be published, not held"
+    published = mock_session.patch.call_args[1]["json"]["logs"]
+    assert len(published) == 4  # 1 pre-existing + 3 appended
+    assert "line 1" in published[1]
+    assert "line 3" in published[3]
+
+
+def test_publish_deadline_is_short_enough_for_a_live_stream():
+    """The deadline is what bounds visibility, so it has to actually be short.
+
+    An unbounded deadline reintroduces the original stall while still looking like a
+    fix, which is why this is asserted separately from the behaviour above.
+    """
+    broker = PocketBaseTaskBroker(session=MagicMock())
+    assert 0 < broker.log_flush_interval_sec <= 30
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_publishes_logs_held_by_a_silent_worker():
+    """The heartbeat is the floor: it must carry whatever is still buffered.
+
+    A worker between two log lines can go quiet for longer than the heartbeat interval
+    (a single synchronous Appium command routinely takes tens of seconds), and nothing
+    else touches the record meanwhile. The heartbeat already PATCHes the task every
+    interval, so riding the buffered logs along costs no extra round trip and bounds
+    visibility even when the worker emits nothing at all.
+    """
+    mock_session = MagicMock()
+    get_resp = MagicMock()
+    get_resp.status_code = 200
+    get_resp.json.return_value = _running_task_record()
+    mock_session.get.return_value = get_resp
+
+    patch_resp = MagicMock()
+    patch_resp.status_code = 200
+    patch_resp.json.return_value = _running_task_record()
+    mock_session.patch.return_value = patch_resp
+
+    broker = PocketBaseTaskBroker(session=mock_session)
+    broker.log_buffer_bound = 10
+
+    await broker.append_log("task_stream", "line 1")
+    await broker.append_log("task_stream", "line 2")
+    assert mock_session.patch.call_count == 0
+
+    await broker.update_heartbeat("task_stream", worker_id="w1")
+
+    assert mock_session.patch.call_count == 1
+    body = mock_session.patch.call_args[1]["json"]
+    assert body["last_heartbeat_at"]
+    assert len(body["logs"]) == 3
+    assert "line 1" in body["logs"][1]
+    assert "line 2" in body["logs"][2]
