@@ -207,7 +207,7 @@ def build_search_launch(
         # of one (issue #302).
         "preview_timeout_sec": DEFAULT_PREVIEW_TIMEOUT_SEC,
     }
-    if search_dict.get("screening_policy"):
+    if search.screening_policy is not None and search_dict.get("screening_policy"):
         payload["screening_policy"] = search_dict["screening_policy"]
     if candidate_profile:
         payload["candidate_profile"] = candidate_profile
