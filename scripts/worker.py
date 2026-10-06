@@ -13,7 +13,8 @@ import sys
 from collections.abc import Coroutine, Sequence
 from typing import Any
 
-from boss_agent.broker.pocketbase_adapter import PocketBaseTaskBroker
+from boss_agent.broker.pocketbase_adapter import BaseTaskBroker, PocketBaseTaskBroker
+from boss_agent.broker.sweeper import TaskLeaseSweeper
 from boss_agent.settings import (
     resolve_enable_scheduler,
     resolve_pocketbase_url,
@@ -32,6 +33,42 @@ from droid_agent_core.driver import AppiumSession, DriverConfig
 logger = logging.getLogger("worker_main")
 
 TERMINATION_SIGNALS = (signal.SIGTERM, signal.SIGINT)
+
+
+def build_supervised_services(
+    config: WorkerConfig,
+    broker: BaseTaskBroker,
+    startup_gate: StartupCleanupGate | None = None,
+) -> list[Coroutine[Any, Any, None]]:
+    """The auxiliary service loops supervised alongside the worker's claim loop.
+
+    The lease sweeper is what makes a crashed worker recoverable. Without it a task whose
+    worker died mid-run keeps its `running` status forever -- the heartbeat freezes with
+    the dead process, and the dashboard reports a permanently active task that nobody is
+    executing. It belongs to every worker process rather than to one particular mode, so
+    recovery cannot be switched off along with the scheduler.
+
+    Returns the coroutines themselves: `run_services` creates the tasks, so the list is
+    inert until it is supervised.
+    """
+    services: list[Coroutine[Any, Any, None]] = [
+        TaskLeaseSweeper(
+            broker=broker,
+            lease_timeout_sec=config.lease_timeout_sec,
+            retry_limit=config.max_task_retries,
+        ).start(interval_sec=config.lease_sweep_interval_sec)
+    ]
+
+    if config.enable_scheduler:
+        from boss_agent.scheduler import AutomationScheduler
+
+        services.append(
+            AutomationScheduler(
+                broker=broker, poll_interval_sec=30.0, startup_gate=startup_gate
+            ).run_forever()
+        )
+
+    return services
 
 
 async def run_services(
@@ -198,15 +235,19 @@ def main() -> None:
         config.pocketbase_url,
     )
 
-    service_coros: list[Coroutine[Any, Any, None]] = []
+    service_coros: list[Coroutine[Any, Any, None]] = build_supervised_services(
+        config=config,
+        broker=broker,
+        startup_gate=startup_gate,
+    )
     if config.enable_scheduler:
-        from boss_agent.scheduler import AutomationScheduler
-
-        scheduler = AutomationScheduler(
-            broker=broker, poll_interval_sec=30.0, startup_gate=startup_gate
-        )
         logger.info("Integrated Cron scheduler enabled")
-        service_coros.append(scheduler.run_forever())
+    logger.info(
+        "Lease sweeper enabled (lease_timeout=%.0fs, interval=%.0fs, max_retries=%d)",
+        config.lease_timeout_sec,
+        config.lease_sweep_interval_sec,
+        config.max_task_retries,
+    )
 
     try:
         asyncio.run(run_services(worker, service_coros))
