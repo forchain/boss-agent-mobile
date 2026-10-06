@@ -491,7 +491,14 @@ async def test_scrape_jobs_handler_eliminates_blacklisted_cards_and_persists_rea
         payload={
             "keyword": "销售",
             "max_jobs": 1,
+            # Pin title_blacklist so the *company* rule is deterministically the one under
+            # test. A payload list inherits the global ScreeningPolicy when absent, and the
+            # built-in default title blacklist contains "销售" — which also matches this
+            # card's title. Title is screened before company, so without this pin the title
+            # rule short-circuits first and the asserted reason depends on whether a local
+            # settings.local.yaml happens to exist (it does not on CI).
             "screening_policy": {
+                "title_blacklist": ["管培生"],
                 "company_blacklist": ["黑名单外包科技"],
             },
         },
