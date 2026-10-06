@@ -383,8 +383,18 @@ class PocketBaseTaskBroker(BaseTaskBroker):
         )
         self._subscribers: list[Callable[[str, AutomationTask], Any]] = []
         self.log_buffer_bound = 10
+        #: How long the oldest buffered line may stay invisible before it is published
+        #: anyway. The line bound above is an optimization — it caps how many round trips
+        #: a run costs — but on its own it caps nothing about *when* an operator sees the
+        #: log: a run emitting fewer lines than the bound never trips it, so its entire
+        #: log stayed in this process until the terminal transition. The dashboard's live
+        #: log stream reads the broker record, so for those runs it showed nothing at all
+        #: until the task ended. This deadline bounds that visibility independently.
+        self.log_flush_interval_sec = 2.0
         self._task_logs: dict[str, list[str]] = {}
         self._buffered_logs: dict[str, list[str]] = {}
+        #: When each task's current buffer started filling, keyed by task id.
+        self._log_buffer_since: dict[str, datetime] = {}
 
         # Ensure obsolete fallback cache files are removed if present
         try:
@@ -471,6 +481,7 @@ class PocketBaseTaskBroker(BaseTaskBroker):
         claimed = self._record_to_task(record)
         self._task_logs[task_id] = list(claimed.logs or [])
         self._buffered_logs[task_id] = []
+        self._log_buffer_since.pop(task_id, None)
 
         await self._notify_subscribers("update", claimed)
         return claimed
@@ -506,14 +517,31 @@ class PocketBaseTaskBroker(BaseTaskBroker):
             return False
 
         now = datetime.now(UTC).isoformat()
+        # The heartbeat is the only write that happens while a worker is thinking rather
+        # than logging, and a single synchronous Appium command routinely keeps it silent
+        # for tens of seconds. Riding the buffer along here costs no extra round trip and
+        # bounds visibility even when the worker emits nothing at all — the append-side
+        # deadline can only fire on an append, so on its own it would hold the last few
+        # lines through exactly the quiet stretch an operator is watching.
+        body: dict[str, Any] = {"last_heartbeat_at": now}
+        carried = list(self._buffered_logs.get(task_id) or [])
+        if carried:
+            body["logs"] = self._task_logs[task_id]
+
         resp = await execute_broker_request(
-            lambda: self.session.patch(
-                url, json={"last_heartbeat_at": now}, headers=self._headers()
-            ),
+            lambda: self.session.patch(url, json=body, headers=self._headers()),
             expected_statuses=(200,),
             allow_404=True,
             error_prefix=f"PocketBase update_heartbeat patch({task_id}) failed",
         )
+        if resp.status_code == 200 and carried:
+            # Retire only what this PATCH carried. The request awaited, so a line appended
+            # while it was in flight belongs to the next publish, not this one.
+            sent = set(carried)
+            remaining = [line for line in self._buffered_logs.get(task_id, []) if line not in sent]
+            self._buffered_logs[task_id] = remaining
+            if not remaining:
+                self._log_buffer_since.pop(task_id, None)
         return resp.status_code == 200
 
     async def update_task_status(
@@ -529,11 +557,13 @@ class PocketBaseTaskBroker(BaseTaskBroker):
         if logs is not None:
             self._task_logs[task_id] = list(logs)
             self._buffered_logs[task_id] = []
+            self._log_buffer_since.pop(task_id, None)
             body["logs"] = logs
         elif self._buffered_logs.get(task_id) or task_id in self._task_logs:
             # Guarantee flush: flush buffered logs within the status update payload
             body["logs"] = self._task_logs[task_id]
             self._buffered_logs[task_id] = []
+            self._log_buffer_since.pop(task_id, None)
 
         if error_message is not None:
             body["error_message"] = error_message
@@ -550,6 +580,7 @@ class PocketBaseTaskBroker(BaseTaskBroker):
         if status.is_terminal():
             self._task_logs.pop(task_id, None)
             self._buffered_logs.pop(task_id, None)
+            self._log_buffer_since.pop(task_id, None)
 
         await self._notify_subscribers("update", updated)
         return updated
@@ -567,10 +598,25 @@ class PocketBaseTaskBroker(BaseTaskBroker):
 
         self._task_logs[task_id].append(formatted)
         self._buffered_logs.setdefault(task_id, []).append(formatted)
+        self._log_buffer_since.setdefault(task_id, now)
 
-        if len(self._buffered_logs[task_id]) >= self.log_buffer_bound:
+        if len(self._buffered_logs[task_id]) >= self.log_buffer_bound or self._log_deadline_passed(
+            task_id, now
+        ):
             await self.flush_logs(task_id)
         return True
+
+    def _log_deadline_passed(self, task_id: str, now: datetime) -> bool:
+        """Whether the oldest buffered line has waited longer than it is allowed to.
+
+        Counted from when this buffer started filling, not from the newest line: a
+        steadily-streaming run would otherwise reset the clock on every append and never
+        publish anything until it ended.
+        """
+        since = self._log_buffer_since.get(task_id)
+        if since is None:
+            return False
+        return (now - since).total_seconds() >= self.log_flush_interval_sec
 
     async def flush_logs(self, task_id: str | None = None) -> None:
         target_ids = [task_id] if task_id else list(self._buffered_logs.keys())
@@ -589,6 +635,7 @@ class PocketBaseTaskBroker(BaseTaskBroker):
                 error_prefix=f"PocketBase flush_logs patch({tid}) failed",
             )
             self._buffered_logs[tid] = []
+            self._log_buffer_since.pop(tid, None)
 
     async def list_pending_tasks(self, limit: int = 10) -> list[AutomationTask]:
         url = f"{self._collection_url()}?filter=(status='pending')&sort=created&perPage={limit}"
@@ -635,6 +682,7 @@ class PocketBaseTaskBroker(BaseTaskBroker):
     async def requeue_task(self, task_id: str, retry_count: int) -> AutomationTask:
         self._task_logs.pop(task_id, None)
         self._buffered_logs.pop(task_id, None)
+        self._log_buffer_since.pop(task_id, None)
         url = f"{self._collection_url()}/{task_id}"
         body = {
             "status": TaskStatus.PENDING.value,
@@ -690,6 +738,10 @@ class PocketBaseTaskBroker(BaseTaskBroker):
             last_heartbeat_at=self._parse_dt(record.get("last_heartbeat_at")),
             logs=logs,
             error_message=record.get("error_message"),
+            # Recovery reads the retry count to decide between re-queueing and failing an
+            # orphan. Dropping it here made every broker-read task report 0, so a stale
+            # task could be re-queued forever instead of reaching a terminal state.
+            retry_count=int(record.get("retry_count") or 0),
             created=self._parse_dt(record.get("created")) or datetime.now(UTC),
             updated=self._parse_dt(record.get("updated")) or datetime.now(UTC),
         )

@@ -416,7 +416,7 @@ class ScreeningPolicy:
 
 
 def resolve_screening_policy(
-    policy: ScreeningPolicy,
+    policy: ScreeningPolicy | None = None,
     *,
     channel_preference: Any = None,
 ) -> ScreeningPolicy:
@@ -436,6 +436,8 @@ def resolve_screening_policy(
     rest of the process. A strategy that states nothing — absent, empty or unrecognized —
     yields the policy unchanged, which is the whole meaning of "inherit global".
     """
+    if policy is None:
+        policy = ScreeningPolicy.load_default()
     stated = normalize_channel_preference(channel_preference, default=INHERIT_CHANNEL)
     if not stated:
         return policy

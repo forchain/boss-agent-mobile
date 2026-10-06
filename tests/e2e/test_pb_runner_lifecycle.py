@@ -15,6 +15,7 @@ import sqlite3
 import subprocess
 import time
 import urllib.request
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -568,6 +569,29 @@ async def test_service_integration_atomic_task_lease_and_buffered_logs(tmp_path:
         local_view = await winning_broker.get_task(task.id)
         assert len(local_view.logs) == 12
 
+        # 5b. A line that has waited past the publish deadline must reach the broker while
+        # the task is still RUNNING, not only at its terminal transition. The line bound on
+        # its own never fires for a run quieter than the bound, so the broker's copy — the
+        # one every dashboard reads — stayed frozen for the whole run and the operator saw
+        # nothing until it ended. A second reader standing in for the dashboard, plus the
+        # heartbeat (the only write while the worker is thinking rather than logging),
+        # covers both paths that used to hold a line back.
+        before_terminal = await broker2.get_task(task.id)
+        assert before_terminal is not None
+        published_before = len(before_terminal.logs)
+
+        winning_broker._log_buffer_since[task.id] -= timedelta(
+            seconds=winning_broker.log_flush_interval_sec + 1
+        )
+        await winning_broker.append_log(task.id, "Execution step 12")
+        assert await winning_broker.update_heartbeat(task.id, worker_id=winner.worker_id)
+
+        mid_run = await broker2.get_task(task.id)
+        assert mid_run is not None
+        assert mid_run.status == TaskStatus.RUNNING
+        assert len(mid_run.logs) > published_before
+        assert "Execution step 12" in mid_run.logs[-1]
+
         # 6. Terminal status transition guarantees log flush
         completed_task = await winning_broker.update_task_status(
             task.id,
@@ -575,12 +599,13 @@ async def test_service_integration_atomic_task_lease_and_buffered_logs(tmp_path:
         )
         assert completed_task.status == TaskStatus.SUCCESS
 
-        # Remote reader (broker2) now sees all 12 flushed lines
+        # Remote reader (broker2) now sees every line, including the one published mid-run
         remote_view = await broker2.get_task(task.id)
         assert remote_view is not None
-        assert len(remote_view.logs) == 12
+        assert len(remote_view.logs) == 13
         assert "Execution step 0" in remote_view.logs[0]
         assert "Execution step 11" in remote_view.logs[11]
+        assert "Execution step 12" in remote_view.logs[12]
 
         # 7. Lease and sweeper reclamation
         requeued = await broker1.requeue_task(task.id, retry_count=1)

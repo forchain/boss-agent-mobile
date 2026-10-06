@@ -15,7 +15,7 @@ running batch outreach is ``FeedStreamConfig.target_action``.
 
 import logging
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
@@ -286,9 +286,65 @@ class FeedStreamConfig:
             data.get("daily_greeting_limit") or load_settings().get("daily_greeting_limit", 20)
         )
 
-        base_policy = (
-            ScreeningPolicy.from_dict(raw_policy) if raw_policy else ScreeningPolicy.load_default()
-        )
+        default_policy = ScreeningPolicy.load_default()
+        if not raw_policy or not isinstance(raw_policy, dict):
+            base_policy = default_policy
+        elif raw_policy.get("enable_screening") is False:
+            base_policy = ScreeningPolicy.from_dict(raw_policy)
+        else:
+            parsed_policy = ScreeningPolicy.from_dict(raw_policy)
+            title_bl = (
+                parsed_policy.title_blacklist
+                if raw_policy.get("title_blacklist")
+                else default_policy.title_blacklist
+            )
+            company_bl = (
+                parsed_policy.company_blacklist
+                if raw_policy.get("company_blacklist")
+                else default_policy.company_blacklist
+            )
+            title_wl = (
+                parsed_policy.title_whitelist
+                if raw_policy.get("title_whitelist")
+                else default_policy.title_whitelist
+            )
+            jd_bl = (
+                parsed_policy.jd_blacklist
+                if raw_policy.get("jd_blacklist")
+                else default_policy.jd_blacklist
+            )
+            dist_bl = (
+                parsed_policy.business_district_blacklist
+                if raw_policy.get("business_district_blacklist")
+                else default_policy.business_district_blacklist
+            )
+            dist_inspect = (
+                parsed_policy.business_district_inspect_list
+                if raw_policy.get("business_district_inspect_list")
+                else default_policy.business_district_inspect_list
+            )
+            commute_km = (
+                parsed_policy.max_commute_distance_km
+                if "max_commute_distance_km" in raw_policy
+                else default_policy.max_commute_distance_km
+            )
+            channel_pref = (
+                parsed_policy.channel_preference
+                if "channel_preference" in raw_policy
+                else default_policy.channel_preference
+            )
+            base_policy = replace(
+                default_policy,
+                title_blacklist=title_bl,
+                company_blacklist=company_bl,
+                title_whitelist=title_wl,
+                jd_blacklist=jd_bl,
+                business_district_blacklist=dist_bl,
+                business_district_inspect_list=dist_inspect,
+                enable_screening=parsed_policy.enable_screening,
+                channel_preference=channel_pref,
+                max_commute_distance_km=commute_km,
+            )
         # A strategy may pin its own recruitment channel; saying nothing means inherit the
         # policy resolved above (issue #368). The rule itself belongs to
         # ``models.resolve_screening_policy``, which the interactive SmokeHarness also

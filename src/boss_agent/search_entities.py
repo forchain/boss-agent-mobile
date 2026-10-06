@@ -131,7 +131,7 @@ class SavedSearch:
     description: str = ""
     search: SearchConfig = field(default_factory=SearchConfig)
     filter: FilterConfig = field(default_factory=FilterConfig)
-    screening_policy: ScreeningPolicy = field(default_factory=ScreeningPolicy)
+    screening_policy: ScreeningPolicy | None = None
     cron_expression: str = ""
     is_enabled: bool = False
     last_run_at: str | None = None
@@ -161,9 +161,7 @@ class SavedSearch:
         self.description = description
         self.search = search if search is not None else SearchConfig()
         self.filter = filter if filter is not None else FilterConfig()
-        self.screening_policy = (
-            screening_policy if screening_policy is not None else ScreeningPolicy()
-        )
+        self.screening_policy = screening_policy
         self.cron_expression = cron_expression
         self.is_enabled = is_enabled
         self.last_run_at = last_run_at
@@ -225,7 +223,7 @@ class SavedSearch:
         self.search.keyword = val
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result: dict[str, Any] = {
             "id": self.id,
             "name": self.name,
             "description": self.description,
@@ -250,12 +248,15 @@ class SavedSearch:
                 # strategy to whatever the global setting happened to be that day.
                 "channel_preference": self.filter.channel_preference,
             },
-            "screening_policy": self.screening_policy.to_dict(),
+            "screening_policy": (
+                self.screening_policy.to_dict() if self.screening_policy is not None else None
+            ),
             "cron_expression": self.cron_expression,
             "is_enabled": self.is_enabled,
             "last_run_at": self.last_run_at,
             "target_task_type": self.target_task_type,
         }
+        return result
 
     @classmethod
     def from_dict(
@@ -322,12 +323,12 @@ class SavedSearch:
             enable_filter=enable_filter,
         )
 
-        policy_data = data.get("screening_policy", {}) or {}
+        policy_data = data.get("screening_policy")
         if isinstance(policy_data, str):
             try:
                 policy_data = json.loads(policy_data)
             except Exception:
-                policy_data = {}
+                policy_data = None
 
         # Allow fallback from top-level keys if screening_policy not nested
         if not policy_data and any(
@@ -350,7 +351,7 @@ class SavedSearch:
                 "business_district_inspect_list": data.get("business_district_inspect_list"),
             }
 
-        screening_policy = ScreeningPolicy.from_dict(policy_data)
+        screening_policy = ScreeningPolicy.from_dict(policy_data) if policy_data else None
 
         target_task_type = data.get("target_task_type", TargetTaskType.AUTO_APPLY)
         target_action = data.get("target_action")
