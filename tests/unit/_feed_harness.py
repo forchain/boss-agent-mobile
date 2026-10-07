@@ -83,6 +83,10 @@ class ScriptedFeed:
         self._viewports = viewports
         self._boundary_after = boundary_after
         self.scrolls = 0
+        # How many times the pipeline reset to the home feed before browsing. Home
+        # recovery is a step the pipeline takes on a keyword-less run, and a test that
+        # cannot see it can only assert that the run happened, not where it started.
+        self.home_visits = 0
 
     @property
     def _index(self) -> int:
@@ -109,6 +113,7 @@ class ScriptedFeed:
         return True
 
     def navigate_to_home(self) -> bool:
+        self.home_visits += 1
         return True
 
     def open_search(self, timeout_sec: float = 10.0, max_back_attempts: int = 10) -> bool:
