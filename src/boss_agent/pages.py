@@ -1824,6 +1824,30 @@ class CommunicationListPage(BaseBossPage):
         self.gestures.random_sleep(0.3, 0.6)
         return True
 
+    def scroll_to_top(self) -> bool:
+        """Reset the conversation list to its newest messages by double-tapping 消息.
+
+        The app reads a double-tap on the bottom 消息 tab as "scroll the current
+        feed back to the top", which is the only reset the 仅沟通 list offers: a
+        RecyclerView left scrolled into the middle of the feed keeps the newest
+        rejections off the first screen, so a triage run that lands there would
+        never see them. The settle pause after the gesture is what lets the
+        scroll-to-top animation finish before any card is read.
+
+        The caller owns this, not ``open_list()``: the return value exists so a run
+        can narrate whether the reset actually happened, and a reset nested inside
+        the navigation loop would report it to no one.
+
+        Returns False when the navigation bar is not on screen — there is nothing
+        to double-tap, and pausing would only invent a wait.
+        """
+        entry_tab = self.find_now("communication_list.entry_tab")
+        if not entry_tab:
+            return False
+        self.gestures.human_double_click(entry_tab)
+        self.gestures.random_sleep(0.2, 0.4)
+        return True
+
     def wait_for_list_return(self, timeout_sec: float = 5.0) -> bool:
         """Wait for the platform to drop the conversation and land back on the list."""
         return self.is_on_list(timeout_sec=timeout_sec)
@@ -1838,6 +1862,13 @@ class CommunicationListPage(BaseBossPage):
 
         From anywhere else the loop spends at most ``max_steps`` screens trying to
         reach the message column, then clicks 消息 -> 仅沟通 and confirms the landing.
+
+        Landing is the whole job here. The 仅沟通 RecyclerView is shared state that
+        survives navigation, so the caller resets it to the newest messages with
+        ``scroll_to_top()`` (spec #388) once this returns: keeping the reset out of
+        the navigation loop is what lets its outcome reach the caller, which has to
+        narrate a reset that was actually performed. Two callers resetting here
+        would double-tap 消息 on every entry.
 
         A CHECK_CHAT dispatch can arrive while the app sits on a job detail, an open
         chat, a filter sheet or the launcher, so "the 消息 tab is right there" cannot

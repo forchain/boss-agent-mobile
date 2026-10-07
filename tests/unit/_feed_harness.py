@@ -12,7 +12,7 @@ their pipeline through ``_pipeline()`` here.
 
 Everything is in-memory: no Appium session, no bound port, no live LLM endpoint. Pass a
 stub client into ``CandidateScreener`` — the screener fails open without one, and the only
-symptom of forgetting is latency and a token bill.
+symptom of forgetting is latency and a token bill — which is what ``stub_llm()`` is for.
 """
 
 from datetime import UTC, datetime
@@ -36,9 +36,19 @@ GOOD_JD = (
 
 
 def _card(
-    title: str, company: str, y: int | None = None, digest: str = "", location: str = ""
+    title: str,
+    company: str,
+    y: int | None = None,
+    digest: str = "",
+    location: str = "",
+    recruiter_title: str = "",
 ) -> LocatedJobCard:
-    """One scripted card: the parsed brief plus the element it would have been read from."""
+    """One scripted card: the parsed brief plus the element it would have been read from.
+
+    ``recruiter_title`` is what the App-Enforced channel rules read: a card carrying
+    ``猎头顾问`` resolves to the headhunter channel, which is the fact the direct-only
+    strategies are about.
+    """
     element = MagicMock()
     if y is not None:
         element.location = {"x": 0, "y": y}
@@ -47,6 +57,7 @@ def _card(
             title=title,
             company_name=company,
             recruiter_name="王女士",
+            recruiter_title=recruiter_title,
             salary_range="40-60K",
             digest=digest,
             location=location,
@@ -65,6 +76,19 @@ def _posting(title: str = "AI Agent 平台工程师", company: str = "智元创�
     )
 
 
+def stub_llm(approved: bool = True, reason: str = "stub verdict") -> MagicMock:
+    """An LLM client that answers instantly, so no test in this tier reaches an endpoint.
+
+    ``CandidateScreener`` builds a real client for itself whenever it is handed none, and
+    both the JD semantic screener and the greeting drafter fail open on an error — so the
+    only symptom of forgetting is seconds of latency and a token bill, never a failure. Any
+    suite that lets a screening policy reach the screener should hand it this instead.
+    """
+    llm = MagicMock()
+    llm.chat_completion_json.return_value = {"approved": approved, "reason": reason}
+    return llm
+
+
 class ScriptedFeed:
     """Viewport-by-viewport stand-in for a Boss search result feed."""
 
@@ -72,6 +96,10 @@ class ScriptedFeed:
         self._viewports = viewports
         self._boundary_after = boundary_after
         self.scrolls = 0
+        # How many times the pipeline reset to the home feed before browsing. Home
+        # recovery is a step the pipeline takes on a keyword-less run, and a test that
+        # cannot see it can only assert that the run happened, not where it started.
+        self.home_visits = 0
 
     @property
     def _index(self) -> int:
@@ -98,10 +126,38 @@ class ScriptedFeed:
         return True
 
     def navigate_to_home(self) -> bool:
+        self.home_visits += 1
         return True
 
     def open_search(self, timeout_sec: float = 10.0, max_back_attempts: int = 10) -> bool:
         return True
+
+
+def script_pages(
+    pipeline: JobFeedPipeline,
+    *,
+    feed: ScriptedFeed | None = None,
+    detail: MagicMock | None = None,
+    search: Any = None,
+    chat: MagicMock | None = None,
+) -> JobFeedPipeline:
+    """Seat scripted page objects on a pipeline that is already built.
+
+    A run composes its own engine — the worker through ``for_task``, the interactive
+    SmokeHarness in its constructor — so a test that wants a scripted device has nothing
+    left to inject at construction time. Rebinding afterwards is that seam, and it is the
+    same one ``_pipeline`` uses on the pipeline it builds, so a scripted feed cannot mean
+    one thing here and another there.
+    """
+    if feed is not None:
+        pipeline.list_page = feed
+    if detail is not None:
+        pipeline.detail_page = detail
+    if search is not None:
+        pipeline.search_page = search
+    if chat is not None:
+        pipeline.chat_page = chat
+    return pipeline
 
 
 def _pipeline(
@@ -135,12 +191,7 @@ def _pipeline(
             is_cancelled=is_cancelled,
         )
     # Rebind the scripted page objects: the patches above only applied during construction.
-    if feed is not None:
-        pipeline.list_page = feed
-    if detail is not None:
-        pipeline.detail_page = detail
-    if chat is not None:
-        pipeline.chat_page = chat
+    script_pages(pipeline, feed=feed, detail=detail, chat=chat)
     pipeline.search_page.is_search_page.return_value = True
     pipeline.search_page.search.return_value = True
     return pipeline
