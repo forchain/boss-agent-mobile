@@ -10,11 +10,12 @@ from typing import Any
 
 from rich.console import Console
 
+from .candidate_entities import CandidateProfile
 from .enums import AuthStatus
 from .graph import run_job_application_graph
 from .job_entities import JobCardBrief, JobPosting
 from .matching import JobMatchGreetingService, MatchGreetingResult
-from .memory import ResumeMemoryManager, StructuredCandidateProfile
+from .memory import ResumeMemoryManager
 from .pages import (
     ChatPage,
     FilterDialogPage,
@@ -111,7 +112,7 @@ class SmokeHarness:
         )
 
         # Pre-flight upfront candidate memory initialization
-        self.candidate_profile: StructuredCandidateProfile | None = None
+        self.candidate_profile: CandidateProfile | None = None
         if self.enable_greeting_draft:
             try:
                 self.candidate_profile = self.memory_manager.load_memory(

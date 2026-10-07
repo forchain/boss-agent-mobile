@@ -14,7 +14,9 @@ from typing import Any, TypedDict
 from langgraph.graph import END, START, StateGraph
 from langsmith import traceable
 
+from .candidate_entities import CandidateProfile
 from .job_entities import JobCardBrief
+from .memory import ProfileNormalizer, ResumeTextExtractor
 from .screening import CARD_PASS_REASON, CandidateScreener, CardVerdictStage
 from .screening_policy import ScreeningPolicy
 
@@ -27,7 +29,7 @@ class JobApplicationState(TypedDict, total=False):
     # Input specifications
     card: dict[str, Any]  # Serialized JobCardBrief
     screening_policy: dict[str, Any]  # Serialized ScreeningPolicy
-    candidate_profile: dict[str, Any]  # Serialized StructuredCandidateProfile
+    candidate_profile: dict[str, Any]  # Serialized CandidateProfile
     jd_text: str
     commute_distance_km: float | None  # Probed detail-page commute distance (spec #209)
 
@@ -256,8 +258,6 @@ def resume_text_extractor_node(state: ResumeLifecycleState) -> dict[str, Any]:
     file_path = state.get("file_path", "")
     raw_text = state.get("raw_resume_text", "")
     if not raw_text and file_path:
-        from .memory import ResumeTextExtractor
-
         extractor = ResumeTextExtractor()
         raw_text = extractor.extract_text(file_path)
 
@@ -357,15 +357,13 @@ def make_resume_document_generator_node(llm_client: Any | None = None):
 
 def resume_normalizer_node(state: ResumeLifecycleState) -> dict[str, Any]:
     """Self-healing node ensuring critical fields, valid arrays, and fallback markdown exist."""
-    from .memory import ProfileNormalizer, StructuredCandidateProfile
-
     raw_text = state.get("raw_resume_text", "")
     extracted = dict(state.get("extracted_metadata") or {})
     if not extracted.get("profile_document") and state.get("profile_document"):
         extracted["profile_document"] = state["profile_document"]
 
     normalized = ProfileNormalizer.normalize(extracted, raw_text=raw_text)
-    profile_obj = StructuredCandidateProfile.from_dict(normalized)
+    profile_obj = CandidateProfile.from_dict(normalized)
     return {
         "normalized_profile": profile_obj.to_dict(),
         "profile_document": profile_obj.profile_document,
