@@ -1,8 +1,12 @@
 from unittest.mock import MagicMock
 
-from boss_agent.graph import run_job_application_graph
 from boss_agent.job_entities import JobCardBrief
-from boss_agent.screening import CandidateScreener, JobVerdictStage
+from boss_agent.screening import (
+    CandidateScreener,
+    CardScreeningVerdict,
+    CardVerdictStage,
+    JobVerdictStage,
+)
 from boss_agent.screening_policy import ScreeningPolicy
 from boss_agent.search_entities import SavedSearch
 
@@ -53,10 +57,11 @@ def test_keyword_screener_blacklist_rejection():
         company_name="某互联网公司",
         recruiter_name="张三",
     )
-    state = run_job_application_graph(card, policy=policy)
-    assert state["keyword_pass"] is False
-    assert state["status"] == "filtered_by_keyword"
-    assert "Java" in state["keyword_reason"]
+    screener = CandidateScreener(llm_client=MagicMock())
+    verdict = screener.evaluate_card(card, policy)
+    assert verdict.passed is False
+    assert verdict.stage is CardVerdictStage.FILTERED_BY_KEYWORD
+    assert "Java" in verdict.reason
 
 
 def test_keyword_screener_company_blacklist_rejection():
@@ -68,10 +73,11 @@ def test_keyword_screener_company_blacklist_rejection():
         company_name="北京软通动力信息技术有限公司",
         recruiter_name="李四",
     )
-    state = run_job_application_graph(card, policy=policy)
-    assert state["keyword_pass"] is False
-    assert state["status"] == "filtered_by_keyword"
-    assert "软通动力" in state["keyword_reason"]
+    screener = CandidateScreener(llm_client=MagicMock())
+    verdict = screener.evaluate_card(card, policy)
+    assert verdict.passed is False
+    assert verdict.stage is CardVerdictStage.FILTERED_BY_KEYWORD
+    assert "软通动力" in verdict.reason
 
 
 def test_keyword_screener_whitelist_miss_no_longer_rejects():
@@ -94,11 +100,18 @@ def test_keyword_screener_whitelist_miss_no_longer_rejects():
             "greeting_message": "您好，看到贵司在招聘云原生架构师...",
         },
     ]
+    screener = CandidateScreener(llm_client=mock_llm)
     jd_text = "岗位职责：负责容器平台与云原生基础设施建设，精通 Go 与 Kubernetes。"
-    state = run_job_application_graph(card, policy=policy, jd_text=jd_text, llm_client=mock_llm)
-    assert state["keyword_pass"] is True
-    assert state["keyword_reason"] == "通过卡片初筛"
-    assert state["status"] == "greeting_drafted"
+    verdict = screener.evaluate_card(card, policy)
+    assert verdict.passed is True
+    assert verdict.stage is CardVerdictStage.PASSED
+    assert verdict.reason == "通过卡片初筛"
+
+    result = screener.evaluate_job(card, jd_text, policy=policy)
+
+    assert result.passed is True
+    assert result.stage is JobVerdictStage.PASSED
+    assert result.greeting_message != ""
 
 
 def test_keyword_screener_whitelist_hit_and_pass():
@@ -117,15 +130,20 @@ def test_keyword_screener_whitelist_hit_and_pass():
         "match_score": 85,
         "greeting_message": "您好，关注到贵司在招聘AI Agent岗位...",
     }
+    screener = CandidateScreener(llm_client=mock_llm)
     jd_text = (
         "岗位职责：负责智能体协同平台架构与大模型自动化体系建设，要求精通Python与Multi-Agent。"
     )
-    state = run_job_application_graph(card, policy=policy, jd_text=jd_text, llm_client=mock_llm)
-    assert state["keyword_pass"] is True
-    assert state["deep_screen_pass"] is True
-    assert state["status"] == "greeting_drafted"
-    assert state["keyword_reason"] == "通过卡片初筛"
-    assert state["greeting_message"] != ""
+    verdict = screener.evaluate_card(card, policy)
+    assert verdict.passed is True
+    assert verdict.stage is CardVerdictStage.PASSED
+    assert verdict.reason == "通过卡片初筛"
+
+    result = screener.evaluate_job(card, jd_text, policy=policy)
+
+    assert result.passed is True
+    assert result.stage is JobVerdictStage.PASSED
+    assert result.greeting_message != ""
 
 
 def test_keyword_screener_disabled_policy():
@@ -144,9 +162,15 @@ def test_keyword_screener_disabled_policy():
         "greeting_message": "您好！",
     }
     jd_text = "岗位职责：负责金融科技核心系统架构设计，具备10年以上Java与高并发经验。"
-    state = run_job_application_graph(card, policy=policy, jd_text=jd_text, llm_client=mock_llm)
-    assert state["keyword_pass"] is True
-    assert state["status"] == "greeting_drafted"
+    screener = CandidateScreener(llm_client=mock_llm)
+    verdict = screener.evaluate_card(card, policy)
+    assert verdict.passed is True
+    assert verdict.stage is CardVerdictStage.PASSED
+
+    result = screener.evaluate_job(card, jd_text, policy=policy)
+
+    assert result.passed is True
+    assert result.stage is JobVerdictStage.PASSED
 
 
 def test_jd_semantic_screener_rejects_hidden_blacklist_in_jd():
@@ -172,19 +196,17 @@ def test_jd_semantic_screener_rejects_hidden_blacklist_in_jd():
         "reason": "JD正文明确要求熟练掌握Java与微服务架构，触犯黑名单技术栈",
     }
 
-    state = run_job_application_graph(
-        card=card,
-        policy=policy,
-        jd_text=jd_text,
-        llm_client=mock_llm,
-    )
+    screener = CandidateScreener(llm_client=mock_llm)
+    verdict = screener.evaluate_card(card, policy)
 
-    assert state["keyword_pass"] is True
-    assert state["deep_screen_pass"] is False
-    assert state["status"] == "filtered_by_deep_screener"
-    assert "Java" in state["deep_screen_reason"]
-    # Verify greeting_drafter was NOT called
-    assert "greeting_message" not in state or not state["greeting_message"]
+    result = screener.evaluate_job(card, jd_text, policy=policy)
+
+    assert verdict.passed is True
+    assert result.passed is False
+    assert result.stage is JobVerdictStage.FILTERED_BY_DEEP_SCREENER
+    assert "Java" in result.reason
+    # A deep-screen veto is final: no greeting was ever drafted.
+    assert result.greeting_message == ""
     mock_llm.chat_completion_json.assert_called_once()
 
 
@@ -220,19 +242,16 @@ def test_jd_semantic_screener_passes_compliant_jd_and_drafts_greeting():
         },
     ]
 
-    state = run_job_application_graph(
-        card=card,
-        policy=policy,
-        jd_text=jd_text,
-        llm_client=mock_llm,
-    )
+    screener = CandidateScreener(llm_client=mock_llm)
+    verdict = screener.evaluate_card(card, policy)
+    result = screener.evaluate_job(card, jd_text, policy=policy)
 
-    assert state["keyword_pass"] is True
-    assert state["deep_screen_pass"] is True
-    assert state["status"] == "greeting_drafted"
-    assert "契合Agent方向" in state["deep_screen_reason"]
-    assert "LangGraph" in state["greeting_message"]
-    assert state["match_score"] == 92
+    assert verdict.passed is True
+    assert result.passed is True
+    assert result.stage is JobVerdictStage.PASSED
+    assert "契合Agent方向" in result.reason
+    assert "LangGraph" in result.greeting_message
+    assert result.match_score == 92
     assert mock_llm.chat_completion_json.call_count == 2
 
 
@@ -245,19 +264,17 @@ def test_jd_semantic_screener_empty_jd_fallback():
         "match_score": 80,
         "greeting_message": "您好！看到贵司职位...",
     }
-    state = run_job_application_graph(
-        card=card,
-        policy=policy,
-        jd_text="",
-        llm_client=mock_llm,
-    )
+    screener = CandidateScreener(llm_client=mock_llm)
+    verdict = screener.evaluate_card(card, policy)
 
-    assert state["keyword_pass"] is True
+    result = screener.evaluate_job(card, "", policy=policy)
+
+    assert verdict.passed is True
     # No JD means no evaluable verdict: reported honestly rather than passed silently.
-    assert state["deep_screen_pass"] is False
-    assert state["status"] == JobVerdictStage.JD_UNAVAILABLE.value
-    assert "missing or too short" in state["error_message"]
-    assert state["greeting_message"] == ""
+    assert result.passed is False
+    assert result.stage is JobVerdictStage.JD_UNAVAILABLE
+    assert "missing or too short" in result.error_message
+    assert result.greeting_message == ""
     # The drafting stage was never reached, so no tokens were spent on a greeting.
     mock_llm.chat_completion_json.assert_not_called()
 
@@ -284,7 +301,7 @@ def test_jd_semantic_screener_llm_exception_graceful_fallback():
     assert "降级放行" in result.reason
 
 
-def test_full_lifecycle_job_application_graph_with_profile():
+def test_full_lifecycle_screening_with_profile():
     from boss_agent.memory import StructuredCandidateProfile
 
     profile = StructuredCandidateProfile(
@@ -319,19 +336,15 @@ def test_full_lifecycle_job_application_graph_with_profile():
         },
     ]
 
-    state = run_job_application_graph(
-        card=card,
-        policy=policy,
-        jd_text=jd_text,
-        candidate_profile=profile,
-        llm_client=mock_llm,
-    )
+    screener = CandidateScreener(llm_client=mock_llm)
+    verdict = screener.evaluate_card(card, policy)
+    result = screener.evaluate_job(card, jd_text, profile, policy)
 
-    assert state["keyword_pass"] is True
-    assert state["deep_screen_pass"] is True
-    assert state["status"] == "greeting_drafted"
-    assert state["match_score"] == 95
-    assert "张总" in state["greeting_message"]
+    assert verdict.passed is True
+    assert result.passed is True
+    assert result.stage is JobVerdictStage.PASSED
+    assert result.match_score == 95
+    assert "张总" in result.greeting_message
     assert mock_llm.chat_completion_json.call_count == 2
 
 
@@ -411,8 +424,8 @@ def test_matches_card_keywords_with_digest_whitelist_admission():
     assert "通过卡片初筛" in reason
 
 
-def test_keyword_screener_in_graph_evaluates_digest():
-    """LangGraph keyword_screener node rejects card based on digest and stops graph execution."""
+def test_evaluate_card_evaluates_digest():
+    """Card screening rejects a card based on its digest, before any token is spent."""
     policy = ScreeningPolicy(
         title_whitelist=["Agent"],
         jd_blacklist=["驻场"],
@@ -424,11 +437,12 @@ def test_keyword_screener_in_graph_evaluates_digest():
         digest="工作地点在客户现场，需要长期驻场支持",
     )
     mock_llm = MagicMock()
-    state = run_job_application_graph(card=card, policy=policy, llm_client=mock_llm)
-    assert state["keyword_pass"] is False
-    assert state["status"] == "filtered_by_keyword"
-    assert "驻场" in state["keyword_reason"]
-    # LLM should never be called when card fails keyword screener
+    screener = CandidateScreener(llm_client=mock_llm)
+    verdict = screener.evaluate_card(card, policy)
+    assert verdict.passed is False
+    assert verdict.stage is CardVerdictStage.FILTERED_BY_KEYWORD
+    assert "驻场" in verdict.reason
+    # A rejected card never reaches the JD stages, so no token is spent.
     mock_llm.chat_completion_json.assert_not_called()
 
 
@@ -437,13 +451,11 @@ def test_keyword_screener_in_graph_evaluates_digest():
 # ----------------------------------------------------------------------------
 
 
-def test_job_application_state_declares_relaxation_fields():
-    """JobApplicationState must carry the App-Enforced Filter and relaxation facets."""
-    from boss_agent.graph import JobApplicationState
-
-    annotations = JobApplicationState.__annotations__
+def test_card_screening_verdict_declares_relaxation_fields():
+    """CardScreeningVerdict must carry the App-Enforced Filter and relaxation facets."""
+    fields = CardScreeningVerdict.__dataclass_fields__
     for key in ("app_rule_pass", "app_rule_violation", "relaxed_by_whitelist", "relaxation_reason"):
-        assert key in annotations, f"missing state field: {key}"
+        assert key in fields, f"missing verdict field: {key}"
 
 
 def test_app_filter_direct_only_rejects_headhunter_without_whitelist():
@@ -461,16 +473,15 @@ def test_app_filter_direct_only_rejects_headhunter_without_whitelist():
     assert card.is_headhunter is True
 
     mock_llm = MagicMock()
-    jd_text = "岗位职责：负责智能体平台后端开发。"
-    state = run_job_application_graph(
-        card=card, policy=policy, jd_text=jd_text, llm_client=mock_llm
-    )
+    screener = CandidateScreener(llm_client=mock_llm)
+    verdict = screener.evaluate_card(card, policy)
 
-    assert state["keyword_pass"] is True
-    assert state["app_rule_pass"] is False
-    assert "direct_only" in state["app_rule_violation"]
-    assert state.get("relaxed_by_whitelist", False) is False
-    assert state["status"] == "filtered_by_app_rule"
+    # The keyword stage ran and passed; the App-Enforced Filter is what rejected it.
+    assert verdict.stage is CardVerdictStage.FILTERED_BY_APP_RULE
+    assert verdict.passed is False
+    assert verdict.app_rule_pass is False
+    assert "direct_only" in verdict.app_rule_violation
+    assert verdict.relaxed_by_whitelist is False
     # Rejected jobs must never reach the JD semantic screener / drafter
     mock_llm.chat_completion_json.assert_not_called()
 
@@ -486,15 +497,11 @@ def test_app_filter_headhunter_only_rejects_direct_posting():
     assert card.is_headhunter is False
 
     mock_llm = MagicMock()
-    state = run_job_application_graph(
-        card=card,
-        policy=policy,
-        jd_text="负责智能体平台建设。",
-        llm_client=mock_llm,
-    )
-    assert state["app_rule_pass"] is False
-    assert "headhunter_only" in state["app_rule_violation"]
-    assert state["status"] == "filtered_by_app_rule"
+    screener = CandidateScreener(llm_client=mock_llm)
+    verdict = screener.evaluate_card(card, policy)
+    assert verdict.app_rule_pass is False
+    assert "headhunter_only" in verdict.app_rule_violation
+    assert verdict.stage is CardVerdictStage.FILTERED_BY_APP_RULE
     mock_llm.chat_completion_json.assert_not_called()
 
 
@@ -526,18 +533,20 @@ def test_app_filter_violation_rescued_by_whitelist_relaxation():
         "岗位职责：主导企业级大模型应用与Agent工作流平台建设，负责LLM推理链编排、"
         "向量检索体系优化以及多智能体协同框架的架构设计与落地。"
     )
-    state = run_job_application_graph(
-        card=card, policy=policy, jd_text=jd_text, llm_client=mock_llm
-    )
+    screener = CandidateScreener(llm_client=mock_llm)
+    verdict = screener.evaluate_card(card, policy)
 
-    assert state["keyword_pass"] is True
-    assert state["app_rule_pass"] is False
-    assert "direct_only" in state["app_rule_violation"]
-    assert state["relaxed_by_whitelist"] is True
-    assert "大模型" in state["relaxation_reason"]
-    assert state["deep_screen_pass"] is True
-    assert state["status"] == "greeting_drafted"
-    assert state["greeting_message"] != ""
+    assert verdict.passed is True
+    assert verdict.app_rule_pass is False
+    assert "direct_only" in verdict.app_rule_violation
+    assert verdict.relaxed_by_whitelist is True
+    assert "大模型" in verdict.relaxation_reason
+
+    result = screener.evaluate_job(card, jd_text, policy=policy)
+
+    assert result.passed is True
+    assert result.stage is JobVerdictStage.PASSED
+    assert result.greeting_message != ""
     # Rescued job must continue into the LLM stages
     mock_llm.chat_completion_json.assert_called()
 
@@ -561,15 +570,18 @@ def test_app_filter_clean_job_bypasses_relaxation():
         {"match_score": 90, "greeting_message": "您好，我对贵司Agent平台岗位很感兴趣..."},
     ]
     jd_text = "岗位职责：负责Agent编排平台研发，要求精通Python。"
-    state = run_job_application_graph(
-        card=card, policy=policy, jd_text=jd_text, llm_client=mock_llm
-    )
+    screener = CandidateScreener(llm_client=mock_llm)
+    verdict = screener.evaluate_card(card, policy)
 
-    assert state["app_rule_pass"] is True
-    assert state["app_rule_violation"] == ""
-    assert state.get("relaxed_by_whitelist", False) is False
-    assert state.get("relaxation_reason", "") == ""
-    assert state["status"] == "greeting_drafted"
+    assert verdict.app_rule_pass is True
+    assert verdict.app_rule_violation == ""
+    assert verdict.relaxed_by_whitelist is False
+    assert verdict.relaxation_reason == ""
+
+    result = screener.evaluate_job(card, jd_text, policy=policy)
+
+    assert result.passed is True
+    assert result.stage is JobVerdictStage.PASSED
 
 
 # ----------------------------------------------------------------------------
@@ -669,11 +681,10 @@ def test_greeting_drafter_injects_active_blacklists_into_prompt():
         },
     ]
 
-    state = run_job_application_graph(
-        card=card, policy=policy, jd_text=jd_text, llm_client=mock_llm
-    )
-    assert state["deep_screen_pass"] is True
-    assert state["status"] == "greeting_drafted"
+    screener = CandidateScreener(llm_client=mock_llm)
+    result = screener.evaluate_job(card, jd_text, policy=policy)
+    assert result.passed is True
+    assert result.stage is JobVerdictStage.PASSED
 
     # Second LLM call is the greeting drafter
     drafter_prompt = _extract_system_prompt(mock_llm, 1)
