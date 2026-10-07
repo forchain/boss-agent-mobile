@@ -23,7 +23,7 @@ from .feed_verification import (
 from .job_entities import JobPosting
 from .matching import JobMatchGreetingService
 from .memory import ResumeMemoryManager
-from .pages import LoginPage
+from .pages.system import LoginPage
 from .saved_search_store import (
     SavedSearchStore,
     missing_saved_search_message,

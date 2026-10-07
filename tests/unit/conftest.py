@@ -22,7 +22,8 @@ So this tier removes the waiting, not the logic behind it:
   above: a mocked driver never paints the element the pause is waiting for, so the wait can
   only expire. They are worth more than they look — dropping them took the tier from ~64s to
   ~9s, because a handful of smoke-harness tests walk the same settle-then-read sequence
-  dozens of times.
+  dozens of times. Since `pages` became a package (spec #395) those pauses live in whichever
+  submodule owns the screen, so the fixture walks the package rather than one module.
 
 Everything else keeps real time, and that includes the shutdown budgets the lifecycle suites
 measure: those sleep from the test module and read the test module's own clock, neither of
@@ -38,6 +39,8 @@ into the handler under test — and to audit the tier, run it against a poisoned
 `droid_agent_core.llm.OpenAIChatClient`.
 """
 
+import importlib
+import pkgutil
 import socket
 import subprocess
 import time
@@ -89,10 +92,35 @@ def any_job_store(request) -> Any:
 @pytest.fixture(autouse=True)
 def instant_ui_pacing(monkeypatch: pytest.MonkeyPatch) -> None:
     """Let UI wait loops exhaust their budget, and gestures play out, without waiting."""
-    from boss_agent import pages, workflows
+    from boss_agent import workflows
 
-    for module in (locators, gestures, workflows, pages):
+    for module in (locators, gestures, workflows, *_pages_pacing_modules()):
         monkeypatch.setattr(module, "time", _InstantPacingTime(time))
+
+
+def _pages_pacing_modules() -> tuple[Any, ...]:
+    """Every `boss_agent.pages` submodule that owns its own `import time`.
+
+    `pages` became a package in spec #395, so the settling pauses are no longer neutralised by
+    one `monkeypatch.setattr(pages, "time", ...)`: each submodule holds its own `time` reference,
+    and patching only the facade attribute would leave every `time.sleep` live -- turning the tier
+    from seconds into minutes with no failure to explain it. Walking the package keeps this fixture
+    correct as submodules are added, rather than pinning today's file list by hand.
+    """
+    from boss_agent import pages
+
+    modules = []
+    for info in pkgutil.iter_modules(pages.__path__):
+        module = importlib.import_module(f"{pages.__name__}.{info.name}")
+        if hasattr(module, "time"):
+            modules.append(module)
+    return tuple(sorted(modules, key=lambda m: m.__name__))
+
+
+@pytest.fixture
+def pages_pacing_modules() -> tuple[Any, ...]:
+    """The page modules the tier's pacing fixture neutralises, for tests that pin the contract."""
+    return _pages_pacing_modules()
 
 
 @pytest.fixture(autouse=True)

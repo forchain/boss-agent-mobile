@@ -20,7 +20,7 @@ from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
 from boss_agent.enums import ChatButtonState
 from boss_agent.identifier_helpers import classify_chat_button
 from boss_agent.job_entities import JobCardBrief
-from boss_agent.pages import JobDetailPage
+from boss_agent.pages.job_detail import JobDetailPage
 from boss_agent.worker.config import WorkerConfig
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.daemon import AutomationWorker
