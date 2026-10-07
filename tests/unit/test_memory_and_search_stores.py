@@ -17,7 +17,11 @@ from typing import Any
 import pytest
 
 from boss_agent.broker.collection_schema import SAVED_SEARCH_MAX_JOBS
-from boss_agent.broker.pocketbase_adapter import BaseTaskBroker, InMemoryTaskBroker
+from boss_agent.broker.pocketbase_adapter import (
+    BaseTaskBroker,
+    InMemoryTaskBroker,
+    PocketBaseTaskBroker,
+)
 from boss_agent.broker.provisioner import DEFAULT_INITIAL_SEARCHES
 from boss_agent.candidate_memory_store import (
     CandidateMemoryStore,
@@ -559,9 +563,9 @@ async def test_an_empty_store_still_yields_a_usable_default_search(
 async def test_the_in_memory_store_hydrates_raw_record_fixtures() -> None:
     """``DEFAULT_INITIAL_SEARCHES`` is raw records, so the store has to hydrate them.
 
-    A caller migrating off the registry hands over exactly that dict; taking it
-    verbatim would leave ``list_saved_searches`` handing back dicts to consumers that
-    expect the domain type.
+    ``resolve_saved_search_store(prefer_database=False)`` hands over exactly that dict;
+    taking it verbatim would leave ``list_saved_searches`` handing back dicts to
+    consumers that expect the domain type.
     """
     store = InMemorySavedSearchStore(DEFAULT_INITIAL_SEARCHES)
 
@@ -581,18 +585,6 @@ async def test_the_in_memory_store_still_accepts_domain_objects() -> None:
     store = InMemorySavedSearchStore({"s1": _search()})
 
     assert (await store.get_saved_search("s1")) == _search()
-
-
-@pytest.mark.asyncio
-async def test_a_searches_wrapped_fixture_is_accepted() -> None:
-    """The registry tolerated a ``{"searches": {...}}`` wrapper; its replacement does too."""
-    wrapped = {"searches": {"s1": {"id": "s1", "name": "包裹"}}}
-
-    store = InMemorySavedSearchStore(wrapped)
-
-    loaded = await store.get_saved_search("s1")
-    assert loaded is not None
-    assert loaded.name == "包裹"
 
 
 @pytest.mark.asyncio
@@ -624,6 +616,34 @@ def hermetic_pocketbase(monkeypatch: pytest.MonkeyPatch) -> FakePocketBaseSessio
     monkeypatch.setenv("POCKETBASE_URL", "http://pb.test:8090")
     monkeypatch.setattr("requests.Session", lambda: session)
     return session
+
+
+def test_the_broker_and_the_resolver_build_their_auth_header_in_one_place(
+    hermetic_pocketbase: FakePocketBaseSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Bearer handling is needed by two call sites, so it has to be written down once.
+
+    The two copies produced identical headers, which is why the duplication cost nothing
+    until the token scheme changed and only the file nobody was looking at got edited —
+    leaving the store authenticated and the broker not, with nothing in either test suite
+    to say so. Patching the shared helper makes that split fail here instead: the moment
+    one of them grows its own copy again, it stops calling it.
+    """
+    seen: list[str | None] = []
+
+    def spy(auth_token: str | None) -> dict[str, str]:
+        seen.append(auth_token)
+        return {"Content-Type": "application/json"}
+
+    monkeypatch.setenv("POCKETBASE_AUTH_TOKEN", "tok-123")
+    monkeypatch.setattr("boss_agent.broker.pocketbase_adapter.pocketbase_headers", spy)
+    monkeypatch.setattr("boss_agent.saved_search_store.pocketbase_headers", spy)
+
+    broker = PocketBaseTaskBroker(session=hermetic_pocketbase)
+    broker._headers()
+    resolve_saved_search_store()._headers()
+
+    assert seen == ["tok-123", "tok-123"]
 
 
 @pytest.mark.asyncio

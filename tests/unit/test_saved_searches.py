@@ -10,7 +10,11 @@ import boss_agent
 from boss_agent import saved_search_store
 from boss_agent.errors import TransportError
 from boss_agent.job_entities import JobPosting
-from boss_agent.saved_search_store import InMemorySavedSearchStore, resolve_saved_search_store
+from boss_agent.saved_search_store import (
+    InMemorySavedSearchStore,
+    missing_saved_search_message,
+    resolve_saved_search_store,
+)
 from boss_agent.search_entities import FilterConfig, SavedSearch, SearchConfig
 from boss_agent.workflows import SmokeHarness, TakeoverHandler
 
@@ -290,6 +294,20 @@ def test_smoke_harness_names_the_available_presets_when_the_id_is_unknown():
 
     assert "missing" in str(excinfo.value)
     assert "only_preset" in str(excinfo.value)
+
+
+def test_the_miss_message_is_written_once_for_both_callers() -> None:
+    """The harness's ``KeyError`` and the CLI's console line are the same sentence.
+
+    They were assembled separately, so an edit to one — a different word, a lost id —
+    left the other telling an operator a half-truth about which presets exist.
+    """
+    assert missing_saved_search_message("missing", ["alpha", "beta"]) == (
+        "Saved search 'missing' not found. Available searches: [alpha, beta]"
+    )
+    assert missing_saved_search_message("missing", []) == (
+        "Saved search 'missing' not found. Available searches: [none]"
+    )
 
 
 def test_smoke_harness_does_not_hide_an_unreachable_store():

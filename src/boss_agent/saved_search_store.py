@@ -20,12 +20,13 @@ from __future__ import annotations
 import logging
 import os
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from typing import Any
 
 import requests
 
 from .async_bridge import execute_broker_request
+from .pocketbase_auth import pocketbase_headers
 from .search_entities import SavedSearch
 from .settings import resolve_pocketbase_url
 
@@ -44,31 +45,47 @@ _DERIVED_ON_ABSENCE = ("name", "keyword", "enable_search", "enable_filter", "tar
 DEFAULT_SEARCH_ID = "default_agent_search"
 
 
+def missing_saved_search_message(search_id: str, available_ids: Iterable[str]) -> str:
+    """The one sentence a missed preset is reported in, whichever caller found it.
+
+    Two callers report a miss to a human — the harness re-raises it as a ``KeyError``,
+    the CLI prints it in red — and they used to assemble the text separately. Someone
+    reading a stack trace and someone reading a terminal were then told subtly
+    different things about the same miss, and the half naming the presets that *do*
+    exist is the half that makes a typo fixable without reading the source.
+
+    An empty store reports ``none`` rather than empty brackets: ``Available searches: []``
+    reads as a formatting bug instead of as the answer it is.
+    """
+    available = ", ".join(available_ids) or "none"
+    return f"Saved search '{search_id}' not found. Available searches: [{available}]"
+
+
 def _hydrate_fixture(
-    fixture: Mapping[str, SavedSearch | Mapping[str, Any]],
+    fixture: Mapping[str, SavedSearch | dict[str, Any]],
 ) -> dict[str, SavedSearch]:
     """Coerce a saved-search fixture into domain objects, keyed by id.
 
     Fixtures reach this seam in two shapes: the domain type, and the raw
     record-shaped dicts the provisioner ships as ``DEFAULT_INITIAL_SEARCHES``. Both
-    are accepted so a caller migrating off the registry can hand over the defaults
-    verbatim instead of rebuilding them.
+    are accepted so ``resolve_saved_search_store(prefer_database=False)`` hands the
+    defaults over verbatim instead of rebuilding them into domain objects first.
 
-    Fixtures are hydrated through bare ``from_dict`` rather than the schema: unlike a
-    persistence read, a fixture is authored in the domain's own vocabulary, and the
-    ``{"searches": {...}}`` wrapper is tolerated because the retired registry's
-    ``load_from_dict`` accepted it and configs written for that loader are not worth
-    breaking.
+    They are hydrated through bare ``from_dict`` rather than the schema: a fixture is
+    authored in the domain's own vocabulary, not the collection's, so normalizing one
+    first would resolve columns the author never wrote.
+
+    The mapping is taken as it comes — a ``{"searches": {...}}`` wrapper is not
+    unwrapped. Nothing produces one: the loader that accepted it is gone with the
+    registry, so tolerating it would be support for a shape no caller has, and a
+    wrapper handed over by mistake would arrive looking like one preset named
+    ``searches`` rather than like an empty store.
     """
-    payload: Mapping[str, Any] = fixture
-    inner = payload.get("searches")
-    if isinstance(inner, Mapping):
-        payload = inner
     return {
         search_id: value
         if isinstance(value, SavedSearch)
         else SavedSearch.from_dict(search_id, value)
-        for search_id, value in payload.items()
+        for search_id, value in fixture.items()
     }
 
 
@@ -127,14 +144,14 @@ class SavedSearchStore(ABC):
 
         ``default_agent_search`` wins when the store carries it; otherwise the first
         search that exists is a better answer than none; and an empty store still
-        yields a synthesized default so a fresh install has something runnable. That
-        precedence is the one callers already relied on; only the owner of the question
-        changed.
+        yields a synthesized default so a fresh install has something runnable.
 
-        It is concrete rather than abstract because the answer is the same question of
-        every adapter ("what is in there?"), and the adapters already agree on how to
-        ask it. Duplicating that walk per adapter is the kind of drift this seam
-        exists to remove.
+        That precedence is the seam's own rather than inherited. It exists so a consumer
+        that names no preset has one documented way to choose, and this is it: answering
+        the question per adapter instead would make "the default" mean something slightly
+        different in each, which is the drift this seam exists to remove. Hence concrete
+        on the interface — the adapters differ in where presets come from, not in how one
+        is picked.
 
         The synthesized default is returned but *not* stored: caching it would
         manufacture a preset the collection never held, and callers could not tell a
@@ -150,11 +167,11 @@ class SavedSearchStore(ABC):
 
 
 class InMemorySavedSearchStore(SavedSearchStore):
-    """Volatile saved-search registry for tests and local development."""
+    """Volatile saved-search store for tests and local development."""
 
     def __init__(
         self,
-        initial: Mapping[str, SavedSearch | Mapping[str, Any]] | None = None,
+        initial: Mapping[str, SavedSearch | dict[str, Any]] | None = None,
         on_delete: ScheduleRevoker | None = None,
     ) -> None:
         self._searches: dict[str, SavedSearch] = _hydrate_fixture(initial or {})
@@ -296,10 +313,7 @@ def resolve_saved_search_store(prefer_database: bool = True) -> SavedSearchStore
     auth_token = os.getenv("POCKETBASE_AUTH_TOKEN")
 
     def _headers() -> dict[str, str]:
-        headers = {"Content-Type": "application/json"}
-        if auth_token:
-            headers["Authorization"] = f"Bearer {auth_token}"
-        return headers
+        return pocketbase_headers(auth_token)
 
     return PocketBaseSavedSearchStore(
         base_url=resolve_pocketbase_url(),

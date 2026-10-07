@@ -24,6 +24,7 @@ from boss_agent.async_bridge import run_sync
 from boss_agent.errors import BrokerError
 from boss_agent.saved_search_store import (
     SavedSearchStore,
+    missing_saved_search_message,
     resolve_saved_search_store,
 )
 from boss_agent.search_entities import FilterConfig, SavedSearch, SearchConfig
@@ -72,19 +73,24 @@ def _read_presets(
         return run_sync(read(resolve_saved_search_store(prefer_database=False)))
 
 
-def load_saved_search(search_id: str, store: SavedSearchStore | None = None) -> SavedSearch | None:
+def read_saved_search(search_id: str, store: SavedSearchStore | None = None) -> SavedSearch | None:
     """The named preset, or ``None`` when the database answered without carrying it."""
     return _read_presets(lambda s: s.get_saved_search(search_id), store)
 
 
-def load_saved_searches(store: SavedSearchStore | None = None) -> list[SavedSearch]:
+def read_saved_searches(store: SavedSearchStore | None = None) -> list[SavedSearch]:
     """Every preset this harness can start from, in the order the store returns them."""
     return _read_presets(lambda s: s.list_saved_searches(), store)
 
 
 def list_saved_searches(store: SavedSearchStore | None = None) -> None:
-    """Print all available preconfigured saved searches."""
-    searches = load_saved_searches(store)
+    """Print all available preconfigured saved searches, returning nothing.
+
+    The ``read_*`` helpers above are the ones that hand a caller its presets; this one
+    only draws them, so the two are named apart rather than ``load``/``list`` — one
+    letter of difference is not enough to tell "returns the list" from "prints it".
+    """
+    searches = read_saved_searches(store)
 
     table = Table(title="📋 Available Saved Searches & Filter Presets")
     table.add_column("Search ID", style="cyan", no_wrap=True)
@@ -120,20 +126,18 @@ def run_live_test(
     saved_search_store: SavedSearchStore | None = None,
 ) -> bool:
     if search_id:
-        saved_search = load_saved_search(search_id, saved_search_store)
+        saved_search = read_saved_search(search_id, saved_search_store)
         if saved_search is None:
-            # The store reports a miss with ``None`` rather than the registry's KeyError,
-            # so the operator-facing message is reconstructed here — naming the preset
-            # that was asked for *and* the ones that exist, which is the part that makes
-            # a typo fixable without reading the source.
-            available = ", ".join(s.id for s in load_saved_searches(saved_search_store)) or "none"
-            # The bracketed id list is escaped because Rich reads ``[alpha_preset]`` as a
-            # markup tag and would swallow it — the one line that tells the operator what
-            # to type instead.
-            console.print(
-                f"[bold red]❌ Saved search '{search_id}' not found. "
-                f"Available searches: {escape(f'[{available}]')}[/bold red]"
-            )
+            # The store reports a miss with ``None`` instead of raising, so this rebuilds
+            # the wording from the ids it does hold — naming the preset that was asked for
+            # *and* the ones that exist, which is the part that makes a typo fixable
+            # without reading the source. The sentence itself belongs to the seam and is
+            # shared with the harness's ``KeyError``, so the two cannot drift apart.
+            available = [s.id for s in read_saved_searches(saved_search_store)]
+            # The message is escaped because Rich reads ``[alpha_preset]`` as a markup tag
+            # and swallows it — the one line that tells the operator what to type instead.
+            message = escape(missing_saved_search_message(search_id, available))
+            console.print(f"[bold red]❌ {message}[/bold red]")
             return False
         search_config = (
             SearchConfig(keyword=keyword) if keyword is not None else saved_search.search
@@ -225,6 +229,7 @@ def run_live_test(
             takeover_handler=takeover,
             search_config=search_config,
             filter_config=active_filter,
+            saved_search_store=saved_search_store,
             resume_file=resume_file,
             force_refresh_memory=force_refresh_memory,
             preview_timeout_sec=preview_timeout_sec,
@@ -347,7 +352,7 @@ def main():
 
     # Resolve settings: CLI flags take precedence over database SavedSearch
     search_id = args.search_id or "default_agent_search"
-    saved_search = load_saved_search(search_id) if search_id else None
+    saved_search = read_saved_search(search_id) if search_id else None
     if search_id and saved_search is None:
         # Degrade to the CLI flags rather than fail: an unknown preset should not stop an
         # operator who passed an explicit keyword from running at all. It is announced,

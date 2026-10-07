@@ -30,6 +30,7 @@ from boss_agent.job_store import (
     JobRecordStore,
     PocketBaseJobRecordStore,
 )
+from boss_agent.pocketbase_auth import pocketbase_headers
 from boss_agent.saved_search_store import (
     InMemorySavedSearchStore,
     PocketBaseSavedSearchStore,
@@ -411,10 +412,7 @@ class PocketBaseTaskBroker(BaseTaskBroker):
             pass
 
     def _headers(self) -> dict[str, str]:
-        headers = {"Content-Type": "application/json"}
-        if self.auth_token:
-            headers["Authorization"] = f"Bearer {self.auth_token}"
-        return headers
+        return pocketbase_headers(self.auth_token)
 
     def _collection_url(self) -> str:
         return f"{self.base_url}/api/collections/{self.collection_name}/records"

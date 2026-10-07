@@ -88,7 +88,7 @@ class Field:
     """One declared column, rendered by both provisioning dialects.
 
     ``default`` is the value the field takes when a writer omits it — the Job Record
-    Store's payload and the SavedSearch registry's record→domain mapper both read it,
+    Store's payload and the SavedSearch store's record→domain mapper both read it,
     so a column added to an older deployment degrades to a declared default rather
     than surfacing as ``None`` mid-task. ``None`` means "genuinely absent" for
     nullable pointer columns (``applied_at``, ``source_task_id``).

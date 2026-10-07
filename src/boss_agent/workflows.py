@@ -26,7 +26,11 @@ from .pages import (
     SearchPage,
     StartupDialogPage,
 )
-from .saved_search_store import SavedSearchStore, resolve_saved_search_store
+from .saved_search_store import (
+    SavedSearchStore,
+    missing_saved_search_message,
+    resolve_saved_search_store,
+)
 from .screening_policy import ScreeningPolicy, resolve_screening_policy
 from .search_entities import FilterConfig, SavedSearch, SearchConfig
 
@@ -40,10 +44,12 @@ def _require_saved_search(store: SavedSearchStore, search_id: str) -> SavedSearc
     with ``run_sync`` rather than ``asyncio.run`` — a harness built from inside a running
     loop (a LangGraph step, an async worker) would otherwise collide with it.
 
-    A store answers a miss with ``None`` where the registry raised, so this turns that
-    ``None`` back into a ``KeyError`` listing the ids the store holds. Letting it through
-    is not an option: the harness would fall through to a default search and filter and
-    run an unfiltered sweep against a live device under a preset nobody chose.
+    A store answers a miss with ``None`` rather than raising, so this turns that
+    ``None`` back into a ``KeyError`` listing the ids the store holds — the wording the
+    CLI prints for the same miss, so neither caller has to be trusted over the other.
+    Letting it through is not an option: the harness would fall through to a default
+    search and filter and run an unfiltered sweep against a live device under a preset
+    nobody chose.
 
     A store failure is not converted at all — it is raised as the typed ``BrokerError``
     the seam reports, because unlike a missing preset this says nothing about what the
@@ -51,10 +57,8 @@ def _require_saved_search(store: SavedSearchStore, search_id: str) -> SavedSearc
     """
     loaded_search = run_sync(store.get_saved_search(search_id))
     if loaded_search is None:
-        available = ", ".join(search.id for search in run_sync(store.list_saved_searches()))
-        raise KeyError(
-            f"Saved search '{search_id}' not found. Available searches: [{available or 'none'}]"
-        )
+        available = [search.id for search in run_sync(store.list_saved_searches())]
+        raise KeyError(missing_saved_search_message(search_id, available))
     return loaded_search
 
 
