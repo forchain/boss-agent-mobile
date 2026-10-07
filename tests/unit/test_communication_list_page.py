@@ -308,6 +308,9 @@ def _recovery_page(driver: _NavDriver) -> CommunicationListPage:
 
     page.find_by_key = MagicMock(side_effect=find)  # type: ignore[method-assign]
     page.gestures.human_click = MagicMock(side_effect=click)  # type: ignore[method-assign]
+    # The double-tap lands on the same 消息 tab: the list reset is a gesture on the
+    # navigation entry, not a new screen, so it shares the single-click wiring above.
+    page.gestures.human_double_click = MagicMock(side_effect=click)  # type: ignore[method-assign]
     page.gestures.random_sleep = MagicMock()  # type: ignore[method-assign]
     return page
 
@@ -386,6 +389,51 @@ def test_recovery_loop_is_bounded_by_the_step_budget():
 
     assert page.open_list(timeout_sec=0.1, max_steps=3) is False
     assert driver.keycodes == [4, 4, 4]
+
+
+def test_scroll_to_top_double_clicks_the_message_entry_tab_and_settles():
+    """#388: 双击「消息」导航按钮把仅沟通列表拉回最新消息。
+
+    A RecyclerView left scrolled into the middle of the feed hides every fresh
+    rejection, so the reset is a double-tap on the navigation entry rather than a
+    swipe — and the settle pause is what lets the scroll-to-top animation land
+    before any card is read.
+    """
+    driver = _NavDriver(on_list=True)
+    page = _recovery_page(driver)
+    page.gestures.random_sleep.reset_mock()
+
+    assert page.scroll_to_top() is True
+
+    double_clicked = [call.args[0].name for call in page.gestures.human_double_click.call_args_list]
+    assert double_clicked == ["消息"]
+    assert page.gestures.random_sleep.call_args_list, (
+        "the scroll-to-top animation needs a settle pause"
+    )
+
+
+def test_scroll_to_top_reports_failure_when_the_navigation_bar_is_absent():
+    """Without the 消息 tab there is nothing to double-tap: report it instead of pausing."""
+    driver = _NavDriver(on_list=True)
+    page = _recovery_page(driver)
+    page.find_by_key = MagicMock(return_value=None)  # type: ignore[method-assign]
+    page.gestures.random_sleep.reset_mock()
+
+    assert page.scroll_to_top() is False
+    assert page.gestures.human_double_click.call_args_list == []
+    assert page.gestures.random_sleep.call_args_list == []
+
+
+def test_open_list_resets_the_feed_to_the_newest_messages_after_landing():
+    """#388: landing on 仅沟通 is not enough — the list must start at the newest message."""
+    driver = _NavDriver(on_list=True)
+    page = _recovery_page(driver)
+
+    assert page.open_list(timeout_sec=0.1) is True
+
+    assert [call.args[0].name for call in page.gestures.human_double_click.call_args_list] == [
+        "消息"
+    ]
 
 
 def test_recovery_steps_never_wait_out_the_element_timeout():

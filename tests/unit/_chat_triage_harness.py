@@ -119,7 +119,19 @@ class Harness:
 
     def open_list(self, timeout_sec: float = 5.0) -> bool:
         self.on_list = self.open_list_ok
-        return self.open_list_ok
+        if not self.on_list:
+            return False
+        # Mirrors the page object: landing on 仅沟通 is followed by the double-tap
+        # reset (#388), because the feed survives navigation. The scripted screen
+        # therefore starts every run at the newest message, whatever it looked like
+        # before the run arrived.
+        self.scroll_to_top()
+        return True
+
+    def scroll_to_top(self) -> bool:
+        self.events.append("scroll_to_top")
+        self.scroll_offset = 0
+        return True
 
     def has_message_tab_unread_dot(self, timeout_sec: float = 1.0) -> bool:
         if self.dot_readings:
