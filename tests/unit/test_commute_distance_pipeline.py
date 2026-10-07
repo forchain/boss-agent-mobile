@@ -42,8 +42,13 @@ def test_evaluate_card_reads_the_probed_commute_distance():
 
 
 def test_evaluate_card_rejects_a_card_beyond_the_commute_ceiling():
-    """A job past max_commute_distance_km is rejected by the App-Enforced Filter,
-    and stays relaxable by a matching whitelist token."""
+    """A job past max_commute_distance_km is rejected by the App-Enforced Filter.
+
+    The whitelist here deliberately does not match the card's title, so the point is
+    the one this file makes at the screener seam: an unmatched relaxation token leaves
+    the violation standing. The matched case (and the worker handler that persists it)
+    is the seam #212 named, in ``test_worker_relaxation_integration.py``.
+    """
     screener = CandidateScreener(llm_client=MagicMock())
 
     verdict = screener.evaluate_card(

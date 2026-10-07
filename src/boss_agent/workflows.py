@@ -294,14 +294,18 @@ class SmokeHarness:
                 )
 
                 verdict = self.screener.evaluate_card(card, self.screening_policy)
-                if verdict.stage is CardVerdictStage.FILTERED_BY_KEYWORD:
-                    console.print(
-                        f"[yellow]⏭️  Job rejected by KeywordScreener: {verdict.reason}[/yellow]"
-                    )
-                elif not verdict.app_rule_pass and not verdict.relaxed_by_whitelist:
-                    console.print(
-                        f"[yellow]🛑  Job rejected by App-Enforced Filter: {verdict.app_rule_violation}[/yellow]"
-                    )
+                # `passed` is the whole gate and `stage` only picks the message, so a
+                # rejection stage this harness does not recognise by name still stops
+                # here instead of falling through to a JD evaluation. #399.
+                if not verdict.passed:
+                    if verdict.stage is CardVerdictStage.FILTERED_BY_KEYWORD:
+                        console.print(
+                            f"[yellow]⏭️  Job rejected by Keyword Screener: {verdict.reason}[/yellow]"
+                        )
+                    else:
+                        console.print(
+                            f"[yellow]🛑  Job rejected by App-Enforced Filter: {verdict.app_rule_violation}[/yellow]"
+                        )
                 else:
                     # Only a card that survived card screening earns a JD evaluation; a
                     # rejected card stops here without spending a single token.
@@ -318,7 +322,7 @@ class SmokeHarness:
                         )
                     elif not evaluation.passed:
                         console.print(
-                            f"[yellow]⏭️  Job rejected by JDSemanticScreener: {evaluation.reason}[/yellow]"
+                            f"[yellow]⏭️  Job rejected by JD Semantic Screener Agent: {evaluation.reason}[/yellow]"
                         )
                     else:
                         if verdict.relaxed_by_whitelist:

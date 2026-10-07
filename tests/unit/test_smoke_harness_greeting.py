@@ -4,15 +4,14 @@ tests.unit.test_smoke_harness_greeting
 Unit tests for SmokeHarness integration with resume memory, match scoring, and greeting draft typing.
 """
 
+import io
 from unittest.mock import MagicMock, patch
+
+from rich.console import Console
 
 from boss_agent.matching import MatchGreetingResult
 from boss_agent.memory import StructuredCandidateProfile
-from boss_agent.screening import (
-    CardScreeningVerdict,
-    JobEvaluationResult,
-    JobVerdictStage,
-)
+from boss_agent.screening import CardScreeningVerdict
 from boss_agent.workflows import SmokeHarness, TakeoverHandler
 
 
@@ -98,7 +97,7 @@ def test_smoke_harness_runs_matching_and_types_greeting():
     mock_matching_svc.render_match_card.assert_called_once_with(job, mock_match_result)
 
 
-def _headhunter_smoke_harness(channel_policy, whitelist=None):
+def _headhunter_smoke_harness(channel_policy, whitelist=None, **policy_overrides):
     """Build a SmokeHarness whose detail page yields a headhunter posting."""
     from boss_agent.job_entities import JobPosting
     from boss_agent.screening_policy import ScreeningPolicy
@@ -131,6 +130,7 @@ def _headhunter_smoke_harness(channel_policy, whitelist=None):
         screening_policy=ScreeningPolicy(
             channel_preference=channel_policy,
             title_whitelist=whitelist or [],
+            **policy_overrides,
         ),
         preview_timeout_sec=0.01,
         enable_greeting_draft=True,
@@ -178,37 +178,63 @@ def test_smoke_harness_relaxed_headhunter_still_drafts_greeting():
     mock_matching_svc.evaluate_and_draft_greeting.assert_called_once()
 
 
-def test_smoke_harness_drives_candidate_screener_directly():
-    """SmokeHarness must screen through the CandidateScreener domain interface (ADR 0013,
-    #399): the screener is built with the configured matching service, and both stages
-    arrive as typed verdicts rather than a marshalled graph state dictionary."""
+def _record_console():
+    """Swap SmokeHarness's Rich console for a wide, in-memory one and return its buffer."""
+    buffer = io.StringIO()
+    return buffer, patch(
+        "boss_agent.workflows.console", Console(file=buffer, width=200, no_color=True)
+    )
+
+
+def test_smoke_harness_keyword_rejection_never_spends_a_jd_evaluation():
+    """A card the Keyword Screener turns away must stop before the JD stage.
+
+    Card screening is the zero-token gate: the blacklist hit has to be reported on the
+    console and the run has to end there, because a JD evaluation is where the first
+    real LLM tokens are spent.
+    """
+    harness, mock_matching_svc = _headhunter_smoke_harness("all", title_blacklist=["平台负责人"])
+    buffer, console_patch = _record_console()
+
+    with console_patch, patch("time.sleep", return_value=None):
+        harness.run_smoke_test()
+
+    output = buffer.getvalue()
+    assert "Job rejected by Keyword Screener" in output
+    # The blacklist hit the policy itself reports, not a placeholder.
+    assert "命中职位黑名单关键词: '平台负责人'" in output
+    mock_matching_svc.evaluate_and_draft_greeting.assert_not_called()
+    mock_matching_svc.render_match_card.assert_not_called()
+    harness.detail_page.open_chat.assert_not_called()
+
+
+def test_smoke_harness_spends_nothing_on_a_rejection_it_has_never_seen():
+    """`CardScreeningVerdict.passed` is the whole gate, so a rejection stage this
+    harness does not recognise by name still costs zero tokens.
+
+    Ticket #399's acceptance criteria put the typed fields in play precisely so the
+    harness stops hand-rolling a dispatcher over ``CardVerdictStage``: a new rejection
+    member added upstream must not fall through to a JD evaluation. The verdict below
+    stands in for one that does not exist yet -- a rejection in the shape of
+    ``rejected_by_keywords``, which leaves ``app_rule_pass`` at its default.
+    """
     screener = MagicMock()
-    screener.evaluate_card.return_value = CardScreeningVerdict.approved(
-        relaxed_by_whitelist=True, matched_token="大模型", app_rule_violation="direct_only"
-    )
-    screener.evaluate_job.return_value = JobEvaluationResult(
-        passed=True,
-        stage=JobVerdictStage.PASSED,
-        reason="【合格保留】技术栈匹配",
-        match_score=88,
-        match_reasons=["技术栈匹配"],
-        greeting_message="您好！我有完整的大模型平台实战经验……",
+    screener.evaluate_card.return_value = CardScreeningVerdict(
+        passed=False,
+        stage="filtered_by_a_future_rule",
+        reason="命中未来新增的过滤规则",
+        app_rule_violation="命中未来新增的过滤规则",
     )
 
-    # The screener is composed by SmokeHarness.__init__, so the patch has to span
-    # construction as well as the run itself.
-    with patch("boss_agent.workflows.CandidateScreener", return_value=screener) as ctor:
-        harness, mock_matching_svc = _headhunter_smoke_harness("direct_only", whitelist=["大模型"])
-        assert ctor.call_args.kwargs["matching_service"] is mock_matching_svc
-
-        with patch("time.sleep", return_value=None):
+    buffer, console_patch = _record_console()
+    with patch("boss_agent.workflows.CandidateScreener", return_value=screener):
+        harness, mock_matching_svc = _headhunter_smoke_harness("all")
+        with console_patch, patch("time.sleep", return_value=None):
             harness.run_smoke_test()
 
-    card_arg, policy_arg = screener.evaluate_card.call_args.args
-    assert card_arg.title == "大模型平台负责人"
-    assert policy_arg is harness.screening_policy
-
-    job_kwargs = screener.evaluate_job.call_args.kwargs
-    assert job_kwargs["jd_text"].startswith("主导企业级大模型应用")
-    assert job_kwargs["profile"] is harness.candidate_profile
-    assert job_kwargs["policy"] is harness.screening_policy
+    screener.evaluate_job.assert_not_called()
+    mock_matching_svc.evaluate_and_draft_greeting.assert_not_called()
+    mock_matching_svc.render_match_card.assert_not_called()
+    harness.detail_page.open_chat.assert_not_called()
+    # The rejection is still surfaced rather than silently swallowed.
+    assert "App-Enforced Filter" in buffer.getvalue()
