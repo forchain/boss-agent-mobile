@@ -2,13 +2,15 @@
 
 import importlib.util
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
+from _feed_harness import GOOD_JD, ScriptedFeed, _card, _detail_page, script_pages, stub_llm
 
 import boss_agent
 from boss_agent import saved_search_store
 from boss_agent.errors import TransportError
+from boss_agent.feed_pipeline import FeedStreamConfig
 from boss_agent.job_entities import JobPosting
 from boss_agent.saved_search_store import (
     InMemorySavedSearchStore,
@@ -214,42 +216,74 @@ def test_saved_search_dual_shape_migration_nested_is_authoritative():
 
 
 def test_smoke_harness_with_saved_search_id():
-    """The harness reads a named preset through an injected store, not a global (#394).
+    """A saved search id becomes the run, and the run's extraction is what comes back.
 
-    Injection is what makes this a seam: the harness resolves no store of its own, so
-    the test supplies the same defaults the resolver seeds for a database-less run.
+    Issue #390 collapsed the harness onto the pipeline; this test was left behind, still
+    driving a feed nothing scripted and asserting ``isinstance(job, JobPosting)`` over a
+    MagicMock driver — a claim any object of that type satisfies, so it pinned the return
+    type and not the behaviour its name states. It is re-seated on the same scripted-device
+    seam as the harness's siblings, and asserts both halves of what resolving a preset is
+    for: the preset's search, filters and screening policy reach the ``FeedStreamConfig``
+    the engine was handed, and the posting that comes back is the one that run extracted.
+
+    The harness reads that preset through an injected store rather than a global (#394).
+    Injection is what makes this a seam: the harness resolves no store of its own, so the
+    test supplies the same defaults the resolver seeds for a database-less run.
     """
     mock_driver = MagicMock()
     mock_driver.get_window_size.return_value = {"width": 1080, "height": 2400}
 
-    mock_btn = MagicMock()
-    mock_btn.rect = {"x": 50, "y": 50, "width": 100, "height": 50}
-
-    mock_title_elem = MagicMock()
-    mock_title_elem.text = "资深 Agent 专家"
-
-    def mock_find_elements(by, value):
-        if "tv_job_name" in value:
-            return [mock_title_elem]
-        if "chat" in value or "editText_with_scrollbar" in value or "btn_chat" in value:
-            return []
-        return [mock_btn]
-
-    mock_driver.find_elements.side_effect = mock_find_elements
-
-    takeover = TakeoverHandler(mock_driver, auto_confirm_for_test=True)
     harness = SmokeHarness(
         driver=mock_driver,
-        takeover_handler=takeover,
+        takeover_handler=TakeoverHandler(mock_driver, auto_confirm_for_test=True),
         saved_search_id="default_agent_search",
         saved_search_store=resolve_saved_search_store(prefer_database=False),
+        # No greeting. The subject here is what a preset id resolves to, and the greeting
+        # path loads a candidate profile from ``config/candidate_memory.json`` — a file on
+        # the developer's checkout rather than a fixture, so the run would answer
+        # differently on someone else's machine.
+        enable_greeting_draft=False,
     )
 
     assert harness.search_config.keyword == "agent"
     assert harness.filter_config.industries == ["在线教育", "游戏", "人工智能"]
 
-    job = harness.run_smoke_test()
-    assert isinstance(job, JobPosting)
+    posting = JobPosting(
+        title="资深 Agent 专家",
+        company_name="智元创新",
+        salary_range="40-60K",
+        job_description=GOOD_JD,
+    )
+    configs: list[FeedStreamConfig] = []
+
+    async def _record(config, on_job=None):
+        configs.append(config)
+        return await _real_stream(config, on_job)
+
+    _real_stream = harness.pipeline.stream_jobs
+    harness.pipeline.stream_jobs = _record
+    script_pages(
+        harness.pipeline,
+        feed=ScriptedFeed([[_card("资深 Agent 专家", "智元创新")]]),
+        detail=_detail_page(posting=posting),
+    )
+
+    with (
+        patch("time.sleep", return_value=None),
+        # ``SAVE_JD`` does not skip the semantic screen — the pipeline evaluates before it
+        # branches on the target action — so a preset whose policy carries blacklists puts
+        # a live client one call away. It has to be a stub: a screener handed none builds a
+        # real one and fails open, which costs a round trip and a token bill without
+        # failing anything.
+        patch("boss_agent.llm_config.create_llm_client", return_value=stub_llm()),
+    ):
+        job = harness.run_smoke_test()
+
+    assert len(configs) == 1, "a verification run is exactly one feed run"
+    assert configs[0].keyword == "agent"
+    assert configs[0].filter_config is harness.filter_config
+    assert configs[0].screening_policy is harness.screening_policy
+    assert job is posting, "the posting handed back is the one the engine extracted"
     assert job.title == "资深 Agent 专家"
 
 

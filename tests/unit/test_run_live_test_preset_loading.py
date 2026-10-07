@@ -14,8 +14,6 @@ not the plumbing but the two judgement calls the migration forced:
 """
 
 import sys
-from dataclasses import dataclass
-from unittest.mock import MagicMock
 
 import pytest
 from scripts import run_live_test as live_test
@@ -34,64 +32,6 @@ _ALPHA = SavedSearch(
     search=SearchConfig(keyword="alpha"),
     filter=FilterConfig(education="本科"),
 )
-
-
-class _FakeSession:
-    """An Appium stand-in: no server is contacted and no process is started."""
-
-    def __init__(self, config: object) -> None:
-        self.config = config
-
-    def start(self) -> MagicMock:
-        return MagicMock()
-
-    def stop(self) -> None:
-        return None
-
-
-class _FakePath:
-    """``pathlib.Path`` stand-in, so a unit run never writes ``~/.boss_agent``."""
-
-    def __init__(self, *parts: object) -> None:
-        self.parts = parts
-
-    @classmethod
-    def home(cls) -> "_FakePath":
-        return cls("home")
-
-    def __truediv__(self, other: object) -> "_FakePath":
-        return _FakePath(*self.parts, other)
-
-    def mkdir(self, **kwargs: object) -> None:
-        return None
-
-    def write_text(self, data: str, encoding: str = "utf-8") -> None:
-        return None
-
-    def __str__(self) -> str:
-        return "/fake/artifact"
-
-
-class _NoSleepTime:
-    """The runner pauses between Appium steps; a unit run must not spend them."""
-
-    def sleep(self, _seconds: float) -> None:
-        return None
-
-
-@dataclass
-class _FakeJob:
-    title: str = "资深 Agent"
-    company_name: str = "示例公司"
-    salary_range: str = "40-60K"
-
-
-def _stub_the_device(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Replace everything ``run_live_test`` needs a device for, with local stand-ins."""
-    monkeypatch.setattr(live_test, "AppiumSession", _FakeSession)
-    monkeypatch.setattr(live_test, "TakeoverHandler", lambda *args, **kwargs: MagicMock())
-    monkeypatch.setattr(live_test, "Path", _FakePath)
-    monkeypatch.setattr(live_test, "time", _NoSleepTime())
 
 
 class _UnreachableStore(InMemorySavedSearchStore):
@@ -205,30 +145,32 @@ def test_run_live_test_stops_and_names_the_preset_when_it_is_unknown(capsys):
     assert "alpha_preset" in printed
 
 
-def test_run_live_test_hands_the_injected_store_to_the_harness(monkeypatch):
-    """The injected store has to reach the harness, or the parameter is a lie.
+def test_run_live_test_hands_the_injected_store_to_the_preset_lookup(monkeypatch):
+    """The injected store has to reach the preset lookup, or the parameter is a lie.
 
-    ``run_live_test`` resolves the preset itself, so the store it is handed is not
-    consulted on this path today — which is exactly why the omission survived. The
-    next caller who injects a store and watches the harness build its own authenticated
-    one has been handed a parameter that does nothing, with no failure to notice it.
+    Issue #390 replaced the ``SmokeHarness`` this test used to intercept with
+    ``run_verification_feed``, so the harness is no longer where the store has to show up.
+    The guard is unchanged in kind and only moves with the code: ``run_live_test`` resolves
+    the preset through ``read_saved_search``, and the store that lookup receives has to be
+    the one the caller injected. If it is not, the next caller who injects a store watches
+    the run build its own database-backed one — handed a parameter that does nothing, with
+    no failure to notice it.
     """
     captured: dict[str, object] = {}
     store = InMemorySavedSearchStore({"alpha_preset": _ALPHA})
 
-    class _FakeHarness:
-        def __init__(self, **kwargs: object) -> None:
-            captured.update(kwargs)
+    def fake_read_saved_search(search_id: str, store_arg: SavedSearchStore | None = None):
+        captured["search_id"] = search_id
+        captured["store"] = store_arg
+        return None
 
-        def run_smoke_test(self) -> _FakeJob:
-            return _FakeJob()
+    monkeypatch.setattr(live_test, "read_saved_search", fake_read_saved_search)
 
-    _stub_the_device(monkeypatch)
-    monkeypatch.setattr(live_test, "SmokeHarness", _FakeHarness)
+    # A ``None`` preset takes the miss path, which returns before any device is touched.
+    assert live_test.run_live_test(search_id="alpha_preset", saved_search_store=store) is False
 
-    assert live_test.run_live_test(search_id="alpha_preset", saved_search_store=store) is True
-
-    assert captured["saved_search_store"] is store
+    assert captured["search_id"] == "alpha_preset"
+    assert captured["store"] is store
 
 
 def test_run_live_test_names_a_bracketed_preset_it_could_have_run(capsys):

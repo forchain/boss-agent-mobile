@@ -18,6 +18,7 @@ from _chat_triage_harness import (
     COMPANY,
     DESCRIPTOR,
     REJECTION_TEXT,
+    SCROLL_TO_TOP_EVENT,
     FakeClassifier,
     Harness,
     card,
@@ -140,7 +141,10 @@ async def test_a_cancelled_task_is_reported_as_a_stopped_run(broker, context, po
     assert result.success is True
     assert result.output["stop_reason"] == "cancelled"
     assert result.output["scanned"] == 0
-    assert harness.events == []
+    # #388: entering 仅沟通 double-taps 消息 to reset the feed before the cancellation is
+    # noticed. Cancellation still costs no card interaction — nothing was opened or
+    # closed, and the reset happens exactly once.
+    assert harness.events == [SCROLL_TO_TOP_EVENT]
 
 
 # ---------------------------------------------------------------------------
