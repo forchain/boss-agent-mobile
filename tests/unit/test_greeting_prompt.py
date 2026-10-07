@@ -10,10 +10,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from boss_agent.candidate_entities import CandidateProfile
 from boss_agent.greeting_prompt import load_greeting_prompt
 from boss_agent.job_entities import JobPosting
 from boss_agent.matching import JobMatchGreetingService
-from boss_agent.memory import StructuredCandidateProfile
 
 SEED_TEXT = "# 默认种子提示词\n严禁模板化套话。"
 LOCAL_TEXT = "# 沉淀后的最终记忆\n第一句直击 JD 痛点，并突出海外留学与英文面试意愿。"
@@ -117,7 +117,7 @@ def test_evaluate_embeds_greeting_prompt_verbatim():
     service = JobMatchGreetingService(llm_client=mock_llm)
     service.evaluate_and_draft_greeting(
         job=_job(),
-        profile=StructuredCandidateProfile(name="张三", core_skills=["LangGraph 工程化落地"]),
+        profile=CandidateProfile(name="张三", core_skills=["LangGraph 工程化落地"]),
         greeting_prompt=LOCAL_TEXT,
     )
     system_prompt = mock_llm.chat_completion_json.call_args[0][0][0]["content"]

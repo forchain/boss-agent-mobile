@@ -15,6 +15,9 @@ from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
+from .candidate_entities import CandidateProfile
+from .memory import ProfileNormalizer, ResumeTextExtractor
+
 logger = logging.getLogger(__name__)
 
 
@@ -48,8 +51,6 @@ def resume_text_extractor_node(state: ResumeLifecycleState) -> dict[str, Any]:
     file_path = state.get("file_path", "")
     raw_text = state.get("raw_resume_text", "")
     if not raw_text and file_path:
-        from .memory import ResumeTextExtractor
-
         extractor = ResumeTextExtractor()
         raw_text = extractor.extract_text(file_path)
 
@@ -149,15 +150,13 @@ def make_resume_document_generator_node(llm_client: Any | None = None):
 
 def resume_normalizer_node(state: ResumeLifecycleState) -> dict[str, Any]:
     """Self-healing node ensuring critical fields, valid arrays, and fallback markdown exist."""
-    from .memory import ProfileNormalizer, StructuredCandidateProfile
-
     raw_text = state.get("raw_resume_text", "")
     extracted = dict(state.get("extracted_metadata") or {})
     if not extracted.get("profile_document") and state.get("profile_document"):
         extracted["profile_document"] = state["profile_document"]
 
     normalized = ProfileNormalizer.normalize(extracted, raw_text=raw_text)
-    profile_obj = StructuredCandidateProfile.from_dict(normalized)
+    profile_obj = CandidateProfile.from_dict(normalized)
     return {
         "normalized_profile": profile_obj.to_dict(),
         "profile_document": profile_obj.profile_document,

@@ -302,9 +302,9 @@ def test_jd_semantic_screener_llm_exception_graceful_fallback():
 
 
 def test_full_lifecycle_screening_with_profile():
-    from boss_agent.memory import StructuredCandidateProfile
+    from boss_agent.candidate_entities import CandidateProfile
 
-    profile = StructuredCandidateProfile(
+    profile = CandidateProfile(
         name="李华",
         years_of_experience=7,
         core_skills=["Python", "LangGraph", "Android"],

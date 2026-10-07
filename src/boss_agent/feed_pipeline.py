@@ -21,6 +21,7 @@ from enum import StrEnum
 from typing import Any
 
 from .broker.models import TaskType
+from .candidate_entities import CandidateProfile
 from .enums import (
     DEPTH_DECLARED,
     DEPTH_LEGACY_HALF_PAIR,
@@ -58,7 +59,6 @@ from .keyword_constants import (
     HEADHUNTER_COMMUTE_PROBE_SKIP_REASON,
     NOT_INSPECTED_DISTRICT_SKIP_REASON,
 )
-from .memory import StructuredCandidateProfile
 from .pages import (
     ChatPage,
     FilterDialogPage,
@@ -193,7 +193,7 @@ class FeedStreamConfig:
     # Set when the payload was read through a shape producers are no longer allowed to
     # write. The run says so in its own log instead of failing the queued task.
     depth_warning: str = ""
-    candidate_profile: StructuredCandidateProfile | None = None
+    candidate_profile: CandidateProfile | None = None
     source_task_id: str | None = None
     # A targeted application acts on the posting already on screen instead of scanning.
     single_screen: bool = False
