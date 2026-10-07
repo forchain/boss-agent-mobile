@@ -17,13 +17,13 @@ root_dir = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(root_dir))
 sys.path.insert(0, str(root_dir / "src"))
 
+from boss_agent.candidate_entities import CandidateProfile  # noqa: E402
 from boss_agent.graph import run_resume_lifecycle_graph  # noqa: E402
 from boss_agent.llm_config import load_llm_config  # noqa: E402
 from boss_agent.memory import (  # noqa: E402
     ProfileNormalizer,
     ResumeMemoryManager,
     ResumeTextExtractor,
-    StructuredCandidateProfile,
 )
 from droid_agent_core.llm import LLMConfig, OpenAIChatClient  # noqa: E402
 
@@ -183,7 +183,7 @@ def main() -> None:
 
         if args.memory_path and final_profile:
             try:
-                prof_obj = StructuredCandidateProfile.from_dict(final_profile)
+                prof_obj = CandidateProfile.from_dict(final_profile)
                 ResumeMemoryManager(
                     llm_client=llm_client,
                     memory_file_path=args.memory_path,
@@ -217,7 +217,7 @@ def main() -> None:
         sys.stderr.write(f"LangGraph parse warning: {e}, falling back to heuristic normalizer.\n")
         try:
             normalized = ProfileNormalizer.normalize({}, raw_text=raw_text)
-            profile_obj = StructuredCandidateProfile.from_dict(normalized)
+            profile_obj = CandidateProfile.from_dict(normalized)
             if args.memory_path:
                 ResumeMemoryManager(
                     llm_client=llm_client,

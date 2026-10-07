@@ -27,6 +27,8 @@ console = Console()
 # __init__.py, twelve test files, and three scripts import it from this module, and
 # `screening.py` dispatches on `isinstance(profile, StructuredCandidateProfile)`.
 # The alias must stay an identity, not a subclass, or that isinstance check breaks.
+# This module's own load/save paths name the entity directly (Issue #385); the alias
+# exists for the importers above, not for new code.
 __all__ = [
     "CandidateProfile",
     "ProfileNormalizer",
@@ -354,14 +356,14 @@ class ResumeMemoryManager:
         """Return True if candidate memory profile file exists and is non-empty."""
         return self.memory_path.is_file() and self.memory_path.stat().st_size > 0
 
-    def load_cached_memory(self) -> StructuredCandidateProfile | None:
+    def load_cached_memory(self) -> CandidateProfile | None:
         """Load memory profile from the candidate profile database collection (single source of truth)."""
         # 0. If caller explicitly passed a memory file path and it exists, load it directly
         if self.explicit_memory_file and self.has_memory_file():
             try:
                 content = self.memory_path.read_text(encoding="utf-8")
                 data = json.loads(content)
-                return StructuredCandidateProfile.from_dict(data)
+                return CandidateProfile.from_dict(data)
             except Exception as e:
                 console.print(
                     f"[yellow]⚠️  Failed to read explicit memory from {self.memory_path}: {e}[/yellow]"
@@ -381,11 +383,11 @@ class ResumeMemoryManager:
             or data.get("projects")
             or data.get("profile_document")
         ):
-            return StructuredCandidateProfile.from_dict(data)
+            return CandidateProfile.from_dict(data)
         return None
 
     @traceable(name="ResumeMemoryManager.generate_and_save_memory", run_type="chain")
-    def generate_and_save_memory(self, resume_path: str | Path) -> StructuredCandidateProfile:
+    def generate_and_save_memory(self, resume_path: str | Path) -> CandidateProfile:
         """Extract text from resume file, call LLM to parse into unabbreviated schema, and save to database."""
         console.print(f"📄 [bold cyan]Parsing resume file:[/bold cyan] {resume_path}...")
         raw_text = self.extractor.extract_text(resume_path)
@@ -469,13 +471,13 @@ class ResumeMemoryManager:
         )
         result_dict["raw_resume_text"] = raw_text
         normalized = ProfileNormalizer.normalize(result_dict, raw_text=raw_text)
-        profile = StructuredCandidateProfile.from_dict(normalized)
+        profile = CandidateProfile.from_dict(normalized)
 
         self.save_memory_profile(profile)
         return profile
 
     def save_memory_profile(
-        self, profile: StructuredCandidateProfile, sync_to_db: bool | None = None
+        self, profile: CandidateProfile, sync_to_db: bool | None = None
     ) -> None:
         """Save candidate profile to PocketBase database with local file fallback."""
         if sync_to_db is None:
@@ -511,7 +513,7 @@ class ResumeMemoryManager:
         self,
         force_refresh: bool = False,
         resume_file: str | Path | None = None,
-    ) -> StructuredCandidateProfile:
+    ) -> CandidateProfile:
         """Load candidate profile memory idempotently or regenerate from resume."""
         target_resume = resume_file or self.configured_resume_path
 
