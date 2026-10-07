@@ -11,6 +11,7 @@ from typing import Any
 from rich.console import Console
 
 from .async_bridge import run_sync
+from .candidate_entities import CandidateProfile
 from .enums import AuthStatus
 from .feed_verification import (
     activate_app,
@@ -21,7 +22,7 @@ from .feed_verification import (
 )
 from .job_entities import JobPosting
 from .matching import JobMatchGreetingService
-from .memory import ResumeMemoryManager, StructuredCandidateProfile
+from .memory import ResumeMemoryManager
 from .pages import LoginPage
 from .saved_search_store import (
     SavedSearchStore,
@@ -170,7 +171,7 @@ class SmokeHarness:
         # drafting a greeting — with ``force_refresh_memory`` it regenerates the profile from
         # the resume through the LLM — so a greeting-less harness skips it rather than paying
         # for an answer the run will not use.
-        self.candidate_profile: StructuredCandidateProfile | None = None
+        self.candidate_profile: CandidateProfile | None = None
         if self.enable_greeting_draft:
             self.candidate_profile = load_candidate_profile(
                 memory_manager=self.memory_manager,
