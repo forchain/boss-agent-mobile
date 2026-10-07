@@ -18,6 +18,7 @@ from _chat_triage_harness import (
     COMPANY,
     DESCRIPTOR,
     REJECTION_TEXT,
+    SCROLL_TO_TOP_EVENT,
     FakeClassifier,
     Harness,
     card,
@@ -28,7 +29,7 @@ from _chat_triage_harness import (
 from boss_agent.broker.models import TaskStatus, TaskType
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
 from boss_agent.chat_triage import TriagePages
-from boss_agent.pages import CommunicationListPage
+from boss_agent.pages.communication import CommunicationListPage
 from boss_agent.rejection import DEFAULT_REJECTION_REPLY_TEXT, ChatAcknowledgmentSettings
 from boss_agent.screening_policy import ScreeningPolicy
 from boss_agent.worker.config import WorkerConfig
@@ -140,7 +141,10 @@ async def test_a_cancelled_task_is_reported_as_a_stopped_run(broker, context, po
     assert result.success is True
     assert result.output["stop_reason"] == "cancelled"
     assert result.output["scanned"] == 0
-    assert harness.events == []
+    # #388: entering 仅沟通 double-taps 消息 to reset the feed before the cancellation is
+    # noticed. Cancellation still costs no card interaction — nothing was opened or
+    # closed, and the reset happens exactly once.
+    assert harness.events == [SCROLL_TO_TOP_EVENT]
 
 
 # ---------------------------------------------------------------------------

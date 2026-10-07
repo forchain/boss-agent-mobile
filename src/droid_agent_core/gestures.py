@@ -9,8 +9,53 @@ import logging
 import random
 import time
 from dataclasses import dataclass
+from typing import Any
 
 ui_logger = logging.getLogger("droid_agent_core.ui")
+
+# Android's system double-tap detector pairs a second tap with the first only when
+# it lands inside this window; past it the input stream is read as two single taps.
+DOUBLE_TAP_MAX_INTERVAL = 0.30
+# Headroom below the window, so a clamped gap stays strictly inside it. #387 AC2
+# fixes the hard bound at < 300ms and the typical range at 100-220ms; the cap is
+# that 300ms bound minus this headroom, not an independently chosen pacing value.
+_DOUBLE_TAP_INTERVAL_CAP = DOUBLE_TAP_MAX_INTERVAL - 0.03
+
+#: Press duration range (ms) for a synthesized tap, shared by every tap gesture so
+#: the pacing of a double-tap is the same one a single tap already uses.
+TAP_DURATION_MS = (60, 120)
+
+#: Sentinel distinguishing "not resolved yet" from a resolved ``None``.
+_UNRESOLVED = object()
+
+# Resolved once at import, the way optional dependencies are resolved elsewhere in
+# this repo (the domain layer's package `__init__`): the import machinery is not
+# per-call work, and the answer cannot change while the process runs. The selenium
+# branch is the live one — Appium-Python-Client 6.0.0 ships no
+# `appium.webdriver.common.action_chains` — but the appium probe is kept first so a
+# client that does provide it is preferred.
+_w3c_action_chains: Any = _UNRESOLVED
+
+
+def _load_w3c_action_chains():
+    """Resolve the W3C ``ActionChains`` class once, or ``None`` when the client lacks it."""
+    global _w3c_action_chains
+    if _w3c_action_chains is _UNRESOLVED:
+        _w3c_action_chains = _resolve_w3c_action_chains()
+    return _w3c_action_chains
+
+
+def _resolve_w3c_action_chains():
+    """Probe the client for ``ActionChains``, appium's copy first, then selenium's."""
+    with contextlib.suppress(ImportError):
+        from appium.webdriver.common.action_chains import ActionChains
+
+        return ActionChains
+    with contextlib.suppress(ImportError):
+        from selenium.webdriver.common.action_chains import ActionChains
+
+        return ActionChains
+    return None
 
 
 def _describe_element(element) -> str:
@@ -224,6 +269,158 @@ class HumanizedGestureExecutor:
         )
         if hasattr(self.driver, "tap"):
             self.driver.tap([(target_x, target_y)], duration=dur)
+        self.random_sleep(0.1, 0.3)
+
+    def _double_click_element(self, element, interval: float) -> None:
+        """Two sequential `element.click()` calls, ``interval`` apart.
+
+        The fallback for a driver with neither a pointer-action seam nor an element
+        rect to aim at. Kept in one place so the two branches that reach for it
+        cannot drift apart on pacing.
+        """
+        element.click()
+        time.sleep(interval)
+        element.click()
+
+    def _tap_twice_at(
+        self, x: float, y: float, interval: float, duration_ms: tuple[int, int]
+    ) -> None:
+        """Two sequential `driver.tap` calls at one point, ``interval`` apart.
+
+        The host round trip between the two is what can push the second tap past
+        Android's double-tap window, so this is only reached when the W3C pointer
+        batch is unavailable.
+        """
+        dur = random.randint(duration_ms[0], duration_ms[1])
+        self.driver.tap([(x, y)], duration=dur)
+        time.sleep(interval)
+        self.driver.tap([(x, y)], duration=dur)
+
+    def _double_tap_interval(self, interval_range: tuple[float, float]) -> float:
+        """Draw an inter-tap gap that always stays inside Android's double-tap window."""
+        low = min(interval_range)
+        high = min(max(interval_range), _DOUBLE_TAP_INTERVAL_CAP)
+        low = min(low, high)
+        return random.uniform(low, high)
+
+    def _emit_w3c_double_tap(self, x: float, y: float, interval: float) -> bool:
+        """Emit both taps as one W3C pointer batch; ``False`` when unsupported."""
+        action_chains_cls = _load_w3c_action_chains()
+        if action_chains_cls is None:
+            return False
+        try:
+            actions = action_chains_cls(self.driver)
+            (
+                actions.w3c_actions.pointer_action.move_to_location(x, y)
+                .pointer_down()
+                .pointer_up()
+                .pause(interval)
+                .pointer_down()
+                .pointer_up()
+            )
+            actions.perform()
+        except Exception as exc:
+            ui_logger.debug("[UI] double_click W3C batch unavailable: %s", exc)
+            return False
+        return True
+
+    def human_double_click(
+        self,
+        element,
+        interval_range: tuple[float, float] = (0.10, 0.22),
+        jitter: bool = True,
+        duration_ms: tuple[int, int] = TAP_DURATION_MS,
+    ) -> None:
+        """Perform a humanized double-tap on a mobile element.
+
+        Both taps travel in a single W3C pointer batch when the driver supports
+        it, so the inter-tap gap is held by the device instead of the host: the
+        round trip between two sequential `driver.tap` calls routinely pushes the
+        second tap past Android's double-tap window, and the gesture then reads as
+        two single taps.
+        """
+        if not self.driver or not element:
+            return
+
+        rect = getattr(element, "rect", None)
+        interval = self._double_tap_interval(interval_range)
+
+        if not (
+            jitter
+            and isinstance(rect, dict)
+            and all(
+                k in rect and isinstance(rect[k], int | float)
+                for k in ("x", "y", "width", "height")
+            )
+        ):
+            ui_logger.debug(
+                "[UI] double_click element=%s interval=%dms via=element.click",
+                _describe_element(element),
+                int(interval * 1000),
+            )
+            self._double_click_element(element, interval)
+            self.random_sleep(0.1, 0.3)
+            return
+
+        x, y = calculate_bounding_box_jitter(
+            left=float(rect["x"]),
+            top=float(rect["y"]),
+            width=float(rect["width"]),
+            height=float(rect["height"]),
+        )
+
+        if self._emit_w3c_double_tap(x, y, interval):
+            via = "w3c.pointer_actions"
+        elif hasattr(self.driver, "tap"):
+            self._tap_twice_at(x, y, interval, duration_ms)
+            via = "driver.tap"
+        else:
+            self._double_click_element(element, interval)
+            via = "element.click"
+
+        ui_logger.debug(
+            "[UI] double_click element=%s target=(%.1f, %.1f) interval=%dms via=%s",
+            _describe_element(element),
+            x,
+            y,
+            int(interval * 1000),
+            via,
+        )
+        self.random_sleep(0.1, 0.3)
+
+    def human_double_click_at_point(
+        self,
+        x: float,
+        y: float,
+        interval_range: tuple[float, float] = (0.10, 0.22),
+        jitter_px: float = 3.0,
+        duration_ms: tuple[int, int] = TAP_DURATION_MS,
+    ) -> None:
+        """Perform a humanized double-tap at an absolute screen coordinate with gaussian micro-jitter."""
+        if not self.driver:
+            return
+
+        offset_x = random.gauss(0, max(0.1, jitter_px / 2.0))
+        offset_y = random.gauss(0, max(0.1, jitter_px / 2.0))
+        target_x = round(float(x + offset_x), 1)
+        target_y = round(float(y + offset_y), 1)
+        interval = self._double_tap_interval(interval_range)
+
+        if self._emit_w3c_double_tap(target_x, target_y, interval):
+            via = "w3c.pointer_actions"
+        elif hasattr(self.driver, "tap"):
+            self._tap_twice_at(target_x, target_y, interval, duration_ms)
+            via = "driver.tap"
+        else:
+            via = "unavailable"
+
+        ui_logger.debug(
+            "[UI] double_click target=(%.1f, %.1f) interval=%dms via=%s",
+            target_x,
+            target_y,
+            int(interval * 1000),
+            via,
+        )
         self.random_sleep(0.1, 0.3)
 
     def human_type(self, element, text: str, clear_first: bool = False) -> None:

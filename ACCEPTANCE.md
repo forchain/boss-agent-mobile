@@ -23,7 +23,7 @@ Phase 1 establishes the **production-grade foundation**:
 - **In Scope (Phase 1)**:
   - Idempotent bootstrap CLI (`scripts/bootstrap.py`).
   - `droid_agent_core` primitives (device session, element locator, Bézier touch synthesis, popup interceptor, LLM interface stubs).
-  - `boss_agent` smoke harness (launch, permission bypass, auth status check, job listing scroll, job detail parser).
+  - `boss_agent` job feed pipeline (launch, permission bypass, auth status check, search entry, job listing scroll, job detail extraction) and the verification adapter that drives it on a device.
   - Unit tests and automated integration smoke tests.
 - **Out of Scope (Deferred to Phase 2)**:
   - Automated candidate profile matching using live LLM inference.
@@ -45,7 +45,7 @@ boss-agent-mobile/
 │   └── agents/                   # Agent operational guidelines & protocols
 ├── scripts/
 │   ├── bootstrap.py              # Idempotent environment provisioner
-│   └── run_live_test.py          # Live device smoke harness runner
+│   └── run_live_test.py          # Live device feed verification runner (JobFeedPipeline)
 ├── doctor.sh                     # System health diagnostics & remediation CLI
 ├── emulator.sh                   # Dedicated AVD lifecycle manager
 ├── appium.sh                     # Dedicated Appium server runner
@@ -64,12 +64,12 @@ boss-agent-mobile/
 │       ├── broker/               # PocketBase persistence adapter & schema provisioner
 │       ├── worker/               # Dedicated out-of-process automation daemon & handlers
 │       ├── pages/                # Page Objects (JobListPage, JobDetailPage, etc.)
-│       ├── workflows/            # Fast entry search, smoke harness & session persistence
+│       ├── workflows/            # Fast entry search, feed verification adapter & session persistence
 │       ├── graph.py              # LangGraph multi-agent candidate screener workflow
 │       └── models.py             # Domain models (JobPosting, ScreeningPolicy, SavedSearch)
 └── tests/
     ├── unit/                     # Fast isolated mock/unit tests
-    └── e2e/                      # Integration & smoke harness tests
+    └── e2e/                      # Integration & live device verification tests
 ```
 
 **Strict Decoupling Rule**: `src/droid_agent_core/` MUST NOT import anything from `boss_agent` or contain any hardcoded "boss" strings, package IDs, or element identifiers.
@@ -121,7 +121,7 @@ Each acceptance criterion is defined with Gherkin semantics and an exact verific
 
 ### Criterion 3: App Lifecycle & Safety Takeover (`boss_agent`)
 - **Given**: A running AVD emulator instance with Boss 直聘 installed.
-- **When**: Launching the app via `boss_agent.workflows.SmokeHarness`.
+- **When**: Launching the app via `scripts/run_live_test.py`, whose run is gated on `boss_agent.workflows.TakeoverHandler`.
 - **Then**:
   1. App launch permissions and privacy agreements are automatically identified and dismissed.
   2. If the user is unauthenticated or a slider captcha appears, the system triggers `TakeoverHandler`, pauses automation, prints clear instructions for manual resolution in GUI, and resumes upon completion.
@@ -133,7 +133,7 @@ Each acceptance criterion is defined with Gherkin semantics and an exact verific
 
 ### Criterion 4: End-to-End Job Detail Extraction Smoke Test
 - **Given**: An authenticated session or browsable job list on Boss 直聘.
-- **When**: Executing the smoke harness workflow.
+- **When**: Executing `scripts/run_live_test.py`, which activates the app, passes `TakeoverHandler`, and then runs one `JobFeedPipeline` pass.
 - **Then**:
   1. The agent smoothly navigates the job list using humanized scrolling.
   2. The agent opens the top job card.
@@ -143,13 +143,17 @@ Each acceptance criterion is defined with Gherkin semantics and an exact verific
      - `salary_range` (str, non-empty)
      - `job_description` (str, length >= 20 chars)
   4. The agent gracefully navigates back to the list.
+  5. The run is the production engine, not a bespoke walk: the runner states its intent as one `FeedStreamConfig` (`max_jobs=1`, `send_greeting=False`) and reports what that run extracted, so a device run verifies the same feed the Automation Worker executes.
+  6. A run that extracts no posting fails with a non-zero exit code rather than reporting success for a screen it never read.
+  7. The run drafts a greeting when asked and sends none — a verification run has no business messaging a real recruiter.
 - **Verification Command**:
   ```bash
   # Live device run — the Given above: boots the app and parses a real job detail
   uv run python scripts/run_live_test.py
 
-  # Fast-tier contract check for the same parsing path (mocked driver, no device)
-  pytest tests/unit/test_smoke_harness_extraction.py
+  # Fast-tier contract checks for the same path (scripted device, no device needed)
+  uv run --extra dev pytest tests/unit/test_smoke_harness_extraction.py   # adapter over the pipeline
+  uv run --extra dev pytest tests/unit/test_run_live_test_cli.py          # the runner's own seam
   ```
 
 ---
@@ -169,6 +173,7 @@ Each acceptance criterion is defined with Gherkin semantics and an exact verific
 | `ANOM-006` | 2026-09-21 | PocketBase / Schema Provisioning | Adding columns to `job_records` (`applied_at`, `applied_source`) via `./pocketbase.sh provision` wrote the new schema to SQLite, but the already-running PocketBase server kept serving its cached collection definition: API responses omitted the new fields and PATCH payloads for them were silently discarded (HTTP 200, no error). | Restart PocketBase after provisioning (`./pocketbase.sh stop && ./pocketbase.sh start --daemon`, or Ctrl-C and re-run the foreground process) so the collection schema is re-read. Provisioning alone is not sufficient while the server is live. | `KNOWN` |
 | `ANOM-007` | 2026-09-22 | Service Shutdown / POSIX Process State | A terminated but unreaped process (a zombie) still answers `kill(pid, 0)` and is still listed by `ps -p <pid>`, so a naive liveness check treats a dead service as running. Observed while stopping a Web Dashboard whose parent was blocked: `./dashboard.sh stop` waited out the full graceful timeout (5.13s with a 2s timeout, and 20s+ under the E2E gate) before escalating, and the Worker gate misreported a defunct PID. | Both `dashboard.sh` (`process_alive()`) and the teardown gate (`ServiceTeardownGate._is_alive()`) now consult `ps -p <pid> -o stat=` and treat a `Z*` state as terminated, so defunct PIDs neither stall a synchronous stop nor masquerade as a running dashboard. | `RESOLVED` |
 | `ANOM-008` | 2026-09-24 | AVD Runner / ADB Transport | `emulator.sh` and the `run.sh` worker pre-flight gate resolved the running device serial with unbounded `adb devices` / `adb -s <serial> emu avd name` / `adb shell getprop` calls. A device left in `offline` state (stale network sessions on the ADB port, e.g. `127.0.0.1:6555 offline`) makes those queries block indefinitely: `./emulator.sh status` and `./run.sh` never returned, and each invocation leaked a hung `adb` client process holding the wedged transport. | `emulator.sh` now routes every adb query through `bounded_run` (SIGTERM at `ADB_QUERY_TIMEOUT_SEC`, default 2s, SIGKILL 0.5s later, exit 124 on a bound), skips devices not in the `device` state, and probes every remaining candidate so a healthy device behind unresponsive siblings is still found. `run.sh` delegates its AVD gate to `./emulator.sh status` instead of re-running the scan, so it inherits the bound. `status` returns in <1s against a genuinely offline device. Guarded by `tests/unit/test_emulator_timeout_resilience.py` and `tests/unit/test_run_sh_avd_gate.py` (fake `adb`, no `live` marker). | `RESOLVED` |
+| `ANOM-009` | 2026-10-07 | 仅沟通 List / Feed Scroll State | The 仅沟通 RecyclerView is shared state that survives navigation: returning to the list restores the scroll position the feed had when it was left, so a dispatch arriving while the list sits mid-history reads stale cards and never sees the newest messages — the ones a rejection triage exists to find. The only reset the screen offers is a double-tap on the bottom 消息 tab. | `CommunicationListPage.scroll_to_top()` double-taps `communication_list.entry_tab` and settles before any card is read; the triage run calls it on entry and narrates the return value, so a reset the device declined (no navigation bar on screen) is reported as such rather than claimed as done. Guarded by `tests/unit/test_chat_triage.py` and `tests/unit/test_communication_list_page.py`. | `RESOLVED` |
 
 ---
 
@@ -221,4 +226,4 @@ flowchart LR
 | **AC-1** | Idempotent Environment Provisioner | `VERIFIED` | Test Suite & CLI | `tests/unit/test_bootstrap_provisioner.py`, `scripts/bootstrap.py --check` |
 | **AC-2** | Framework Independence (`droid_agent_core`) | `VERIFIED` | Test Suite & AST | `tests/unit/test_framework_isolation.py`, `tests/unit/test_gestures_and_locators.py` |
 | **AC-3** | App Lifecycle & Safety Takeover | `VERIFIED` | Test Suite | `tests/unit/test_lifecycle_and_takeover.py` |
-| **AC-4** | End-to-End Job Detail Extraction Smoke Test | `VERIFIED` | Smoke Harness | `scripts/run_live_test.py` (device), `tests/unit/test_smoke_harness_extraction.py` (parsing contract) |
+| **AC-4** | End-to-End Job Detail Extraction Smoke Test | `VERIFIED` | Feed Pipeline & Verification Runner | `scripts/run_live_test.py` (device), `tests/unit/test_run_live_test_cli.py` (runner seam), `tests/unit/test_smoke_harness_extraction.py` (adapter contract) |

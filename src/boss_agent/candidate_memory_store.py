@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from boss_agent.async_bridge import execute_broker_request
+from boss_agent.candidate_entities import CandidateProfile
 from boss_agent.errors import (
     TransportError,
 )
@@ -544,8 +545,10 @@ async def async_migrate_legacy_candidate_profile(
     """Lift an existing local candidate profile JSON file into the broker's Candidate Profile collection.
 
     Converts legacy profile formats (such as dictionary-shaped core_skills, raw_summary-only
-    profile documents, or legacy project structures) into the canonical StructuredCandidateProfile
-    schema and persists it to the Candidate Profile database collection.
+    profile documents, or legacy project structures) into the canonical CandidateProfile
+    schema and persists it to the Candidate Profile database collection. ``to_dict`` is the
+    only thing that shapes the persisted dictionary, so this is the one place a legacy file
+    becomes the eleven-key storage contract.
     """
     path = Path(local_path or "config/candidate_memory.json")
     if not path.is_file():
@@ -570,9 +573,7 @@ async def async_migrate_legacy_candidate_profile(
     if not isinstance(raw_data, dict):
         return None
 
-    from boss_agent.memory import StructuredCandidateProfile
-
-    profile = StructuredCandidateProfile.from_dict(raw_data)
+    profile = CandidateProfile.from_dict(raw_data)
     profile_dict = profile.to_dict()
 
     if broker is None:

@@ -16,7 +16,7 @@ from unittest.mock import patch
 
 import pytest
 
-from boss_agent.pages import JobListPage, SearchPage
+from boss_agent.pages.job_feed import JobListPage, SearchPage
 from droid_agent_core.locators import By, LocatorRegistry
 
 EXACT_SEARCH_ICON_XPATH = (

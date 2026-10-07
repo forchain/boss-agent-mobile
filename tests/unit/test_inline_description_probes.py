@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock, patch
 
-from boss_agent.pages import JobDetailPage
+from boss_agent.pages.job_detail import JobDetailPage
 from droid_agent_core.gestures import (
     HumanizedGestureExecutor,
     calculate_probe_coordinate,

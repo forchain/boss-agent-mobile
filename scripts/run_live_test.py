@@ -2,7 +2,28 @@
 """
 scripts/run_live_test.py
 ========================
-Executes the Smoke Harness against a live Virtual Device Session or physical device.
+Executes a verification run against a live Virtual Device Session or physical device.
+
+The run is one ``JobFeedPipeline`` pass — the same engine the Automation Worker's handlers
+drive, reached through the entry point it publishes (issue #391). This script used to hand
+itself to ``SmokeHarness`` and thereby walk a second, bespoke implementation of a job feed
+that no device run ever exercised twice; two implementations of one feed drift, and this
+was the one nobody tested on a device. Which card was chosen, whether its JD was usable,
+what was screened and why: that is now answered in one place, and this runner reports it.
+
+What stays here is what is genuinely this script's: which saved search preset it resolves and
+how, the device session it opens and closes, the two screenshots it captures for an operator
+to look at afterwards, and the flags. The composition *around* the engine — the config
+translation, the log sink, activation, the profile load, the refusal to report a run that
+read nothing — is ``boss_agent.feed_verification``'s, because ``SmokeHarness`` composes the
+same run and #391 left two copies of that block free to drift.
+
+Two things stay here because the pipeline cannot answer them for itself — it assumes a
+usable session and knows nothing about challenges:
+
+* **App activation** belongs to whoever opened the session.
+* **The auth gate.** ``TakeoverHandler`` proves the session before the run starts, so a
+  captcha stops a verification run before it begins reading somebody's job list.
 
 Usage:
   python3 scripts/run_live_test.py [--keyword agent] [--device emulator-5554]
@@ -12,25 +33,100 @@ Usage:
 import argparse
 import sys
 import time
+from collections.abc import Callable, Coroutine
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
-from boss_agent.search_entities import FilterConfig, SearchConfig
-from boss_agent.searches import get_global_search_registry
+from boss_agent.async_bridge import run_sync
+from boss_agent.config_realm import DEFAULTS
+from boss_agent.enums import AuthStatus
+from boss_agent.errors import BrokerError
+from boss_agent.feed_pipeline import FeedStreamResult
+from boss_agent.feed_verification import (
+    BOSS_PACKAGE,
+    activate_app,
+    build_verification_pipeline,
+    load_candidate_profile,
+    render_greeting_match_card,
+    run_verification_feed,
+)
+from boss_agent.matching import JobMatchGreetingService
+from boss_agent.memory import ResumeMemoryManager
+from boss_agent.saved_search_store import (
+    SavedSearchStore,
+    missing_saved_search_message,
+    resolve_saved_search_store,
+)
+from boss_agent.screening import JobVerdictStage
+from boss_agent.screening_policy import ScreeningPolicy
+from boss_agent.search_entities import FilterConfig, SavedSearch, SearchConfig
 from boss_agent.settings import load_settings
-from boss_agent.workflows import SmokeHarness, TakeoverHandler
+from boss_agent.workflows import TakeoverHandler
 from droid_agent_core.driver import AppiumSession, DriverConfig
 
 console = Console()
 
+T = TypeVar("T")
 
-def list_saved_searches() -> None:
-    """Print all available preconfigured saved searches."""
-    reg = get_global_search_registry()
-    searches = reg.list_all()
+
+def _read_presets(
+    read: Callable[[SavedSearchStore], Coroutine[Any, Any, T]],
+    store: SavedSearchStore | None,
+) -> T:
+    """Run one preset read against the database store, falling back to the built-in defaults.
+
+    The registry this replaces probed PocketBase while it was being constructed and
+    swallowed every failure, so "the database was unreachable" and "there are no presets"
+    were the same answer — which is why a laptop with no PocketBase could still run the
+    harness on the seeded defaults. The store performs no I/O at construction and raises a
+    typed ``BrokerError`` from the read that actually needed the database, so that
+    fallback has to be written down instead of inherited.
+
+    It lives here, in the CLI, rather than in the seam itself: the store reports what
+    happened, and only this caller knows that a live smoke run on a laptop is worth
+    degrading for. The degradation is announced on the console rather than swallowed,
+    because a run that silently fell back is a run whose presets came from somewhere
+    other than the operator's database.
+
+    A miss is deliberately *not* a failure. A store that answered and did not carry the
+    id returns ``None``, and substituting the defaults there would execute a preset the
+    operator did not name.
+    """
+    if store is not None:
+        return run_sync(read(store))
+
+    try:
+        return run_sync(read(resolve_saved_search_store()))
+    except BrokerError as e:
+        console.print(
+            f"[yellow]⚠️  PocketBase saved searches unavailable ({e}). "
+            f"Continuing with the built-in default presets.[/yellow]"
+        )
+        return run_sync(read(resolve_saved_search_store(prefer_database=False)))
+
+
+def read_saved_search(search_id: str, store: SavedSearchStore | None = None) -> SavedSearch | None:
+    """The named preset, or ``None`` when the database answered without carrying it."""
+    return _read_presets(lambda s: s.get_saved_search(search_id), store)
+
+
+def read_saved_searches(store: SavedSearchStore | None = None) -> list[SavedSearch]:
+    """Every preset this harness can start from, in the order the store returns them."""
+    return _read_presets(lambda s: s.list_saved_searches(), store)
+
+
+def list_saved_searches(store: SavedSearchStore | None = None) -> None:
+    """Print all available preconfigured saved searches, returning nothing.
+
+    The ``read_*`` helpers above are the ones that hand a caller its presets; this one
+    only draws them, so the two are named apart rather than ``load``/``list`` — one
+    letter of difference is not enough to tell "returns the list" from "prints it".
+    """
+    searches = read_saved_searches(store)
 
     table = Table(title="📋 Available Saved Searches & Filter Presets")
     table.add_column("Search ID", style="cyan", no_wrap=True)
@@ -53,6 +149,40 @@ def list_saved_searches() -> None:
     console.print(table)
 
 
+def _verdict_line(result: FeedStreamResult) -> str:
+    """How the run's own outcome should be read out to the operator.
+
+    "PASSED" is one word standing in for two different facts, and #391 printed the same line
+    for both. A run that extracted a posting and had the screening engine *accept* it has
+    verified the engine end to end. A run that extracted a posting and had the engine
+    *reject* it has verified only that the app launches, searches, opens a card and parses a
+    JD — which is most of what this script exists to check, but not the same claim, and an
+    operator reading a green line had no way to tell them apart.
+
+    Both are passes and neither is rewritten into a failure: making a correctly-rejected card
+    fail the run would report the engine as broken every time it works. What changes is that
+    the run says which of the two it was, so a screening rejection stops reading as a match.
+
+    The rejected branch is a guard rather than a routine outcome today, and that is the
+    runner's own doing: it hands the engine ``ScreeningPolicy()`` on purpose (see
+    ``run_live_test``), and an empty blacklist means the deep screener always admits. It
+    becomes reachable the moment that policy stops being empty, which is exactly why the
+    wording has to be right before it matters.
+    """
+    outcome = str(result.outcome)
+    if outcome == JobVerdictStage.FILTERED_BY_DEEP_SCREENER.value:
+        return (
+            "\n[bold yellow]✅ Feed verification PASSED (extraction verified, card screened out):[/bold yellow]\n"
+            f"[dim]the run launched, searched, opened a card and parsed its JD; the screening "
+            f"engine then turned that card down ({result.reason or outcome}). Extraction is "
+            f"what this script verifies, and it succeeded.[/dim]"
+        )
+    return (
+        "\n[bold green]🎉 Feed verification PASSED on Virtual Device Session![/bold green] "
+        f"[dim](outcome={outcome}, score={result.score})[/dim]"
+    )
+
+
 def run_live_test(
     search_id: str | None = "default_agent_search",
     keyword: str | None = None,
@@ -61,28 +191,44 @@ def run_live_test(
     server_url: str = "http://127.0.0.1:4723",
     resume_file: str | None = None,
     force_refresh_memory: bool = False,
-    preview_timeout_sec: float = 3.0,
     enable_greeting_draft: bool = True,
+    saved_search_store: SavedSearchStore | None = None,
 ) -> bool:
-    reg = get_global_search_registry()
+    """Open a device session, run one feed pass, and report what it extracted.
+
+    Returns ``True`` only when the run produced a posting. Silence is not a pass: the
+    pipeline hands back only the postings it kept, so an empty result means the run opened
+    no card or had every card it opened withdrawn at the detail stage — it never read a job
+    description, and reporting success for that is the one failure mode a verification script
+    must not have. A card the *screening engine* rejected is not this failure: that run still
+    proved extraction, and ``_verdict_line`` says so rather than reporting it as a match.
+    """
     if search_id:
-        try:
-            saved_search = reg.get(search_id)
-            search_config = (
-                SearchConfig(keyword=keyword) if keyword is not None else saved_search.search
-            )
-            active_filter = filter_config or saved_search.filter
-            console.print(
-                f"\n[bold cyan]🚀 Starting Smoke Harness using Saved Search:[/bold cyan] [bold yellow]'{search_id}'[/bold yellow] ({saved_search.name})"
-            )
-        except KeyError as e:
-            console.print(f"[bold red]❌ {e}[/bold red]")
+        saved_search = read_saved_search(search_id, saved_search_store)
+        if saved_search is None:
+            # The store reports a miss with ``None`` instead of raising, so this rebuilds
+            # the wording from the ids it does hold — naming the preset that was asked for
+            # *and* the ones that exist, which is the part that makes a typo fixable
+            # without reading the source. The sentence itself belongs to the seam and is
+            # shared with the harness's ``KeyError``, so the two cannot drift apart.
+            available = [s.id for s in read_saved_searches(saved_search_store)]
+            # The message is escaped because Rich reads ``[alpha_preset]`` as a markup tag
+            # and swallows it — the one line that tells the operator what to type instead.
+            message = escape(missing_saved_search_message(search_id, available))
+            console.print(f"[bold red]❌ {message}[/bold red]")
             return False
+        search_config = (
+            SearchConfig(keyword=keyword) if keyword is not None else saved_search.search
+        )
+        active_filter = filter_config or saved_search.filter
+        console.print(
+            f"\n[bold cyan]🚀 Starting Smoke Harness using Saved Search:[/bold cyan] [bold yellow]'{search_id}'[/bold yellow] ({saved_search.name})"
+        )
     else:
         search_config = SearchConfig(keyword=keyword)
         active_filter = filter_config or FilterConfig()
         console.print(
-            "\n[bold cyan]🚀 Starting Smoke Harness on Virtual Device Session...[/bold cyan]"
+            "\n[bold cyan]🚀 Starting feed verification on Virtual Device Session...[/bold cyan]"
         )
 
     if search_config.should_search:
@@ -115,7 +261,7 @@ def run_live_test(
         platform_name="Android",
         automation_name="UiAutomator2",
         device_name=device_udid,
-        app_package="com.hpbr.bosszhipin",
+        app_package=BOSS_PACKAGE,
         app_activity="com.hpbr.bosszhipin.module.launcher.WelcomeActivity",
         no_reset=True,
         auto_grant_permissions=True,
@@ -136,12 +282,7 @@ def run_live_test(
     try:
         console.print(f"[dim]Connecting to Appium server at {server_url}...[/dim]")
         driver = session.start()
-        if hasattr(driver, "activate_app"):
-            try:
-                driver.activate_app(config.app_package or "com.hpbr.bosszhipin")
-                time.sleep(1.0)
-            except Exception:
-                pass
+        activate_app(driver)
         console.print(
             "[bold green]✅ Connected to virtual device session and launched Boss 直聘![/bold green]"
         )
@@ -154,36 +295,76 @@ def run_live_test(
         page_source_path = output_dir / "live_page_source.xml"
         page_source_path.write_text(driver.page_source, encoding="utf-8")
 
-        # 2. Run Smoke Harness with AI matching and greeting drafting
+        # 2. Prove the session is usable before anything reads the feed. The pipeline knows
+        # nothing about captchas or login challenges, so this gate cannot move into it: a
+        # challenge has to stop the run *here*, not after it has begun scrolling a login
+        # wall (issue #391). It runs before the engine is even composed so a blocked run
+        # costs an operator nothing but the wait for them to solve it.
         takeover = TakeoverHandler(driver, auto_confirm_for_test=False)
-        harness = SmokeHarness(
-            driver=driver,
-            takeover_handler=takeover,
+        auth_status = takeover.check_and_handle_takeover()
+        if auth_status != AuthStatus.AUTHENTICATED:
+            raise RuntimeError(f"Authentication failed: {auth_status}")
+
+        # 3. Compose the run. The pipeline holds the feed pass end to end — search entry,
+        # filter dialogs, recovery, viewport iteration, screening, extraction — with no
+        # store, so this device run persists nothing and needs no broker behind it
+        # (issue #389). The screener carries *this* run's matching service, so the greeting
+        # is drafted by the object the operator configured rather than by a second one the
+        # pipeline built for itself.
+        matching_service = JobMatchGreetingService()
+        # Loading the profile is the expensive half of drafting a greeting: with
+        # ``--force-refresh-memory`` it regenerates the profile from the resume through the
+        # LLM. So it happens only on the greeting path — ``--no-greeting`` skips it rather
+        # than paying for an answer the run will not use (issue #391).
+        candidate_profile = (
+            load_candidate_profile(
+                memory_manager=ResumeMemoryManager(),
+                resume_file=resume_file,
+                force_refresh_memory=force_refresh_memory,
+                matching_service=matching_service,
+            )
+            if enable_greeting_draft
+            else None
+        )
+
+        pipeline = build_verification_pipeline(driver, matching_service=matching_service)
+        result = run_verification_feed(
+            pipeline=pipeline,
             search_config=search_config,
             filter_config=active_filter,
-            resume_file=resume_file,
-            force_refresh_memory=force_refresh_memory,
-            preview_timeout_sec=preview_timeout_sec,
+            # Deliberately the engine's own default, not the preset's stored policy:
+            # resolving it would call ``ScreeningPolicy.load_default()``, read the
+            # operator's global screening configuration, and change which cards this live
+            # run accepts. This script's job is to report what the engine does, not to
+            # re-decide what the engine should accept (issue #391).
+            screening_policy=ScreeningPolicy(),
+            candidate_profile=candidate_profile,
             enable_greeting_draft=enable_greeting_draft,
         )
-        job = harness.run_smoke_test()
 
+        job = result.postings[0]
         console.print(
             f"\n📋 [bold green]Extracted Job Posting:[/bold green] {job.title} | {job.company_name} | {job.salary_range}"
         )
 
-        # 3. Capture final screen
+        render_greeting_match_card(
+            matching_service=matching_service,
+            posting=job,
+            result=result,
+            candidate_profile=candidate_profile,
+            enable_greeting_draft=enable_greeting_draft,
+        )
+
+        # 4. Capture final screen
         final_screen = output_dir / "live_final_screen.png"
         driver.save_screenshot(str(final_screen))
         console.print(f"📸 Final screen captured: [cyan]{final_screen}[/cyan]")
 
-        console.print(
-            "\n[bold green]🎉 Smoke Harness PASSED on Virtual Device Session![/bold green]"
-        )
+        console.print(_verdict_line(result))
         return True
 
     except Exception as e:
-        console.print(f"\n[bold red]❌ Smoke Harness Execution Error: {e}[/bold red]")
+        console.print(f"\n[bold red]❌ Verification Run Error: {e}[/bold red]")
         import traceback
 
         traceback.print_exc()
@@ -200,7 +381,7 @@ def load_runner_settings(config_path: str | Path | None = None) -> dict[str, Any
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Boss Agent Mobile Smoke Harness on Virtual Device Session (Config-First)"
+        description="Boss Agent Mobile feed verification on Virtual Device Session (Config-First)"
     )
     parser.add_argument(
         "--config",
@@ -253,13 +434,21 @@ def main():
         "--preview-timeout",
         type=float,
         default=None,
-        help="Timeout in seconds to preview typed greeting message in chat box before navigating back",
+        help=(
+            "Accepted for backward compatibility and ignored. It paced the pause before "
+            "navigating back out of a greeting typed into a live chat box; a verification "
+            "run drafts a greeting and sends nothing, so there is no pause left to time "
+            "(issue #390). Passing it prints a notice rather than waiting silently."
+        ),
     )
     parser.add_argument(
         "--no-greeting",
         action="store_true",
         default=None,
-        help="Disable LLM match analysis and greeting draft generation",
+        help=(
+            "Disable LLM match analysis and greeting draft generation: the candidate "
+            "profile is not loaded and the run screens on its own"
+        ),
     )
     parser.add_argument(
         "--device",
@@ -283,13 +472,15 @@ def main():
 
     # Resolve settings: CLI flags take precedence over database SavedSearch
     search_id = args.search_id or "default_agent_search"
-    saved_search = None
-    if search_id:
-        try:
-            reg = get_global_search_registry()
-            saved_search = reg.get(search_id)
-        except Exception:
-            saved_search = None
+    saved_search = read_saved_search(search_id) if search_id else None
+    if search_id and saved_search is None:
+        # Degrade to the CLI flags rather than fail: an unknown preset should not stop an
+        # operator who passed an explicit keyword from running at all. It is announced,
+        # because the flags about to run are not the ones the preset would have supplied.
+        console.print(
+            f"[yellow]⚠️  Saved search '{search_id}' not found. "
+            f"Continuing with CLI flags only.[/yellow]"
+        )
 
     enable_search = (
         False if args.no_search else (saved_search.enable_search if saved_search else True)
@@ -310,12 +501,30 @@ def main():
     force_refresh = (
         True if args.force_refresh_memory else bool(cfg.get("force_refresh_memory", False))
     )
-    preview_timeout = (
-        args.preview_timeout
-        if args.preview_timeout is not None
-        else float(cfg.get("preview_timeout_sec", 3.0))
-    )
     enable_greeting = False if args.no_greeting else bool(cfg.get("enable_greeting", True))
+
+    # Say it out loud, on both routes in. The flag stayed because invocations are in muscle
+    # memory and in runbooks, and the key stayed because it is in DEFAULTS and therefore in
+    # every operator's settings file — an operator who set `preview_timeout_sec: 10` and now
+    # waits for nothing deserves the same notice as one who typed the flag. Only a *changed*
+    # value is announced: DEFAULTS carries 3.0, so an untouched key would otherwise put the
+    # warning in front of every run in the world (issue #391).
+    configured_preview_timeout = cfg.get("preview_timeout_sec")
+    if args.preview_timeout is not None:
+        console.print(
+            f"[yellow]⚠️  --preview-timeout ({args.preview_timeout}s) is inert:[/yellow] "
+            f"[dim]a verification run types no greeting into a chat box, so there is no "
+            f"preview pause to time (issue #390).[/dim]"
+        )
+    elif configured_preview_timeout is not None and float(configured_preview_timeout) != float(
+        DEFAULTS["preview_timeout_sec"]
+    ):
+        console.print(
+            f"[yellow]⚠️  preview_timeout_sec ({configured_preview_timeout}s) in your settings "
+            f"is inert:[/yellow] "
+            f"[dim]a verification run types no greeting into a chat box, so there is no "
+            f"preview pause to time (issue #390).[/dim]"
+        )
 
     target_keyword = keyword if enable_search else None
     target_search_id = search_id if enable_search else None
@@ -341,7 +550,6 @@ def main():
         server_url=server_url,
         resume_file=resume_file,
         force_refresh_memory=force_refresh,
-        preview_timeout_sec=preview_timeout,
         enable_greeting_draft=enable_greeting,
     )
     sys.exit(0 if success else 1)

@@ -7,12 +7,12 @@ verifying education fit (Master's candidate matching Bachelor's JD with Master's
 
 from unittest.mock import MagicMock
 
+from boss_agent.candidate_entities import CandidateProfile
 from boss_agent.job_entities import JobPosting
 from boss_agent.matching import (
     JobMatchGreetingService,
     format_search_filter,
 )
-from boss_agent.memory import StructuredCandidateProfile
 from boss_agent.search_entities import FilterConfig
 
 
@@ -84,7 +84,7 @@ def test_master_candidate_bachelor_jd_matching_with_search_filter_and_tags():
         ),
     }
 
-    profile = StructuredCandidateProfile(
+    profile = CandidateProfile(
         name="李智",
         years_of_experience=7,
         education=[{"school": "上海交通大学", "degree": "硕士", "major": "人工智能与计算机工程"}],
@@ -212,7 +212,7 @@ def test_job_match_prompt_guidance_for_master_in_jd_text():
         recruiter_name="殷先生",
     )
 
-    profile = StructuredCandidateProfile(
+    profile = CandidateProfile(
         name="周黄金",
         years_of_experience=19,
         education=[{"school": "沙迦美国大学", "degree": "硕士", "major": "计算机工程"}],

@@ -1,9 +1,54 @@
-"""Unit tests for FilterConfig and FilterDialogPage."""
+"""
+tests/unit/test_filter_dialog_and_config.py
+============================================
+Filter configuration, the filter dialog page, and how a filter reaches a feed run.
+
+The two filter tests that used to live at the bottom of this file drove ``SmokeHarness``
+over a mocked driver and asserted that a walk finished — one of them merely asserted
+``isinstance(job, JobPosting)``, which a posting built out of MagicMock attributes
+satisfies without proving anything (issue #391). The filter behaviour they were reaching
+for belongs to ``JobFeedPipeline``: it is the engine that now owns the dialog, and it is
+what the interactive runner drives on a device. So they are asserted there, against the
+config the run was actually handed, rather than against the order a page walk happened to
+click things in.
+
+The dialog's own vocabulary — option synonyms, reset-before-select ordering — is still
+tested directly against ``FilterDialogPage``, because the pipeline still drives exactly
+that object and those are its guarantees, not the harness's.
+"""
 
 from unittest.mock import MagicMock, patch
 
-from boss_agent.pages import FilterDialogPage
+import pytest
+from _feed_harness import ScriptedFeed, _card, _detail_page, _pipeline, _posting
+
+from boss_agent.feed_pipeline import FeedStreamConfig
+from boss_agent.pages.job_feed import FilterDialogPage
 from boss_agent.search_entities import FilterConfig
+
+CONFIGURED = FilterConfig(
+    education="硕士",
+    salary="50K以上",
+    experience="10年以上",
+    activity="今日活跃",
+    company_scales=["100-499人"],
+)
+NOTHING_TO_APPLY = FilterConfig(
+    education=None,
+    salary=None,
+    experience=None,
+    activity=None,
+    company_scales=[],
+)
+
+
+def _feed_pipeline():
+    """A pipeline over a scripted feed, with the filter dialog left observable."""
+    return _pipeline(
+        None,
+        feed=ScriptedFeed([[_card("AI Agent 平台工程师", "智元创新")]]),
+        detail=_detail_page(posting=_posting()),
+    )
 
 
 def test_filter_config_defaults_and_validation():
@@ -208,80 +253,49 @@ def test_apply_filters_resets_first_and_handles_empty_config():
         assert actions == ["reset", "confirm"]
 
 
-def test_smoke_harness_with_filter_config():
-    from boss_agent.job_entities import JobPosting
-    from boss_agent.search_entities import SearchConfig
-    from boss_agent.workflows import SmokeHarness, TakeoverHandler
+@pytest.mark.asyncio
+async def test_a_configured_filter_reaches_the_dialog_as_the_operator_wrote_it():
+    """A run applies the filter config it was given, untranslated.
 
-    mock_driver = MagicMock()
-    mock_driver.get_window_size.return_value = {"width": 1080, "height": 2400}
+    The interactive runner hands its ``FilterConfig`` straight through, so the object the
+    dialog receives has to be that one — same industries, same education, same scales. If
+    the pipeline rebuilt or defaulted it, an operator's preset would silently stop
+    describing the search they asked for.
+    """
+    pipeline = _feed_pipeline()
 
-    mock_btn = MagicMock()
-    mock_btn.rect = {"x": 50, "y": 50, "width": 100, "height": 50}
+    with patch("boss_agent.feed_pipeline.FilterDialogPage") as filter_cls:
+        result = await pipeline.stream_jobs(
+            FeedStreamConfig(keyword="Agent", max_jobs=1, filter_config=CONFIGURED)
+        )
 
-    mock_title_elem = MagicMock()
-    mock_title_elem.text = "资深 Agent 架构师"
-
-    def mock_find_elements(by, value):
-        if "tv_job_name" in value:
-            return [mock_title_elem]
-        if "chat" in value or "editText_with_scrollbar" in value or "btn_chat" in value:
-            return []
-        return [mock_btn]
-
-    mock_driver.find_elements.side_effect = mock_find_elements
-
-    takeover = TakeoverHandler(mock_driver, auto_confirm_for_test=True)
-    harness = SmokeHarness(
-        driver=mock_driver,
-        takeover_handler=takeover,
-        search_config=SearchConfig(keyword="agent"),
-        filter_config=FilterConfig(),
-    )
-
-    job = harness.run_smoke_test()
-    assert isinstance(job, JobPosting)
+    filter_cls.return_value.apply_filters.assert_called_once()
+    applied = filter_cls.return_value.apply_filters.call_args.args[0]
+    assert applied is CONFIGURED
+    assert (applied.education, applied.salary) == ("硕士", "50K以上")
+    # The run is still a verification run: filtering decides what the feed shows, not
+    # whether the run extracted anything.
+    assert [p.title for p in result.postings] == ["AI Agent 平台工程师"]
 
 
-def test_smoke_harness_clears_filters_when_no_filter_config():
-    from boss_agent.job_entities import JobPosting
-    from boss_agent.search_entities import FilterConfig, SearchConfig
-    from boss_agent.workflows import SmokeHarness, TakeoverHandler
+@pytest.mark.asyncio
+async def test_a_run_with_nothing_to_apply_clears_the_conditions_a_previous_run_left():
+    """No configured filters means *clear*, not *leave whatever was there*.
 
-    mock_driver = MagicMock()
-    mock_driver.get_window_size.return_value = {"width": 1080, "height": 2400}
+    The app's filter dialog keeps its conditions between runs, so a run with nothing to
+    apply inherits somebody else's search unless it actively clears them. Asserted on the
+    page object the pipeline drives, which is where the behaviour moved in issue #390.
 
-    mock_btn = MagicMock()
-    mock_btn.rect = {"x": 50, "y": 50, "width": 100, "height": 50}
+    ``test_job_feed_pipeline.py`` pins the same decision for the worker path, where the
+    flag arrives through a task payload's ``enable_filter``; this is the runner's version,
+    where the filter config arrives directly from the operator's preset.
+    """
+    pipeline = _feed_pipeline()
 
-    mock_title_elem = MagicMock()
-    mock_title_elem.text = "资深 Agent 架构师"
+    with patch("boss_agent.feed_pipeline.FilterDialogPage") as filter_cls:
+        await pipeline.stream_jobs(
+            FeedStreamConfig(keyword="Agent", max_jobs=1, filter_config=NOTHING_TO_APPLY)
+        )
 
-    def mock_find_elements(by, value):
-        if "tv_job_name" in value:
-            return [mock_title_elem]
-        if "chat" in value or "editText_with_scrollbar" in value or "btn_chat" in value:
-            return []
-        return [mock_btn]
-
-    mock_driver.find_elements.side_effect = mock_find_elements
-
-    takeover = TakeoverHandler(mock_driver, auto_confirm_for_test=True)
-    empty_cfg = FilterConfig(
-        education=None,
-        salary=None,
-        experience=None,
-        activity=None,
-        company_scales=[],
-    )
-    harness = SmokeHarness(
-        driver=mock_driver,
-        takeover_handler=takeover,
-        search_config=SearchConfig(keyword="agent"),
-        filter_config=empty_cfg,
-    )
-
-    with patch.object(harness.filter_dialog, "clear_filters") as mock_clear:
-        job = harness.run_smoke_test()
-        assert isinstance(job, JobPosting)
-        mock_clear.assert_called_once()
+    filter_cls.return_value.clear_filters.assert_called_once()
+    filter_cls.return_value.apply_filters.assert_not_called()

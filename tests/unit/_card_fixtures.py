@@ -13,7 +13,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 from boss_agent.job_entities import JobCardBrief
-from boss_agent.pages import LocatedJobCard
+from boss_agent.pages.job_feed import LocatedJobCard
 
 
 def located(card: JobCardBrief, element: Any | None = None) -> LocatedJobCard:

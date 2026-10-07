@@ -23,10 +23,10 @@ from typing import Any
 
 from langsmith import traceable
 
+from .candidate_entities import CandidateProfile
 from .identifier_helpers import is_substantive_jd, resolve_headhunter_channel
 from .job_entities import JobCardBrief, JobPosting
 from .matching import JobMatchGreetingService
-from .memory import StructuredCandidateProfile
 from .screening_policy import ScreeningPolicy
 
 logger = logging.getLogger(__name__)
@@ -42,7 +42,7 @@ UNUSABLE_JD_REASON = (
 class CardVerdictStage(StrEnum):
     """Terminal stage of card-level (pre-detail-navigation) screening.
 
-    Values are the screening status labels carried by `JobApplicationState.status` and
+    Values are the screening status labels carried by `CardScreeningVerdict.stage` and
     logged to the task stream. They are *not* persisted as job-record statuses: a
     rejected card is written as `JobRecordStatus.IGNORED`, with the stage in
     `screened_reason`.
@@ -317,7 +317,7 @@ class CandidateScreener:
     """Deep module owning every candidate screening rule and greeting decision.
 
     Dependencies are injected so screening can be exercised over pure domain data
-    (``JobCardBrief`` / ``ScreeningPolicy`` / ``StructuredCandidateProfile``) with a
+    (``JobCardBrief`` / ``ScreeningPolicy`` / ``CandidateProfile``) with a
     mockable LLM client — no Appium driver, no virtual device, no database.
     """
 
@@ -391,7 +391,7 @@ class CandidateScreener:
         self,
         card: JobCardBrief | JobPosting | dict[str, Any],
         jd_text: str,
-        profile: StructuredCandidateProfile | dict[str, Any] | None = None,
+        profile: CandidateProfile | dict[str, Any] | None = None,
         policy: ScreeningPolicy | dict[str, Any] | None = None,
         prompt: str | None = None,
         *,
@@ -830,10 +830,10 @@ def _resolve_policy(policy: ScreeningPolicy | dict[str, Any] | None) -> Screenin
 
 
 def _resolve_profile(
-    profile: StructuredCandidateProfile | dict[str, Any] | None,
-) -> StructuredCandidateProfile | None:
-    if isinstance(profile, StructuredCandidateProfile):
+    profile: CandidateProfile | dict[str, Any] | None,
+) -> CandidateProfile | None:
+    if isinstance(profile, CandidateProfile):
         return profile
     if isinstance(profile, dict) and profile:
-        return StructuredCandidateProfile.from_dict(profile)
+        return CandidateProfile.from_dict(profile)
     return None

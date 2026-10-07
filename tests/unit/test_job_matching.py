@@ -6,13 +6,13 @@ Unit tests for JobMatchGreetingService and MatchGreetingResult.
 
 from unittest.mock import MagicMock
 
+from boss_agent.candidate_entities import CandidateProfile
 from boss_agent.job_entities import JobPosting
 from boss_agent.matching import (
     JobMatchGreetingService,
     MatchGreetingResult,
     offline_match_result,
 )
-from boss_agent.memory import StructuredCandidateProfile
 
 
 def test_match_greeting_result_serialization():
@@ -40,7 +40,7 @@ def test_job_match_greeting_service_evaluation():
     }
 
     service = JobMatchGreetingService(llm_client=mock_llm)
-    profile = StructuredCandidateProfile(
+    profile = CandidateProfile(
         name="张三",
         years_of_experience=6,
         core_skills=["Python", "LLM", "Android"],
@@ -65,7 +65,7 @@ def test_job_match_greeting_service_fallback_on_error():
     mock_llm.chat_completion_json.side_effect = RuntimeError("API error")
 
     service = JobMatchGreetingService(llm_client=mock_llm)
-    profile = StructuredCandidateProfile(name="李四")
+    profile = CandidateProfile(name="李四")
     job = JobPosting(
         title="Python 后端",
         company_name="某公司",
@@ -91,7 +91,7 @@ def test_persistent_candidate_profile_context(monkeypatch):
         "greeting_message": "针对贵司移动端多端通信与 Agent 落地的挑战，我主导过类似高可用自动化系统架构，期待进一步探讨！",
     }
 
-    profile = StructuredCandidateProfile(
+    profile = CandidateProfile(
         name="王五",
         years_of_experience=8,
         core_skills=["Python", "Android", "LLM Agent"],
@@ -136,7 +136,7 @@ def test_full_context_unabbreviated_matching():
         "greeting_message": "针对贵司高并发大模型落地需求，我曾主导系统重构提升300%吞吐量，深度契合该业务痛点！",
     }
 
-    full_profile = StructuredCandidateProfile(
+    full_profile = CandidateProfile(
         name="李高级",
         years_of_experience=10,
         education=[{"school": "清华大学", "degree": "硕士", "major": "计算机科学"}],
@@ -237,10 +237,10 @@ def test_job_match_greeting_service_requires_full_substantive_jd():
     mock_llm.chat_completion_json.assert_not_called()
 
 
-def test_greeting_drafter_in_graph_catches_precondition_failure():
-    """Greeting drafter node in LangGraph should record failure state rather than crashing when JD is missing."""
-    from boss_agent.graph import run_job_application_graph
-    from boss_agent.pages import JobCardBrief
+def test_evaluate_job_reports_missing_jd_without_crashing():
+    """CandidateScreener.evaluate_job records the unavailable JD rather than crashing on it."""
+    from boss_agent.job_entities import JobCardBrief
+    from boss_agent.screening import CandidateScreener, CardVerdictStage, JobVerdictStage
     from boss_agent.screening_policy import ScreeningPolicy
 
     policy = ScreeningPolicy(title_whitelist=["Agent"])
@@ -252,14 +252,17 @@ def test_greeting_drafter_in_graph_catches_precondition_failure():
     )
 
     mock_llm = MagicMock()
-    # Execute graph with empty jd_text
-    state = run_job_application_graph(card=card, policy=policy, jd_text="", llm_client=mock_llm)
+    screener = CandidateScreener(llm_client=mock_llm)
+    verdict = screener.evaluate_card(card, policy)
 
-    assert state["keyword_pass"] is True
-    assert state["deep_screen_pass"] is False
-    assert state["status"] == "jd_unavailable"
-    assert state["greeting_message"] == ""
-    assert "Job description is missing or too short" in state["error_message"]
+    result = screener.evaluate_job(card, "", policy=policy)
+
+    assert verdict.passed is True
+    assert verdict.stage is CardVerdictStage.PASSED
+    assert result.passed is False
+    assert result.stage is JobVerdictStage.JD_UNAVAILABLE
+    assert result.greeting_message == ""
+    assert "Job description is missing or too short" in result.error_message
     # LLM should not have been called for greeting
     mock_llm.chat_completion_json.assert_not_called()
 
@@ -484,10 +487,10 @@ def test_offline_fallback_reports_candidate_skill_coverage():
         job_description="负责大模型 Agent 与 Android 移动端自动化架构设计，精通 Python",
     )
     covering = offline_match_result(
-        job, profile=StructuredCandidateProfile(name="周黄金", core_skills=["Python", "Android"])
+        job, profile=CandidateProfile(name="周黄金", core_skills=["Python", "Android"])
     )
     unrelated = offline_match_result(
-        job, profile=StructuredCandidateProfile(name="张三", core_skills=["Photoshop"])
+        job, profile=CandidateProfile(name="张三", core_skills=["Photoshop"])
     )
 
     assert any("Python" in reason for reason in covering.match_reasons)

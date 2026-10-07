@@ -3,8 +3,10 @@ boss_agent.graph
 ================
 LangGraph workflows.
 
-The job screening workflow is a thin traced adapter over the deep ``CandidateScreener``
-module (ADR 0013); the resume lifecycle workflow below it remains self-contained.
+The module now holds the resume lifecycle workflow only: stateful ingestion,
+normalization, diffing, and persistence for candidate resumes (ADR 0008). Card-level
+and job-level screening is not graphed here — callers invoke ``CandidateScreener``
+directly (ADR 0013), which is the seam every caller migrated to.
 """
 
 import logging
@@ -12,218 +14,11 @@ from pathlib import Path
 from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
-from langsmith import traceable
 
-from .job_entities import JobCardBrief
-from .screening import CARD_PASS_REASON, CandidateScreener, CardVerdictStage
-from .screening_policy import ScreeningPolicy
+from .candidate_entities import CandidateProfile
+from .memory import ProfileNormalizer, ResumeTextExtractor
 
 logger = logging.getLogger(__name__)
-
-
-class JobApplicationState(TypedDict, total=False):
-    """Execution state for single-job screening and outreach pipeline."""
-
-    # Input specifications
-    card: dict[str, Any]  # Serialized JobCardBrief
-    screening_policy: dict[str, Any]  # Serialized ScreeningPolicy
-    candidate_profile: dict[str, Any]  # Serialized StructuredCandidateProfile
-    jd_text: str
-    commute_distance_km: float | None  # Probed detail-page commute distance (spec #209)
-
-    # Intermediate / Output: Card Screener (keywords, App-Enforced Filters, relaxation)
-    card_pass: bool
-    keyword_pass: bool
-    keyword_reason: str
-    app_rule_pass: bool
-    app_rule_violation: str
-    relaxed_by_whitelist: bool
-    relaxation_reason: str
-
-    # Intermediate / Output: JD evaluation and greeting drafting
-    deep_screen_pass: bool
-    deep_screen_reason: str
-    greeting_message: str
-    match_score: int
-    match_reasons: list[str]
-    jd_key_requirements: list[str]
-
-    # Global status & execution audit
-    status: str  # "pending", "keyword_passed", "filtered_by_keyword", "filtered_by_app_rule", "relaxed_by_whitelist", "greeting_drafted", "jd_unavailable", "error"
-    error_message: str
-
-
-def make_card_screener_node(screener: CandidateScreener):
-    """Factory creating the card screening node bound to a screener instance.
-
-    One node owns the whole card-level verdict: keyword matching, App-Enforced Filters
-    and Whitelist Relaxation used to be three nodes plus a router, which is what let
-    callers re-implement the same rules slightly differently (ADR 0013).
-    """
-
-    def card_screener_node(state: JobApplicationState) -> dict[str, Any]:
-        policy = ScreeningPolicy.from_dict(state.get("screening_policy") or {})
-        card = dict(state.get("card") or {})
-        if "commute_distance_km" in state and "commute_distance_km" not in card:
-            card["commute_distance_km"] = state.get("commute_distance_km")
-        verdict = screener.evaluate_card(card, policy)
-        rejected_by_keywords = verdict.stage is CardVerdictStage.FILTERED_BY_KEYWORD
-
-        return {
-            "card_pass": verdict.passed,
-            "keyword_pass": not rejected_by_keywords,
-            "keyword_reason": verdict.reason if rejected_by_keywords else CARD_PASS_REASON,
-            "app_rule_pass": verdict.app_rule_pass,
-            "app_rule_violation": verdict.app_rule_violation,
-            "relaxed_by_whitelist": verdict.relaxed_by_whitelist,
-            "relaxation_reason": verdict.relaxation_reason,
-            "status": verdict.stage.value,
-        }
-
-    return card_screener_node
-
-
-def make_job_evaluation_node(screener: CandidateScreener):
-    """Factory creating the full-JD evaluation node bound to a screener instance."""
-
-    def job_evaluation_node(state: JobApplicationState) -> dict[str, Any]:
-        policy = ScreeningPolicy.from_dict(state.get("screening_policy") or {})
-        search_filter = state.get("search_filter") or (state.get("card") or {}).get("search_filter")
-        result = screener.evaluate_job(
-            card=state.get("card") or {},
-            jd_text=state.get("jd_text") or "",
-            profile=state.get("candidate_profile") or None,
-            policy=policy,
-            search_filter=search_filter,
-        )
-        return {
-            "deep_screen_pass": result.passed,
-            "deep_screen_reason": result.reason,
-            "greeting_message": result.greeting_message,
-            "match_score": result.match_score,
-            "match_reasons": result.match_reasons,
-            "jd_key_requirements": result.jd_key_requirements,
-            "status": "greeting_drafted" if result.passed else result.stage.value,
-            "error_message": result.error_message,
-        }
-
-    return job_evaluation_node
-
-
-def should_continue_after_card_screening(state: JobApplicationState) -> str:
-    """Conditional edge router after the card screening node."""
-    if state.get("card_pass", False):
-        return "continue"
-    return "end"
-
-
-def build_job_application_graph(
-    llm_client: Any | None = None,
-    matching_service: Any | None = None,
-    screener: CandidateScreener | None = None,
-) -> Any:
-    """Construct and compile the stateful job screening workflow.
-
-    The graph is a thin traced adapter over ``CandidateScreener`` (ADR 0013): it keeps
-    the screening stages observable as a LangGraph run with LangSmith tags while every
-    screening rule itself lives in the screener module.
-    """
-    resolved_screener = screener or CandidateScreener(
-        llm_client=llm_client, matching_service=matching_service
-    )
-
-    builder = StateGraph(JobApplicationState)
-    builder.add_node("card_screener", make_card_screener_node(resolved_screener))
-    builder.add_node("job_evaluation", make_job_evaluation_node(resolved_screener))
-
-    builder.add_edge(START, "card_screener")
-    # Only a card that survived card screening with a usable verdict earns a JD evaluation;
-    # a rejected card terminates the workflow without spending a single token.
-    builder.add_conditional_edges(
-        "card_screener",
-        should_continue_after_card_screening,
-        {
-            "continue": "job_evaluation",
-            "end": END,
-        },
-    )
-    builder.add_edge("job_evaluation", END)
-
-    return builder.compile()
-
-
-@traceable(name="run_job_application_graph", run_type="chain")
-def run_job_application_graph(
-    card: JobCardBrief | dict[str, Any],
-    policy: ScreeningPolicy | dict[str, Any] | None = None,
-    candidate_profile: Any | None = None,
-    jd_text: str = "",
-    llm_client: Any | None = None,
-    matching_service: Any | None = None,
-    graph: Any | None = None,
-    config: dict[str, Any] | None = None,
-) -> JobApplicationState:
-    """Run the job application workflow graph on a single job posting card."""
-    if graph is None:
-        graph = build_job_application_graph(
-            llm_client=llm_client, matching_service=matching_service
-        )
-
-    if isinstance(card, JobCardBrief):
-        card_dict = {
-            "title": card.title,
-            "company_name": card.company_name,
-            "recruiter_name": card.recruiter_name,
-            "recruiter_title": card.recruiter_title,
-            "salary_range": card.salary_range,
-            "location": card.location,
-            "tags": card.tags,
-            "digest": card.digest or card.snippet,
-            "snippet": card.snippet or card.digest,
-            "is_headhunter": card.is_headhunter,
-            "commute_distance_km": card.commute_distance_km,
-            "commute_distance_text": card.commute_distance_text,
-        }
-    else:
-        card_dict = dict(card)
-
-    if policy is None:
-        policy_dict = ScreeningPolicy().to_dict()
-    elif isinstance(policy, ScreeningPolicy):
-        policy_dict = policy.to_dict()
-    else:
-        policy_dict = dict(policy)
-
-    if candidate_profile is None:
-        profile_dict = {}
-    elif hasattr(candidate_profile, "to_dict"):
-        profile_dict = candidate_profile.to_dict()
-    else:
-        profile_dict = dict(candidate_profile)
-
-    initial_state: JobApplicationState = {
-        "card": card_dict,
-        "screening_policy": policy_dict,
-        "candidate_profile": profile_dict,
-        "jd_text": jd_text,
-        "commute_distance_km": card_dict.get("commute_distance_km"),
-        "status": "pending",
-    }
-
-    run_config: dict[str, Any] = {
-        "tags": ["boss-agent", "screening-graph"],
-        "metadata": {
-            "title": card_dict.get("title", ""),
-            "company_name": card_dict.get("company_name", ""),
-            "salary_range": card_dict.get("salary_range", ""),
-            "location": card_dict.get("location", ""),
-        },
-    }
-    if config:
-        run_config.update(config)
-
-    result = graph.invoke(initial_state, config=run_config)
-    return result
 
 
 # ==============================================================================
@@ -256,8 +51,6 @@ def resume_text_extractor_node(state: ResumeLifecycleState) -> dict[str, Any]:
     file_path = state.get("file_path", "")
     raw_text = state.get("raw_resume_text", "")
     if not raw_text and file_path:
-        from .memory import ResumeTextExtractor
-
         extractor = ResumeTextExtractor()
         raw_text = extractor.extract_text(file_path)
 
@@ -357,15 +150,13 @@ def make_resume_document_generator_node(llm_client: Any | None = None):
 
 def resume_normalizer_node(state: ResumeLifecycleState) -> dict[str, Any]:
     """Self-healing node ensuring critical fields, valid arrays, and fallback markdown exist."""
-    from .memory import ProfileNormalizer, StructuredCandidateProfile
-
     raw_text = state.get("raw_resume_text", "")
     extracted = dict(state.get("extracted_metadata") or {})
     if not extracted.get("profile_document") and state.get("profile_document"):
         extracted["profile_document"] = state["profile_document"]
 
     normalized = ProfileNormalizer.normalize(extracted, raw_text=raw_text)
-    profile_obj = StructuredCandidateProfile.from_dict(normalized)
+    profile_obj = CandidateProfile.from_dict(normalized)
     return {
         "normalized_profile": profile_obj.to_dict(),
         "profile_document": profile_obj.profile_document,

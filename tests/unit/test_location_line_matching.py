@@ -21,7 +21,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from boss_agent.job_entities import JobLocationLine
-from boss_agent.pages import JobDetailPage
+from boss_agent.pages.job_detail import JobDetailPage
 from boss_agent.screening_policy import ScreeningPolicy
 
 FULL_LINE = "上海·浦东新区·张江(近13/16号线华夏中路地铁站)"

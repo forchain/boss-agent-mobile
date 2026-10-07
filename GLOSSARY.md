@@ -34,8 +34,8 @@ The managed lifecycle of an Android Virtual Device (AVD) instance, its hardware 
 _Avoid_: Emulator runner, VM instance
 
 **Smoke Harness**:
-The end-to-end verification pipeline that boots the emulator, launches Boss App, dismisses startup dialogs, checks auth readiness, navigates job cards, and parses job details.
-_Avoid_: E2E test script, sanity check, launch test
+The verification adapter over the Mobile Job Feed Pipeline: it translates an operator's SearchConfig, FilterConfig and ScreeningPolicy into one feed run, gates that run on an authenticated session, and returns the JobPosting the run extracted. It owns no navigation of its own — activation and the auth challenge are the only two things it keeps, because the pipeline assumes a usable session and cannot answer either — so a verification run exercises the same engine the Automation Worker runs rather than a second implementation of a feed.
+_Avoid_: E2E test script, sanity check, launch test, second feed implementation
 
 **Session Persistence**:
 The mechanism that detects user authentication status and preserves the logged-in app state across virtual device restarts to prevent repeated manual logins.
@@ -205,10 +205,6 @@ _Avoid_: config store, settings dir, user preference folder
 **Candidate Screener (`CandidateScreener`)**:
 The unified deep module consolidating zero-token card preliminary keyword checks, App-Enforced Filters, Whitelist Relaxation, JD semantic blacklist evaluation, and living Greeting Prompt drafting behind a minimal two-method interface (`evaluate_card` and `evaluate_job`). Supersedes shallow pass-through graph wrappers.
 _Avoid_: filter runner, card checker, matcher script
-
-**Candidate Screener Graph (`JobApplicationState`)**:
-The LangGraph workflow that runs card screening and JD evaluation as two traced stages. It is a thin adapter over the Candidate Screener (ADR 0013): the graph contributes run configuration, tags and the serialized state contract, while every screening rule lives in the screener module.
-_Avoid_: Screening pipeline, match chain, agent workflow
 
 **Keyword Screener**:
 The zero-token deterministic gatekeeper stage of `CandidateScreener.evaluate_card`, evaluating visible job card metadata (title, tags, company, digest, location) against the active Screening Policy before triggering expensive mobile navigation. Confined to the compact card facets by design, where collateral over-rejection is tolerated because the short text mirrors the role's core; it never operates on the full Job Description.

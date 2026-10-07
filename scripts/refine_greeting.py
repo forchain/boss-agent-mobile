@@ -16,10 +16,10 @@ root_dir = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(root_dir))
 sys.path.insert(0, str(root_dir / "src"))
 
+from boss_agent.candidate_entities import CandidateProfile  # noqa: E402
 from boss_agent.job_entities import JobPosting  # noqa: E402
 from boss_agent.llm_config import load_llm_config  # noqa: E402
 from boss_agent.matching import JobMatchGreetingService  # noqa: E402
-from boss_agent.memory import StructuredCandidateProfile  # noqa: E402
 from droid_agent_core.llm import LLMConfig, OpenAIChatClient  # noqa: E402
 
 
@@ -131,7 +131,7 @@ def main() -> None:
             from boss_agent.memory import ProfileNormalizer
 
             norm_dict = ProfileNormalizer.normalize(profile_dict)
-            candidate_profile = StructuredCandidateProfile.from_dict(norm_dict)
+            candidate_profile = CandidateProfile.from_dict(norm_dict)
         except Exception as e:
             sys.stderr.write(f"Warning: Failed to parse candidate profile JSON ({e})\n")
 

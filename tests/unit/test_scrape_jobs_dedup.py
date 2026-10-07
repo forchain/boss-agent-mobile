@@ -183,7 +183,7 @@ async def test_scrape_jobs_handler_direct_ingestion_even_when_detail_fails():
 
 def test_extract_visible_job_cards_parser():
     """extract_visible_job_cards accurately parses cards with salary, location, recruiter, tags, and snippet."""
-    from boss_agent.pages import JobListPage
+    from boss_agent.pages.job_feed import JobListPage
 
     mock_driver = MagicMock()
     mock_card = MagicMock()
