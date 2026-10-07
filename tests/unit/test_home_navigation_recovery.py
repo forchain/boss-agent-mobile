@@ -3,7 +3,7 @@
 from unittest.mock import MagicMock
 
 from boss_agent.job_entities import JobPosting
-from boss_agent.pages import JobListPage
+from boss_agent.pages.job_feed import JobListPage
 from boss_agent.search_entities import SavedSearch
 from boss_agent.workflows import SmokeHarness, TakeoverHandler
 
@@ -142,7 +142,7 @@ def test_smoke_harness_recovers_to_home_before_search():
 
 
 def test_chat_screen_does_not_collide_with_search_or_home():
-    from boss_agent.pages import SearchPage
+    from boss_agent.pages.job_feed import SearchPage
 
     mock_driver = MagicMock()
     mock_chat_input = MagicMock()

@@ -15,7 +15,7 @@ import pytest
 
 from boss_agent.broker.models import TaskType
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
-from boss_agent.pages import JobListPage, SearchPage
+from boss_agent.pages.job_feed import JobListPage, SearchPage
 from boss_agent.worker.config import WorkerConfig
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.handlers.auto_apply import AutoApplyHandler

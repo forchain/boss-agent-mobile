@@ -240,7 +240,7 @@ def test_job_match_greeting_service_requires_full_substantive_jd():
 def test_greeting_drafter_in_graph_catches_precondition_failure():
     """Greeting drafter node in LangGraph should record failure state rather than crashing when JD is missing."""
     from boss_agent.graph import run_job_application_graph
-    from boss_agent.pages import JobCardBrief
+    from boss_agent.job_entities import JobCardBrief
     from boss_agent.screening_policy import ScreeningPolicy
 
     policy = ScreeningPolicy(title_whitelist=["Agent"])

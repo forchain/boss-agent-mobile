@@ -24,7 +24,7 @@ from boss_agent.feed_pipeline import FeedStreamConfig, JobFeedPipeline
 from boss_agent.job_entities import JobCardBrief, JobPosting
 from boss_agent.job_store import JobRecordStore
 from boss_agent.memory import StructuredCandidateProfile
-from boss_agent.pages import LocatedJobCard
+from boss_agent.pages.job_feed import LocatedJobCard
 from boss_agent.screening import CandidateScreener
 
 TODAY = datetime.now(UTC).isoformat()
