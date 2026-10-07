@@ -54,17 +54,21 @@ def test_humanized_gesture_pauses_do_not_cost_wall_clock():
     assert elapsed < 0.5, f"one gesture pause cost {elapsed:.1f}s of the tier"
 
 
-def test_page_and_workflow_settling_pauses_do_not_cost_wall_clock():
+def test_page_and_workflow_settling_pauses_do_not_cost_wall_clock(pages_pacing_modules):
     """The fixed pauses pages/workflows spend letting a device render must not be paid here.
 
     Each of these sits between a UI action and the read that confirms it landed, so on a
     mocked driver they are dead time: the element a real device would eventually paint never
     arrives, and the wait can only ever expire. That is the same trade the wait loop and the
     gesture pause already make, and it is where the tier's wall-clock actually went.
-    """
-    from boss_agent import pages, workflows
 
-    for module in (pages, workflows):
+    `pages` is a package now, so the assertion covers every submodule that owns a settling
+    pause rather than one module — a submodule that kept its own `import time` would otherwise
+    pay real seconds while this test still reported success.
+    """
+    from boss_agent import workflows
+
+    for module in (*pages_pacing_modules, workflows):
         started_at = time.monotonic()
 
         module.time.sleep(2.0)
@@ -73,15 +77,15 @@ def test_page_and_workflow_settling_pauses_do_not_cost_wall_clock():
         assert elapsed < 0.5, f"{module.__name__} paid {elapsed:.1f}s for a settling pause"
 
 
-def test_dropping_the_pause_leaves_the_rest_of_the_clock_real():
+def test_dropping_the_pause_leaves_the_rest_of_the_clock_real(pages_pacing_modules):
     """Neutralising `sleep` must not freeze the clock those modules read to do budget maths.
 
     A wait loop that exits on `time.time() - started < timeout_sec` only behaves the same if
     the rest of the module still hands back the real clock, so that is the half worth pinning.
     """
-    from boss_agent import pages, workflows
+    from boss_agent import workflows
 
-    for module in (pages, workflows):
+    for module in (*pages_pacing_modules, workflows):
         assert abs(module.time.time() - time.time()) < 1.0, (
             f"{module.__name__} reads a clock that has drifted from the real one"
         )
