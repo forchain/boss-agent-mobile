@@ -48,7 +48,7 @@ export const DEFAULT_MAX_JOBS = 30;
 /** Seconds the worker previews a drafted greeting before moving on. */
 export const DEFAULT_PREVIEW_TIMEOUT_SEC = 3.0;
 
-/** Task Provenance — where a task came from (CONTEXT.md). */
+/** Task Provenance — where a task came from (GLOSSARY.md). */
 export type LaunchSource = 'manual' | 'test' | 'scheduler';
 
 /**

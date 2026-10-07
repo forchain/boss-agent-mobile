@@ -12,7 +12,7 @@ The divergences were not cosmetic. ``min_score`` defaulted to 75 in the launch m
 and 70 in the scheduler, and was simply absent from the dashboard's "run scheduled
 now" button. ``preview_only`` was ``True`` from every web builder and ``False`` from
 the scheduler, so the *same* SavedSearch produced inverted execution depth depending
-on who dispatched it. And task provenance — a first-class CONTEXT.md attribute with
+on who dispatched it. And task provenance — a first-class GLOSSARY.md attribute with
 defined ``manual``/``test``/``scheduler`` semantics — existed nowhere in code, faked
 instead with payload markers like ``startup_cleanup`` and ``scheduled``.
 
@@ -21,7 +21,7 @@ one that made ``auto_apply`` a lie: dispatch needs ``auto_send=True`` *and*
 ``preview_only=False``, only an explicit ``LaunchMode.LIVE`` ever produced that pair, and
 no scheduled or one-click path stated a mode. Every strategy trigger therefore drafted a
 greeting, logged an offline draft, and never opened the chat — while the SavedSearch
-that configured it says 自动打招呼, because CONTEXT.md makes Target Action *the* execution
+that configured it says 自动打招呼, because GLOSSARY.md makes Target Action *the* execution
 depth. A targeted application had the same defect one layer closer to the wire: the job
 detail's 定向投递 button hand-built an ``AUTO_APPLY`` payload that stated neither flag, so
 the worker's defaults drafted instead of sent.
@@ -79,7 +79,7 @@ DEFAULT_PREVIEW_TIMEOUT_SEC = 3.0
 
 
 class LaunchSource(StrEnum):
-    """Task Provenance — where a task came from, as CONTEXT.md defines it.
+    """Task Provenance — where a task came from, as GLOSSARY.md defines it.
 
     A real attribute on the task record rather than a payload marker: startup
     reclamation cancels ``TEST`` tasks so an automated suite never contends with the

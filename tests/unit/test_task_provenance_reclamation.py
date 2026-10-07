@@ -1,7 +1,7 @@
 """
 tests/unit/test_task_provenance_reclamation.py
 ==============================================
-Task Provenance as a real attribute, and the rule CONTEXT.md attaches to it.
+Task Provenance as a real attribute, and the rule GLOSSARY.md attaches to it.
 
 Provenance used to exist nowhere in code — the startup barrier and the scheduler faked
 it with payload markers (`startup_cleanup`, `scheduled`). It is now a column on the

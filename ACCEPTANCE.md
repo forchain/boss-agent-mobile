@@ -38,10 +38,10 @@ The codebase is strictly separated into two independent tiers:
 
 ```
 boss-agent-mobile/
-├── CONTEXT.md                    # Canonical domain glossary (Zero implementation noise)
+├── GLOSSARY.md                   # Canonical domain glossary (Zero implementation noise; symlinked by CONTEXT.md)
 ├── ACCEPTANCE.md                 # This executable acceptance baseline
 ├── docs/
-│   ├── adr/                      # Architectural Decision Records (0001-0012, README.md index)
+│   ├── adr/                      # Architectural Decision Records (0001-0019, README.md index)
 │   └── agents/                   # Agent operational guidelines & protocols
 ├── scripts/
 │   ├── bootstrap.py              # Idempotent environment provisioner
@@ -197,7 +197,7 @@ flowchart LR
 ```
 
 ### 6.1 Dev Agent Contract
-- **Context**: Reads `CONTEXT.md`, `ADR/*`, and `ACCEPTANCE.md`.
+- **Context**: Reads `GLOSSARY.md`, `ADR/*`, and `ACCEPTANCE.md`.
 - **Duties**:
   - Implements `scripts/bootstrap.py`, `src/droid_agent_core/`, `src/boss_agent/`.
   - Implements unit tests with mocks.

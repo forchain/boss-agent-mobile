@@ -44,7 +44,7 @@ class AutomationTask(BaseModel):
     task_type: TaskType
     status: TaskStatus = TaskStatus.PENDING
     payload: dict[str, Any] = Field(default_factory=dict)
-    #: Task Provenance (CONTEXT.md): manual | test | scheduler. A real attribute on the
+    #: Task Provenance (GLOSSARY.md): manual | test | scheduler. A real attribute on the
     #: record, so startup reclamation and the dashboard can act on it without reading a
     #: payload marker. Legacy rows read as "manual".
     source: str = "manual"
