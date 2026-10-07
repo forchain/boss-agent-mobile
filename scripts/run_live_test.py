@@ -33,14 +33,18 @@ Usage:
 import argparse
 import sys
 import time
+from collections.abc import Callable, Coroutine
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
+from boss_agent.async_bridge import run_sync
 from boss_agent.config_realm import DEFAULTS
 from boss_agent.enums import AuthStatus
+from boss_agent.errors import BrokerError
 from boss_agent.feed_pipeline import FeedStreamResult
 from boss_agent.feed_verification import (
     BOSS_PACKAGE,
@@ -52,21 +56,77 @@ from boss_agent.feed_verification import (
 )
 from boss_agent.matching import JobMatchGreetingService
 from boss_agent.memory import ResumeMemoryManager
+from boss_agent.saved_search_store import (
+    SavedSearchStore,
+    missing_saved_search_message,
+    resolve_saved_search_store,
+)
 from boss_agent.screening import JobVerdictStage
 from boss_agent.screening_policy import ScreeningPolicy
-from boss_agent.search_entities import FilterConfig, SearchConfig
-from boss_agent.searches import get_global_search_registry
+from boss_agent.search_entities import FilterConfig, SavedSearch, SearchConfig
 from boss_agent.settings import load_settings
 from boss_agent.workflows import TakeoverHandler
 from droid_agent_core.driver import AppiumSession, DriverConfig
 
 console = Console()
 
+T = TypeVar("T")
 
-def list_saved_searches() -> None:
-    """Print all available preconfigured saved searches."""
-    reg = get_global_search_registry()
-    searches = reg.list_all()
+
+def _read_presets(
+    read: Callable[[SavedSearchStore], Coroutine[Any, Any, T]],
+    store: SavedSearchStore | None,
+) -> T:
+    """Run one preset read against the database store, falling back to the built-in defaults.
+
+    The registry this replaces probed PocketBase while it was being constructed and
+    swallowed every failure, so "the database was unreachable" and "there are no presets"
+    were the same answer — which is why a laptop with no PocketBase could still run the
+    harness on the seeded defaults. The store performs no I/O at construction and raises a
+    typed ``BrokerError`` from the read that actually needed the database, so that
+    fallback has to be written down instead of inherited.
+
+    It lives here, in the CLI, rather than in the seam itself: the store reports what
+    happened, and only this caller knows that a live smoke run on a laptop is worth
+    degrading for. The degradation is announced on the console rather than swallowed,
+    because a run that silently fell back is a run whose presets came from somewhere
+    other than the operator's database.
+
+    A miss is deliberately *not* a failure. A store that answered and did not carry the
+    id returns ``None``, and substituting the defaults there would execute a preset the
+    operator did not name.
+    """
+    if store is not None:
+        return run_sync(read(store))
+
+    try:
+        return run_sync(read(resolve_saved_search_store()))
+    except BrokerError as e:
+        console.print(
+            f"[yellow]⚠️  PocketBase saved searches unavailable ({e}). "
+            f"Continuing with the built-in default presets.[/yellow]"
+        )
+        return run_sync(read(resolve_saved_search_store(prefer_database=False)))
+
+
+def read_saved_search(search_id: str, store: SavedSearchStore | None = None) -> SavedSearch | None:
+    """The named preset, or ``None`` when the database answered without carrying it."""
+    return _read_presets(lambda s: s.get_saved_search(search_id), store)
+
+
+def read_saved_searches(store: SavedSearchStore | None = None) -> list[SavedSearch]:
+    """Every preset this harness can start from, in the order the store returns them."""
+    return _read_presets(lambda s: s.list_saved_searches(), store)
+
+
+def list_saved_searches(store: SavedSearchStore | None = None) -> None:
+    """Print all available preconfigured saved searches, returning nothing.
+
+    The ``read_*`` helpers above are the ones that hand a caller its presets; this one
+    only draws them, so the two are named apart rather than ``load``/``list`` — one
+    letter of difference is not enough to tell "returns the list" from "prints it".
+    """
+    searches = read_saved_searches(store)
 
     table = Table(title="📋 Available Saved Searches & Filter Presets")
     table.add_column("Search ID", style="cyan", no_wrap=True)
@@ -132,6 +192,7 @@ def run_live_test(
     resume_file: str | None = None,
     force_refresh_memory: bool = False,
     enable_greeting_draft: bool = True,
+    saved_search_store: SavedSearchStore | None = None,
 ) -> bool:
     """Open a device session, run one feed pass, and report what it extracted.
 
@@ -142,20 +203,27 @@ def run_live_test(
     must not have. A card the *screening engine* rejected is not this failure: that run still
     proved extraction, and ``_verdict_line`` says so rather than reporting it as a match.
     """
-    reg = get_global_search_registry()
     if search_id:
-        try:
-            saved_search = reg.get(search_id)
-            search_config = (
-                SearchConfig(keyword=keyword) if keyword is not None else saved_search.search
-            )
-            active_filter = filter_config or saved_search.filter
-            console.print(
-                f"\n[bold cyan]🚀 Starting feed verification using Saved Search:[/bold cyan] [bold yellow]'{search_id}'[/bold yellow] ({saved_search.name})"
-            )
-        except KeyError as e:
-            console.print(f"[bold red]❌ {e}[/bold red]")
+        saved_search = read_saved_search(search_id, saved_search_store)
+        if saved_search is None:
+            # The store reports a miss with ``None`` instead of raising, so this rebuilds
+            # the wording from the ids it does hold — naming the preset that was asked for
+            # *and* the ones that exist, which is the part that makes a typo fixable
+            # without reading the source. The sentence itself belongs to the seam and is
+            # shared with the harness's ``KeyError``, so the two cannot drift apart.
+            available = [s.id for s in read_saved_searches(saved_search_store)]
+            # The message is escaped because Rich reads ``[alpha_preset]`` as a markup tag
+            # and swallows it — the one line that tells the operator what to type instead.
+            message = escape(missing_saved_search_message(search_id, available))
+            console.print(f"[bold red]❌ {message}[/bold red]")
             return False
+        search_config = (
+            SearchConfig(keyword=keyword) if keyword is not None else saved_search.search
+        )
+        active_filter = filter_config or saved_search.filter
+        console.print(
+            f"\n[bold cyan]🚀 Starting Smoke Harness using Saved Search:[/bold cyan] [bold yellow]'{search_id}'[/bold yellow] ({saved_search.name})"
+        )
     else:
         search_config = SearchConfig(keyword=keyword)
         active_filter = filter_config or FilterConfig()
@@ -404,13 +472,15 @@ def main():
 
     # Resolve settings: CLI flags take precedence over database SavedSearch
     search_id = args.search_id or "default_agent_search"
-    saved_search = None
-    if search_id:
-        try:
-            reg = get_global_search_registry()
-            saved_search = reg.get(search_id)
-        except Exception:
-            saved_search = None
+    saved_search = read_saved_search(search_id) if search_id else None
+    if search_id and saved_search is None:
+        # Degrade to the CLI flags rather than fail: an unknown preset should not stop an
+        # operator who passed an explicit keyword from running at all. It is announced,
+        # because the flags about to run are not the ones the preset would have supplied.
+        console.print(
+            f"[yellow]⚠️  Saved search '{search_id}' not found. "
+            f"Continuing with CLI flags only.[/yellow]"
+        )
 
     enable_search = (
         False if args.no_search else (saved_search.enable_search if saved_search else True)

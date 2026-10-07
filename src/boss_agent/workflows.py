@@ -10,6 +10,7 @@ from typing import Any
 
 from rich.console import Console
 
+from .async_bridge import run_sync
 from .candidate_entities import CandidateProfile
 from .enums import AuthStatus
 from .feed_verification import (
@@ -23,10 +24,40 @@ from .job_entities import JobPosting
 from .matching import JobMatchGreetingService
 from .memory import ResumeMemoryManager
 from .pages.system import LoginPage
+from .saved_search_store import (
+    SavedSearchStore,
+    missing_saved_search_message,
+    resolve_saved_search_store,
+)
 from .screening_policy import ScreeningPolicy, resolve_screening_policy
 from .search_entities import FilterConfig, SavedSearch, SearchConfig
 
 console = Console()
+
+
+def _require_saved_search(store: SavedSearchStore, search_id: str) -> SavedSearch:
+    """Fetch one preset through ``store``, or name what is actually available.
+
+    ``SmokeHarness`` is synchronous and every store verb is not, so the read is bridged
+    with ``run_sync`` rather than ``asyncio.run`` — a harness built from inside a running
+    loop (a LangGraph step, an async worker) would otherwise collide with it.
+
+    A store answers a miss with ``None`` rather than raising, so this turns that
+    ``None`` back into a ``KeyError`` listing the ids the store holds — the wording the
+    CLI prints for the same miss, so neither caller has to be trusted over the other.
+    Letting it through is not an option: the harness would fall through to a default
+    search and filter and run an unfiltered sweep against a live device under a preset
+    nobody chose.
+
+    A store failure is not converted at all — it is raised as the typed ``BrokerError``
+    the seam reports, because unlike a missing preset this says nothing about what the
+    operator asked for and everything about whether the answer can be trusted.
+    """
+    loaded_search = run_sync(store.get_saved_search(search_id))
+    if loaded_search is None:
+        available = [search.id for search in run_sync(store.list_saved_searches())]
+        raise KeyError(missing_saved_search_message(search_id, available))
+    return loaded_search
 
 
 class TakeoverHandler:
@@ -112,6 +143,7 @@ class SmokeHarness:
         enable_greeting_draft: bool = True,
         memory_manager: ResumeMemoryManager | None = None,
         matching_service: JobMatchGreetingService | None = None,
+        saved_search_store: SavedSearchStore | None = None,
     ):
         self.driver = driver
         self.takeover = takeover_handler or TakeoverHandler(driver, auto_confirm_for_test=True)
@@ -160,10 +192,13 @@ class SmokeHarness:
                 channel_preference=saved_search.filter.channel_preference,
             )
         elif saved_search_id:
-            from .searches import get_global_search_registry
-
-            reg = get_global_search_registry()
-            loaded_search = reg.get(saved_search_id)
+            # A named preset is resolved through the store seam, so the harness reaches
+            # PocketBase with the broker's credentials instead of the registry's
+            # unauthenticated side-channel read. Left to resolve its own store only
+            # when a caller injects none, because that resolution builds an authenticated
+            # database client the caller may not have wanted.
+            store = saved_search_store or resolve_saved_search_store()
+            loaded_search = _require_saved_search(store, saved_search_id)
             self.search_config = loaded_search.search
             self.filter_config = loaded_search.filter
             self.screening_policy = resolve_screening_policy(

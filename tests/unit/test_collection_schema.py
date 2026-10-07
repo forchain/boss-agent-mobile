@@ -37,8 +37,8 @@ from boss_agent.broker.collection_schema import (
     wire_payload,
 )
 from boss_agent.broker.provisioner import provision_remote_pocketbase, provision_sqlite_database
+from boss_agent.saved_search_store import record_to_saved_search
 from boss_agent.search_entities import SavedSearch
-from boss_agent.searches import record_to_saved_search
 
 _COLLECTIONS_DDL = """
     CREATE TABLE _collections (
@@ -361,7 +361,7 @@ def test_normalized_reads_leave_derived_columns_for_the_domain() -> None:
 
 
 def test_max_jobs_default_lives_in_exactly_one_place() -> None:
-    """The domain model, the provisioner and the registry all read the schema's value."""
+    """The domain model, the provisioner and the saved-search store read the schema's value."""
     assert SAVED_SEARCHES.field("max_jobs").default == SAVED_SEARCH_MAX_JOBS
     assert SavedSearch(id="s").max_jobs == SAVED_SEARCH_MAX_JOBS
     assert record_to_saved_search("s", {"name": "s"}).max_jobs == SAVED_SEARCH_MAX_JOBS
@@ -373,7 +373,7 @@ def test_a_stored_max_jobs_still_wins_over_the_default() -> None:
     assert record_to_saved_search("s", {"name": "s", "max_jobs": 7}).max_jobs == 7
 
 
-def test_the_registry_mapper_derives_target_action_from_the_task_type() -> None:
+def test_the_store_mapper_derives_target_action_from_the_task_type() -> None:
     """Normalizing the record must not pre-empt the domain's derivation."""
     search = record_to_saved_search(
         "s", {"name": "s", "target_task_type": "AUTO_APPLY", "target_action": None}

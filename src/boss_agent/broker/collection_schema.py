@@ -24,7 +24,7 @@ Everything that needs a collection's shape reads it from here:
 * upgrades render ``ALTER TABLE`` from :func:`column_migrations` and the ordered
   :func:`backfills`;
 * the Job Record Store builds its write payload from :func:`wire_payload`;
-* the SavedSearch registry maps raw HTTP records through :func:`wire_payload` too.
+* the SavedSearch store maps raw records through :func:`normalize_record` too.
 
 Adding a field is therefore one edit, and a dialect cannot ship a field the other
 lacks — :func:`dialect_field_names` is what the equality test asserts against.
@@ -88,7 +88,7 @@ class Field:
     """One declared column, rendered by both provisioning dialects.
 
     ``default`` is the value the field takes when a writer omits it — the Job Record
-    Store's payload and the SavedSearch registry's record→domain mapper both read it,
+    Store's payload and the SavedSearch store's record→domain mapper both read it,
     so a column added to an older deployment degrades to a declared default rather
     than surfacing as ``None`` mid-task. ``None`` means "genuinely absent" for
     nullable pointer columns (``applied_at``, ``source_task_id``).
