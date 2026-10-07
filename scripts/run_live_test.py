@@ -11,6 +11,13 @@ that no device run ever exercised twice; two implementations of one feed drift, 
 was the one nobody tested on a device. Which card was chosen, whether its JD was usable,
 what was screened and why: that is now answered in one place, and this runner reports it.
 
+What stays here is what is genuinely this script's: which saved search preset it resolves and
+how, the device session it opens and closes, the two screenshots it captures for an operator
+to look at afterwards, and the flags. The composition *around* the engine — the config
+translation, the log sink, activation, the profile load, the refusal to report a run that
+read nothing — is ``boss_agent.feed_verification``'s, because ``SmokeHarness`` composes the
+same run and #391 left two copies of that block free to drift.
+
 Two things stay here because the pipeline cannot answer them for itself — it assumes a
 usable session and knows nothing about challenges:
 
@@ -32,12 +39,20 @@ from typing import Any
 from rich.console import Console
 from rich.table import Table
 
-from boss_agent.async_bridge import run_sync
-from boss_agent.enums import AuthStatus, TargetAction
-from boss_agent.feed_pipeline import FeedStreamConfig, JobFeedPipeline
-from boss_agent.matching import JobMatchGreetingService, MatchGreetingResult
-from boss_agent.memory import ResumeMemoryManager, StructuredCandidateProfile
-from boss_agent.screening import CandidateScreener
+from boss_agent.config_realm import DEFAULTS
+from boss_agent.enums import AuthStatus
+from boss_agent.feed_pipeline import FeedStreamResult
+from boss_agent.feed_verification import (
+    BOSS_PACKAGE,
+    activate_app,
+    build_verification_pipeline,
+    load_candidate_profile,
+    render_greeting_match_card,
+    run_verification_feed,
+)
+from boss_agent.matching import JobMatchGreetingService
+from boss_agent.memory import ResumeMemoryManager
+from boss_agent.screening import JobVerdictStage
 from boss_agent.screening_policy import ScreeningPolicy
 from boss_agent.search_entities import FilterConfig, SearchConfig
 from boss_agent.searches import get_global_search_registry
@@ -46,8 +61,6 @@ from boss_agent.workflows import TakeoverHandler
 from droid_agent_core.driver import AppiumSession, DriverConfig
 
 console = Console()
-
-BOSS_PACKAGE = "com.hpbr.bosszhipin"
 
 
 def list_saved_searches() -> None:
@@ -76,120 +89,37 @@ def list_saved_searches() -> None:
     console.print(table)
 
 
-async def _log(line: str) -> None:
-    """Send the pipeline's run log to the console a person is watching.
+def _verdict_line(result: FeedStreamResult) -> str:
+    """How the run's own outcome should be read out to the operator.
 
-    The pipeline reports every decision it makes through this sink — search entry, each
-    screened card, why a card was turned down. It exists because this runner's reader is a
-    human standing at a terminal, so those lines belong on the console rather than in a
-    worker task log nobody opened. That visibility is the point of the script: it replaced
-    the step prints the old procedural walk used to emit, and nothing was lost with them.
+    "PASSED" is one word standing in for two different facts, and #391 printed the same line
+    for both. A run that extracted a posting and had the screening engine *accept* it has
+    verified the engine end to end. A run that extracted a posting and had the engine
+    *reject* it has verified only that the app launches, searches, opens a card and parses a
+    JD — which is most of what this script exists to check, but not the same claim, and an
+    operator reading a green line had no way to tell them apart.
+
+    Both are passes and neither is rewritten into a failure: making a correctly-rejected card
+    fail the run would report the engine as broken every time it works. What changes is that
+    the run says which of the two it was, so a screening rejection stops reading as a match.
+
+    The rejected branch is a guard rather than a routine outcome today, and that is the
+    runner's own doing: it hands the engine ``ScreeningPolicy()`` on purpose (see
+    ``run_live_test``), and an empty blacklist means the deep screener always admits. It
+    becomes reachable the moment that policy stops being empty, which is exactly why the
+    wording has to be right before it matters.
     """
-    console.print(line)
-
-
-def _activate_app(driver: Any, package_name: str = BOSS_PACKAGE) -> None:
-    """Bring Boss 直聘 to the foreground before anything reads the screen.
-
-    The pipeline starts from whatever page it is handed — it recovers to home and searches,
-    but it has no opinion about which app is in front. Whoever opened the session is what
-    decides that, which is this script. Failures are swallowed on purpose: a driver without
-    ``activate_app`` (or an app already in front) is not a reason to abandon a verification
-    run, and the run itself will fail loudly if the screen really is wrong.
-    """
-    if hasattr(driver, "activate_app"):
-        try:
-            driver.activate_app(package_name)
-            time.sleep(1.0)
-        except Exception:
-            pass
-
-
-def _load_candidate_profile(
-    *,
-    resume_file: str | None,
-    force_refresh_memory: bool,
-) -> StructuredCandidateProfile | None:
-    """Load the candidate profile the run will screen against, or ``None`` if there is none.
-
-    Loading is the expensive half of drafting a greeting: with ``--force-refresh-memory`` it
-    regenerates the profile from the resume through the LLM. So it is called only on the
-    greeting path — ``--no-greeting`` skips it rather than paying for an answer the run
-    will not use (issue #391).
-    """
-    memory_manager = ResumeMemoryManager()
-    try:
-        profile = memory_manager.load_memory(
-            force_refresh=force_refresh_memory,
-            resume_file=resume_file,
+    outcome = str(result.outcome)
+    if outcome == JobVerdictStage.FILTERED_BY_DEEP_SCREENER.value:
+        return (
+            "\n[bold yellow]✅ Feed verification PASSED (extraction verified, card screened out):[/bold yellow]\n"
+            f"[dim]the run launched, searched, opened a card and parsed its JD; the screening "
+            f"engine then turned that card down ({result.reason or outcome}). Extraction is "
+            f"what this script verifies, and it succeeded.[/dim]"
         )
-    except FileNotFoundError:
-        console.print(
-            "[dim]No candidate resume or memory profile configured. Greeting draft will be skipped.[/dim]"
-        )
-        return None
-    except Exception as e:
-        # A verification run must survive an unreadable profile: the feed pass is what it
-        # is here to verify, and a missing greeting does not invalidate an extraction.
-        console.print(f"[yellow]⚠️  Failed to pre-load candidate memory upfront: {e}[/yellow]")
-        return None
-
-    if profile:
-        console.print(
-            f"👤 [bold green]Candidate Memory Profile Active:[/bold green] "
-            f"[bold cyan]{profile.name}[/bold cyan] "
-            f"({profile.years_of_experience}年经验, "
-            f"核心技能: {', '.join(profile.core_skills[:3])})"
-        )
-    return profile
-
-
-def build_feed_config(
-    *,
-    search_config: SearchConfig,
-    filter_config: FilterConfig,
-    candidate_profile: StructuredCandidateProfile | None,
-    enable_greeting_draft: bool,
-) -> FeedStreamConfig:
-    """Translate what the operator asked for into the one declarative run the engine reads.
-
-    ``FeedStreamConfig`` is the pipeline's whole vocabulary: it states an intent, and the
-    engine decides which card that means. This is the same translation issue #390 wrote
-    inside ``SmokeHarness`` — it lives here as well because that adapter keeps taking a
-    ``SavedSearch`` by id and resolving the preset's own screening policy through
-    ``resolve_screening_policy``, whereas this runner resolves the preset itself and hands
-    over concrete configs. Two callers, one shape, so the fields mean the same thing in
-    both.
-
-    The screening policy is the one field deliberately left at the engine's own default.
-    Resolving a preset's stored policy would call ``ScreeningPolicy.load_default()``, i.e.
-    read the operator's global screening configuration, and change which cards a live
-    verification run accepts. That is a behavioural change to a runner whose job is to
-    report what the engine does, not to re-decide what the engine should accept.
-    """
-    should_search = search_config.should_search
-    return FeedStreamConfig(
-        # A verification run drafts a greeting; it never sends one. ``send_greeting=False``
-        # is the depth the dispatch path reads: the screener still drafts, the record stays
-        # re-sendable, and nothing is typed into an employer's chat window — a smoke test
-        # has no business messaging a real recruiter.
-        target_action=(TargetAction.AUTO_APPLY if enable_greeting_draft else TargetAction.SAVE_JD),
-        send_greeting=False,
-        # ``should_search`` is the whole search decision, keyword included: a config with no
-        # keyword states ``enable_search=False`` so the pipeline resets to the home feed and
-        # browses recommendations, which is what this runner always did with a keyword-less
-        # config — reset to home, then do not search.
-        keyword=search_config.keyword if should_search else None,
-        enable_search=should_search,
-        # This run verifies one posting. The old flow opened the top card and stopped
-        # there; ``max_jobs=1`` says the same thing to the scanner.
-        max_jobs=1,
-        # The filter config carries its own enable flag and its own "nothing to apply", so
-        # handing it over unchanged gets both halves of the old filter step: apply what is
-        # configured, clear the dialog when nothing is.
-        filter_config=filter_config,
-        screening_policy=ScreeningPolicy(),
-        candidate_profile=candidate_profile,
+    return (
+        "\n[bold green]🎉 Feed verification PASSED on Virtual Device Session![/bold green] "
+        f"[dim](outcome={outcome}, score={result.score})[/dim]"
     )
 
 
@@ -206,9 +136,11 @@ def run_live_test(
     """Open a device session, run one feed pass, and report what it extracted.
 
     Returns ``True`` only when the run produced a posting. Silence is not a pass: the
-    pipeline reports what it *kept*, so a run that extracted nothing — every card filtered
-    out, or no readable detail page — verified nothing, and reporting success for a screen
-    it never read is the one failure mode a verification script must not have.
+    pipeline hands back only the postings it kept, so an empty result means the run opened
+    no card or had every card it opened withdrawn at the detail stage — it never read a job
+    description, and reporting success for that is the one failure mode a verification script
+    must not have. A card the *screening engine* rejected is not this failure: that run still
+    proved extraction, and ``_verdict_line`` says so rather than reporting it as a match.
     """
     reg = get_global_search_registry()
     if search_id:
@@ -282,7 +214,7 @@ def run_live_test(
     try:
         console.print(f"[dim]Connecting to Appium server at {server_url}...[/dim]")
         driver = session.start()
-        _activate_app(driver)
+        activate_app(driver)
         console.print(
             "[bold green]✅ Connected to virtual device session and launched Boss 直聘![/bold green]"
         )
@@ -312,70 +244,55 @@ def run_live_test(
         # is drafted by the object the operator configured rather than by a second one the
         # pipeline built for itself.
         matching_service = JobMatchGreetingService()
+        # Loading the profile is the expensive half of drafting a greeting: with
+        # ``--force-refresh-memory`` it regenerates the profile from the resume through the
+        # LLM. So it happens only on the greeting path — ``--no-greeting`` skips it rather
+        # than paying for an answer the run will not use (issue #391).
         candidate_profile = (
-            _load_candidate_profile(
-                resume_file=resume_file, force_refresh_memory=force_refresh_memory
+            load_candidate_profile(
+                memory_manager=ResumeMemoryManager(),
+                resume_file=resume_file,
+                force_refresh_memory=force_refresh_memory,
+                matching_service=matching_service,
             )
             if enable_greeting_draft
             else None
         )
-        if candidate_profile:
-            matching_service.set_candidate_profile(candidate_profile)
 
-        pipeline = JobFeedPipeline(
-            driver=driver,
-            screener=CandidateScreener(matching_service=matching_service),
-            log=_log,
-        )
-        feed_config = build_feed_config(
+        pipeline = build_verification_pipeline(driver, matching_service=matching_service)
+        result = run_verification_feed(
+            pipeline=pipeline,
             search_config=search_config,
             filter_config=active_filter,
+            # Deliberately the engine's own default, not the preset's stored policy:
+            # resolving it would call ``ScreeningPolicy.load_default()``, read the
+            # operator's global screening configuration, and change which cards this live
+            # run accepts. This script's job is to report what the engine does, not to
+            # re-decide what the engine should accept (issue #391).
+            screening_policy=ScreeningPolicy(),
             candidate_profile=candidate_profile,
             enable_greeting_draft=enable_greeting_draft,
         )
-
-        result = run_sync(pipeline.stream_jobs(feed_config))
-        if not result.postings:
-            # The pipeline hands back only what it kept: a card whose detail page yielded
-            # nothing, or one the run withdrew at screening, is not a posting. On a device
-            # "nothing extracted" is almost never a mystery — it is one screen's worth of
-            # explanation, and the operator is the only one who can see that screen.
-            raise RuntimeError(
-                f"Verification run extracted no job posting "
-                f"(outcome={result.outcome}, "
-                f"reason={result.reason or 'n/a'}, "
-                f"error={result.error_message or 'n/a'}, "
-                f"scanned={result.scanned}, processed={result.processed}, "
-                f"skipped={result.skipped})"
-            )
 
         job = result.postings[0]
         console.print(
             f"\n📋 [bold green]Extracted Job Posting:[/bold green] {job.title} | {job.company_name} | {job.salary_range}"
         )
 
-        if candidate_profile and result.greeting_message:
-            # Rendering is presentation, and the pipeline does not present: the run reports
-            # what it drafted, the operator reads it here. The match reasons are not part
-            # of that report, but the pipeline logged them on the way through, so the same
-            # reasoning appears one line earlier than the rendered card does.
-            matching_service.render_match_card(
-                job,
-                MatchGreetingResult(
-                    match_score=result.score,
-                    match_reasons=[],
-                    greeting_message=result.greeting_message,
-                ),
-            )
+        render_greeting_match_card(
+            matching_service=matching_service,
+            posting=job,
+            result=result,
+            candidate_profile=candidate_profile,
+            enable_greeting_draft=enable_greeting_draft,
+        )
 
         # 4. Capture final screen
         final_screen = output_dir / "live_final_screen.png"
         driver.save_screenshot(str(final_screen))
         console.print(f"📸 Final screen captured: [cyan]{final_screen}[/cyan]")
 
-        console.print(
-            "\n[bold green]🎉 Feed verification PASSED on Virtual Device Session![/bold green]"
-        )
+        console.print(_verdict_line(result))
         return True
 
     except Exception as e:
@@ -516,12 +433,25 @@ def main():
     )
     enable_greeting = False if args.no_greeting else bool(cfg.get("enable_greeting", True))
 
+    # Say it out loud, on both routes in. The flag stayed because invocations are in muscle
+    # memory and in runbooks, and the key stayed because it is in DEFAULTS and therefore in
+    # every operator's settings file — an operator who set `preview_timeout_sec: 10` and now
+    # waits for nothing deserves the same notice as one who typed the flag. Only a *changed*
+    # value is announced: DEFAULTS carries 3.0, so an untouched key would otherwise put the
+    # warning in front of every run in the world (issue #391).
+    configured_preview_timeout = cfg.get("preview_timeout_sec")
     if args.preview_timeout is not None:
-        # Say it out loud. The flag stayed because invocations are in muscle memory and in
-        # runbooks, and an operator who typed it is entitled to know it now waits for
-        # nothing — a silently accepted no-op would read as "the preview was too short".
         console.print(
             f"[yellow]⚠️  --preview-timeout ({args.preview_timeout}s) is inert:[/yellow] "
+            f"[dim]a verification run types no greeting into a chat box, so there is no "
+            f"preview pause to time (issue #390).[/dim]"
+        )
+    elif configured_preview_timeout is not None and float(configured_preview_timeout) != float(
+        DEFAULTS["preview_timeout_sec"]
+    ):
+        console.print(
+            f"[yellow]⚠️  preview_timeout_sec ({configured_preview_timeout}s) in your settings "
+            f"is inert:[/yellow] "
             f"[dim]a verification run types no greeting into a chat box, so there is no "
             f"preview pause to time (issue #390).[/dim]"
         )

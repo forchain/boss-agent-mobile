@@ -12,7 +12,7 @@ their pipeline through ``_pipeline()`` here.
 
 Everything is in-memory: no Appium session, no bound port, no live LLM endpoint. Pass a
 stub client into ``CandidateScreener`` — the screener fails open without one, and the only
-symptom of forgetting is latency and a token bill.
+symptom of forgetting is latency and a token bill — which is what ``stub_llm()`` is for.
 """
 
 from datetime import UTC, datetime
@@ -74,6 +74,19 @@ def _posting(title: str = "AI Agent 平台工程师", company: str = "智元创�
         job_description=GOOD_JD,
         recruiter_name="王女士",
     )
+
+
+def stub_llm(approved: bool = True, reason: str = "stub verdict") -> MagicMock:
+    """An LLM client that answers instantly, so no test in this tier reaches an endpoint.
+
+    ``CandidateScreener`` builds a real client for itself whenever it is handed none, and
+    both the JD semantic screener and the greeting drafter fail open on an error — so the
+    only symptom of forgetting is seconds of latency and a token bill, never a failure. Any
+    suite that lets a screening policy reach the screener should hand it this instead.
+    """
+    llm = MagicMock()
+    llm.chat_completion_json.return_value = {"approved": approved, "reason": reason}
+    return llm
 
 
 class ScriptedFeed:

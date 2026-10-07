@@ -18,37 +18,40 @@ wall or leave it scanning a screen nobody was looking at.
 Everything stays in memory — the Appium session is a stand-in, the pipeline is scripted
 through the shared harness, and the candidate screener is handed a stub LLM client so the
 fast tier never reaches an endpoint.
+
+Where the seams are: the runner resolves its own preset and device session, so it still
+constructs its own ``ResumeMemoryManager`` and ``JobMatchGreetingService`` and the tests
+still patch those on the script module. The engine composition — ``JobFeedPipeline`` plus the
+screener that carries this run's matching service — moved to ``boss_agent.feed_verification``
+in the #391 review, so those two patches moved with it. That is the point of the move: the
+runner and ``SmokeHarness`` now build one pipeline in one place, and a test that watched the
+runner build it watches the shared composition instead.
 """
 
 from unittest.mock import MagicMock, patch
 
 import pytest
 import scripts.run_live_test as runner
-from _feed_harness import ScriptedFeed, _card, _detail_page, script_pages
+from _feed_harness import ScriptedFeed, _card, _detail_page, _posting, script_pages, stub_llm
 
-from boss_agent.enums import AuthStatus, TargetAction
-from boss_agent.feed_pipeline import JobFeedPipeline
+from boss_agent.enums import AuthStatus, JobRecordStatus, TargetAction
+from boss_agent.feed_pipeline import FeedStreamResult, JobFeedPipeline
 from boss_agent.job_entities import JobPosting
+from boss_agent.matching import JobMatchGreetingService
 from boss_agent.memory import StructuredCandidateProfile
+from boss_agent.screening import CandidateScreener, JobVerdictStage
 
-# Captured before any patching: the tests replace these attributes on the script module to
-# observe composition, and must still be able to reach the real classes through them.
-_REAL_PIPELINE = runner.JobFeedPipeline
-_REAL_SCREENER = runner.CandidateScreener
-_REAL_GREETING = runner.JobMatchGreetingService
+# Captured before any patching: the tests replace these attributes to observe composition,
+# and must still be able to reach the real classes through them.
+_REAL_PIPELINE = JobFeedPipeline
+_REAL_SCREENER = CandidateScreener
+_REAL_GREETING = JobMatchGreetingService
 
 POSTING_TITLE = "资深 Python / Android 自动化专家"
 POSTING_COMPANY = "北京智联前沿科技有限公司"
 CANDIDATE = StructuredCandidateProfile(
     name="李华", years_of_experience=8, core_skills=["Python", "Android"]
 )
-
-
-def _stub_llm() -> MagicMock:
-    """An LLM client that answers instantly, so no test reaches a real endpoint."""
-    llm = MagicMock()
-    llm.chat_completion_json.return_value = {"approved": True, "reason": "stub verdict"}
-    return llm
 
 
 def _run(
@@ -58,7 +61,7 @@ def _run(
     enable_greeting_draft: bool = False,
     feed: ScriptedFeed | None = None,
     detail_yields_nothing: bool = False,
-    load_memory: MagicMock | None = None,
+    profile: StructuredCandidateProfile | None = CANDIDATE,
 ):
     """Drive ``run_live_test`` over a scripted device; return what the run was made of.
 
@@ -67,6 +70,9 @@ def _run(
     over a scripted feed rather than being mocked into agreeing with the test. The config
     it was handed is recorded too, because the runner's decisions live in that config and
     nowhere else.
+
+    ``profile`` is what the memory manager answers with, so "a greeting was asked for and
+    there is nothing to draft with" is one keyword rather than a hand-built mock.
     """
     driver = MagicMock()
     driver.get_window_size.return_value = {"width": 1080, "height": 2400}
@@ -111,7 +117,8 @@ def _run(
     takeover = MagicMock()
     takeover.check_and_handle_takeover.return_value = auth_status
     memory = MagicMock()
-    memory.load_memory.return_value = CANDIDATE if load_memory is None else load_memory
+    memory.load_memory.return_value = profile
+    verdict = stub_llm()
 
     with (
         patch("pathlib.Path.home", return_value=tmp_path),
@@ -119,12 +126,12 @@ def _run(
         patch.object(runner, "AppiumSession", return_value=session),
         patch.object(runner, "TakeoverHandler", return_value=takeover),
         patch.object(runner, "ResumeMemoryManager", return_value=memory),
-        patch.object(runner, "JobFeedPipeline", side_effect=_compose_pipeline),
-        patch.object(runner, "CandidateScreener") as screener_cls,
+        patch("boss_agent.feed_verification.JobFeedPipeline", side_effect=_compose_pipeline),
+        patch("boss_agent.feed_verification.CandidateScreener") as screener_cls,
         patch.object(runner, "JobMatchGreetingService") as greeting_cls,
     ):
-        screener_cls.side_effect = lambda **kw: _REAL_SCREENER(llm_client=_stub_llm(), **kw)
-        greeting_cls.side_effect = lambda **kw: _REAL_GREETING(llm_client=_stub_llm(), **kw)
+        screener_cls.side_effect = lambda **kw: _REAL_SCREENER(llm_client=verdict, **kw)
+        greeting_cls.side_effect = lambda **kw: _REAL_GREETING(llm_client=stub_llm(), **kw)
         outcome = runner.run_live_test(
             search_id=None,
             keyword="Agent",
@@ -261,6 +268,62 @@ def test_greeting_drafting_hands_the_pipeline_the_profile_it_loaded(tmp_path):
     assert configs[0].send_greeting is False
 
 
+def test_a_wanted_greeting_with_no_profile_states_save_only(tmp_path):
+    """The greeting gate is a conjunction, and the conjunction is the whole point.
+
+    Issue #391's review. Keying the target action off ``enable_greeting_draft`` alone meant
+    ``--resume`` with an unreadable resume — or none at all — still stated ``AUTO_APPLY``, so
+    a run with no candidate to greet issued the LLM screening and drafting calls the old
+    runner never made. Reaching out requires both halves: the operator asked for a greeting
+    *and* there is a profile to draft it from.
+    """
+    outcome, _composed, configs, _takeover, _session, _driver, memory = _run(
+        tmp_path, enable_greeting_draft=True, profile=None
+    )
+
+    assert outcome is True
+    assert memory.load_memory.called, "the greeting path still asks for a profile"
+    assert configs[0].candidate_profile is None
+    assert configs[0].target_action is TargetAction.SAVE_JD, (
+        "no profile means nothing to draft, so the run must not state outreach intent"
+    )
+    assert configs[0].send_greeting is False
+
+
+def test_a_run_the_screening_engine_turned_down_says_so_instead_of_claiming_a_match():
+    """ "PASSED" is one word for two facts, and the runner has to say which one it is.
+
+    Issue #391's review. A card the deep screener rejects is still a card the app opened and
+    whose JD the run parsed — that is the extraction this script verifies — so it exits zero
+    and must not be rewritten into a failure. But it is not the claim a matched card earns,
+    and one green line cannot honestly carry both.
+
+    The branch is pinned on the report rather than through a scripted run because this
+    runner deliberately hands the engine ``ScreeningPolicy()``: an empty blacklist means the
+    deep screener always admits, so today the engine cannot turn a card down here at all. The
+    line is a guard on the outcome the pipeline reports, not a routine event — which is
+    exactly why it has to be right the first time it does happen.
+    """
+    posting = _posting()
+    screened_out = FeedStreamResult(
+        outcome=JobVerdictStage.FILTERED_BY_DEEP_SCREENER.value,
+        reason="命中驻场黑名单",
+        postings=[posting],
+    )
+    accepted = FeedStreamResult(outcome=JobRecordStatus.MATCHED.value, score=93, postings=[posting])
+
+    rejected_line = runner._verdict_line(screened_out)
+    assert "PASSED" in rejected_line
+    assert "screened out" in rejected_line
+    assert "命中驻场黑名单" in rejected_line
+    assert "🎉" not in rejected_line, "a screened-out run must not read as a matched one"
+
+    accepted_line = runner._verdict_line(accepted)
+    assert "🎉" in accepted_line
+    assert "screened out" not in accepted_line
+    assert "outcome=matched" in accepted_line
+
+
 def test_preview_timeout_still_parses_but_says_it_paces_nothing(capsys):
     """The flag survives, and no longer lies about what it does.
 
@@ -284,6 +347,46 @@ def test_preview_timeout_still_parses_but_says_it_paces_nothing(capsys):
     printed = capsys.readouterr().out
     assert "--preview-timeout" in printed
     assert "inert" in printed
+
+
+def test_a_preview_timeout_set_in_settings_is_announced_too(capsys):
+    """The notice covers both routes in, or it covers the one an operator notices less.
+
+    Issue #391's review. ``preview_timeout_sec`` is in ``DEFAULTS``, so every operator's
+    settings file carries it and an operator who deliberately changed it to wait longer got
+    silence while ``--preview-timeout`` printed a warning. Both spellings of the same dead
+    number deserve the same word. The *unchanged* default must stay quiet, or the warning
+    would lead every run in the world.
+    """
+    with (
+        patch.object(runner.sys, "argv", ["run_live_test.py"]),
+        patch.object(runner, "load_runner_settings", return_value={"preview_timeout_sec": 10.0}),
+        patch.object(runner, "run_live_test", return_value=True),
+        pytest.raises(SystemExit),
+    ):
+        runner.main()
+
+    printed = capsys.readouterr().out
+    assert "preview_timeout_sec" in printed
+    assert "10.0" in printed and "inert" in printed
+
+
+def test_an_untouched_preview_timeout_default_prints_no_warning(capsys):
+    """The other half of the same fix: silence for a number nobody set.
+
+    ``DEFAULTS`` states 3.0, so without this the notice would fire on every invocation and
+    train operators to scroll past it — which is how the flag's warning stopped meaning
+    anything in the first place.
+    """
+    with (
+        patch.object(runner.sys, "argv", ["run_live_test.py"]),
+        patch.object(runner, "load_runner_settings", return_value={"preview_timeout_sec": 3.0}),
+        patch.object(runner, "run_live_test", return_value=True),
+        pytest.raises(SystemExit),
+    ):
+        runner.main()
+
+    assert "inert" not in capsys.readouterr().out
 
 
 def test_a_failed_run_still_exits_nonzero(capsys):

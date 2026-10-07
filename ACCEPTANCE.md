@@ -152,8 +152,8 @@ Each acceptance criterion is defined with Gherkin semantics and an exact verific
   uv run python scripts/run_live_test.py
 
   # Fast-tier contract checks for the same path (scripted device, no device needed)
-  pytest tests/unit/test_smoke_harness_extraction.py   # adapter over the pipeline
-  pytest tests/unit/test_run_live_test_cli.py          # the runner's own seam
+  uv run --extra dev pytest tests/unit/test_smoke_harness_extraction.py   # adapter over the pipeline
+  uv run --extra dev pytest tests/unit/test_run_live_test_cli.py          # the runner's own seam
   ```
 
 ---
