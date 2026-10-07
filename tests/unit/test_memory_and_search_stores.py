@@ -538,7 +538,7 @@ async def test_an_empty_store_still_yields_a_usable_default_search(
 ) -> None:
     """An empty collection is not an error — callers still get a runnable search.
 
-    This mirrors ``SavedSearchRegistry.get_default_search``: a store that has never
+    This keeps the precedence callers already relied on: a store that has never
     been provisioned has to hand back something the Scheduler can start on, rather
     than raising and leaving a fresh install with no default to run.
     """

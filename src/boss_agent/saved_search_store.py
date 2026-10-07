@@ -4,9 +4,11 @@ boss_agent.saved_search_store
 SavedSearch persistence, behind its own repository seam.
 
 ADR 0013 confined ``BaseTaskBroker`` to task lifecycle, leases and realtime logs, but
-four SavedSearch verbs stayed on the broker *and* the registry read the collection
-anyway, over raw HTTP — so the domain had both an over-fat interface and an unowned
-side-channel. This store is the owner the registry's read was missing.
+four SavedSearch verbs stayed on the broker while a second component read the same
+collection over raw, unauthenticated HTTP — so the domain had both an over-fat interface
+and an unowned side-channel. This store is the seam both of those now pass through: one
+read path, one owner, and a caller that names the seam it needs instead of reaching
+around the broker for it.
 
 Deleting or renaming a search also has to stop any live schedule pointing at it, which
 is why the PocketBase adapter is the only adapter that carries a schedule hook: the
@@ -54,7 +56,7 @@ def _hydrate_fixture(
 
     Fixtures are hydrated through bare ``from_dict`` rather than the schema: unlike a
     persistence read, a fixture is authored in the domain's own vocabulary, and the
-    ``{"searches": {...}}`` wrapper is tolerated because the registry's
+    ``{"searches": {...}}`` wrapper is tolerated because the retired registry's
     ``load_from_dict`` accepted it and configs written for that loader are not worth
     breaking.
     """
@@ -125,8 +127,9 @@ class SavedSearchStore(ABC):
 
         ``default_agent_search`` wins when the store carries it; otherwise the first
         search that exists is a better answer than none; and an empty store still
-        yields a synthesized default so a fresh install has something runnable. This
-        mirrors ``SavedSearchRegistry.get_default_search`` — the resolver it replaces.
+        yields a synthesized default so a fresh install has something runnable. That
+        precedence is the one callers already relied on; only the owner of the question
+        changed.
 
         It is concrete rather than abstract because the answer is the same question of
         every adapter ("what is in there?"), and the adapters already agree on how to
@@ -181,10 +184,9 @@ class PocketBaseSavedSearchStore(SavedSearchStore):
 
     This is the seam's production adapter, and it now owns the record→domain mapping
     too: reads go through the Collection Schema (``record_to_saved_search``) rather
-    than the bare ``from_dict`` the adapter started with. That closes the gap the
-    registry's own read used to cover — the field-spelling duplication this seam
-    exists to remove is gone, and so is the only remaining reason for a second,
-    unauthenticated read path to exist.
+    than the bare ``from_dict`` the adapter started with. That closes the gap a second
+    reader used to cover — the field-spelling duplication this seam exists to remove is
+    gone, and so is the only remaining reason for an unauthenticated read path to exist.
     """
 
     def __init__(
@@ -275,16 +277,16 @@ def resolve_saved_search_store(prefer_database: bool = True) -> SavedSearchStore
     ``POCKETBASE_AUTH_TOKEN``, same bearer header — so a harness started outside the
     broker talks to PocketBase exactly as one started inside it does.
 
-    Construction deliberately performs no I/O. The registry it replaces probed the
+    Construction deliberately performs no I/O. The retired registry probed the
     collection while being built and swallowed every failure, so a store that could
     not be built looked identical to one that was merely empty; here a transport
     failure surfaces from the read that actually needed it, where the caller can see
     which call and which URL produced it.
 
     ``prefer_database=False`` seeds ``DEFAULT_INITIAL_SEARCHES`` because that is where
-    the registry's "database unreachable, fall back to defaults in memory" behavior
-    lived. Note the asymmetry: ``InMemorySavedSearchStore()`` composes empty (the
-    in-memory broker relies on it), and the seeding is an explicit choice here.
+    the "database unreachable, fall back to defaults in memory" behavior lived. Note
+    the asymmetry: ``InMemorySavedSearchStore()`` composes empty (the in-memory broker
+    relies on it), and the seeding is an explicit choice here.
     """
     from .broker.provisioner import DEFAULT_INITIAL_SEARCHES
 

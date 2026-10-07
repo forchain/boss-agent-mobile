@@ -1,17 +1,105 @@
-"""Unit tests for SavedSearch, SavedSearchRegistry, and SmokeHarness integration."""
+"""Unit tests for SavedSearch, the SavedSearchStore seam, and SmokeHarness integration."""
 
+import importlib.util
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
+import boss_agent
+from boss_agent import saved_search_store
 from boss_agent.errors import TransportError
 from boss_agent.job_entities import JobPosting
 from boss_agent.saved_search_store import InMemorySavedSearchStore, resolve_saved_search_store
 from boss_agent.search_entities import FilterConfig, SavedSearch, SearchConfig
-from boss_agent.searches import (
-    SavedSearchRegistry,
-)
 from boss_agent.workflows import SmokeHarness, TakeoverHandler
+
+PACKAGE_ROOT = Path(boss_agent.__file__).parent
+
+#: The identifiers this retirement removes, spelled as fragments and joined at runtime.
+#: Writing them as literals would defeat this guard's own purpose: CPython folds
+#: adjacent string literals at compile time, so ``"SavedSearch" + "Registry"`` lands in
+#: the compiled test module as the very name the repository-wide scan below forbids.
+RETIRED_REGISTRY_PARTS = (("SavedSearch", "Registry"), ("get_global_", "search_registry"))
+RETIRED_REGISTRY_NAMES = tuple(head + tail for head, tail in RETIRED_REGISTRY_PARTS)
+
+#: The retired module, joined rather than concatenated for the same reason.
+RETIRED_MODULE = ".".join(("boss_agent", "searches"))
+
+#: The saved-search surface ``boss_agent`` advertises. ``test_package_exports`` covers the
+#: whole of ``__all__``; this list pins the half this ticket owns.
+SAVED_SEARCH_EXPORTS = (
+    "SavedSearch",
+    "SavedSearchStore",
+    "InMemorySavedSearchStore",
+    "PocketBaseSavedSearchStore",
+    "resolve_saved_search_store",
+)
+
+
+# --------------------------------------------------------------------------- #
+# Package public surface
+# --------------------------------------------------------------------------- #
+
+
+def test_the_package_exports_the_saved_search_seam():
+    """``boss_agent`` offers the store and its adapters, and they are the real objects.
+
+    Re-exporting a name is only worth anything if it is the module's own class: a
+    stand-in or a stale alias would let a consumer type-check against one definition
+    and construct another.
+    """
+    for name in SAVED_SEARCH_EXPORTS:
+        assert name in boss_agent.__all__, f"{name} should be advertised by boss_agent.__all__"
+        assert getattr(boss_agent, name) is getattr(saved_search_store, name)
+
+
+def test_no_exported_saved_search_name_fails_to_bind():
+    """A suppressed import failure must not leave ``__all__`` advertising a missing name.
+
+    Every ``boss_agent`` import is wrapped in ``contextlib.suppress(ImportError)``, so
+    a typo or a cycle in the new store import would be indistinguishable from an
+    absent optional dependency: the package would import cleanly, ``__all__`` would
+    still list the seam, and ``from boss_agent import SavedSearchStore`` would fail
+    only for whoever ran it.
+    """
+    missing = [name for name in SAVED_SEARCH_EXPORTS if not hasattr(boss_agent, name)]
+
+    assert missing == []
+
+
+def test_the_retired_registry_is_gone_from_the_public_surface():
+    """Retiring the registry means retiring it as an import, not just as an implementation."""
+    for name in RETIRED_REGISTRY_NAMES:
+        assert name not in boss_agent.__all__
+        assert not hasattr(boss_agent, name)
+
+
+def test_no_package_module_references_the_retired_registry():
+    """Nothing under ``src/`` may still name it, however casually.
+
+    A surviving mention is how dead code comes back: the next caller finds the name in a
+    docstring or an ``__init__`` and reaches for it, and by then nothing fails until the
+    import does. This scans rather than spot-checks the few known sites, so a reference
+    added anywhere in the package is caught without updating a list.
+    """
+    offenders = [
+        f"{path.relative_to(PACKAGE_ROOT.parent.parent)}: {name}"
+        for path in sorted(PACKAGE_ROOT.rglob("*.py"))
+        for name in RETIRED_REGISTRY_NAMES
+        if name in path.read_text(encoding="utf-8")
+    ]
+
+    assert offenders == []
+
+
+def test_the_retired_registry_module_is_gone():
+    """The module must not survive as an importable husk.
+
+    Leaving it in place would let a new caller keep reaching for the unauthenticated
+    sync read it owned, and the next reader would have no way to tell the file is dead.
+    """
+    assert importlib.util.find_spec(RETIRED_MODULE) is None
 
 
 def test_saved_search_model_serialization():
@@ -121,74 +209,6 @@ def test_saved_search_dual_shape_migration_nested_is_authoritative():
     assert migrated["filter"]["enable_filter"] is False
 
 
-def test_saved_search_registry_default_initialization():
-    registry = SavedSearchRegistry(prefer_database=False)
-    searches = registry.list_all()
-    assert len(searches) >= 2
-
-    # Verify default startup query
-    default_search = registry.get("default_agent_search")
-    assert default_search is not None
-    assert default_search.search.keyword == "agent"
-    assert "在线教育" in default_search.filter.industries
-    assert "游戏" in default_search.filter.industries
-    assert "人工智能" in default_search.filter.industries
-
-
-def test_saved_search_registry_load_from_dict():
-    registry = SavedSearchRegistry(prefer_database=False, initial_searches={})
-    custom_data = {
-        "searches": {
-            "custom_search": {
-                "name": "Custom Search",
-                "search": {"keyword": "rust"},
-                "filter": {"education": "本科"},
-            }
-        }
-    }
-    registry.load_from_dict(custom_data)
-    assert len(registry.list_all()) == 1
-    s = registry.get("custom_search")
-    assert s.search.keyword == "rust"
-    assert s.filter.education == "本科"
-
-
-def test_saved_search_registry_unknown_id():
-    registry = SavedSearchRegistry(prefer_database=False, initial_searches={})
-    with pytest.raises(KeyError, match="Saved search 'unknown_id' not found"):
-        registry.get("unknown_id")
-
-
-def test_saved_search_registry_load_pocketbase():
-    from unittest.mock import patch
-
-    registry = SavedSearchRegistry(prefer_database=False)
-    mock_resp = MagicMock()
-    mock_resp.ok = True
-    mock_resp.json.return_value = {
-        "items": [
-            {
-                "id": "db_agent_search",
-                "name": "DB Agent Search",
-                "keyword": "agent",
-                "filter": {"education": "硕士", "industries": ["人工智能"]},
-                "is_enabled": True,
-                "cron_expression": "0 9 * * *",
-                "target_task_type": "AUTO_APPLY",
-            }
-        ]
-    }
-    with patch("requests.get", return_value=mock_resp):
-        loaded = registry.load_from_pocketbase("http://127.0.0.1:8090")
-        assert loaded is True
-        s = registry.get("db_agent_search")
-        assert s.name == "DB Agent Search"
-        assert s.search.keyword == "agent"
-        assert s.filter.education == "硕士"
-        assert s.is_enabled is True
-        assert s.cron_expression == "0 9 * * *"
-
-
 def test_smoke_harness_with_saved_search_id():
     """The harness reads a named preset through an injected store, not a global (#394).
 
@@ -273,11 +293,11 @@ def test_smoke_harness_names_the_available_presets_when_the_id_is_unknown():
 
 
 def test_smoke_harness_does_not_hide_an_unreachable_store():
-    """The registry swallowed a dead PocketBase; the store's typed failure must surface.
+    """A dead PocketBase must surface, not degrade into an empty store's settings.
 
-    Falling back here would silently run the smoke sweep with an empty store's worth of
-    settings — the operator would see a completed run and no indication that the preset
-    they named never arrived.
+    The retired registry swallowed a dead PocketBase; falling back here would silently
+    run the smoke sweep with an empty store's worth of settings — the operator would see
+    a completed run and no indication that the preset they named never arrived.
     """
 
     class _UnreachableStore(InMemorySavedSearchStore):

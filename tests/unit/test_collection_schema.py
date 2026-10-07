@@ -37,8 +37,8 @@ from boss_agent.broker.collection_schema import (
     wire_payload,
 )
 from boss_agent.broker.provisioner import provision_remote_pocketbase, provision_sqlite_database
+from boss_agent.saved_search_store import record_to_saved_search
 from boss_agent.search_entities import SavedSearch
-from boss_agent.searches import record_to_saved_search
 
 _COLLECTIONS_DDL = """
     CREATE TABLE _collections (

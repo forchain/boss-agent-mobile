@@ -24,7 +24,7 @@ Everything that needs a collection's shape reads it from here:
 * upgrades render ``ALTER TABLE`` from :func:`column_migrations` and the ordered
   :func:`backfills`;
 * the Job Record Store builds its write payload from :func:`wire_payload`;
-* the SavedSearch registry maps raw HTTP records through :func:`wire_payload` too.
+* the SavedSearch store maps raw records through :func:`normalize_record` too.
 
 Adding a field is therefore one edit, and a dialect cannot ship a field the other
 lacks — :func:`dialect_field_names` is what the equality test asserts against.

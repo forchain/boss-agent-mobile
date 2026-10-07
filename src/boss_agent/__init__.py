@@ -90,7 +90,13 @@ with contextlib.suppress(ImportError):
     )
 
 with contextlib.suppress(ImportError):
-    from .searches import SavedSearchRegistry, get_global_search_registry
+    from .saved_search_store import (
+        InMemorySavedSearchStore,
+        PocketBaseSavedSearchStore,
+        SavedSearchStore,
+        resolve_saved_search_store,
+    )
+
 from .settings import (
     load_settings,
     resolve_git_common_root,
@@ -117,6 +123,7 @@ __all__ = [
     "FilterDialogPage",
     "IndustryFilterDialogPage",
     "InMemoryJobRecordStore",
+    "InMemorySavedSearchStore",
     "JobApplicationState",
     "JobDetailPage",
     "JobEvaluationResult",
@@ -130,12 +137,13 @@ __all__ = [
     "LoginPage",
     "MatchGreetingResult",
     "PocketBaseJobRecordStore",
+    "PocketBaseSavedSearchStore",
     "ProfileNormalizer",
     "ResumeLifecycleState",
     "ResumeMemoryManager",
     "ResumeTextExtractor",
     "SavedSearch",
-    "SavedSearchRegistry",
+    "SavedSearchStore",
     "ScreeningPolicy",
     "SearchConfig",
     "SearchPage",
@@ -147,7 +155,6 @@ __all__ = [
     "is_writable_screening_path",
     "build_job_application_graph",
     "build_resume_lifecycle_graph",
-    "get_global_search_registry",
     "is_headhunter_agency_name",
     "is_masked_company_name",
     "load_greeting_prompt",
@@ -157,6 +164,7 @@ __all__ = [
     "resolve_pocketbase_data_dir",
     "resolve_pocketbase_db_path",
     "resolve_pocketbase_url",
+    "resolve_saved_search_store",
     "run_job_application_graph",
     "run_resume_lifecycle_graph",
     "ensure_greeting_prefix",
