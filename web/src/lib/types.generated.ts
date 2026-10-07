@@ -40,7 +40,7 @@ export interface AutomationTask {
 	retry_count?: number;
 	logs: string[];
 	error_message?: string;
-	/** Task Provenance (CONTEXT.md): manual | test | scheduler. */
+	/** Task Provenance (GLOSSARY.md): manual | test | scheduler. */
 	source?: 'manual' | 'test' | 'scheduler' | string;
 	created?: string;
 	updated?: string;

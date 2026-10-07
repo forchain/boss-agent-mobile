@@ -2,7 +2,7 @@
 """Fail when the Fast Unit tier exceeds its wall-clock budget.
 
 Spec #303's thesis is that the project's claims about itself must be verifiable. The Fast
-Unit tier claims it "finishes in under 60 seconds" (docs/agents/testing.md, CONTEXT.md).
+Unit tier claims it "finishes in under 60 seconds" (docs/agents/testing.md, GLOSSARY.md).
 This script is what turns that sentence into a fact: it runs the tier the way CI does and
 exits non-zero when the measured wall-clock crosses ``BUDGET_SECONDS``, so the number cannot
 quietly drift back into fiction.
@@ -19,7 +19,7 @@ import subprocess
 import sys
 
 # The budget the docs promise. Amending it means amending docs/agents/testing.md and the
-# CONTEXT.md glossary in the same change — the point is that the number and the prose agree.
+# GLOSSARY.md glossary in the same change — the point is that the number and the prose agree.
 BUDGET_SECONDS = 60.0
 
 # pytest's summary line, with or without trailing warnings: "1119 passed in 76.97s".
@@ -51,7 +51,7 @@ def main() -> int:
     if seconds > BUDGET_SECONDS:
         print(
             f"::error::Fast Unit tier took {seconds:.2f}s, over its {BUDGET_SECONDS:.0f}s budget. "
-            "Speed it up, or amend the budget in docs/agents/testing.md and CONTEXT.md together.",
+            "Speed it up, or amend the budget in docs/agents/testing.md and GLOSSARY.md together.",
             file=sys.stderr,
         )
         return 1

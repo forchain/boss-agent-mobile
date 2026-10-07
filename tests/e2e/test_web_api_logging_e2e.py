@@ -151,7 +151,7 @@ def test_web_api_logging_e2e(web_dashboard: Dashboard):
     # against the worker's four handler types and answers 400 for anything else, which is
     # what `search_and_greet` used to be. CHECK_LOGIN is the one that reads no payload and
     # dispatches no greeting, and `source: test` marks it as an Automated Test Task
-    # (CONTEXT.md) rather than a run somebody asked for.
+    # (GLOSSARY.md) rather than a run somebody asked for.
     post_task_resp = client.post(
         "/api/tasks",
         json={

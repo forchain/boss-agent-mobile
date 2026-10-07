@@ -71,16 +71,18 @@ JD 输入 → AI 契合度评分 → 自动生成招呼语草稿
 ## 🏗️ 架构与项目结构 (Project Structure)
 
 - `src/droid_agent_core/`: 通用、业务解耦的 Android 移动自动化框架，包含贝塞尔手势合成、统一定位器管理、弹窗拦截器、UI 遥测与 LLM 决策接口。
-- `src/boss_agent/`: Boss 直聘业务领域实现（Page Object 模型、双锚点检索工作流、候选人结构化画像、LangGraph 筛选流水线、PocketBase 状态流适配器与守护进程 Worker）。
+- `src/boss_agent/`: Boss 直聘业务领域实现（Page Object 模型、双锚点检索工作流、`JobFeedPipeline` 移动端 Feed 流水线、`CandidateScreener` 深度筛选器、`JobRecordStore` 职位记录仓库、解耦领域实体模块（`enums`/`job_entities`/`candidate_entities`/`search_entities`/`screening_policy` 等）、`CHECK_CHAT` 未读角标有界分页与双级预检、LangGraph 筛选流水线、PocketBase 状态流适配器与守护进程 Worker）。
 - `web/`: 现代化 SvelteKit Web 管理控制台（职位流看板、实时任务管理、候选人结构化简历编辑、SavedSearch 策略库与系统配置面板）。
-- `doctor.sh`: 系统全栈健康检查与自动诊断修复工具（[System Doctor](CONTEXT.md)）。
+- `doctor.sh`: 系统全栈健康检查与自动诊断修复工具（[System Doctor](GLOSSARY.md)）。
 - `pocketbase.sh`: PocketBase 状态流持久化与实时 SSE Broker 服务管理脚本。
 - `emulator.sh`: 专用 Android Virtual Device (AVD) 模拟器生命周期管理工具。
 - `appium.sh`: 独立 Appium 自动化服务启动与日志挂载工具。
 - `dashboard.sh`: Web 控制台一键启动管理工具。
-- `run.sh`: 真实设备/模拟器冒烟与 Worker 任务执行入口。
+- `worker.sh`: Automation Worker 守护进程专属运行器（启动/停止/重启/状态/日志挂载）；`run.sh worker` 会路由至此脚本。
+- `runner_lib.sh`: 各 shell runner 共用的进程生命周期原语与配置读取库（`worker.sh`、`dashboard.sh` 等共同 source）。
+- `run.sh`: 统一主编排入口，管理完整服务栈（infra + app）或将子命令路由至各专属 runner（`worker`、`dashboard`/`web`、`pb`、`emu`、`appium`、`doctor`、`live`）。
 - `config/`: 声明式系统配置（`greeting_prompt.local.md`, `settings.local.yaml`, `locators.yaml`）。
-- `docs/adr/`: 核心架构决策记录（ADR 0001 - 0012，含决策总览索引 [docs/adr/README.md](docs/adr/README.md)）。
+- `docs/adr/`: 核心架构决策记录（ADR 0001 - 0019，含决策总览索引 [docs/adr/README.md](docs/adr/README.md)）。
 - `scripts/bootstrap.py`: 幂等式自动化环境初始化工具（JDK、Android SDK、AVD 模拟器、Appium 服务及 APK 安装）。
 - `scripts/init_worktree.py`: Git Worktree 与本地共享配置初始化工具（自动同步 main 分支、创建隔离工作区并软链接共享配置）。
 
@@ -107,23 +109,33 @@ uv run python scripts/bootstrap.py
 
 ### 3. 启动基础设施与服务
 ```bash
+# 方式 A：一键启动完整服务栈（infra + app）
+./run.sh all start --daemon
+
+# 方式 B：分步启动
 # 启动 PocketBase 状态流 Broker 服务（后台守护模式）
 ./pocketbase.sh start --daemon
+# 或：./run.sh pb start --daemon
 
 # 启动专用 Android 模拟器与 Appium 自动化服务（后台守护模式）
 ./emulator.sh start --daemon
 ./appium.sh start --daemon
 
+# 启动 Automation Worker 守护进程
+./worker.sh start --daemon
+# 或：./run.sh worker start --daemon
+
 # 启动 Web 管理控制台（访问 http://127.0.0.1:5173）
 ./dashboard.sh
+# 或：./run.sh dashboard
 ```
 
 ### 4. 运行自动化与测试
 ```bash
 # 方式 A：通过 Web 控制台 (http://127.0.0.1:5173) 创建并派发自动化任务
 
-# 方式 B：通过 CLI 运行 live 任务与冒烟测试
-./run.sh --keyword "Agent 架构师"
+# 方式 B：通过 run.sh 运行 live 移动端测试
+./run.sh live
 
 # 方式 C：运行自动化测试套件（三级分层）
 # ① 快速单元测试（默认目标：tests/unit，秒级、纯内存、无任何副作用）
@@ -135,9 +147,10 @@ uv run --extra dev pytest tests/e2e
 # ③ live 真机 / 模拟器用例（需显式指定 live marker，会真实驱动 AVD）
 uv run --extra dev pytest -m live
 
-# 运行真机 / 模拟器冒烟测试
+# 运行真机 / 模拟器冒烟测试脚本
 uv run python scripts/run_live_test.py
 ```
+
 
 > ⚠️ **默认隔离约定**：`pyproject.toml` 中 `testpaths = ["tests/unit"]` 与
 > `addopts = "-m 'not live and not e2e'"` 保证任何未加参数的 `pytest` 调用只会执行快速单元用例；
@@ -227,9 +240,9 @@ gh attach /path/to/new_recording.mp4 -R forchain/boss-agent-mobile
 
 ## 📚 关键文档 (Key Documents)
 
-- [CONTEXT.md](CONTEXT.md): 领域术语表与统一语言定义（Ubiquitous Language）。
+- [GLOSSARY.md](GLOSSARY.md): 领域术语表与统一语言定义（Ubiquitous Language，兼容量保留 `CONTEXT.md` 软链接）。
 - [ACCEPTANCE.md](ACCEPTANCE.md): 验收基线、可执行验收矩阵与 Multi-Agent 协作协议。
-- [docs/adr/README.md](docs/adr/README.md): 核心架构决策记录总览索引（ADR 0001 - 0012）：
+- [docs/adr/README.md](docs/adr/README.md): 核心架构决策记录总览索引（ADR 0001 - 0019）：
   - [ADR 0001](docs/adr/0001-avd-and-appium-bootstrap.md): AVD 与 Appium 环境自动化基线
   - [ADR 0002](docs/adr/0002-framework-domain-split.md): 核心自动化框架与业务领域深度解耦
   - [ADR 0003](docs/adr/0003-phase-1-scope.md): Phase 1 交付范围基线
@@ -242,7 +255,14 @@ gh attach /path/to/new_recording.mp4 -R forchain/boss-agent-mobile
   - [ADR 0010](docs/adr/0010-single-living-greeting-prompt.md): 单一活态 Greeting Prompt 提示词与人机协同 Diff 演进机制
   - [ADR 0011](docs/adr/0011-two-anchor-search-entry-back-recovery-and-ui-telemetry.md): 双锚点检索入场、Back 键快速恢复与 DEBUG UI 遥测
   - [ADR 0012](docs/adr/0012-communicated-job-detection-cooldown-and-enterprise-exclusion.md): 详情页已沟通检测、复投冷却时效与直招同企避嫌
-- [docs/agents/](docs/agents/): Agent 协作准则（包含 [Issue Tracker](docs/agents/issue-tracker.md), [Triage Labels](docs/agents/triage-labels.md), [Domain Docs](docs/agents/domain.md), [Demo Assets](docs/agents/demo-assets.md)）。
+  - [ADR 0013](docs/adr/0013-deepen-screener-feed-pipeline-and-job-store.md): CandidateScreener 深度筛选、JobFeedPipeline 移动端 Feed 流水线与 JobRecordStore 记录仓库
+  - [ADR 0014](docs/adr/0014-execution-cursor-bounded-check-chat-paging.md): 执行游标驱动的 CHECK_CHAT 分页（已被 ADR 0015 取代）
+  - [ADR 0015](docs/adr/0015-opening-screen-only-check-chat-scan.md): CHECK_CHAT 仅读取首屏、不分页扫描（已被 ADR 0017 取代）
+  - [ADR 0016](docs/adr/0016-jingoutong-resilient-recovery-category-tab-and-startup-barrier.md): 仅沟通页面弹性回退恢复、专属分类 Tab 与启动清理屏障
+  - [ADR 0017](docs/adr/0017-unread-badge-bounded-check-chat-paging.md): 未读角标驱动的 CHECK_CHAT 有界分页与两级预检短路
+  - [ADR 0018](docs/adr/0018-single-depth-expression-and-greeting-provenance.md): 单一执行深度表达与 Greeting 来源溯源（`target_action` 合同、Draft 重访、`greeting_source`）
+  - [ADR 0019](docs/adr/0019-decomposed-domain-entity-modules.md): 领域实体模块解耦重构，退役单体 `boss_agent.models`
+- [docs/agents/](docs/agents/): Agent 协作准则（包含 [Issue Tracker](docs/agents/issue-tracker.md), [Triage Labels](docs/agents/triage-labels.md), [Domain Docs](docs/agents/domain.md), [Demo Assets](docs/agents/demo-assets.md), [Testing](docs/agents/testing.md), [Git Workflow](docs/agents/git-workflow.md)）。
 
 ---
 

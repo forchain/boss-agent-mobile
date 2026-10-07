@@ -431,7 +431,7 @@ class AutomationWorker:
     async def _reclaim_test_sourced_tasks(self) -> list[str]:
         """Cancel queued tasks whose provenance is ``test``.
 
-        CONTEXT.md defines Task Provenance precisely so an automated suite never
+        GLOSSARY.md defines Task Provenance precisely so an automated suite never
         contends with the live worker for the device: a test that queued work before
         the worker came up finds it already cancelled rather than racing the real run.
         Only *pending* work is reclaimed — a task already running is somebody's
