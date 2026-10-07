@@ -8,6 +8,11 @@ from unittest.mock import MagicMock, patch
 
 from boss_agent.matching import MatchGreetingResult
 from boss_agent.memory import StructuredCandidateProfile
+from boss_agent.screening import (
+    CardScreeningVerdict,
+    JobEvaluationResult,
+    JobVerdictStage,
+)
 from boss_agent.workflows import SmokeHarness, TakeoverHandler
 
 
@@ -171,3 +176,39 @@ def test_smoke_harness_relaxed_headhunter_still_drafts_greeting():
         harness.run_smoke_test()
 
     mock_matching_svc.evaluate_and_draft_greeting.assert_called_once()
+
+
+def test_smoke_harness_drives_candidate_screener_directly():
+    """SmokeHarness must screen through the CandidateScreener domain interface (ADR 0013,
+    #399): the screener is built with the configured matching service, and both stages
+    arrive as typed verdicts rather than a marshalled graph state dictionary."""
+    screener = MagicMock()
+    screener.evaluate_card.return_value = CardScreeningVerdict.approved(
+        relaxed_by_whitelist=True, matched_token="大模型", app_rule_violation="direct_only"
+    )
+    screener.evaluate_job.return_value = JobEvaluationResult(
+        passed=True,
+        stage=JobVerdictStage.PASSED,
+        reason="【合格保留】技术栈匹配",
+        match_score=88,
+        match_reasons=["技术栈匹配"],
+        greeting_message="您好！我有完整的大模型平台实战经验……",
+    )
+
+    # The screener is composed by SmokeHarness.__init__, so the patch has to span
+    # construction as well as the run itself.
+    with patch("boss_agent.workflows.CandidateScreener", return_value=screener) as ctor:
+        harness, mock_matching_svc = _headhunter_smoke_harness("direct_only", whitelist=["大模型"])
+        assert ctor.call_args.kwargs["matching_service"] is mock_matching_svc
+
+        with patch("time.sleep", return_value=None):
+            harness.run_smoke_test()
+
+    card_arg, policy_arg = screener.evaluate_card.call_args.args
+    assert card_arg.title == "大模型平台负责人"
+    assert policy_arg is harness.screening_policy
+
+    job_kwargs = screener.evaluate_job.call_args.kwargs
+    assert job_kwargs["jd_text"].startswith("主导企业级大模型应用")
+    assert job_kwargs["profile"] is harness.candidate_profile
+    assert job_kwargs["policy"] is harness.screening_policy

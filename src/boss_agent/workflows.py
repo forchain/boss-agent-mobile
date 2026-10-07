@@ -11,7 +11,6 @@ from typing import Any
 from rich.console import Console
 
 from .enums import AuthStatus
-from .graph import run_job_application_graph
 from .job_entities import JobCardBrief, JobPosting
 from .matching import JobMatchGreetingService, MatchGreetingResult
 from .memory import ResumeMemoryManager, StructuredCandidateProfile
@@ -25,6 +24,7 @@ from .pages import (
     SearchPage,
     StartupDialogPage,
 )
+from .screening import CandidateScreener, CardVerdictStage, JobVerdictStage
 from .screening_policy import ScreeningPolicy, resolve_screening_policy
 from .search_entities import FilterConfig, SavedSearch, SearchConfig
 
@@ -104,6 +104,12 @@ class SmokeHarness:
         self.enable_greeting_draft = enable_greeting_draft
         self.memory_manager = memory_manager or ResumeMemoryManager()
         self.matching_service = matching_service or JobMatchGreetingService()
+        # Screening goes through the deep CandidateScreener directly (ADR 0013): the
+        # LangGraph wrapper only re-marshalled these two calls into a graph run.
+        self.screener = CandidateScreener(
+            llm_client=getattr(self.matching_service, "llm_client", None),
+            matching_service=self.matching_service,
+        )
         self.preview_timeout_sec = (
             preview_timeout_sec
             if preview_timeout_sec is not None
@@ -270,11 +276,11 @@ class SmokeHarness:
         # 7. Extract real job details from detail screen
         posting = self.detail_page.extract_job_posting(timeout_sec=10.0)
 
-        # 8. Multi-Stage Screening and Greeting Draft via LangGraph
+        # 8. Multi-Stage Screening and Greeting Draft via CandidateScreener
         if self.enable_greeting_draft and self.candidate_profile:
             try:
                 console.print(
-                    f"📊 [bold cyan]Evaluating job match via LangGraph for candidate:[/bold cyan] {self.candidate_profile.name}..."
+                    f"📊 [bold cyan]Evaluating job match via CandidateScreener for candidate:[/bold cyan] {self.candidate_profile.name}..."
                 )
                 card = JobCardBrief(
                     title=posting.title,
@@ -287,64 +293,62 @@ class SmokeHarness:
                     tags=posting.tags,
                 )
 
-                graph_state = run_job_application_graph(
-                    card=card,
-                    policy=self.screening_policy,
-                    candidate_profile=self.candidate_profile,
-                    jd_text=posting.job_description,
-                    llm_client=getattr(self.matching_service, "llm_client", None),
-                    matching_service=self.matching_service,
-                )
-
-                if not graph_state.get("keyword_pass", True):
+                verdict = self.screener.evaluate_card(card, self.screening_policy)
+                if verdict.stage is CardVerdictStage.FILTERED_BY_KEYWORD:
                     console.print(
-                        f"[yellow]⏭️  Job rejected by KeywordScreener: {graph_state.get('keyword_reason')}[/yellow]"
+                        f"[yellow]⏭️  Job rejected by KeywordScreener: {verdict.reason}[/yellow]"
                     )
-                elif not graph_state.get("app_rule_pass", True) and not graph_state.get(
-                    "relaxed_by_whitelist", False
-                ):
+                elif not verdict.app_rule_pass and not verdict.relaxed_by_whitelist:
                     console.print(
-                        f"[yellow]🛑  Job rejected by App-Enforced Filter: {graph_state.get('app_rule_violation')}[/yellow]"
-                    )
-                elif graph_state.get("status") == "jd_unavailable":
-                    console.print(
-                        f"[yellow]⚠️  No evaluable JD on this posting: "
-                        f"{graph_state.get('error_message')}[/yellow]"
-                    )
-                elif not graph_state.get("deep_screen_pass", True):
-                    console.print(
-                        f"[yellow]⏭️  Job rejected by JDSemanticScreener: {graph_state.get('deep_screen_reason')}[/yellow]"
+                        f"[yellow]🛑  Job rejected by App-Enforced Filter: {verdict.app_rule_violation}[/yellow]"
                     )
                 else:
-                    if graph_state.get("relaxed_by_whitelist"):
+                    # Only a card that survived card screening earns a JD evaluation; a
+                    # rejected card stops here without spending a single token.
+                    evaluation = self.screener.evaluate_job(
+                        card=card,
+                        jd_text=posting.job_description,
+                        profile=self.candidate_profile,
+                        policy=self.screening_policy,
+                    )
+                    if evaluation.stage is JobVerdictStage.JD_UNAVAILABLE:
                         console.print(
-                            f"🎗️  [bold cyan]Whitelist Relaxation rescue:[/bold cyan] "
-                            f"{graph_state.get('relaxation_reason')}"
+                            f"[yellow]⚠️  No evaluable JD on this posting: "
+                            f"{evaluation.error_message}[/yellow]"
                         )
-                    greeting_message = graph_state.get("greeting_message", "")
-                    match_result = MatchGreetingResult(
-                        match_score=graph_state.get("match_score", 80),
-                        match_reasons=graph_state.get("match_reasons", []),
-                        greeting_message=greeting_message,
-                    )
-                    self.matching_service.render_match_card(posting, match_result)
-
-                    # Open chat dialog and type greeting
-                    console.print(
-                        "💬 [bold cyan]Opening chat dialog to type greeting draft...[/bold cyan]"
-                    )
-                    if self.detail_page.open_chat(timeout_sec=5.0):
-                        typed = self.chat_page.type_greeting_message(
-                            greeting_message, timeout_sec=5.0
+                    elif not evaluation.passed:
+                        console.print(
+                            f"[yellow]⏭️  Job rejected by JDSemanticScreener: {evaluation.reason}[/yellow]"
                         )
-                        if typed:
+                    else:
+                        if verdict.relaxed_by_whitelist:
                             console.print(
-                                f"⏳ [bold yellow]Greeting message entered in chat box. "
-                                f"Pausing for {self.preview_timeout_sec}s preview (NOT SENT)...[/bold yellow]"
+                                f"🎗️  [bold cyan]Whitelist Relaxation rescue:[/bold cyan] "
+                                f"{verdict.relaxation_reason}"
                             )
-                            time.sleep(self.preview_timeout_sec)
-                        # Navigate back from chat dialog to job detail screen
-                        self.chat_page.navigate_back()
+                        match_result = MatchGreetingResult(
+                            match_score=evaluation.match_score,
+                            match_reasons=evaluation.match_reasons,
+                            greeting_message=evaluation.greeting_message,
+                        )
+                        self.matching_service.render_match_card(posting, match_result)
+
+                        # Open chat dialog and type greeting
+                        console.print(
+                            "💬 [bold cyan]Opening chat dialog to type greeting draft...[/bold cyan]"
+                        )
+                        if self.detail_page.open_chat(timeout_sec=5.0):
+                            typed = self.chat_page.type_greeting_message(
+                                evaluation.greeting_message, timeout_sec=5.0
+                            )
+                            if typed:
+                                console.print(
+                                    f"⏳ [bold yellow]Greeting message entered in chat box. "
+                                    f"Pausing for {self.preview_timeout_sec}s preview (NOT SENT)...[/bold yellow]"
+                                )
+                                time.sleep(self.preview_timeout_sec)
+                            # Navigate back from chat dialog to job detail screen
+                            self.chat_page.navigate_back()
             except Exception as e:
                 console.print(
                     f"[yellow]⚠️  Matching/Greeting draft skipped due to error:[/yellow] {e}"
