@@ -431,9 +431,9 @@ def resolve_screening_policy(
     already paid for twice (PR #297, issue #302).
 
     A new policy is returned rather than the caller's being edited in place, because the
-    caller's policy is often shared: ``SavedSearchRegistry.get`` hands back the object it
-    stores, so mutating it would overwrite the global screening configuration for the
-    rest of the process. A strategy that states nothing — absent, empty or unrecognized —
+    caller's policy is often shared: ``SavedSearchStore.get_saved_search`` hands back the
+    object it stores, so mutating it would overwrite the global screening configuration for
+    the rest of the process. A strategy that states nothing — absent, empty or unrecognized —
     yields the policy unchanged, which is the whole meaning of "inherit global".
     """
     if policy is None:

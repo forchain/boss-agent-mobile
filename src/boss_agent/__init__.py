@@ -17,9 +17,13 @@ So every name is declared in ``_LAZY_EXPORTS`` and resolved on first attribute a
 by ``__getattr__``, then cached in the module globals so later accesses skip the hook
 entirely. Two properties of the old file are deliberately preserved:
 
-* **Names.** ``__all__`` is unchanged, and each name still resolves to the identical
+* **Names.** Every name the old file advertised still resolves, and to the identical
   object it resolved to before. ``from boss_agent import X`` and ``boss_agent.X`` both
-  work, because the import system's attribute fallback and ``__getattr__`` agree.
+  work, because the import system's attribute fallback and ``__getattr__`` agree. The
+  export set differs only where a later change to the package deliberately retired a
+  module, and it did so here rather than by editing this file: ``_LAZY_EXPORTS`` and
+  ``__all__`` are kept exactly consistent with each other, so ``__all__`` cannot
+  advertise a name the hook does not know how to resolve.
 * **Optional dependencies.** Most imports were wrapped in
   ``contextlib.suppress(ImportError)`` so a missing extra skipped one name and left
   the rest usable. That tolerance now lives in ``__getattr__``: when a symbol's module
@@ -82,6 +86,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "FilterDialogPage": ".pages",
     "IndustryFilterDialogPage": ".pages",
     "InMemoryJobRecordStore": ".job_store",
+    "InMemorySavedSearchStore": ".saved_search_store",
     "JobApplicationState": ".graph",
     "JobDetailPage": ".pages",
     "JobEvaluationResult": ".screening",
@@ -95,12 +100,13 @@ _LAZY_EXPORTS: dict[str, str] = {
     "LoginPage": ".pages",
     "MatchGreetingResult": ".matching",
     "PocketBaseJobRecordStore": ".job_store",
+    "PocketBaseSavedSearchStore": ".saved_search_store",
     "ProfileNormalizer": ".memory",
     "ResumeLifecycleState": ".graph",
     "ResumeMemoryManager": ".memory",
     "ResumeTextExtractor": ".memory",
     "SavedSearch": ".search_entities",
-    "SavedSearchRegistry": ".searches",
+    "SavedSearchStore": ".saved_search_store",
     "ScreeningPolicy": ".screening_policy",
     "SearchConfig": ".search_entities",
     "SearchPage": ".pages",
@@ -113,7 +119,6 @@ _LAZY_EXPORTS: dict[str, str] = {
     "build_resume_lifecycle_graph": ".graph",
     "ensure_greeting_prefix": ".matching",
     "format_recruiter_greeting_prefix": ".identifier_helpers",
-    "get_global_search_registry": ".searches",
     "is_headhunter_agency_name": ".identifier_helpers",
     "is_masked_company_name": ".identifier_helpers",
     "is_writable_screening_path": ".screening_config",
@@ -124,6 +129,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "resolve_pocketbase_data_dir": ".settings",
     "resolve_pocketbase_db_path": ".settings",
     "resolve_pocketbase_url": ".settings",
+    "resolve_saved_search_store": ".saved_search_store",
     "resolve_writable_screening_config_path": ".screening_config",
     "run_job_application_graph": ".graph",
     "run_resume_lifecycle_graph": ".graph",
@@ -168,6 +174,7 @@ __all__ = [
     "FilterDialogPage",
     "IndustryFilterDialogPage",
     "InMemoryJobRecordStore",
+    "InMemorySavedSearchStore",
     "JobApplicationState",
     "JobDetailPage",
     "JobEvaluationResult",
@@ -181,12 +188,13 @@ __all__ = [
     "LoginPage",
     "MatchGreetingResult",
     "PocketBaseJobRecordStore",
+    "PocketBaseSavedSearchStore",
     "ProfileNormalizer",
     "ResumeLifecycleState",
     "ResumeMemoryManager",
     "ResumeTextExtractor",
     "SavedSearch",
-    "SavedSearchRegistry",
+    "SavedSearchStore",
     "ScreeningPolicy",
     "SearchConfig",
     "SearchPage",
@@ -198,7 +206,6 @@ __all__ = [
     "is_writable_screening_path",
     "build_job_application_graph",
     "build_resume_lifecycle_graph",
-    "get_global_search_registry",
     "is_headhunter_agency_name",
     "is_masked_company_name",
     "load_greeting_prompt",
@@ -208,6 +215,7 @@ __all__ = [
     "resolve_pocketbase_data_dir",
     "resolve_pocketbase_db_path",
     "resolve_pocketbase_url",
+    "resolve_saved_search_store",
     "run_job_application_graph",
     "run_resume_lifecycle_graph",
     "ensure_greeting_prefix",

@@ -24,7 +24,6 @@ from typing import Any
 import requests
 
 from boss_agent.async_bridge import execute_broker_request
-from boss_agent.broker.collection_schema import JOB_RECORDS, wire_payload
 from boss_agent.enums import STATE_RANK, JobRecordStatus
 from boss_agent.errors import (
     BrokerError,
@@ -162,7 +161,15 @@ def _record_fields(record_data: dict[str, Any], fingerprint: str, now: str) -> d
     The field list is the Collection Schema's, so a column added to ``job_records``
     is written by the store the moment it is declared, and a key the schema does not
     know about is dropped rather than smuggled onto the wire.
+
+    The schema is imported inside the function for the same reason the saved-search
+    entities import theirs lazily: ``boss_agent.broker``'s package ``__init__`` imports
+    the broker adapter, which imports this module. A module-scope import here made
+    ``import boss_agent.job_store`` fail on its own, and the failure was survivable only
+    because some *other* module happened to re-enter the broker package afterwards.
     """
+    from boss_agent.broker.collection_schema import JOB_RECORDS, wire_payload
+
     fields = wire_payload(JOB_RECORDS, record_data)
     fields["fingerprint"] = fingerprint
 
