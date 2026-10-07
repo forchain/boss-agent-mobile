@@ -111,6 +111,20 @@ def _wait_until(predicate, timeout: float = 3.0, interval: float = 0.02) -> bool
     return bool(predicate())
 
 
+def _teardown_lines(records, client_addr: str) -> list[str]:
+    """The relay-teardown log lines that name `client_addr`.
+
+    Kept separate from the assertion below so the test can *poll* for the line
+    rather than assume it is already there when a condition is observed.
+    """
+    return [
+        record.getMessage()
+        for record in records
+        if client_addr in record.getMessage()
+        and ("->" in record.getMessage() or "retir" in record.getMessage().lower())
+    ]
+
+
 def _reset_close(sock: socket.socket) -> None:
     """Close a socket with SO_LINGER 0 so the peer sees an RST, not an orderly FIN.
 
@@ -776,18 +790,22 @@ def test_session_teardown_is_logged_with_client_and_direction(
             f"{bridge.active_client_endpoints[0][0]}:{bridge.active_client_endpoints[0][1]}"
         )
 
-        with caplog.at_level(logging.INFO, logger="remote_adb_bridge"):
-            client.close()
-            client = None
-            assert _wait_until(lambda: bridge.active_client_endpoints == [], timeout=5.0)
+        # The capture has to outlast the relay thread's teardown. `retire_session`
+        # drops the session from `_sessions` first and only then closes the sockets
+        # and writes the line, so `active_client_endpoints == []` is observed a
+        # fraction of a millisecond *before* the line exists. A `caplog.at_level`
+        # window that closes on the same condition therefore drops the record on the
+        # floor -- a flake that showed up as an empty `caplog.messages`, with no
+        # error anywhere, because the line really was written, just too late.
+        caplog.set_level(logging.INFO, logger="remote_adb_bridge")
+        client.close()
+        client = None
+        assert _wait_until(lambda: bridge.active_client_endpoints == [], timeout=5.0)
 
-        teardowns = [
-            record.getMessage()
-            for record in caplog.records
-            if client_addr in record.getMessage()
-            and ("->" in record.getMessage() or "retir" in record.getMessage().lower())
-        ]
-        assert teardowns, f"no teardown line naming {client_addr}: {caplog.messages}"
+        assert _wait_until(lambda: _teardown_lines(caplog.records, client_addr), timeout=5.0), (
+            f"no teardown line naming {client_addr}: {caplog.messages}"
+        )
+        teardowns = _teardown_lines(caplog.records, client_addr)
         assert any("client->target" in line or "target->client" in line for line in teardowns)
     finally:
         if client is not None:
