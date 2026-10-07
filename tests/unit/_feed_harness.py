@@ -36,9 +36,19 @@ GOOD_JD = (
 
 
 def _card(
-    title: str, company: str, y: int | None = None, digest: str = "", location: str = ""
+    title: str,
+    company: str,
+    y: int | None = None,
+    digest: str = "",
+    location: str = "",
+    recruiter_title: str = "",
 ) -> LocatedJobCard:
-    """One scripted card: the parsed brief plus the element it would have been read from."""
+    """One scripted card: the parsed brief plus the element it would have been read from.
+
+    ``recruiter_title`` is what the App-Enforced channel rules read: a card carrying
+    ``猎头顾问`` resolves to the headhunter channel, which is the fact the direct-only
+    strategies are about.
+    """
     element = MagicMock()
     if y is not None:
         element.location = {"x": 0, "y": y}
@@ -47,6 +57,7 @@ def _card(
             title=title,
             company_name=company,
             recruiter_name="王女士",
+            recruiter_title=recruiter_title,
             salary_range="40-60K",
             digest=digest,
             location=location,
@@ -104,6 +115,33 @@ class ScriptedFeed:
         return True
 
 
+def script_pages(
+    pipeline: JobFeedPipeline,
+    *,
+    feed: ScriptedFeed | None = None,
+    detail: MagicMock | None = None,
+    search: Any = None,
+    chat: MagicMock | None = None,
+) -> JobFeedPipeline:
+    """Seat scripted page objects on a pipeline that is already built.
+
+    A run composes its own engine — the worker through ``for_task``, the interactive
+    SmokeHarness in its constructor — so a test that wants a scripted device has nothing
+    left to inject at construction time. Rebinding afterwards is that seam, and it is the
+    same one ``_pipeline`` uses on the pipeline it builds, so a scripted feed cannot mean
+    one thing here and another there.
+    """
+    if feed is not None:
+        pipeline.list_page = feed
+    if detail is not None:
+        pipeline.detail_page = detail
+    if search is not None:
+        pipeline.search_page = search
+    if chat is not None:
+        pipeline.chat_page = chat
+    return pipeline
+
+
 def _pipeline(
     store: JobRecordStore,
     *,
@@ -135,12 +173,7 @@ def _pipeline(
             is_cancelled=is_cancelled,
         )
     # Rebind the scripted page objects: the patches above only applied during construction.
-    if feed is not None:
-        pipeline.list_page = feed
-    if detail is not None:
-        pipeline.detail_page = detail
-    if chat is not None:
-        pipeline.chat_page = chat
+    script_pages(pipeline, feed=feed, detail=detail, chat=chat)
     pipeline.search_page.is_search_page.return_value = True
     pipeline.search_page.search.return_value = True
     return pipeline
