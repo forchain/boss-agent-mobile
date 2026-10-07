@@ -95,6 +95,17 @@ UNREAD_ABSENCE_CONFIRMATIONS = 3
 #: mistaken for an absent probe.
 SETTLE_PAUSE_SEC = 0.35
 
+#: Narration for a feed reset the device actually performed. Named so a test asserts
+#: on the same string the run emits rather than a re-spelled copy of it.
+LIST_RESET_LOG = "🔝 [Navigation] 双击「消息」导航按钮，快速回到最新消息列表顶部"
+
+#: Narration for a reset the page declined — the 消息 tab was not on screen, so no
+#: gesture was made. A run that could not reset must not narrate the success line.
+LIST_RESET_FAILED_LOG = (
+    "⚠️ [Navigation] 「消息」导航栏不可用，未能双击回到最新消息列表顶部；"
+    "列表可能停留在历史位置，继续扫描"
+)
+
 
 class StopReason(StrEnum):
     """Why a triage run stopped.
@@ -197,7 +208,11 @@ class ChatListReader(Protocol):
         """Navigate to the list from wherever the app is; True once it is showing."""
 
     def scroll_to_top(self) -> bool:
-        """Reset the list to its newest messages by double-tapping the 消息 tab."""
+        """Reset the list to its newest messages by double-tapping the 消息 tab.
+
+        The run calls this on entry and narrates the return value, so False has to
+        mean "the device was not touched" rather than "something was attempted".
+        """
 
     def visible_cards(self, max_items: int) -> list[CommunicationCard]:
         """The opening screen's cards, newest first, capped at ``max_items``."""
@@ -618,10 +633,17 @@ class ChatTriage:
             await self._log("❌ [List] 无法进入「仅沟通」列表，任务终止")
             return False
         # Landing on 仅沟通 is not landing on its newest messages: the feed is shared
-        # state that survives navigation, so ensure_open_list() double-taps 消息 to
-        # reset the RecyclerView (#388). The run says so, because a feed inspected
-        # mid-history is exactly how a fresh rejection goes unnoticed.
-        await self._log("🔝 [Navigation] 双击「消息」导航按钮，快速回到最新消息列表顶部")
+        # state that survives navigation, so the run resets it with a double-tap on
+        # 消息 (#388). The reset is a step of its own rather than a side effect of
+        # navigation because its outcome has to reach the narration: the page
+        # declines it outright when the 消息 tab is not on screen, and a run that
+        # claimed a reset it could not perform would be describing a device action
+        # that never happened. A declined reset is not a navigation failure — the
+        # list is showing — so the scan continues, from wherever the feed stands.
+        if self.list_reader.scroll_to_top():
+            await self._log(LIST_RESET_LOG)
+        else:
+            await self._log(LIST_RESET_FAILED_LOG)
         return True
 
     # ------------------------------------------------------------------

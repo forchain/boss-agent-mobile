@@ -36,6 +36,11 @@ DELIVERED_TEXT = "我对这个岗位很感兴趣，期待您的回复~"
 COMPANY = "传音控股"
 DESCRIPTOR = f"{COMPANY} | 算法工程师"
 
+#: Event name a run records when it asks the list to reset its feed to the newest
+#: messages. Shared so a suite asserting on the run's device actions never has to
+#: re-spell the string the harness appends.
+SCROLL_TO_TOP_EVENT = "scroll_to_top"
+
 
 class FakeClassifier:
     """Deterministic stand-in for the LLM rejection judge."""
@@ -76,6 +81,8 @@ class Harness:
     """In-memory 仅沟通 screen + chat simulator recording every write action.
 
     ``viewport_size`` is the cards visible on screen in one snapshot.
+    ``entry_tab_present=False`` models a screen whose bottom 消息 tab is missing:
+    the list can still be showing, but the scroll-to-top reset is declined.
     """
 
     def __init__(
@@ -93,6 +100,7 @@ class Harness:
         auto_decrement_badge: bool = True,
         dot_readings: list[bool] | None = None,
         badge_readings: list[int | None] | None = None,
+        entry_tab_present: bool = True,
     ) -> None:
         self.cards = list(cards)
         self.viewport_size = viewport_size
@@ -110,6 +118,10 @@ class Harness:
         # finished rendering: the first reading of a probe is not the account's state.
         self.dot_readings = list(dot_readings or [])
         self.badge_readings = list(badge_readings or [])
+        # Whether the bottom 消息 tab is on screen. The page object declines the
+        # scroll-to-top reset entirely when it is absent, so the harness models the
+        # same decline rather than resetting a feed no entry tab could reach.
+        self.entry_tab_present = entry_tab_present
         self.scroll_offset = 0
         self.events: list[str] = []
 
@@ -119,17 +131,12 @@ class Harness:
 
     def open_list(self, timeout_sec: float = 5.0) -> bool:
         self.on_list = self.open_list_ok
-        if not self.on_list:
-            return False
-        # Mirrors the page object: landing on 仅沟通 is followed by the double-tap
-        # reset (#388), because the feed survives navigation. The scripted screen
-        # therefore starts every run at the newest message, whatever it looked like
-        # before the run arrived.
-        self.scroll_to_top()
-        return True
+        return self.on_list
 
     def scroll_to_top(self) -> bool:
-        self.events.append("scroll_to_top")
+        self.events.append(SCROLL_TO_TOP_EVENT)
+        if not self.entry_tab_present:
+            return False
         self.scroll_offset = 0
         return True
 

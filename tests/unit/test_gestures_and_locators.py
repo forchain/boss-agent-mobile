@@ -7,6 +7,7 @@ import pytest
 
 from droid_agent_core import gestures
 from droid_agent_core.gestures import (
+    DOUBLE_TAP_MAX_INTERVAL,
     BézierTouchSynthesizer,
     HumanizedGestureExecutor,
     Point,
@@ -17,8 +18,10 @@ from droid_agent_core.locators import By, UISelector
 UI_LOGGER = "droid_agent_core.ui"
 
 # Android's system double-tap detector accepts a second tap only inside this
-# window; past it the input stream is read as two independent single taps.
-ANDROID_DOUBLE_TAP_MAX_INTERVAL = 0.30
+# window; past it the input stream is read as two independent single taps. The
+# value lives in the module under test — a copy here could drift from the clamp
+# it is meant to police.
+ANDROID_DOUBLE_TAP_MAX_INTERVAL = DOUBLE_TAP_MAX_INTERVAL
 
 
 def test_bezier_curve_generation():
@@ -328,6 +331,47 @@ def test_human_double_click_emits_debug_telemetry(caplog):
     assert any(
         m.startswith("[UI] double_click element=") and "LinearLayout" in m for m in messages
     ), f"expected an element-scoped double_click entry, got: {messages}"
+
+
+def test_w3c_action_chains_is_resolved_once_and_cached(monkeypatch):
+    """The import machinery is not per-call work, and the answer cannot change mid-run."""
+    monkeypatch.setattr(gestures, "_w3c_action_chains", gestures._UNRESOLVED)
+    probes = 0
+
+    def counting_resolver():
+        nonlocal probes
+        probes += 1
+        return FakeActionChains
+
+    monkeypatch.setattr(gestures, "_resolve_w3c_action_chains", counting_resolver)
+
+    assert gestures._load_w3c_action_chains() is FakeActionChains
+    assert gestures._load_w3c_action_chains() is FakeActionChains
+    assert gestures._load_w3c_action_chains() is FakeActionChains
+
+    assert probes == 1, "the client is probed once, not once per double-tap"
+
+
+def test_w3c_action_chains_resolver_prefers_appium_then_falls_back_to_selenium(monkeypatch):
+    """Appium-Python-Client 6.0.0 ships no action_chains, so selenium is the live branch."""
+    import builtins
+
+    real_import = builtins.__import__
+    attempted: list[str] = []
+
+    def tracking_import(name, *args, **kwargs):
+        if name.endswith("action_chains"):
+            attempted.append(name)
+            raise ImportError(name)
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", tracking_import)
+
+    assert gestures._resolve_w3c_action_chains() is None
+    assert attempted == [
+        "appium.webdriver.common.action_chains",
+        "selenium.webdriver.common.action_chains",
+    ]
 
 
 def test_human_double_click_is_a_noop_without_driver_or_element(w3c_supported):
