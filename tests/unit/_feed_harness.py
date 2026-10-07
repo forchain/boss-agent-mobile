@@ -19,11 +19,11 @@ from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+from boss_agent.candidate_entities import CandidateProfile
 from boss_agent.enums import ChatButtonState, TargetAction
 from boss_agent.feed_pipeline import FeedStreamConfig, JobFeedPipeline
 from boss_agent.job_entities import JobCardBrief, JobPosting
 from boss_agent.job_store import JobRecordStore
-from boss_agent.memory import StructuredCandidateProfile
 from boss_agent.pages import LocatedJobCard
 from boss_agent.screening import CandidateScreener
 
@@ -221,7 +221,7 @@ def _apply_config(**overrides) -> FeedStreamConfig:
         "send_greeting": True,
         "depth_expression": "declared_target_action",
         "min_score": 70.0,
-        "candidate_profile": StructuredCandidateProfile(name="李华", core_skills=["Python"]),
+        "candidate_profile": CandidateProfile(name="李华", core_skills=["Python"]),
     }
     data.update(overrides)
     return FeedStreamConfig(**data)

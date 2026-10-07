@@ -19,9 +19,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 from _feed_harness import ScriptedFeed, _card, _detail_page, _posting, script_pages
 
+from boss_agent.candidate_entities import CandidateProfile
 from boss_agent.enums import ChatButtonState
 from boss_agent.matching import MatchGreetingResult
-from boss_agent.memory import StructuredCandidateProfile
 from boss_agent.pages import ChatPage
 from boss_agent.screening_policy import ScreeningPolicy
 from boss_agent.search_entities import FilterConfig
@@ -36,7 +36,7 @@ _HEADHUNTER_JD = (
 def _harness(driver, matching_service, **kwargs) -> SmokeHarness:
     """A harness whose greeting is drafted by the injected matching service."""
     memory_manager = MagicMock()
-    memory_manager.load_memory.return_value = StructuredCandidateProfile(
+    memory_manager.load_memory.return_value = CandidateProfile(
         name="测试候选人",
         years_of_experience=7,
         core_skills=["Python", "Appium", "LLM"],

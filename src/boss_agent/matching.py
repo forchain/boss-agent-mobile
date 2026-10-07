@@ -14,6 +14,7 @@ from rich.panel import Panel
 
 from droid_agent_core.llm import LLMDecisionClient
 
+from .candidate_entities import CandidateProfile
 from .greeting_prompt import load_greeting_prompt
 from .identifier_helpers import (
     extract_tags_from_text,
@@ -22,7 +23,6 @@ from .identifier_helpers import (
 )
 from .job_entities import JobPosting
 from .llm_config import create_llm_client
-from .memory import StructuredCandidateProfile
 from .screening_policy import ScreeningPolicy
 
 console = Console(stderr=True)
@@ -95,7 +95,7 @@ _GENERIC_REQUIREMENT = "具备扎实的工程研发能力与快速业务落地�
 
 
 def offline_match_result(
-    job: JobPosting, profile: StructuredCandidateProfile | None = None
+    job: JobPosting, profile: CandidateProfile | None = None
 ) -> MatchGreetingResult:
     """Evaluate a JD deterministically, with no LLM call and no credentials.
 
@@ -189,12 +189,12 @@ class JobMatchGreetingService:
     def __init__(
         self,
         llm_client: LLMDecisionClient | None = None,
-        candidate_profile: StructuredCandidateProfile | None = None,
+        candidate_profile: CandidateProfile | None = None,
     ):
         self.llm_client = llm_client or create_llm_client()
         self.candidate_profile = candidate_profile
 
-    def set_candidate_profile(self, profile: StructuredCandidateProfile) -> None:
+    def set_candidate_profile(self, profile: CandidateProfile) -> None:
         """Update candidate memory profile in service context."""
         self.candidate_profile = profile
 
@@ -254,7 +254,7 @@ class JobMatchGreetingService:
     def evaluate_and_draft_greeting(
         self,
         job: JobPosting,
-        profile: StructuredCandidateProfile | None = None,
+        profile: CandidateProfile | None = None,
         greeting_prompt: str | None = None,
         screening_policy: ScreeningPolicy | None = None,
     ) -> MatchGreetingResult:
@@ -344,7 +344,7 @@ class JobMatchGreetingService:
         current_greeting: str,
         critique: str,
         history: list[dict[str, str]] | None = None,
-        profile: StructuredCandidateProfile | None = None,
+        profile: CandidateProfile | None = None,
         greeting_prompt: str | None = None,
     ) -> str:
         """Refine and iterate on a greeting draft based on candidate's conversational critique."""
