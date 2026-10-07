@@ -59,16 +59,16 @@ from .keyword_constants import (
     HEADHUNTER_COMMUTE_PROBE_SKIP_REASON,
     NOT_INSPECTED_DISTRICT_SKIP_REASON,
 )
-from .pages import (
-    ChatPage,
+from .pages.communication import ChatPage
+from .pages.job_detail import JobDetailPage
+from .pages.job_feed import (
     FilterDialogPage,
     IndustryFilterDialogPage,
-    JobDetailPage,
     JobListPage,
     LocatedJobCard,
     SearchPage,
-    StartupDialogPage,
 )
+from .pages.system import StartupDialogPage
 from .screening import (
     CandidateScreener,
     CardScreeningVerdict,

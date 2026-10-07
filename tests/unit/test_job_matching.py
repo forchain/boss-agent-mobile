@@ -239,7 +239,7 @@ def test_job_match_greeting_service_requires_full_substantive_jd():
 
 def test_evaluate_job_reports_missing_jd_without_crashing():
     """CandidateScreener.evaluate_job records the unavailable JD rather than crashing on it."""
-    from boss_agent.pages import JobCardBrief
+    from boss_agent.job_entities import JobCardBrief
     from boss_agent.screening import CandidateScreener, CardVerdictStage, JobVerdictStage
     from boss_agent.screening_policy import ScreeningPolicy
 

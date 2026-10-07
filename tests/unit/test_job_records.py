@@ -251,8 +251,7 @@ async def test_pocketbase_broker_upsert_persists_without_fallback_file(tmp_path,
 @pytest.mark.asyncio
 async def test_job_records_digest_and_job_description_decoupling():
     """Verify that digest and job_description are decoupled across models and broker."""
-    from boss_agent.job_entities import JobPosting, JobRecord
-    from boss_agent.pages import JobCardBrief
+    from boss_agent.job_entities import JobCardBrief, JobPosting, JobRecord
 
     # 1. JobCardBrief supports digest with backward-compatible snippet alias
     card = JobCardBrief(

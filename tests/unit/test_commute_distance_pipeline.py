@@ -12,7 +12,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from boss_agent.pages import JobCardBrief
+from boss_agent.job_entities import JobCardBrief
 from boss_agent.screening import CandidateScreener, CardFacets, CardVerdictStage
 from boss_agent.screening_policy import ScreeningPolicy
 

@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from boss_agent.pages import (
+from boss_agent.pages.communication import (
     CommunicationCard,
     CommunicationListPage,
     parse_company_from_descriptor,

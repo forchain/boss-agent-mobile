@@ -6,7 +6,8 @@ Unit tests for ChatPage UI automation ensuring greeting typing without sending.
 
 from unittest.mock import MagicMock
 
-from boss_agent.pages import ChatPage, JobDetailPage
+from boss_agent.pages.communication import ChatPage
+from boss_agent.pages.job_detail import JobDetailPage
 
 
 def test_chat_page_open_chat_clicks_entry():

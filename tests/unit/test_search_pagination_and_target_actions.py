@@ -21,7 +21,7 @@ from boss_agent.enums import (
     JobRecordStatus,
     TargetAction,
 )
-from boss_agent.pages import JobListPage
+from boss_agent.pages.job_feed import JobListPage
 from boss_agent.search_entities import (
     SavedSearch,
     SearchConfig,
