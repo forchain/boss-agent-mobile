@@ -398,7 +398,9 @@ async def test_empty_list_stops_without_interaction(policy):
 
     assert report.scanned == 0
     assert report.stop_reason is StopReason.EMPTY_LIST
-    assert harness.events == []
+    # #388: entering the list now double-taps 消息 to reset the feed. That reset is the
+    # only device action an empty 仅沟通 list costs — no card was opened or touched.
+    assert [e for e in harness.events if e != "scroll_to_top"] == []
 
 
 @pytest.mark.asyncio
@@ -834,3 +836,56 @@ async def test_enter_list_always_navigates_to_ensure_jingoutong_selected(policy)
 
     assert open_list_called is True
     assert report.rejections == 1
+
+
+@pytest.mark.asyncio
+async def test_entering_the_list_resets_the_feed_to_the_newest_messages(policy):
+    """#388: 仅沟通 was left scrolled into the middle of history; the run must see the newest.
+
+    The scripted feed starts one viewport down, so a run that never resets it reads
+    the stale card first and scrolls straight past the fresh rejection.
+    """
+    harness = Harness(
+        [
+            card(REJECTION_TEXT, sender="严胜", descriptor=DESCRIPTOR),
+            card(INVITATION_TEXT, sender="宋女士", descriptor=DESCRIPTOR),
+        ],
+        viewport_size=1,
+    )
+    harness.scroll_offset = 1
+
+    report = await triage_run(
+        harness, classifier=FakeClassifier({REJECTION_TEXT: True}), policy=policy
+    ).scan()
+
+    assert "scroll_to_top" in harness.events
+    assert harness.scroll_offset == 0
+    assert report.rejections == 1, "the newest rejection was never read"
+
+
+@pytest.mark.asyncio
+async def test_entering_the_list_narrates_the_double_tap_reset(policy):
+    """#388: the double-tap is a deliberate recovery, so a run has to say it out loud."""
+    harness = Harness([card(REJECTION_TEXT, sender="严胜", descriptor=DESCRIPTOR)])
+    lines, log = recording_log()
+
+    await triage_run(
+        harness, classifier=FakeClassifier({REJECTION_TEXT: True}), policy=policy, log=log
+    ).scan()
+
+    assert any(
+        "🔝 [Navigation] 双击「消息」导航按钮，快速回到最新消息列表顶部" in line for line in lines
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_unreachable_list_is_not_reset_to_the_top(policy):
+    """No list to reset: the run ends without touching the navigation."""
+    harness = Harness([card(REJECTION_TEXT)], on_list=False, open_list_ok=False)
+
+    report = await triage_run(
+        harness, classifier=FakeClassifier({REJECTION_TEXT: True}), policy=policy
+    ).scan()
+
+    assert report.stop_reason is StopReason.LIST_UNREACHABLE
+    assert "scroll_to_top" not in harness.events

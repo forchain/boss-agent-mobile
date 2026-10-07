@@ -196,6 +196,9 @@ class ChatListReader(Protocol):
     def ensure_open_list(self) -> bool:
         """Navigate to the list from wherever the app is; True once it is showing."""
 
+    def scroll_to_top(self) -> bool:
+        """Reset the list to its newest messages by double-tapping the 消息 tab."""
+
     def visible_cards(self, max_items: int) -> list[CommunicationCard]:
         """The opening screen's cards, newest first, capped at ``max_items``."""
 
@@ -266,6 +269,9 @@ class CommunicationListAdapter:
 
     def ensure_open_list(self) -> bool:
         return self._page.open_list(timeout_sec=self._timeout_sec)
+
+    def scroll_to_top(self) -> bool:
+        return self._page.scroll_to_top()
 
     def visible_cards(self, max_items: int) -> list[CommunicationCard]:
         return self._page.extract_visible_messages(max_items=max_items)
@@ -608,10 +614,15 @@ class ChatTriage:
         # cannot differentiate which sub-tab is currently active, ensure_open_list()
         # explicitly clicks 消息 -> 仅沟通 rather than assuming presence equals selection.
         await self._log("🔄 [Navigation] 启动自愈导航返回「消息」栏目并进入「仅沟通」列表")
-        if self.list_reader.ensure_open_list():
-            return True
-        await self._log("❌ [List] 无法进入「仅沟通」列表，任务终止")
-        return False
+        if not self.list_reader.ensure_open_list():
+            await self._log("❌ [List] 无法进入「仅沟通」列表，任务终止")
+            return False
+        # Landing on 仅沟通 is not landing on its newest messages: the feed is shared
+        # state that survives navigation, so ensure_open_list() double-taps 消息 to
+        # reset the RecyclerView (#388). The run says so, because a feed inspected
+        # mid-history is exactly how a fresh rejection goes unnoticed.
+        await self._log("🔝 [Navigation] 双击「消息」导航按钮，快速回到最新消息列表顶部")
+        return True
 
     # ------------------------------------------------------------------
     # Per-card stages
