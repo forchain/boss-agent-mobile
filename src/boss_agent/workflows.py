@@ -15,16 +15,15 @@ from .graph import run_job_application_graph
 from .job_entities import JobCardBrief, JobPosting
 from .matching import JobMatchGreetingService, MatchGreetingResult
 from .memory import ResumeMemoryManager, StructuredCandidateProfile
-from .pages import (
-    ChatPage,
+from .pages.communication import ChatPage
+from .pages.job_detail import JobDetailPage
+from .pages.job_feed import (
     FilterDialogPage,
     IndustryFilterDialogPage,
-    JobDetailPage,
     JobListPage,
-    LoginPage,
     SearchPage,
-    StartupDialogPage,
 )
+from .pages.system import LoginPage, StartupDialogPage
 from .screening_policy import ScreeningPolicy, resolve_screening_policy
 from .search_entities import FilterConfig, SavedSearch, SearchConfig
 
