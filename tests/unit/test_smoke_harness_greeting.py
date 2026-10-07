@@ -6,8 +6,8 @@ Unit tests for SmokeHarness integration with resume memory, match scoring, and g
 
 from unittest.mock import MagicMock, patch
 
+from boss_agent.candidate_entities import CandidateProfile
 from boss_agent.matching import MatchGreetingResult
-from boss_agent.memory import StructuredCandidateProfile
 from boss_agent.workflows import SmokeHarness, TakeoverHandler
 
 
@@ -59,7 +59,7 @@ def test_smoke_harness_runs_matching_and_types_greeting():
     mock_driver.find_elements.side_effect = mock_find_elements
 
     mock_memory_mgr = MagicMock()
-    mock_profile = StructuredCandidateProfile(
+    mock_profile = CandidateProfile(
         name="测试候选人",
         years_of_experience=7,
         core_skills=["Python", "Appium", "LLM"],
@@ -105,7 +105,7 @@ def _headhunter_smoke_harness(channel_policy, whitelist=None):
     mock_driver.find_elements.return_value = [mock_btn]
 
     mock_memory_mgr = MagicMock()
-    mock_memory_mgr.load_memory.return_value = StructuredCandidateProfile(
+    mock_memory_mgr.load_memory.return_value = CandidateProfile(
         name="测试候选人",
         years_of_experience=7,
         core_skills=["Python", "Appium", "LLM"],

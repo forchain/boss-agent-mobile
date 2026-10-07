@@ -11,9 +11,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from boss_agent.candidate_entities import CandidateProfile
 from boss_agent.job_entities import JobCardBrief, JobPosting
 from boss_agent.matching import MatchGreetingResult
-from boss_agent.memory import StructuredCandidateProfile
 from boss_agent.screening import (
     CandidateScreener,
     CardFacets,
@@ -277,7 +277,7 @@ def test_evaluate_job_passes_and_drafts_tailored_greeting():
         },
     ]
     screener = CandidateScreener(llm_client=llm)
-    profile = StructuredCandidateProfile(
+    profile = CandidateProfile(
         name="李华",
         years_of_experience=7,
         core_skills=["Python", "LangGraph"],
