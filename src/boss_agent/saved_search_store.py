@@ -16,17 +16,79 @@ in-memory adapter has no scheduler to notify.
 from __future__ import annotations
 
 import logging
+import os
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
+
+import requests
 
 from .async_bridge import execute_broker_request
 from .search_entities import SavedSearch
+from .settings import resolve_pocketbase_url
 
 logger = logging.getLogger("boss_agent.saved_search_store")
 
 #: Called with a deleted search id so a running scheduler can drop its schedule.
 ScheduleRevoker = Callable[[str], Awaitable[None]]
+
+#: Columns the domain interprets itself when they are absent, by falling back to a
+#: sibling key. The schema's storage default must not be substituted for these before
+#: that derivation runs, or e.g. an empty ``target_action`` would stop inheriting
+#: ``target_task_type`` and quietly invert execution depth.
+_DERIVED_ON_ABSENCE = ("name", "keyword", "enable_search", "enable_filter", "target_action")
+
+#: The id the default-search resolver looks for, and the id it synthesizes.
+DEFAULT_SEARCH_ID = "default_agent_search"
+
+
+def _hydrate_fixture(
+    fixture: Mapping[str, SavedSearch | Mapping[str, Any]],
+) -> dict[str, SavedSearch]:
+    """Coerce a saved-search fixture into domain objects, keyed by id.
+
+    Fixtures reach this seam in two shapes: the domain type, and the raw
+    record-shaped dicts the provisioner ships as ``DEFAULT_INITIAL_SEARCHES``. Both
+    are accepted so a caller migrating off the registry can hand over the defaults
+    verbatim instead of rebuilding them.
+
+    Fixtures are hydrated through bare ``from_dict`` rather than the schema: unlike a
+    persistence read, a fixture is authored in the domain's own vocabulary, and the
+    ``{"searches": {...}}`` wrapper is tolerated because the registry's
+    ``load_from_dict`` accepted it and configs written for that loader are not worth
+    breaking.
+    """
+    payload: Mapping[str, Any] = fixture
+    inner = payload.get("searches")
+    if isinstance(inner, Mapping):
+        payload = inner
+    return {
+        search_id: value
+        if isinstance(value, SavedSearch)
+        else SavedSearch.from_dict(search_id, value)
+        for search_id, value in payload.items()
+    }
+
+
+def record_to_saved_search(search_id: str, record: Mapping[str, Any]) -> SavedSearch:
+    """Map a raw ``saved_searches`` record to the domain type through the schema.
+
+    Reading a collection through the schema rather than a private set of fallbacks is
+    what keeps a stored preset from drifting away from the domain: a record written
+    before a column existed returns without it, and an absent column has to land on the
+    *declared* default rather than on whatever the reader happened to guess. The
+    ``max_jobs`` 20-vs-30 drift was exactly that class of bug.
+
+    The schema is imported inside the function because ``boss_agent.broker``'s package
+    ``__init__`` imports the broker adapter, which imports this module — a module-scope
+    import would close that cycle. ``search_entities`` resolves its own schema default
+    the same way, for the same reason.
+    """
+    from .broker.collection_schema import SAVED_SEARCHES, normalize_record
+
+    return SavedSearch.from_dict(
+        search_id, normalize_record(SAVED_SEARCHES, record, exclude=_DERIVED_ON_ABSENCE)
+    )
 
 
 class SavedSearchStore(ABC):
@@ -58,16 +120,41 @@ class SavedSearchStore(ABC):
     async def delete_saved_search(self, search_id: str) -> bool:
         """Delete a saved search preset by ID."""
 
+    async def get_default_search(self) -> SavedSearch:
+        """Resolve the search a caller should start on when it names none.
+
+        ``default_agent_search`` wins when the store carries it; otherwise the first
+        search that exists is a better answer than none; and an empty store still
+        yields a synthesized default so a fresh install has something runnable. This
+        mirrors ``SavedSearchRegistry.get_default_search`` — the resolver it replaces.
+
+        It is concrete rather than abstract because the answer is the same question of
+        every adapter ("what is in there?"), and the adapters already agree on how to
+        ask it. Duplicating that walk per adapter is the kind of drift this seam
+        exists to remove.
+
+        The synthesized default is returned but *not* stored: caching it would
+        manufacture a preset the collection never held, and callers could not tell a
+        real record from one this method invented.
+        """
+        searches = await self.list_saved_searches()
+        for search in searches:
+            if search.id == DEFAULT_SEARCH_ID:
+                return search
+        if searches:
+            return searches[0]
+        return SavedSearch(id=DEFAULT_SEARCH_ID, name="Default Agent Search")
+
 
 class InMemorySavedSearchStore(SavedSearchStore):
     """Volatile saved-search registry for tests and local development."""
 
     def __init__(
         self,
-        initial: dict[str, SavedSearch] | None = None,
+        initial: Mapping[str, SavedSearch | Mapping[str, Any]] | None = None,
         on_delete: ScheduleRevoker | None = None,
     ) -> None:
-        self._searches: dict[str, SavedSearch] = dict(initial or {})
+        self._searches: dict[str, SavedSearch] = _hydrate_fixture(initial or {})
         self._on_delete = on_delete
 
     async def list_saved_searches(self) -> list[SavedSearch]:
@@ -92,13 +179,12 @@ class InMemorySavedSearchStore(SavedSearchStore):
 class PocketBaseSavedSearchStore(SavedSearchStore):
     """PocketBase-backed saved searches.
 
-    This is the seam's production adapter; the `SavedSearchRegistry`'s own read is
-    still its own. That read is synchronous (it runs during a page load, with a 1.5s
-    timeout and no auth headers) and this adapter is async, so folding it in means
-    either making the registry async or duplicating a sync path here. Neither was worth
-    doing in this pass: the registry already maps its records through the Collection
-    Schema, so the field-spelling duplication this seam exists to remove is gone even
-    though the transport duplication remains.
+    This is the seam's production adapter, and it now owns the record→domain mapping
+    too: reads go through the Collection Schema (``record_to_saved_search``) rather
+    than the bare ``from_dict`` the adapter started with. That closes the gap the
+    registry's own read used to cover — the field-spelling duplication this seam
+    exists to remove is gone, and so is the only remaining reason for a second,
+    unauthenticated read path to exist.
     """
 
     def __init__(
@@ -130,7 +216,7 @@ class PocketBaseSavedSearchStore(SavedSearchStore):
         if resp.status_code == 404:
             return []
         items = resp.json().get("items", [])
-        return [SavedSearch.from_dict(item["id"], item) for item in items]
+        return [record_to_saved_search(item["id"], item) for item in items]
 
     async def get_saved_search(self, search_id: str) -> SavedSearch | None:
         url = f"{self._collection_url()}/{search_id}"
@@ -143,7 +229,7 @@ class PocketBaseSavedSearchStore(SavedSearchStore):
         if resp.status_code == 404:
             return None
         data = resp.json()
-        return SavedSearch.from_dict(data["id"], data)
+        return record_to_saved_search(data["id"], data)
 
     async def save_saved_search(self, saved_search: SavedSearch) -> SavedSearch | None:
         url = self._collection_url()
@@ -164,7 +250,7 @@ class PocketBaseSavedSearchStore(SavedSearchStore):
                 error_prefix=f"PocketBase save_saved_search for {saved_search.id} failed",
             )
         data = resp.json()
-        return SavedSearch.from_dict(data["id"], data)
+        return record_to_saved_search(data["id"], data)
 
     async def delete_saved_search(self, search_id: str) -> bool:
         url = f"{self._collection_url()}/{search_id}"
@@ -178,6 +264,46 @@ class PocketBaseSavedSearchStore(SavedSearchStore):
         if deleted and self._on_delete is not None:
             await self._on_delete(search_id)
         return deleted
+
+
+def resolve_saved_search_store(prefer_database: bool = True) -> SavedSearchStore:
+    """The one place a consumer asks for a saved-search store, so it cannot drift.
+
+    Domain and CLI consumers used to each assemble their own store, which is how the
+    same collection ended up being read with and without an auth token. This mirrors
+    ``PocketBaseTaskBroker.__init__`` — same URL resolution, same
+    ``POCKETBASE_AUTH_TOKEN``, same bearer header — so a harness started outside the
+    broker talks to PocketBase exactly as one started inside it does.
+
+    Construction deliberately performs no I/O. The registry it replaces probed the
+    collection while being built and swallowed every failure, so a store that could
+    not be built looked identical to one that was merely empty; here a transport
+    failure surfaces from the read that actually needed it, where the caller can see
+    which call and which URL produced it.
+
+    ``prefer_database=False`` seeds ``DEFAULT_INITIAL_SEARCHES`` because that is where
+    the registry's "database unreachable, fall back to defaults in memory" behavior
+    lived. Note the asymmetry: ``InMemorySavedSearchStore()`` composes empty (the
+    in-memory broker relies on it), and the seeding is an explicit choice here.
+    """
+    from .broker.provisioner import DEFAULT_INITIAL_SEARCHES
+
+    if not prefer_database:
+        return InMemorySavedSearchStore(DEFAULT_INITIAL_SEARCHES)
+
+    auth_token = os.getenv("POCKETBASE_AUTH_TOKEN")
+
+    def _headers() -> dict[str, str]:
+        headers = {"Content-Type": "application/json"}
+        if auth_token:
+            headers["Authorization"] = f"Bearer {auth_token}"
+        return headers
+
+    return PocketBaseSavedSearchStore(
+        base_url=resolve_pocketbase_url(),
+        session=requests.Session(),
+        headers=_headers,
+    )
 
 
 def _wire_body(saved_search: SavedSearch) -> dict[str, Any]:

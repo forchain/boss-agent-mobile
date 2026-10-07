@@ -16,17 +16,21 @@ from typing import Any
 
 import pytest
 
+from boss_agent.broker.collection_schema import SAVED_SEARCH_MAX_JOBS
 from boss_agent.broker.pocketbase_adapter import BaseTaskBroker, InMemoryTaskBroker
+from boss_agent.broker.provisioner import DEFAULT_INITIAL_SEARCHES
 from boss_agent.candidate_memory_store import (
     CandidateMemoryStore,
     InMemoryCandidateMemoryStore,
     PocketBaseCandidateMemoryStore,
 )
+from boss_agent.enums import TargetTaskType
 from boss_agent.errors import TransportError
 from boss_agent.saved_search_store import (
     InMemorySavedSearchStore,
     PocketBaseSavedSearchStore,
     SavedSearchStore,
+    resolve_saved_search_store,
 )
 from boss_agent.search_entities import FilterConfig, SavedSearch, SearchConfig
 
@@ -52,6 +56,8 @@ class FakePocketBaseSession:
     def __init__(self) -> None:
         self.collections: dict[str, dict[str, dict[str, Any]]] = {}
         self.calls: list[tuple[str, str]] = []
+        #: Headers of each request, so auth wiring is assertable through a public read.
+        self.request_headers: list[dict[str, str]] = []
 
     def _collection(self, url: str) -> tuple[str, str | None]:
         parts = url.split("/api/collections/", 1)[1].split("/")
@@ -61,6 +67,7 @@ class FakePocketBaseSession:
 
     def get(self, url: str, **kwargs: Any) -> FakeResponse:
         self.calls.append(("GET", url))
+        self.request_headers.append(kwargs.get("headers") or {})
         name, record_id = self._collection(url)
         records = self.collections.get(name, {})
         if record_id:
@@ -430,3 +437,240 @@ def test_the_fallback_reads_a_local_database(tmp_path: Path) -> None:
         sqlite_db_path=db_file,
     )
     assert store._query_sqlite_profile("default")["core_skills"] == ["Rust"]
+
+
+# --------------------------------------------------------------------------- #
+# Reads hydrate through the Collection Schema
+# --------------------------------------------------------------------------- #
+
+
+def _store_over(records: dict[str, dict[str, Any]]) -> PocketBaseSavedSearchStore:
+    """A PocketBase store whose collection already holds these raw records."""
+    session = FakePocketBaseSession()
+    session.collections["saved_searches"] = records
+    return PocketBaseSavedSearchStore(base_url="http://pb.test", session=session, headers=_headers)
+
+
+@pytest.mark.asyncio
+async def test_a_read_lands_on_the_schemas_declared_defaults() -> None:
+    """A record read back must hydrate through the Collection Schema, not bare guesses.
+
+    The bare path took a present-but-null column at face value, so a preset whose
+    ``target_task_type`` came back null hydrated as ``None`` and — because the domain
+    derives its action from the task type — resolved to ``save_jd`` instead of
+    ``auto_apply``. The search silently stopped applying, with nothing in the record to
+    explain it. Routing reads through the schema is what makes the declared default,
+    not an incidental ``None``, decide.
+    """
+    store = _store_over(
+        {
+            "s1": {
+                "id": "s1",
+                "name": "老记录",
+                "description": None,
+                "target_task_type": None,
+                "max_jobs": None,
+            }
+        }
+    )
+
+    read = await store.get_saved_search("s1")
+
+    assert read is not None
+    assert read.max_jobs == SAVED_SEARCH_MAX_JOBS, "the schema's declared default"
+    assert read.target_task_type == TargetTaskType.AUTO_APPLY
+    assert str(read.target_action) == "auto_apply"
+    assert read.description == ""
+
+
+@pytest.mark.asyncio
+async def test_derived_columns_keep_their_domain_fallback_on_read() -> None:
+    """The five derived columns must not be pre-filled with their storage default.
+
+    ``name``/``keyword``/``enable_*``/``target_action`` are absent on old records
+    *meaning* "derive me from a sibling key". Handing them the schema's storage default
+    first would turn that absence into a value — an empty ``target_action`` would stop
+    inheriting the task type and quietly invert execution depth.
+    """
+    store = _store_over({"s1": {"id": "s1"}})
+
+    read = await store.get_saved_search("s1")
+
+    assert read is not None
+    assert read.name == "s1", "falls back to the id, not the schema's empty string"
+    assert read.keyword == "agent", "the domain default, not the schema's empty string"
+    assert str(read.target_action) == "auto_apply"
+
+
+# --------------------------------------------------------------------------- #
+# Default search resolution
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("index", [0, 1], ids=["in-memory", "pocketbase"])
+@pytest.mark.asyncio
+async def test_the_default_search_is_the_default_agent_search_preset(
+    pb_session: FakePocketBaseSession, index: int
+) -> None:
+    store = _search_stores(pb_session)[index]
+    await store.save_saved_search(_search("ai_llm_engineer", "AI"))
+    await store.save_saved_search(_search("default_agent_search", "默认"))
+
+    assert (await store.get_default_search()).id == "default_agent_search"
+
+
+@pytest.mark.parametrize("index", [0, 1], ids=["in-memory", "pocketbase"])
+@pytest.mark.asyncio
+async def test_the_default_search_falls_back_to_the_first_available(
+    pb_session: FakePocketBaseSession, index: int
+) -> None:
+    """Without the named preset, any real search beats a synthesized one."""
+    store = _search_stores(pb_session)[index]
+    await store.save_saved_search(_search("only_one", "仅有"))
+
+    assert (await store.get_default_search()).id == "only_one"
+
+
+@pytest.mark.parametrize("index", [0, 1], ids=["in-memory", "pocketbase"])
+@pytest.mark.asyncio
+async def test_an_empty_store_still_yields_a_usable_default_search(
+    pb_session: FakePocketBaseSession, index: int
+) -> None:
+    """An empty collection is not an error — callers still get a runnable search.
+
+    This mirrors ``SavedSearchRegistry.get_default_search``: a store that has never
+    been provisioned has to hand back something the Scheduler can start on, rather
+    than raising and leaving a fresh install with no default to run.
+    """
+    store = _search_stores(pb_session)[index]
+
+    fallback = await store.get_default_search()
+
+    assert fallback.id == "default_agent_search"
+    assert fallback.name == "Default Agent Search"
+
+
+# --------------------------------------------------------------------------- #
+# In-memory fixture initialization
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_the_in_memory_store_hydrates_raw_record_fixtures() -> None:
+    """``DEFAULT_INITIAL_SEARCHES`` is raw records, so the store has to hydrate them.
+
+    A caller migrating off the registry hands over exactly that dict; taking it
+    verbatim would leave ``list_saved_searches`` handing back dicts to consumers that
+    expect the domain type.
+    """
+    store = InMemorySavedSearchStore(DEFAULT_INITIAL_SEARCHES)
+
+    listed = await store.list_saved_searches()
+
+    assert {s.id for s in listed} == set(DEFAULT_INITIAL_SEARCHES)
+    assert all(isinstance(s, SavedSearch) for s in listed)
+    default = await store.get_saved_search("default_agent_search")
+    assert default is not None
+    assert default.keyword == "agent"
+    assert default.filter.industries == ["在线教育", "游戏", "人工智能"]
+
+
+@pytest.mark.asyncio
+async def test_the_in_memory_store_still_accepts_domain_objects() -> None:
+    """Hydrating raw records must not cost callers who already built the domain type."""
+    store = InMemorySavedSearchStore({"s1": _search()})
+
+    assert (await store.get_saved_search("s1")) == _search()
+
+
+@pytest.mark.asyncio
+async def test_a_searches_wrapped_fixture_is_accepted() -> None:
+    """The registry tolerated a ``{"searches": {...}}`` wrapper; its replacement does too."""
+    wrapped = {"searches": {"s1": {"id": "s1", "name": "包裹"}}}
+
+    store = InMemorySavedSearchStore(wrapped)
+
+    loaded = await store.get_saved_search("s1")
+    assert loaded is not None
+    assert loaded.name == "包裹"
+
+
+@pytest.mark.asyncio
+async def test_the_in_memory_store_still_starts_empty() -> None:
+    """Seeding is opt-in — ``InMemoryTaskBroker`` composes this store bare.
+
+    Quietly filling it with defaults would hand every in-memory-broker test a
+    ``default_agent_search`` that no test asked for, so the "no presets configured"
+    state would stop being reachable.
+    """
+    assert await InMemorySavedSearchStore().list_saved_searches() == []
+    assert await InMemoryTaskBroker().saved_searches.list_saved_searches() == []
+
+
+# --------------------------------------------------------------------------- #
+# Store resolution
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture
+def hermetic_pocketbase(monkeypatch: pytest.MonkeyPatch) -> FakePocketBaseSession:
+    """Point the resolver at a fake PocketBase, so resolution never reaches a network.
+
+    The resolver is the one place that decides *which* store a CLI or harness gets;
+    exercising it for real would mean a live port, and a resolver that quietly starts
+    depending on one would be a bug nothing else would catch.
+    """
+    session = FakePocketBaseSession()
+    monkeypatch.setenv("POCKETBASE_URL", "http://pb.test:8090")
+    monkeypatch.setattr("requests.Session", lambda: session)
+    return session
+
+
+@pytest.mark.asyncio
+async def test_the_resolver_builds_an_authenticated_pocketbase_store(
+    hermetic_pocketbase: FakePocketBaseSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The resolved store must carry the caller's token, or every read is a 403.
+
+    A resolver that produced an unauthenticated store would not fail here — it would
+    fail later, at the first read, as a bare HTTP error with nothing pointing back at
+    the missing credential.
+    """
+    monkeypatch.setenv("POCKETBASE_AUTH_TOKEN", "tok-123")
+    hermetic_pocketbase.collections["saved_searches"] = {"s1": {"id": "s1", "name": "x"}}
+
+    store = resolve_saved_search_store()
+
+    assert isinstance(store, PocketBaseSavedSearchStore)
+    assert store.base_url == "http://pb.test:8090"
+    await store.get_saved_search("s1")
+    assert hermetic_pocketbase.request_headers[-1]["Authorization"] == "Bearer tok-123"
+
+
+@pytest.mark.asyncio
+async def test_the_resolver_sends_no_authorization_without_a_token(
+    hermetic_pocketbase: FakePocketBaseSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unauthenticated PocketBase must not be sent a ``Bearer None`` header."""
+    monkeypatch.delenv("POCKETBASE_AUTH_TOKEN", raising=False)
+    hermetic_pocketbase.collections["saved_searches"] = {"s1": {"id": "s1"}}
+
+    store = resolve_saved_search_store()
+    await store.get_saved_search("s1")
+
+    assert "Authorization" not in hermetic_pocketbase.request_headers[-1]
+
+
+@pytest.mark.asyncio
+async def test_the_resolver_can_prefer_the_in_memory_store() -> None:
+    """``prefer_database=False`` is the offline path, and it must still have presets.
+
+    The registry's "fall back to defaults in memory when the database is unreachable"
+    behavior lived here, so dropping the database has to leave a store that resolves a
+    default search rather than an empty one.
+    """
+    store = resolve_saved_search_store(prefer_database=False)
+
+    assert isinstance(store, InMemorySavedSearchStore)
+    assert (await store.get_default_search()).id == "default_agent_search"
+    assert await store.get_saved_search("ai_llm_engineer") is not None
