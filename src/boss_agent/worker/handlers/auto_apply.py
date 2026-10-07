@@ -15,11 +15,11 @@ from typing import Any
 
 from boss_agent.broker.models import AutomationTask, TaskType
 from boss_agent.broker.pocketbase_adapter import BaseTaskBroker
+from boss_agent.candidate_entities import CandidateProfile
 from boss_agent.enums import JobRecordStatus
 from boss_agent.errors import BrokerError, TransportError
 from boss_agent.feed_pipeline import FeedStreamConfig, JobFeedPipeline, card_rejection_stage
 from boss_agent.identifier_helpers import is_masked_company_name
-from boss_agent.memory import StructuredCandidateProfile
 from boss_agent.screening import CandidateScreener
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.handlers.base import BaseTaskHandler, HandlerResult
@@ -125,7 +125,7 @@ class AutoApplyHandler(BaseTaskHandler):
 
     async def _resolve_profile(
         self, broker: BaseTaskBroker, payload: dict[str, Any], task_id: str | None = None
-    ) -> StructuredCandidateProfile:
+    ) -> CandidateProfile:
         profile_data = payload.get("candidate_profile")
         if not profile_data:
             try:
@@ -139,11 +139,7 @@ class AutoApplyHandler(BaseTaskHandler):
                         f"⚠️ [持久化降级] 候选人画像读取遇到持久化异常（{err}），无法读取候选人画像",
                     )
                 raise
-        return (
-            StructuredCandidateProfile.from_dict(profile_data)
-            if profile_data
-            else StructuredCandidateProfile()
-        )
+        return CandidateProfile.from_dict(profile_data) if profile_data else CandidateProfile()
 
     async def _preflight(
         self,

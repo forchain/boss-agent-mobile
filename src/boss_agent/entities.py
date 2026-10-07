@@ -6,7 +6,7 @@ Canonical domain entities grouped by domain concern (Issue #311, Spec #303).
 
 from __future__ import annotations
 
-from boss_agent.candidate_entities import CandidateProfile
+from boss_agent.candidate_entities import CandidateProfile, StructuredCandidateProfile
 from boss_agent.job_entities import (
     JobCardBrief,
     JobLocationLine,
@@ -29,5 +29,6 @@ __all__ = [
     "JobRecord",
     "SavedSearch",
     "SearchConfig",
+    "StructuredCandidateProfile",
     "_saved_search_max_jobs_default",
 ]

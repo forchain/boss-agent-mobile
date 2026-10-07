@@ -6,9 +6,9 @@ Unit tests for screening pipeline, CardFacets digest preservation, and search_fi
 
 from unittest.mock import MagicMock
 
+from boss_agent.candidate_entities import CandidateProfile
 from boss_agent.feed_pipeline import FeedStreamConfig
 from boss_agent.job_entities import JobCardBrief, JobPosting
-from boss_agent.memory import StructuredCandidateProfile
 from boss_agent.screening import CandidateScreener, CardFacets
 from boss_agent.search_entities import FilterConfig
 
@@ -89,7 +89,7 @@ def test_candidate_screener_evaluate_job_passes_search_filter_to_greeting():
     jd_text = "岗位职责：负责智能体协同工作流研发。\n任职资格：计算机相关专业本科及以上学历，3年以上经验。"
     filter_data = {"education": "硕士", "salary": "5万元以上"}
 
-    profile = StructuredCandidateProfile(
+    profile = CandidateProfile(
         name="李同学",
         years_of_experience=5,
         education=[{"school": "清华大学", "degree": "硕士", "major": "人工智能"}],
