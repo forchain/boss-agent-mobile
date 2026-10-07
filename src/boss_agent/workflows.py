@@ -10,21 +10,14 @@ from typing import Any
 
 from rich.console import Console
 
-from .enums import AuthStatus
-from .graph import run_job_application_graph
-from .job_entities import JobCardBrief, JobPosting
+from .async_bridge import run_sync
+from .enums import AuthStatus, TargetAction
+from .feed_pipeline import FeedStreamConfig, JobFeedPipeline
+from .job_entities import JobPosting
 from .matching import JobMatchGreetingService, MatchGreetingResult
 from .memory import ResumeMemoryManager, StructuredCandidateProfile
-from .pages import (
-    ChatPage,
-    FilterDialogPage,
-    IndustryFilterDialogPage,
-    JobDetailPage,
-    JobListPage,
-    LoginPage,
-    SearchPage,
-    StartupDialogPage,
-)
+from .pages import LoginPage
+from .screening import CandidateScreener
 from .screening_policy import ScreeningPolicy, resolve_screening_policy
 from .search_entities import FilterConfig, SavedSearch, SearchConfig
 
@@ -70,7 +63,28 @@ class TakeoverHandler:
 
 
 class SmokeHarness:
-    """Executes the End-to-End Smoke Test verifying app launch, optional search, filtering, to job extraction."""
+    """Runs one verified feed pass and hands back the posting it extracted.
+
+    This used to be the second implementation of a job feed: it owned eight page objects
+    and walked them itself — activate the app, dismiss the startup dialog, search, apply
+    two filter dialogs, scroll, click the top card, parse the detail page — duplicating
+    recovery, filtering, screening and extraction that ``JobFeedPipeline`` already maintains
+    for the worker (issue #390). Two implementations of one feed is how they drift, and the
+    runner is the one nobody tests on a device.
+
+    So this is an adapter and nothing else. It translates what an operator typed at the CLI
+    — a ``SearchConfig``, a ``FilterConfig``, a ``ScreeningPolicy``, a candidate profile —
+    into one ``FeedStreamConfig``, hands the run to ``JobFeedPipeline``, and returns the
+    ``JobPosting`` that run extracted. Which card was chosen, whether its JD was usable,
+    what was screened and why: all of that is now answered in exactly one place.
+
+    What stays here is the two things the pipeline cannot answer for itself. App activation
+    belongs to whoever opened the session. And the auth challenge — the whole point of
+    ``TakeoverHandler`` — is a precondition of touching the feed at all: the pipeline
+    assumes a usable session, so the gate that proves one stays in front of it, where a
+    captcha stops a verification run before it starts rather than after it has begun
+    reading somebody's job list.
+    """
 
     def __init__(
         self,
@@ -89,14 +103,6 @@ class SmokeHarness:
         matching_service: JobMatchGreetingService | None = None,
     ):
         self.driver = driver
-        self.startup_page = StartupDialogPage(driver)
-        self.login_page = LoginPage(driver)
-        self.list_page = JobListPage(driver)
-        self.search_page = SearchPage(driver)
-        self.filter_dialog = FilterDialogPage(driver)
-        self.industry_filter_dialog = IndustryFilterDialogPage(driver)
-        self.detail_page = JobDetailPage(driver)
-        self.chat_page = ChatPage(driver)
         self.takeover = takeover_handler or TakeoverHandler(driver, auto_confirm_for_test=True)
 
         self.resume_file = resume_file
@@ -104,6 +110,10 @@ class SmokeHarness:
         self.enable_greeting_draft = enable_greeting_draft
         self.memory_manager = memory_manager or ResumeMemoryManager()
         self.matching_service = matching_service or JobMatchGreetingService()
+        # Retained on the constructor because ``scripts/run_live_test.py`` passes it, and
+        # because an operator still sets it. It no longer paces anything: the pause it was
+        # written for watched a greeting being typed into a live chat box, and a smoke test
+        # types nothing into one (see ``_feed_config``).
         self.preview_timeout_sec = (
             preview_timeout_sec
             if preview_timeout_sec is not None
@@ -162,6 +172,28 @@ class SmokeHarness:
             self.filter_config = filter_config or FilterConfig()
             self.screening_policy = screening_policy or ScreeningPolicy()
 
+        # One engine, wired for the interactive runner: the volatile ledger of #389 (this
+        # harness has no broker behind it), the run's log going to the console a person is
+        # watching, and a screener holding *this* run's matching service — so the greeting
+        # is drafted by the service the caller injected and asserted on, rather than by a
+        # second one the pipeline built for itself.
+        self.pipeline = JobFeedPipeline(
+            driver=driver,
+            screener=CandidateScreener(matching_service=self.matching_service),
+            log=self._log,
+        )
+
+    async def _log(self, line: str) -> None:
+        """Print the pipeline's run log to the operator's console.
+
+        The pipeline reports every decision it makes — search entry, each screened card,
+        the greeting it drafted, why a card was turned down — through this sink. This
+        runner is the sink: it exists so a person can watch a run, so those lines belong
+        on the console where the old procedural prints were, not in a worker task log
+        nobody opened.
+        """
+        console.print(line)
+
     def ensure_app_active(
         self, package_name: str = "com.hpbr.bosszhipin", timeout_sec: float = 5.0
     ) -> bool:
@@ -175,182 +207,82 @@ class SmokeHarness:
                 pass
         return False
 
+    def _feed_config(self) -> FeedStreamConfig:
+        """Translate the operator's options into the one feed run that will execute."""
+        should_search = self.search_config.should_search
+        return FeedStreamConfig(
+            # A smoke test drafts a greeting; it never sends one. ``send_greeting=False``
+            # is the depth the pipeline reads for that: the screener still drafts, the
+            # record still lands re-sendable, and nothing is typed into the employer's
+            # chat window — a verification run has no business messaging a real recruiter.
+            target_action=(
+                TargetAction.AUTO_APPLY if self.enable_greeting_draft else TargetAction.SAVE_JD
+            ),
+            send_greeting=False,
+            # ``should_search`` is the whole search decision, keyword included: a run with
+            # no keyword states ``enable_search=False`` so the pipeline resets to the home
+            # feed and browses recommendations, which is what this harness always did with
+            # a keyword-less config — reset to home, then do not search.
+            keyword=self.search_config.keyword if should_search else None,
+            enable_search=should_search,
+            # The smoke test verifies one posting. The old flow opened the top card and
+            # stopped there; ``max_jobs=1`` says the same thing to the scanner.
+            max_jobs=1,
+            # The filter config carries its own enable flag and its own "nothing to
+            # apply", so handing it over unchanged gets both halves of the old step 4:
+            # apply what is configured, clear the dialog when nothing is.
+            filter_config=self.filter_config,
+            screening_policy=self.screening_policy,
+            candidate_profile=self.candidate_profile,
+        )
+
     def run_smoke_test(self) -> JobPosting:
-        """Run the full smoke harness flow with robust synchronization and verification."""
-        # 0. Ensure Boss app is active and in foreground
+        """Run the feed once and return the posting it extracted.
+
+        ``stream_jobs`` is the single entry point for feed discovery and extraction, so
+        this method is deliberately thin: activate the app, prove the session is usable,
+        delegate the run, return what came out of it. The auth gate is the one thing that
+        cannot move into the pipeline — it knows nothing about challenges — so it stays
+        here, in front of the run rather than behind it.
+        """
         self.ensure_app_active()
 
-        # 1. Dismiss startup privacy dialogs if present
-        if self.startup_page.is_dialog_present():
-            self.startup_page.dismiss_dialog()
-
-        # 2. Check auth / handle takeover
         auth_status = self.takeover.check_and_handle_takeover()
         if auth_status != AuthStatus.AUTHENTICATED:
             raise RuntimeError(f"Authentication failed: {auth_status}")
 
-        # 3. Ensure navigation is reset to home page before starting query
-        console.print("🏠 [dim]Ensuring navigation is reset to Home Page...[/dim]")
-        if not self.list_page.navigate_to_home():
-            raise RuntimeError("Failed to navigate back to Home Page before query execution")
-
-        # 4. Optional Search: If configured, enter search flow
-        if self.search_config.should_search:
-            keyword = self.search_config.keyword
-            console.print(
-                f"🔍 [bold cyan]Executing job search with keyword:[/bold cyan] '{keyword}'..."
+        result = run_sync(self.pipeline.stream_jobs(self._feed_config()))
+        if not result.postings:
+            # The pipeline hands back only what it kept: a card whose detail page yielded
+            # nothing, or one the run withdrew at screening, is not a posting. The old
+            # runner returned the first card regardless of what screening then made of it,
+            # so it always had something to return; a run that extracted nothing now has
+            # nothing, and a verification run that verified nothing has failed — silently
+            # returning it would report success for a screen it never read. The outcome
+            # and reason are in the message because on a device "nothing extracted" is
+            # almost never a mystery: it is one screen's worth of explanation, which the
+            # caller is the only one who can see.
+            raise RuntimeError(
+                f"Smoke test extracted no job posting "
+                f"(outcome={result.outcome}, "
+                f"reason={result.reason or 'n/a'}, "
+                f"error={result.error_message or 'n/a'}, "
+                f"scanned={result.scanned}, processed={result.processed}, "
+                f"skipped={result.skipped})"
             )
-            # Ensure on job tab
-            self.list_page.ensure_job_tab()
 
-            # Open search page if not already there
-            if not self.search_page.is_search_page() and not self.list_page.open_search(
-                timeout_sec=10.0
-            ):
-                raise RuntimeError("Failed to open search screen from job tab")
-
-            # Wait for search page input to be ready
-            if not self.search_page.wait_for_search_page(timeout_sec=10.0):
-                raise RuntimeError("Timed out waiting for search input screen to become ready")
-
-            # Execute search and submit
-            if not self.search_page.search(keyword, timeout_sec=15.0):  # type: ignore[arg-type]
-                raise RuntimeError(f"Failed to submit search for keyword: '{keyword}'")
-
-            # Wait until search results job cards appear
-            if not self.list_page.wait_for_jobs_loaded(timeout_sec=15.0):
-                raise RuntimeError(f"Timed out waiting for search results to load for '{keyword}'")
-
-        # 4. Optional Filters
-        # 4.1 Industry Filter (Multi-select)
-        if self.filter_config.has_industry_filters:
-            console.print(
-                f"🏢 [bold cyan]Applying industry filters:[/bold cyan] {self.filter_config.industries}..."
+        if self.enable_greeting_draft and self.candidate_profile and result.greeting_message:
+            # Rendering is presentation and the pipeline does not present — the run
+            # reports what it drafted, the operator reads it here. The match reasons are
+            # not part of that report (they are not persisted and `FeedStreamResult` does
+            # not carry them), but the pipeline logged them on the way through, so the
+            # operator sees the same reasoning one line earlier than before.
+            self.matching_service.render_match_card(
+                result.postings[0],
+                MatchGreetingResult(
+                    match_score=result.score,
+                    match_reasons=[],
+                    greeting_message=result.greeting_message,
+                ),
             )
-            if not self.industry_filter_dialog.apply_industry_filters(
-                self.filter_config.industries, timeout_sec=10.0
-            ):
-                raise RuntimeError("Failed to open or apply configured industry filters")
-
-            # Wait until filtered job list reloads
-            if not self.list_page.wait_for_jobs_loaded(timeout_sec=15.0):
-                raise RuntimeError("Timed out waiting for industry-filtered job list to load")
-
-        # 4.2 General Filters (Education, Salary, Experience, Activity, Company Scales)
-        has_general_filters = any(
-            [
-                bool(self.filter_config.education and self.filter_config.education.strip()),
-                bool(self.filter_config.salary and self.filter_config.salary.strip()),
-                bool(self.filter_config.experience and self.filter_config.experience.strip()),
-                bool(self.filter_config.activity and self.filter_config.activity.strip()),
-                bool(self.filter_config.company_scales),
-            ]
-        )
-        if has_general_filters:
-            console.print("🎯 [bold cyan]Applying configured general job filters...[/bold cyan]")
-            if not self.filter_dialog.apply_filters(self.filter_config, timeout_sec=10.0):
-                raise RuntimeError("Failed to open or apply configured job filters")
-
-            # Wait until filtered job list reloads
-            if not self.list_page.wait_for_jobs_loaded(timeout_sec=15.0):
-                raise RuntimeError("Timed out waiting for filtered job list to load")
-        else:
-            console.print(
-                "🧹 [dim]No general filters configured; ensuring filters are cleared...[/dim]"
-            )
-            self.filter_dialog.clear_filters(timeout_sec=5.0)
-
-        # 5. Scroll job list
-        self.list_page.scroll_job_list()
-
-        # 6. Click top job and wait for detail page
-        if not self.list_page.select_first_job(timeout_sec=10.0):
-            raise RuntimeError("Failed to select first job posting in list")
-
-        # 7. Extract real job details from detail screen
-        posting = self.detail_page.extract_job_posting(timeout_sec=10.0)
-
-        # 8. Multi-Stage Screening and Greeting Draft via LangGraph
-        if self.enable_greeting_draft and self.candidate_profile:
-            try:
-                console.print(
-                    f"📊 [bold cyan]Evaluating job match via LangGraph for candidate:[/bold cyan] {self.candidate_profile.name}..."
-                )
-                card = JobCardBrief(
-                    title=posting.title,
-                    company_name=posting.company_name,
-                    recruiter_name=posting.recruiter_name or "",
-                    recruiter_title=posting.recruiter_title or "",
-                    is_headhunter=posting.is_headhunter,
-                    salary_range=posting.salary_range,
-                    location=posting.location or "",
-                    tags=posting.tags,
-                )
-
-                graph_state = run_job_application_graph(
-                    card=card,
-                    policy=self.screening_policy,
-                    candidate_profile=self.candidate_profile,
-                    jd_text=posting.job_description,
-                    llm_client=getattr(self.matching_service, "llm_client", None),
-                    matching_service=self.matching_service,
-                )
-
-                if not graph_state.get("keyword_pass", True):
-                    console.print(
-                        f"[yellow]⏭️  Job rejected by KeywordScreener: {graph_state.get('keyword_reason')}[/yellow]"
-                    )
-                elif not graph_state.get("app_rule_pass", True) and not graph_state.get(
-                    "relaxed_by_whitelist", False
-                ):
-                    console.print(
-                        f"[yellow]🛑  Job rejected by App-Enforced Filter: {graph_state.get('app_rule_violation')}[/yellow]"
-                    )
-                elif graph_state.get("status") == "jd_unavailable":
-                    console.print(
-                        f"[yellow]⚠️  No evaluable JD on this posting: "
-                        f"{graph_state.get('error_message')}[/yellow]"
-                    )
-                elif not graph_state.get("deep_screen_pass", True):
-                    console.print(
-                        f"[yellow]⏭️  Job rejected by JDSemanticScreener: {graph_state.get('deep_screen_reason')}[/yellow]"
-                    )
-                else:
-                    if graph_state.get("relaxed_by_whitelist"):
-                        console.print(
-                            f"🎗️  [bold cyan]Whitelist Relaxation rescue:[/bold cyan] "
-                            f"{graph_state.get('relaxation_reason')}"
-                        )
-                    greeting_message = graph_state.get("greeting_message", "")
-                    match_result = MatchGreetingResult(
-                        match_score=graph_state.get("match_score", 80),
-                        match_reasons=graph_state.get("match_reasons", []),
-                        greeting_message=greeting_message,
-                    )
-                    self.matching_service.render_match_card(posting, match_result)
-
-                    # Open chat dialog and type greeting
-                    console.print(
-                        "💬 [bold cyan]Opening chat dialog to type greeting draft...[/bold cyan]"
-                    )
-                    if self.detail_page.open_chat(timeout_sec=5.0):
-                        typed = self.chat_page.type_greeting_message(
-                            greeting_message, timeout_sec=5.0
-                        )
-                        if typed:
-                            console.print(
-                                f"⏳ [bold yellow]Greeting message entered in chat box. "
-                                f"Pausing for {self.preview_timeout_sec}s preview (NOT SENT)...[/bold yellow]"
-                            )
-                            time.sleep(self.preview_timeout_sec)
-                        # Navigate back from chat dialog to job detail screen
-                        self.chat_page.navigate_back()
-            except Exception as e:
-                console.print(
-                    f"[yellow]⚠️  Matching/Greeting draft skipped due to error:[/yellow] {e}"
-                )
-
-        # 9. Navigate back to job list
-        self.detail_page.navigate_back()
-
-        return posting
+        return result.postings[0]

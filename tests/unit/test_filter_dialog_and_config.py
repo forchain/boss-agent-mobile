@@ -281,7 +281,11 @@ def test_smoke_harness_clears_filters_when_no_filter_config():
         filter_config=empty_cfg,
     )
 
-    with patch.object(harness.filter_dialog, "clear_filters") as mock_clear:
+    # The filter dialog belongs to the feed pipeline now (issue #390), so the claim this
+    # test makes — a run with nothing to apply clears the conditions a previous run left
+    # behind — is asserted on the page object the pipeline drives rather than on one the
+    # harness used to own.
+    with patch("boss_agent.feed_pipeline.FilterDialogPage") as filter_page_cls:
         job = harness.run_smoke_test()
         assert isinstance(job, JobPosting)
-        mock_clear.assert_called_once()
+        filter_page_cls.return_value.clear_filters.assert_called_once()
