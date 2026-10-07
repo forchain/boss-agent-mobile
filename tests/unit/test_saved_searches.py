@@ -4,7 +4,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from boss_agent.errors import TransportError
 from boss_agent.job_entities import JobPosting
+from boss_agent.saved_search_store import InMemorySavedSearchStore, resolve_saved_search_store
 from boss_agent.search_entities import FilterConfig, SavedSearch, SearchConfig
 from boss_agent.searches import (
     SavedSearchRegistry,
@@ -188,6 +190,11 @@ def test_saved_search_registry_load_pocketbase():
 
 
 def test_smoke_harness_with_saved_search_id():
+    """The harness reads a named preset through an injected store, not a global (#394).
+
+    Injection is what makes this a seam: the harness resolves no store of its own, so
+    the test supplies the same defaults the resolver seeds for a database-less run.
+    """
     mock_driver = MagicMock()
     mock_driver.get_window_size.return_value = {"width": 1080, "height": 2400}
 
@@ -211,6 +218,7 @@ def test_smoke_harness_with_saved_search_id():
         driver=mock_driver,
         takeover_handler=takeover,
         saved_search_id="default_agent_search",
+        saved_search_store=resolve_saved_search_store(prefer_database=False),
     )
 
     assert harness.search_config.keyword == "agent"
@@ -219,3 +227,91 @@ def test_smoke_harness_with_saved_search_id():
     job = harness.run_smoke_test()
     assert isinstance(job, JobPosting)
     assert job.title == "资深 Agent 专家"
+
+
+@pytest.mark.asyncio
+async def test_smoke_harness_resolves_a_named_preset_from_inside_a_running_loop():
+    """The harness is synchronous but the store is not, and that gap is bridged (#394).
+
+    A harness built from an async worker or a LangGraph step already has a running loop
+    in this thread; ``asyncio.run`` there would raise, and the store read would have to
+    be threaded out of the constructor entirely. This pins the bridging as something the
+    harness does for its caller rather than something each caller has to arrange.
+    """
+    harness = SmokeHarness(
+        driver=MagicMock(),
+        saved_search_id="default_agent_search",
+        saved_search_store=resolve_saved_search_store(prefer_database=False),
+    )
+
+    assert harness.search_config.keyword == "agent"
+    assert harness.filter_config.industries == ["在线教育", "游戏", "人工智能"]
+
+
+def test_smoke_harness_names_the_available_presets_when_the_id_is_unknown():
+    """A miss must stay actionable: the store answers ``None``, so the harness re-raises.
+
+    Letting the ``None`` through would drop the constructor into its no-preset branch and
+    run an unfiltered sweep against a live device under a preset the operator never chose.
+    """
+    store = InMemorySavedSearchStore(
+        {
+            "only_preset": SavedSearch(
+                id="only_preset",
+                name="Only Preset",
+                search=SearchConfig(keyword="rust"),
+                filter=FilterConfig(education="本科"),
+            )
+        }
+    )
+
+    with pytest.raises(KeyError) as excinfo:
+        SmokeHarness(driver=MagicMock(), saved_search_id="missing", saved_search_store=store)
+
+    assert "missing" in str(excinfo.value)
+    assert "only_preset" in str(excinfo.value)
+
+
+def test_smoke_harness_does_not_hide_an_unreachable_store():
+    """The registry swallowed a dead PocketBase; the store's typed failure must surface.
+
+    Falling back here would silently run the smoke sweep with an empty store's worth of
+    settings — the operator would see a completed run and no indication that the preset
+    they named never arrived.
+    """
+
+    class _UnreachableStore(InMemorySavedSearchStore):
+        async def get_saved_search(self, search_id: str) -> SavedSearch | None:
+            raise TransportError("PocketBase get_saved_search failed: connection refused")
+
+    with pytest.raises(TransportError, match="connection refused"):
+        SmokeHarness(
+            driver=MagicMock(),
+            saved_search_id="default_agent_search",
+            saved_search_store=_UnreachableStore(),
+        )
+
+
+def test_smoke_harness_prefers_a_supplied_preset_over_a_named_one():
+    """Precedence is unchanged: an explicit object wins and the store is left alone."""
+
+    class _UnusableStore(InMemorySavedSearchStore):
+        async def get_saved_search(self, search_id: str) -> SavedSearch | None:
+            raise AssertionError("the store must not be consulted when a preset is supplied")
+
+    preset = SavedSearch(
+        id="explicit_preset",
+        name="Explicit Preset",
+        search=SearchConfig(keyword="from_object"),
+        filter=FilterConfig(education="本科"),
+    )
+
+    harness = SmokeHarness(
+        driver=MagicMock(),
+        saved_search=preset,
+        saved_search_id="default_agent_search",
+        saved_search_store=_UnusableStore(),
+    )
+
+    assert harness.search_config.keyword == "from_object"
+    assert harness.filter_config.education == "本科"

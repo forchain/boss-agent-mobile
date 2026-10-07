@@ -26,6 +26,7 @@ import pytest
 
 from boss_agent.enums import ChannelPreference
 from boss_agent.feed_pipeline import FeedStreamConfig
+from boss_agent.saved_search_store import InMemorySavedSearchStore
 from boss_agent.screening_policy import ScreeningPolicy, resolve_screening_policy
 from boss_agent.search_entities import FilterConfig, SavedSearch, SearchConfig
 from boss_agent.task_launch import LaunchSource, build_search_launch
@@ -378,7 +379,7 @@ def test_interactive_runner_agrees_with_the_worker_on_the_same_strategy():
 def test_resolve_screening_policy_does_not_edit_the_policy_it_was_given():
     """The caller's policy is often shared, so the override must not overwrite it.
 
-    ``SavedSearchRegistry.get`` hands back the object the registry stores, so an
+    ``SavedSearchStore.get_saved_search`` hands back the object the store holds, so an
     in-place override would replace the operator's global screening configuration for the
     rest of the process — a run that pinned a channel would leak it into every strategy
     that inherits.
@@ -393,9 +394,15 @@ def test_resolve_screening_policy_does_not_edit_the_policy_it_was_given():
     assert resolved is not shared
 
 
-def test_registry_stored_policy_survives_a_strategy_run():
-    """End of the blast radius: running one direct-only strategy must not narrow the rest."""
-    from boss_agent.searches import SavedSearchRegistry
+@pytest.mark.asyncio
+async def test_stored_policy_survives_a_strategy_run():
+    """End of the blast radius: running one direct-only strategy must not narrow the rest.
+
+    The preset is written through the store and then read back by id, which is the path
+    the harness actually takes now that it resolves named presets through the seam. A
+    store read hands back the object the store holds, so an in-place override would
+    replace the operator's stored screening configuration for the rest of the process.
+    """
     from boss_agent.workflows import SmokeHarness
 
     strategy = SavedSearch(
@@ -404,9 +411,11 @@ def test_registry_stored_policy_survives_a_strategy_run():
         filter=FilterConfig(channel_preference="direct_only"),
         screening_policy=ScreeningPolicy(channel_preference="all"),
     )
-    registry = SavedSearchRegistry()
-    registry.register(strategy)
+    store = InMemorySavedSearchStore()
+    await store.save_saved_search(strategy)
 
-    SmokeHarness(driver=MagicMock(), saved_search=registry.get(strategy.id))
+    SmokeHarness(driver=MagicMock(), saved_search_id=strategy.id, saved_search_store=store)
 
-    assert registry.get(strategy.id).screening_policy.channel_preference == "all"
+    stored = await store.get_saved_search(strategy.id)
+    assert stored is not None
+    assert stored.screening_policy.channel_preference == "all"
