@@ -46,6 +46,10 @@ cd "${ROOT_DIR}"
 source "$(dirname "${BASH_SOURCE[0]}")/runner_lib.sh"
 
 mkdir -p ".boss_agent"
+RUNNER_TMP_DIR="${ROOT_DIR}/.boss_agent/run"
+mkdir -p "${RUNNER_TMP_DIR}" 2>/dev/null || RUNNER_TMP_DIR="${TMPDIR:-/tmp}"
+# Opportunistically purge stale bounded query temp files older than 5 minutes.
+find "${RUNNER_TMP_DIR}" -maxdepth 1 -name "boss_agent_bounded.*" -mmin +5 -delete 2>/dev/null || true
 
 PID_FILE=".boss_agent/emulator.pid"
 LOG_FILE=".boss_agent/emulator.log"
@@ -146,7 +150,9 @@ bounded_run() {
     local TIMEOUT_SEC="$1"
     shift
     local OUT_FILE
-    OUT_FILE="$(mktemp "${TMPDIR:-/tmp}/boss_agent_bounded.XXXXXX")"
+    OUT_FILE="$(mktemp "${RUNNER_TMP_DIR}/boss_agent_bounded.XXXXXX")"
+    trap 'rm -f "${OUT_FILE}" 2>/dev/null || true; exit 143' INT TERM
+    trap 'rm -f "${OUT_FILE}" 2>/dev/null || true' EXIT
 
     "$@" >"${OUT_FILE}" 2>/dev/null &
     local CMD_PID=$!
@@ -179,7 +185,8 @@ bounded_run() {
     fi
 
     cat "${OUT_FILE}" 2>/dev/null || true
-    rm -f "${OUT_FILE}"
+    rm -f "${OUT_FILE}" 2>/dev/null || true
+    trap - EXIT INT TERM
     return "${EXIT_CODE}"
 }
 
