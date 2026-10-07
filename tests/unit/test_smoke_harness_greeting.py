@@ -1,173 +1,161 @@
 """
 tests.unit.test_smoke_harness_greeting
 ======================================
-Unit tests for SmokeHarness integration with resume memory, match scoring, and greeting draft typing.
+SmokeHarness integration with resume memory, match scoring, and greeting drafting.
+
+The greeting used to be drafted by this module's own LangGraph walk over a posting the
+harness had extracted itself, which meant the assertions here had to reach into the
+harness's page objects to stub the extraction. Issue #390 collapses that walk into
+``JobFeedPipeline``: the run screens the card, drafts the greeting and reports what it
+drafted, and these tests drive it through the scripted device that the pipeline's own
+suites share.
+
+The claim each test pins is unchanged — a drafted greeting reaches the operator's match
+card, and a posting turned down by an App-Enforced Filter never gets one.
 """
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+from _feed_harness import ScriptedFeed, _card, _detail_page, _posting, script_pages
+
 from boss_agent.candidate_entities import CandidateProfile
+from boss_agent.enums import ChatButtonState
 from boss_agent.matching import MatchGreetingResult
+from boss_agent.pages import ChatPage
+from boss_agent.screening_policy import ScreeningPolicy
+from boss_agent.search_entities import FilterConfig
 from boss_agent.workflows import SmokeHarness, TakeoverHandler
 
+_HEADHUNTER_JD = (
+    "主导企业级大模型应用与Agent工作流平台建设，负责推理链编排、"
+    "向量检索体系优化以及多智能体协同框架的架构设计。"
+)
 
-def test_smoke_harness_runs_matching_and_types_greeting():
-    mock_driver = MagicMock()
-    mock_driver.get_window_size.return_value = {"width": 1080, "height": 2400}
 
-    mock_btn = MagicMock()
-    mock_btn.rect = {"x": 50, "y": 50, "width": 100, "height": 50}
-
-    mock_title_elem = MagicMock()
-    mock_title_elem.text = "资深 Agent 研发工程师"
-
-    mock_company_elem = MagicMock()
-    mock_company_elem.text = "未来智能"
-
-    mock_salary_elem = MagicMock()
-    mock_salary_elem.text = "40-60K"
-
-    mock_desc_elem = MagicMock()
-    # A realistic JD: greeting drafting is gated on a substantive description, so a
-    # terse fixture would never reach the matching service at all.
-    mock_desc_elem.text = (
-        "岗位职责：负责移动端自动化框架与大模型能力结合的研发工作，"
-        "要求精通 Python、Appium 与多智能体编排。"
-    )
-
-    step_in_chat = False
-
-    def mock_find_elements(by, value):
-        nonlocal step_in_chat
-        if "tv_job_name" in value:
-            return [mock_title_elem]
-        if "tv_company_name" in value:
-            return [mock_company_elem]
-        if "tv_job_salary" in value:
-            return [mock_salary_elem]
-        if "tv_description" in value or "tv_job_desc" in value:
-            return [mock_desc_elem]
-        if "btn_chat" in value or "立即沟通" in value:
-            step_in_chat = True
-            return [mock_btn]
-        if "editText_with_scrollbar" in value or "chat_editor" in value:
-            return [mock_btn] if step_in_chat else []
-        if "chat" in value:
-            return [mock_btn] if step_in_chat else []
-        return [mock_btn]
-
-    mock_driver.find_elements.side_effect = mock_find_elements
-
-    mock_memory_mgr = MagicMock()
-    mock_profile = CandidateProfile(
+def _harness(driver, matching_service, **kwargs) -> SmokeHarness:
+    """A harness whose greeting is drafted by the injected matching service."""
+    memory_manager = MagicMock()
+    memory_manager.load_memory.return_value = CandidateProfile(
         name="测试候选人",
         years_of_experience=7,
         core_skills=["Python", "Appium", "LLM"],
     )
-    mock_memory_mgr.load_memory.return_value = mock_profile
-
-    mock_matching_svc = MagicMock()
-    mock_match_result = MatchGreetingResult(
-        match_score=95,
-        match_reasons=["技术栈高度匹配", "多年自动化经验"],
-        greeting_message="您好！我对贵司资深 Agent 研发工程师岗位非常感兴趣！",
-    )
-    mock_matching_svc.evaluate_and_draft_greeting.return_value = mock_match_result
-
-    takeover = TakeoverHandler(mock_driver, auto_confirm_for_test=True)
-    harness = SmokeHarness(
-        driver=mock_driver,
-        takeover_handler=takeover,
-        memory_manager=mock_memory_mgr,
-        matching_service=mock_matching_svc,
+    return SmokeHarness(
+        driver=driver,
+        takeover_handler=TakeoverHandler(driver, auto_confirm_for_test=True),
+        memory_manager=memory_manager,
+        matching_service=matching_service,
+        filter_config=FilterConfig(
+            education=None, salary=None, experience=None, activity=None, company_scales=[]
+        ),
         preview_timeout_sec=0.01,
         enable_greeting_draft=True,
+        **kwargs,
+    )
+
+
+def _matching_service() -> MagicMock:
+    """A matching service whose draft is fixed, so the run's report is predictable."""
+    service = MagicMock()
+    service.evaluate_and_draft_greeting.return_value = MatchGreetingResult(
+        match_score=95,
+        match_reasons=["技术栈高度匹配"],
+        greeting_message="您好！我对贵司大模型平台岗位非常感兴趣！",
+    )
+    return service
+
+
+def test_smoke_harness_drafts_and_renders_the_greeting_for_the_extracted_posting():
+    """The greeting is drafted by the matching service the caller injected.
+
+    The harness passes *its* ``JobMatchGreetingService`` into the screener the pipeline
+    runs, so the run drafts through the same object the caller holds — that is what makes
+    a smoke test's greeting the same artefact a worker's would be. The draft is then
+    reported back for the posting that was actually extracted, and rendered: rendering is
+    presentation, and the pipeline does not present.
+    """
+    driver = MagicMock()
+    driver.get_window_size.return_value = {"width": 1080, "height": 2400}
+    matching_service = _matching_service()
+    harness = _harness(driver, matching_service)
+    script_pages(
+        harness.pipeline,
+        feed=ScriptedFeed([[_card("资深 Agent 研发工程师", "未来智能")]]),
+        detail=_detail_page(posting=_posting("资深 Agent 研发工程师", "未来智能")),
     )
 
     with patch("time.sleep", return_value=None):
         job = harness.run_smoke_test()
 
     assert job.title == "资深 Agent 研发工程师"
-    mock_memory_mgr.load_memory.assert_called_once()
-    mock_matching_svc.evaluate_and_draft_greeting.assert_called_once()
-    mock_matching_svc.render_match_card.assert_called_once_with(job, mock_match_result)
+    harness.memory_manager.load_memory.assert_called_once()
+    matching_service.evaluate_and_draft_greeting.assert_called_once()
+    matching_service.render_match_card.assert_called_once()
+    rendered_job, rendered_match = matching_service.render_match_card.call_args[0]
+    assert rendered_job is job
+    assert rendered_match.match_score == 95
+    assert (
+        rendered_match.greeting_message
+        == matching_service.evaluate_and_draft_greeting.return_value.greeting_message
+    )
 
 
 def _headhunter_smoke_harness(channel_policy, whitelist=None):
-    """Build a SmokeHarness whose detail page yields a headhunter posting."""
-    from boss_agent.job_entities import JobPosting
-    from boss_agent.screening_policy import ScreeningPolicy
-
+    """A harness whose feed's only card is a headhunter posting."""
     mock_driver = MagicMock()
     mock_driver.get_window_size.return_value = {"width": 1080, "height": 2400}
-    mock_btn = MagicMock()
-    mock_btn.rect = {"x": 50, "y": 50, "width": 100, "height": 50}
-    mock_driver.find_elements.return_value = [mock_btn]
 
-    mock_memory_mgr = MagicMock()
-    mock_memory_mgr.load_memory.return_value = CandidateProfile(
-        name="测试候选人",
-        years_of_experience=7,
-        core_skills=["Python", "Appium", "LLM"],
-    )
-
-    mock_matching_svc = MagicMock()
-    mock_matching_svc.evaluate_and_draft_greeting.return_value = MatchGreetingResult(
-        match_score=95,
-        match_reasons=["技术栈高度匹配"],
-        greeting_message="您好！看到贵司大模型平台岗位，我有完整实战经验……",
-    )
-
-    harness = SmokeHarness(
-        driver=mock_driver,
-        takeover_handler=TakeoverHandler(mock_driver, auto_confirm_for_test=True),
-        memory_manager=mock_memory_mgr,
-        matching_service=mock_matching_svc,
+    matching_service = _matching_service()
+    harness = _harness(
+        mock_driver,
+        matching_service,
         screening_policy=ScreeningPolicy(
             channel_preference=channel_policy,
             title_whitelist=whitelist or [],
         ),
-        preview_timeout_sec=0.01,
-        enable_greeting_draft=True,
     )
-
-    # Detail extraction on real devices yields no recruiter facet; inject a
-    # headhunter posting directly to exercise the App-Enforced Filter path.
-    harness.detail_page = MagicMock()
-    harness.detail_page.extract_job_posting.return_value = JobPosting(
-        title="大模型平台负责人",
-        company_name="某人力资源服务公司",
-        salary_range="40-60K",
-        job_description=(
-            "主导企业级大模型应用与Agent工作流平台建设，负责推理链编排、"
-            "向量检索体系优化以及多智能体协同框架的架构设计。"
+    chat_page = MagicMock(spec=ChatPage)
+    # A headhunter posting carries the channel on the card the scanner sees, which is
+    # where the App-Enforced Filter reads it from.
+    script_pages(
+        harness.pipeline,
+        feed=ScriptedFeed(
+            [[_card("大模型平台负责人", "某人力资源服务公司", recruiter_title="猎头顾问")]]
         ),
-        recruiter_name="钟先生",
-        recruiter_title="猎头顾问",
-        is_headhunter=True,
+        detail=_detail_page(
+            state=ChatButtonState.UNCONTACTED,
+            posting=_posting("大模型平台负责人", "某人力资源服务公司"),
+        ),
+        chat=chat_page,
     )
-    return harness, mock_matching_svc
+    return harness, matching_service, chat_page
 
 
 def test_smoke_harness_app_rule_violation_short_circuits_greeting():
-    """direct_only + headhunter posting without whitelist rescue: the CLI workflow
-    must NOT draft/type a greeting or open chat (issue review: workflows guard)."""
-    harness, mock_matching_svc = _headhunter_smoke_harness("direct_only")
+    """direct_only + a headhunter posting without whitelist rescue.
 
-    with patch("time.sleep", return_value=None):
+    The App-Enforced Filter turns the card down before a detail page is ever worth opening,
+    so no greeting is drafted, none is rendered, and nothing reaches a chat window — the
+    run must stop there rather than message a posting it just rejected.
+    """
+    harness, matching_service, chat_page = _headhunter_smoke_harness("direct_only")
+
+    with patch("time.sleep", return_value=None), pytest.raises(RuntimeError):
         harness.run_smoke_test()
 
-    mock_matching_svc.evaluate_and_draft_greeting.assert_not_called()
-    mock_matching_svc.render_match_card.assert_not_called()
-    harness.detail_page.open_chat.assert_not_called()
+    matching_service.evaluate_and_draft_greeting.assert_not_called()
+    matching_service.render_match_card.assert_not_called()
+    harness.pipeline.detail_page.open_chat.assert_not_called()
+    chat_page.type_greeting_message.assert_not_called()
 
 
 def test_smoke_harness_relaxed_headhunter_still_drafts_greeting():
-    """direct_only + headhunter posting hitting the whitelist: relaxation rescue keeps
+    """direct_only + a headhunter posting hitting the whitelist: relaxation rescue keeps
     the normal greeting draft path alive."""
-    harness, mock_matching_svc = _headhunter_smoke_harness("direct_only", whitelist=["大模型"])
+    harness, matching_service, _ = _headhunter_smoke_harness("direct_only", whitelist=["大模型"])
 
     with patch("time.sleep", return_value=None):
         harness.run_smoke_test()
 
-    mock_matching_svc.evaluate_and_draft_greeting.assert_called_once()
+    matching_service.evaluate_and_draft_greeting.assert_called_once()

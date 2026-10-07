@@ -48,8 +48,8 @@ from .identifier_helpers import (
     is_direct_hire_company,
     jd_is_usable_on_file,
 )
-from .job_entities import JobCardBrief
-from .job_store import INVALID_JOB_TITLES, JobRecordStore
+from .job_entities import JobCardBrief, JobPosting
+from .job_store import INVALID_JOB_TITLES, InMemoryJobRecordStore, JobRecordStore
 from .keyword_constants import (
     APPLIED_SOURCE_AGENT,
     APPLIED_SOURCE_PLATFORM_HISTORICAL,
@@ -145,6 +145,14 @@ class FeedStreamResult:
     processed: int = 0
     skipped: int = 0
     jobs: list[dict[str, Any]] = field(default_factory=list)
+    #: The postings this run actually extracted, typed instead of as store records.
+    #: ``jobs`` speaks the store's vocabulary — its keys are private to the persistence
+    #: layer and cannot change while the worker handlers read them — so a caller outside
+    #: the worker had no way to read an extraction without hardcoding those keys
+    #: (issue #389). These are what the platform screens with, and they exist only once a
+    #: detail page actually yielded one: a card whose detail read failed still sits in
+    #: ``jobs`` as itself, and a card the run withdraws at the detail stage leaves neither.
+    postings: list[JobPosting] = field(default_factory=list)
     applied: bool = False
     applied_count: int = 0
     score: int = 0
@@ -418,6 +426,11 @@ class _CardRun:
     # Position of this card's record in ``result.jobs``, replaced in place by the
     # enriched record and dropped when the card turns out to be a skip.
     jobs_index: int | None = None
+    # The same position in ``result.postings``, once a detail page has yielded one. It is
+    # set later than ``jobs_index`` — the card record is written before the detail read —
+    # and stays ``None`` when no posting was ever extracted, which is what keeps a card
+    # that failed its detail read out of the typed list while remaining in ``jobs``.
+    postings_index: int | None = None
     # Greetings already dispatched today, as read by this card's quota check. The read is
     # reused by the log lines instead of paying a second round trip per card.
     applied_today: int = 0
@@ -478,18 +491,32 @@ class JobFeedPipeline:
     Dependencies are injected so a run can be driven against synthetic page state:
     a Job Record Store for every persistence decision, a Candidate Screener for every
     screening decision, a log sink and a cancellation probe.
+
+    Only the driver is required. A caller with no broker and no PocketBase server behind
+    it composes the engine with nothing but a driver and gets the volatile ledger
+    (issue #389), so the pipeline is reachable standalone — the worker path through
+    :meth:`for_task` remains the composition that talks to a real server.
     """
 
     def __init__(
         self,
         driver: Any,
-        store: JobRecordStore,
+        store: JobRecordStore | None = None,
         screener: CandidateScreener | None = None,
         log: Callable[[str], Awaitable[None]] | None = None,
         is_cancelled: Callable[[], Awaitable[bool]] | None = None,
     ) -> None:
         self.driver = driver
-        self.store = store
+        # A store is required for the run to mean anything, and until issue #389 the only
+        # one on offer was the broker's ledger — which made a PocketBase server a
+        # precondition for merely composing the engine. A caller that has no broker gets
+        # the volatile ledger instead: the pipeline keeps its full persistence semantics
+        # for the length of the run and the process, which is exactly what a standalone
+        # run wants, rather than a caller having to invent a no-op store to satisfy it.
+        # Keyed on ``is None`` rather than truthiness: an empty ledger is falsy, and
+        # emptiness is a real ledger's normal state at the start of a run, so a truthiness
+        # default would swap the caller's own store out from under it.
+        self.store: JobRecordStore = store if store is not None else InMemoryJobRecordStore()
         self.screener = screener or CandidateScreener()
         self._log_sink = log
         self._cancel_probe = is_cancelled
@@ -914,6 +941,11 @@ class JobFeedPipeline:
             posting = await self._read_posting(run, card, existing_record)
             if posting is None:
                 return
+            # From here the posting exists as a thing the run extracted, whether or not
+            # the stage below keeps it; the typed list records that, and ``_reject_...``
+            # withdraws it again if the detail-stage rules turn the card down (issue #389).
+            run.result.postings.append(posting)
+            run.postings_index = len(run.result.postings) - 1
             await self._evaluate_and_act(run, posting)
         finally:
             self.detail_page.navigate_back()
@@ -1164,6 +1196,11 @@ class JobFeedPipeline:
         if run.jobs_index is not None and run.result.jobs:
             run.result.jobs.pop(run.jobs_index)
             run.jobs_index = None
+        # The extracted posting is withdrawn with its record: a card rejected here was
+        # never collected, so leaving it behind would report a posting the run discarded.
+        if run.postings_index is not None and run.result.postings:
+            run.result.postings.pop(run.postings_index)
+            run.postings_index = None
 
         saved = await self.store.upsert_job_record(enriched)
         title = effective_title(posting, card)
@@ -1747,6 +1784,8 @@ class JobFeedPipeline:
                 f"🎗️ [白名单放宽] '{title}' 获豁免继续评估: {run.verdict.relaxation_reason}"
             )
 
+        run.result.postings.append(posting)
+        run.postings_index = len(run.result.postings) - 1
         await self._evaluate_and_act(run, posting)
 
     # ------------------------------------------------------------------
