@@ -20,7 +20,10 @@ The boundaries enforced here, one rule each:
 3. `communication` never imports `job_feed` or `job_detail`: 仅沟通 chat reads conversations,
    never job discovery.
 4. `job_feed` never imports `communication`, for the same reason in the other direction.
-5. The five submodules form no import cycle at all.
+5. No two submodules form an import cycle at all. Rules 2 and 5 range over the submodules
+   *discovered from the package on disk*, not over a hand-written list, so the next submodule
+   is covered the day it lands; `test_page_submodule_discovery_still_covers_...` is what keeps
+   that discovery from shrinking in silence.
 6. Only the screen drivers may import page objects. Every other module under `src/boss_agent/`
    is a decision, entity, store, prompt or broker module that has no business paying Appium's
    import cost -- see `SCREEN_DRIVERS` for the accepted exception.
@@ -58,8 +61,14 @@ BOSS_AGENT_ROOT = SOURCE_ROOT / "boss_agent"
 
 PAGES_PACKAGE = "boss_agent.pages"
 
-#: The five feature submodules the split produced, and the nodes the cycle rule walks.
-FEATURE_SUBMODULES = ("base", "system", "job_feed", "job_detail", "communication")
+#: The page layer's own directory, read off disk by the discovery below.
+PAGES_ROOT = BOSS_AGENT_ROOT / "pages"
+
+#: The submodules the split produced, kept as a *required* set rather than the source of truth.
+#: Rules 2 and 5 range over `_feature_submodules()` instead, so a sixth submodule added later is
+#: covered by both without a line of prose remembering to add it; this tuple is what stops that
+#: discovery from quietly shrinking either.
+REQUIRED_PAGE_SUBMODULES = ("base", "system", "job_feed", "job_detail", "communication")
 
 #: The only page-layer module `base` and `system` may depend on: the shared screen base they
 #: both subclass. `base` is the root of the layer, so even `system` is out of reach from it.
@@ -157,6 +166,18 @@ def _module_path(dotted: str) -> Path:
     if package_root.is_dir():
         return package_root / "__init__.py"
     return package_root.with_suffix(".py")
+
+
+def _feature_submodules() -> tuple[str, ...]:
+    """The page layer's own submodules, discovered from the package on disk.
+
+    Rules 2 and 5 are only ever as good as the set they range over. Seeding both from a literal
+    tuple meant a `pages/filters.py` added later never entered the cycle walk and was never asked
+    whether it imports the facade -- so a new submodule reaching back for the facade, or forming a
+    cycle with `base`, would have passed the tier in silence. This reads the directory instead,
+    the way rule 6's domain sweep already reads `src/boss_agent/`.
+    """
+    return tuple(sorted(path.stem for path in PAGES_ROOT.glob("*.py") if path.stem != "__init__"))
 
 
 # --------------------------------------------------------------------------- #
@@ -264,13 +285,14 @@ def test_the_shared_base_and_startup_screens_depend_on_no_other_screen(submodule
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.parametrize("submodule", FEATURE_SUBMODULES)
+@pytest.mark.parametrize("submodule", _feature_submodules())
 def test_no_submodule_imports_the_backwards_compatible_facade(submodule: str) -> None:
-    """`boss_agent.pages/__init__.py` imports all five submodules, so they must not import it.
+    """`boss_agent.pages/__init__.py` imports every submodule, so they must not import it.
 
     The facade is where every legacy caller still lands, and it is the *broadest* import in
     the layer: a submodule reaching back for it would both form an import cycle and undo the
-    point of the split by re-acquiring its siblings.
+    point of the split by re-acquiring its siblings. Parametrised over the discovered
+    submodules, so the next one added is covered by this rule on the day it lands.
     """
     path = _module_path(f"{PAGES_PACKAGE}.{submodule}")
     offenders = [record for record in _page_imports(path) if record.module == PAGES_PACKAGE]
@@ -354,7 +376,7 @@ class LayerEdge:
 def _layer_edges() -> dict[str, list[LayerEdge]]:
     """The page layer's own import graph, facade included, edges carrying their line numbers."""
     graph: dict[str, list[LayerEdge]] = {
-        f"{PAGES_PACKAGE}.{name}": [] for name in FEATURE_SUBMODULES
+        f"{PAGES_PACKAGE}.{name}": [] for name in _feature_submodules()
     }
     graph[PAGES_PACKAGE] = []
     for node in graph:
@@ -401,6 +423,27 @@ def test_the_page_submodules_form_no_import_cycle() -> None:
     cycle = _find_cycle(_layer_edges())
 
     assert cycle is None, "the page layer has an import cycle: " + " -> ".join(cycle)
+
+
+# --------------------------------------------------------------------------- #
+# The discovered set is the guard -- prove it still reaches the layer
+# --------------------------------------------------------------------------- #
+
+
+def test_page_submodule_discovery_still_covers_the_submodules_the_split_named() -> None:
+    """Discovery must not quietly shrink rules 2 and 5 as the tree moves.
+
+    Both rules are parametrised over `_feature_submodules()`, so a discovery that returned
+    nothing -- or that missed a renamed file -- would leave them green while covering no
+    layer at all. The five submodules the split produced are the floor.
+    """
+    discovered = set(_feature_submodules())
+    missing = sorted(set(REQUIRED_PAGE_SUBMODULES) - discovered)
+
+    assert not missing, (
+        "these page submodules are no longer discovered, so rules 2 and 5 no longer guard "
+        f"them: {missing}"
+    )
 
 
 # --------------------------------------------------------------------------- #

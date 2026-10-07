@@ -18,8 +18,18 @@ migrates away from the facade and something must be re-decided on purpose.
 import ast
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).parents[2]
+PAGES_ROOT = REPO_ROOT / "src" / "boss_agent" / "pages"
 FEED_PIPELINE = REPO_ROOT / "src" / "boss_agent" / "feed_pipeline.py"
+
+#: The page-layer submodules on disk, so an imported *name* can be read as the submodule it
+#: names rather than as a facade symbol: `from boss_agent.pages import job_feed` binds the
+#: submodule, not the package.
+PAGE_SUBMODULES = frozenset(
+    path.stem for path in PAGES_ROOT.glob("*.py") if path.stem != "__init__"
+)
 
 #: Every page model the feed engine owns, mapped to the submodule that declares it. The facade
 #: is spelled ``<facade>`` so a regression that routes one of these back through it is
@@ -43,19 +53,67 @@ def _page_import_sources(module_path: Path) -> dict[str, str]:
 
     A facade import reads as ``<facade>``, so this answers "which file declared the symbol
     this module depends on" from the source tree alone -- no import of `boss_agent` needed.
+
+    All three spellings that reach the layer are read, matching
+    ``test_chat_triage_page_imports``: the ``from X import name`` the engine uses today, the
+    ``import boss_agent.pages.job_feed`` that is an ``ast.Import`` rather than an
+    ``ImportFrom``, and the ``from boss_agent.pages import job_feed`` whose ``node.module``
+    is the facade and whose imported *name* is the submodule.
     """
     tree = ast.parse(module_path.read_text(encoding="utf-8"))
     sources: dict[str, str] = {}
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.ImportFrom) or node.module is None:
-            continue
-        parts = node.module.split(".")
+
+    def record(module: str, bound: str) -> None:
+        """Bind `bound` to the submodule tail after `pages`, or to ``<facade>``."""
+        parts = module.split(".")
         if "pages" not in parts:
-            continue
+            return
         tail = ".".join(parts[parts.index("pages") + 1 :])
-        for alias in node.names:
-            sources[alias.name] = tail or "<facade>"
+        if not tail and bound in PAGE_SUBMODULES:
+            # A name imported straight from the package may be the submodule itself:
+            # `from .pages import job_feed` binds `job_feed`, not the facade.
+            tail = bound
+        sources[bound] = tail or "<facade>"
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                record(alias.name, alias.asname or alias.name.split(".")[-1])
+        elif isinstance(node, ast.ImportFrom) and node.module is not None:
+            for alias in node.names:
+                record(node.module, alias.name)
     return sources
+
+
+#: Every spelling that reaches the page layer, pinned against synthetic sources: a parser that
+#: stops reading one of them would let a page model into the feed engine unnoticed.
+PAGE_IMPORT_SPELLINGS = (
+    "from .pages.job_feed import JobListPage",
+    "from .pages.communication import ChatPage",
+    "from boss_agent.pages.job_detail import JobDetailPage",
+    "import boss_agent.pages.job_feed",
+    "import boss_agent.pages.job_feed as feed",
+    "from .pages import job_feed",
+    "from boss_agent.pages import job_feed",
+)
+
+
+@pytest.mark.parametrize("source", PAGE_IMPORT_SPELLINGS, ids=PAGE_IMPORT_SPELLINGS)
+def test_the_guard_reads_every_spelling_that_reaches_the_page_layer(
+    source: str, tmp_path: Path
+) -> None:
+    """Prove the source map is reachable, not just present.
+
+    Both rules below read `_page_import_sources`, so a spelling it cannot see is a page
+    model that arrives in the feed engine with no failure to explain it. Each spelling is
+    checked here rather than left to a future import to reveal.
+    """
+    probe = tmp_path / "probe.py"
+    probe.write_text(source, encoding="utf-8")
+
+    assert _page_import_sources(probe), (
+        f"the parser cannot see {source!r}, so neither rule can fail"
+    )
 
 
 def test_feed_pipeline_takes_each_page_model_from_the_submodule_that_owns_it() -> None:
