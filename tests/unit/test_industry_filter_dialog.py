@@ -1,11 +1,35 @@
-"""Unit tests for IndustryFilterDialogPage, FilterConfig industries multi-select, and SmokeHarness integration."""
+"""
+tests/unit/test_industry_filter_dialog.py
+=========================================
+Industry multi-select in ``FilterConfig``, the industry dialog page, and how a run applies it.
 
-from unittest.mock import MagicMock
+The integration test at the bottom of this file used to drive ``SmokeHarness`` over a
+mocked driver to show that a run with industries configured still completed — asserting the
+shape of a procedural walk rather than anything about the industries (issue #391). The
+industry multi-select belongs to ``JobFeedPipeline`` now, so that claim is made there: the
+run passes the operator's industry list to the industry dialog, and keeps its extraction.
 
-from boss_agent.job_entities import JobPosting
+The dialog's own behaviours — multi-select, cancel, auto-scroll to an off-screen option —
+stay tested against ``IndustryFilterDialogPage``, which is the object the pipeline drives.
+"""
+
+from unittest.mock import MagicMock, patch
+
+import pytest
+from _feed_harness import ScriptedFeed, _card, _detail_page, _pipeline, _posting
+
+from boss_agent.feed_pipeline import FeedStreamConfig
 from boss_agent.pages.job_feed import IndustryFilterDialogPage
-from boss_agent.search_entities import FilterConfig, SearchConfig
-from boss_agent.workflows import SmokeHarness, TakeoverHandler
+from boss_agent.search_entities import FilterConfig
+
+WITH_INDUSTRIES = FilterConfig(
+    education="硕士",
+    salary="5万元以上",
+    experience="10年以上",
+    activity="今日活跃",
+    company_scales=["100-499人"],
+    industries=["游戏", "人工智能"],
+)
 
 
 def test_industry_filter_config():
@@ -122,40 +146,29 @@ def test_industry_filter_dialog_auto_scroll():
     assert scroll_count >= 1
 
 
-def test_smoke_harness_with_industry_filter():
-    mock_driver = MagicMock()
-    mock_driver.get_window_size.return_value = {"width": 1080, "height": 2400}
+@pytest.mark.asyncio
+async def test_a_run_applies_the_operator_industry_list_to_the_industry_dialog():
+    """Industries are a multi-select the run hands over whole, not one at a time.
 
-    mock_btn = MagicMock()
-    mock_btn.rect = {"x": 50, "y": 50, "width": 100, "height": 50}
-
-    mock_title_elem = MagicMock()
-    mock_title_elem.text = "资深大模型算法专家"
-
-    def mock_find_elements(by, value):
-        if "tv_job_name" in value:
-            return [mock_title_elem]
-        if "chat" in value or "editText_with_scrollbar" in value or "btn_chat" in value:
-            return []
-        return [mock_btn]
-
-    mock_driver.find_elements.side_effect = mock_find_elements
-
-    takeover = TakeoverHandler(mock_driver, auto_confirm_for_test=True)
-    harness = SmokeHarness(
-        driver=mock_driver,
-        takeover_handler=takeover,
-        search_config=SearchConfig(keyword="agent"),
-        filter_config=FilterConfig(
-            education="硕士",
-            salary="5万元以上",
-            experience="10年以上",
-            activity="今日活跃",
-            company_scales=["100-499人"],
-            industries=["游戏", "人工智能"],
-        ),
+    ``IndustryFilterDialogPage`` is not a native app filter — it is the engine's own
+    screen — and the pipeline applies it before the general filter dialog, which is the
+    order the app expects. The list that arrives has to be the operator's own: an industry
+    silently dropped here is a whole category of postings the run never shows them.
+    """
+    pipeline = _pipeline(
+        None,
+        feed=ScriptedFeed([[_card("资深大模型算法专家", "智元创新")]]),
+        detail=_detail_page(posting=_posting()),
     )
 
-    job = harness.run_smoke_test()
-    assert isinstance(job, JobPosting)
-    assert job.title == "资深大模型算法专家"
+    with patch("boss_agent.feed_pipeline.IndustryFilterDialogPage") as industry_cls:
+        result = await pipeline.stream_jobs(
+            FeedStreamConfig(keyword="Agent", max_jobs=1, filter_config=WITH_INDUSTRIES)
+        )
+
+    industry_cls.return_value.apply_industry_filters.assert_called_once()
+    industries = industry_cls.return_value.apply_industry_filters.call_args.args[0]
+    assert industries == ["游戏", "人工智能"]
+    # Filtering narrows what the feed shows; it is not what decides whether the run
+    # produced anything, so the extraction is still reported.
+    assert [p.title for p in result.postings] == ["AI Agent 平台工程师"]
