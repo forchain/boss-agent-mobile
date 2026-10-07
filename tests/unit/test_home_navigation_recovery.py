@@ -1,11 +1,26 @@
-"""Unit tests for home page state detection and navigation recovery."""
+"""
+tests/unit/test_home_navigation_recovery.py
+===========================================
+Home page state detection, Back-only recovery, and where a feed run starts.
+
+``JobListPage`` still owns home recovery — the pipeline drives it, it does not own it — so
+the page-level guarantees below (Back-only, the 职位 tab anchor, bounded attempts) are
+tested against that object, with the device findings they encode kept in their docstrings.
+
+The last test in this file used to be different in kind: it drove ``SmokeHarness`` over a
+mocked driver to show that a run recovered to home before searching, which asserted the
+shape of a procedural walk (issue #391). That decision belongs to ``JobFeedPipeline`` now —
+the run that opens with no keyword says ``enable_search=False`` and the pipeline resets to
+home — so it is asserted there, on the config the run was actually given.
+"""
 
 from unittest.mock import MagicMock
 
-from boss_agent.job_entities import JobPosting
+import pytest
+from _feed_harness import ScriptedFeed, _card, _detail_page, _pipeline, _posting
+
+from boss_agent.feed_pipeline import FeedStreamConfig
 from boss_agent.pages import JobListPage
-from boss_agent.search_entities import SavedSearch
-from boss_agent.workflows import SmokeHarness, TakeoverHandler
 
 
 def test_is_on_home_page_detection():
@@ -110,35 +125,27 @@ def test_navigate_to_home_gives_up_after_bounded_attempts():
     assert mock_driver.press_keycode.call_count <= 4
 
 
-def test_smoke_harness_recovers_to_home_before_search():
-    mock_driver = MagicMock()
-    mock_driver.get_window_size.return_value = {"width": 1080, "height": 2400}
+@pytest.mark.asyncio
+async def test_a_run_with_no_keyword_resets_to_home_before_browsing_recommendations():
+    """A keyword-less run starts from the home feed, and does not go looking for a search.
 
-    mock_btn = MagicMock()
-    mock_btn.rect = {"x": 50, "y": 50, "width": 100, "height": 50}
+    ``SearchConfig.should_search`` is False when no keyword was given, which the pipeline
+    reads as ``enable_search=False``: reset to home, browse what is recommended, submit no
+    search. The old version of this test proved the same thing by walking a harness over a
+    mocked driver; here the claim is about the run's intent and where the engine started
+    it, and the posting it extracts comes from the scripted feed rather than from whatever
+    a mocked ``find_elements`` happened to return.
+    """
+    feed = ScriptedFeed([[_card("大模型 Agent 架构师", "智元创新")]])
+    pipeline = _pipeline(None, feed=feed, detail=_detail_page(posting=_posting()))
 
-    mock_title_elem = MagicMock()
-    mock_title_elem.text = "大模型 Agent 架构师"
-
-    def mock_find_elements(by, value):
-        if "tv_job_name" in value:
-            return [mock_title_elem]
-        if "chat" in value or "editText_with_scrollbar" in value or "btn_chat" in value:
-            return []
-        return [mock_btn]
-
-    mock_driver.find_elements.side_effect = mock_find_elements
-
-    takeover = TakeoverHandler(mock_driver, auto_confirm_for_test=True)
-    harness = SmokeHarness(
-        driver=mock_driver,
-        takeover_handler=takeover,
-        saved_search=SavedSearch(id="test_query", name="Test Query"),
+    result = await pipeline.stream_jobs(
+        FeedStreamConfig(keyword=None, enable_search=False, max_jobs=1)
     )
 
-    job = harness.run_smoke_test()
-    assert isinstance(job, JobPosting)
-    assert job.title == "大模型 Agent 架构师"
+    assert feed.home_visits == 1, "a keyword-less run must recover to the home feed first"
+    assert pipeline.search_page.search.call_count == 0, "there is no keyword to search for"
+    assert [p.title for p in result.postings] == ["AI Agent 平台工程师"]
 
 
 def test_chat_screen_does_not_collide_with_search_or_home():
