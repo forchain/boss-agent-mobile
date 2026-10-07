@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock
 
-from boss_agent.pages import JobListPage, SearchPage
+from boss_agent.pages.job_feed import JobListPage, SearchPage
 from boss_agent.search_entities import SearchConfig
 
 

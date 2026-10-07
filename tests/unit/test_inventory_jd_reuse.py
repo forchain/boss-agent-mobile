@@ -442,7 +442,7 @@ def test_usability_is_the_existing_rule_applied_to_the_stored_text():
     assert jd_is_usable_on_file(f"  \n{GOOD_JD}  ") is True
 
     # …and the truncation half is literally the detail page's own rule.
-    from boss_agent.pages import JobDetailPage  # noqa: F401  (import seam smoke)
+    from boss_agent.pages.job_detail import JobDetailPage  # noqa: F401  (import seam smoke)
 
     assert jd_is_truncated("岗位职责短…查看更多") is True
     assert jd_is_truncated(GOOD_JD) is False

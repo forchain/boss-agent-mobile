@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 from boss_agent.enums import AuthStatus
 from boss_agent.job_entities import JobPosting
-from boss_agent.pages import (
+from boss_agent.pages.system import (
     LoginPage,
     StartupDialogPage,
 )

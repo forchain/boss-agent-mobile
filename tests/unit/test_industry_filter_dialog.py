@@ -19,7 +19,7 @@ import pytest
 from _feed_harness import ScriptedFeed, _card, _detail_page, _pipeline, _posting
 
 from boss_agent.feed_pipeline import FeedStreamConfig
-from boss_agent.pages import IndustryFilterDialogPage
+from boss_agent.pages.job_feed import IndustryFilterDialogPage
 from boss_agent.search_entities import FilterConfig
 
 WITH_INDUSTRIES = FilterConfig(
