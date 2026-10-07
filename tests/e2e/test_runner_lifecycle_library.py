@@ -186,13 +186,31 @@ def test_a_just_dead_process_is_still_reported_as_gone(fake_toolchain: Path) -> 
     assert result.stdout.strip() == "gone"
 
 
+def _inert_pid() -> str:
+    """A PID no process can own, so the fake `lsof` is what answers.
+
+    `runner_process_cwd` reads `/proc/<pid>/cwd` first and only falls back to `lsof`, so a
+    hardcoded PID never reaches the fake `lsof` whenever the host happens to have that
+    process alive — the test then asserts on the machine it runs on rather than on the
+    library. `test_process_cwd_alive_detects_deleted_directory` hardcoded 1234 and went red
+    on a Linux CI runner that had a live PID 1234: `/proc/1234/cwd` answered, the function
+    reported an alive cwd, and the assertion read `'' == 'stale'`. macOS has no `/proc` at
+    all, which is why the same test was green locally. One past `pid_max` cannot be
+    allocated, so the fake toolchain answers on every platform.
+    """
+    pid_max = Path("/proc/sys/kernel/pid_max")
+    if pid_max.exists():
+        return str(int(pid_max.read_text(encoding="utf-8").strip()) + 1)
+    return "999999"
+
+
 def test_process_cwd_alive_reports_live_directory(fake_toolchain: Path, tmp_path: Path) -> None:
     """A process with an existing working directory is reported as having alive cwd."""
     live_dir = tmp_path / "live_repo"
     live_dir.mkdir()
     result = _run_library(
         fake_toolchain,
-        "runner_process_cwd_alive 1234 && echo alive",
+        f"runner_process_cwd_alive {_inert_pid()} && echo alive",
         FAKE_LSOF_CWD=str(live_dir),
     )
     assert result.stdout.strip() == "alive"
@@ -203,7 +221,7 @@ def test_process_cwd_alive_detects_deleted_directory(fake_toolchain: Path, tmp_p
     deleted_dir = tmp_path / "deleted_repo"
     result = _run_library(
         fake_toolchain,
-        "runner_process_cwd_alive 1234 || echo stale",
+        f"runner_process_cwd_alive {_inert_pid()} || echo stale",
         FAKE_LSOF_CWD=str(deleted_dir),
     )
     assert result.stdout.strip() == "stale"
