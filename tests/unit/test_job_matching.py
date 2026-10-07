@@ -237,10 +237,10 @@ def test_job_match_greeting_service_requires_full_substantive_jd():
     mock_llm.chat_completion_json.assert_not_called()
 
 
-def test_greeting_drafter_in_graph_catches_precondition_failure():
-    """Greeting drafter node in LangGraph should record failure state rather than crashing when JD is missing."""
-    from boss_agent.graph import run_job_application_graph
+def test_evaluate_job_reports_missing_jd_without_crashing():
+    """CandidateScreener.evaluate_job records the unavailable JD rather than crashing on it."""
     from boss_agent.job_entities import JobCardBrief
+    from boss_agent.screening import CandidateScreener, CardVerdictStage, JobVerdictStage
     from boss_agent.screening_policy import ScreeningPolicy
 
     policy = ScreeningPolicy(title_whitelist=["Agent"])
@@ -252,14 +252,17 @@ def test_greeting_drafter_in_graph_catches_precondition_failure():
     )
 
     mock_llm = MagicMock()
-    # Execute graph with empty jd_text
-    state = run_job_application_graph(card=card, policy=policy, jd_text="", llm_client=mock_llm)
+    screener = CandidateScreener(llm_client=mock_llm)
+    verdict = screener.evaluate_card(card, policy)
 
-    assert state["keyword_pass"] is True
-    assert state["deep_screen_pass"] is False
-    assert state["status"] == "jd_unavailable"
-    assert state["greeting_message"] == ""
-    assert "Job description is missing or too short" in state["error_message"]
+    result = screener.evaluate_job(card, "", policy=policy)
+
+    assert verdict.passed is True
+    assert verdict.stage is CardVerdictStage.PASSED
+    assert result.passed is False
+    assert result.stage is JobVerdictStage.JD_UNAVAILABLE
+    assert result.greeting_message == ""
+    assert "Job description is missing or too short" in result.error_message
     # LLM should not have been called for greeting
     mock_llm.chat_completion_json.assert_not_called()
 

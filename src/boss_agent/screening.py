@@ -42,7 +42,7 @@ UNUSABLE_JD_REASON = (
 class CardVerdictStage(StrEnum):
     """Terminal stage of card-level (pre-detail-navigation) screening.
 
-    Values are the screening status labels carried by `JobApplicationState.status` and
+    Values are the screening status labels carried by `CardScreeningVerdict.stage` and
     logged to the task stream. They are *not* persisted as job-record statuses: a
     rejected card is written as `JobRecordStatus.IGNORED`, with the stage in
     `screened_reason`.

@@ -14,6 +14,7 @@ The library tests below prove the policy once, against fake `ps`/`lsof` outputs;
 per-service tests at the end prove each stop path actually goes through it.
 """
 
+import contextlib
 import os
 import shutil
 import subprocess
@@ -121,6 +122,25 @@ def fake_toolchain(tmp_path: Path) -> Path:
     return bin_dir
 
 
+def _host_free_pid() -> int:
+    """A PID that cannot name a live process on the machine running this test.
+
+    `runner_process_cwd` resolves a working directory from `/proc/<pid>/cwd`
+    *before* it falls back to `lsof`, and that first branch reads the real host --
+    no PATH shim can reach it. A PID that merely happens to be alive on the runner
+    therefore answers the probe with a real, still-existing directory, the scripted
+    `FAKE_LSOF_CWD` is never consulted, and the test quietly measures the machine
+    instead of the library. That is exactly how
+    `test_process_cwd_alive_detects_deleted_directory` came to fail on Linux CI
+    while passing on macOS against identical code. PIDs are allocated from the
+    kernel's ceiling downwards, so a value above `pid_max` cannot exist anywhere.
+    """
+    ceiling = 32768  # the historical default, and the floor when /proc is absent
+    with contextlib.suppress(OSError, ValueError):
+        ceiling = max(ceiling, int(Path("/proc/sys/kernel/pid_max").read_text().strip()))
+    return ceiling + 1
+
+
 def _run_library(
     bin_dir: Path, script: str, cwd: Path | None = None, **env: str
 ) -> subprocess.CompletedProcess:
@@ -186,22 +206,27 @@ def test_a_just_dead_process_is_still_reported_as_gone(fake_toolchain: Path) -> 
     assert result.stdout.strip() == "gone"
 
 
-def _inert_pid() -> str:
-    """A PID no process can own, so the fake `lsof` is what answers.
+def test_the_fake_toolchain_is_the_only_cwd_source_of_truth(
+    fake_toolchain: Path, tmp_path: Path
+) -> None:
+    """What the test scripts into `lsof` is what the library must actually read.
 
-    `runner_process_cwd` reads `/proc/<pid>/cwd` first and only falls back to `lsof`, so a
-    hardcoded PID never reaches the fake `lsof` whenever the host happens to have that
-    process alive — the test then asserts on the machine it runs on rather than on the
-    library. `test_process_cwd_alive_detects_deleted_directory` hardcoded 1234 and went red
-    on a Linux CI runner that had a live PID 1234: `/proc/1234/cwd` answered, the function
-    reported an alive cwd, and the assertion read `'' == 'stale'`. macOS has no `/proc` at
-    all, which is why the same test was green locally. One past `pid_max` cannot be
-    allocated, so the fake toolchain answers on every platform.
+    `runner_process_cwd` prefers `/proc/<pid>/cwd`, which no PATH shim can fake. A
+    PID that is alive on the host answers the probe with a real directory and the
+    library never reaches `lsof` at all, so a cwd test silently stops testing the
+    policy and starts testing the CI runner. This pins the fixture's contract: if a
+    real host can ever answer a cwd probe again, this goes red first.
     """
-    pid_max = Path("/proc/sys/kernel/pid_max")
-    if pid_max.exists():
-        return str(int(pid_max.read_text(encoding="utf-8").strip()) + 1)
-    return "999999"
+    scripted_dir = tmp_path / "scripted_repo"
+    scripted_dir.mkdir()
+    result = _run_library(
+        fake_toolchain,
+        f"runner_process_cwd {_host_free_pid()}",
+        FAKE_LSOF_CWD=str(scripted_dir),
+    )
+    assert result.stdout.strip() == str(scripted_dir), (
+        "a real /proc entry answered the probe; the fake toolchain is not hermetic"
+    )
 
 
 def test_process_cwd_alive_reports_live_directory(fake_toolchain: Path, tmp_path: Path) -> None:
@@ -210,7 +235,7 @@ def test_process_cwd_alive_reports_live_directory(fake_toolchain: Path, tmp_path
     live_dir.mkdir()
     result = _run_library(
         fake_toolchain,
-        f"runner_process_cwd_alive {_inert_pid()} && echo alive",
+        f"runner_process_cwd_alive {_host_free_pid()} && echo alive",
         FAKE_LSOF_CWD=str(live_dir),
     )
     assert result.stdout.strip() == "alive"
@@ -221,7 +246,7 @@ def test_process_cwd_alive_detects_deleted_directory(fake_toolchain: Path, tmp_p
     deleted_dir = tmp_path / "deleted_repo"
     result = _run_library(
         fake_toolchain,
-        f"runner_process_cwd_alive {_inert_pid()} || echo stale",
+        f"runner_process_cwd_alive {_host_free_pid()} || echo stale",
         FAKE_LSOF_CWD=str(deleted_dir),
     )
     assert result.stdout.strip() == "stale"

@@ -33,3 +33,6 @@ The historical standalone LangGraph rule nodes (`app_enforced_filter_node`, `whi
 1. `ResumeLifecycleGraph`: Active stateful pipeline governing candidate resume parsing, normalization, and persistence.
 2. `JobApplicationGraph`: Traced adapter over `CandidateScreener` consisting strictly of `card_screener` and `job_evaluation`.
 Standalone rule nodes must not be reintroduced into the graph.
+
+## Amendment (2026-10-07, Spec #397): Retirement of the LangGraph Screening Adapter
+The screening adapter introduced above is retired, superseding item 2 of the 2026-09-30 amendment. The `JobApplicationState` contract, the traced `card_screener` / `job_evaluation` adapter graph, and the node builders that invoked `CandidateScreener` from inside LangGraph have all been removed from `boss_agent.graph`; screening now runs directly through `CandidateScreener.evaluate_card` and `CandidateScreener.evaluate_job` (ADR 0013), leaving that module as the sole owner of screening rules. `ResumeLifecycleGraph`, built by `build_resume_lifecycle_graph` over `ResumeLifecycleState`, is now the sole workflow in `boss_agent.graph`, and this ADR governs it alone. A LangGraph screening adapter must not be reintroduced.

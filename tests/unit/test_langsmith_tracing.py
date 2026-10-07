@@ -2,7 +2,7 @@
 tests/unit/test_langsmith_tracing.py
 ====================================
 Unit tests for LangSmith tracing integration across OpenAIChatClient,
-LangGraph screening workflows, and candidate memory.
+the CandidateScreener screening seam, and candidate memory.
 """
 
 import os
@@ -11,15 +11,38 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from langsmith import traceable
-from langsmith.run_helpers import get_current_run_tree
+from langsmith.run_helpers import get_current_run_tree, tracing_context
+from langsmith.run_trees import RunTree
 
-from boss_agent.graph import run_job_application_graph
 from boss_agent.job_entities import JobCardBrief, JobPosting
 from boss_agent.matching import JobMatchGreetingService
 from boss_agent.memory import ResumeMemoryManager
-from boss_agent.screening import CandidateScreener
+from boss_agent.screening import CandidateScreener, CardVerdictStage, JobVerdictStage
 from boss_agent.screening_policy import ScreeningPolicy
 from droid_agent_core.llm import LLMConfig, OpenAIChatClient, configure_langsmith
+
+
+def _tracing_root() -> RunTree:
+    """A run tree whose client is a mock, so spans are built and asserted in memory.
+
+    The screener methods are decorated with ``@traceable``, so calling them under a
+    parent run tree produces real child spans; the mocked client absorbs the posts,
+    keeping the fast unit tier free of any LangSmith network call.
+    """
+    return RunTree(name="tracing_root", run_type="chain", client=MagicMock())
+
+
+def _spans(root: RunTree) -> dict:
+    """Flatten a run tree into ``{span_name: span}`` so a test can assert on spans."""
+    found = {}
+
+    def walk(node):
+        found[node.name] = node
+        for child in node.child_runs or []:
+            walk(child)
+
+    walk(root)
+    return found
 
 
 def test_llm_config_langsmith_defaults():
@@ -157,8 +180,12 @@ def test_openai_chat_client_evaluate_text_match():
         assert res["greeting_message"] == "Hello"
 
 
-def test_langgraph_screening_traced_execution():
-    """Verify run_job_application_graph executes cleanly with LangSmith tracing metadata and tags."""
+def test_candidate_screener_traced_execution():
+    """CandidateScreener.evaluate_card / evaluate_job are themselves @traceable spans.
+
+    Replacing the graph wrapper must not cost telemetry: the screening stages stay
+    observable under their own span names, and the screening outcomes are unchanged.
+    """
     card = JobCardBrief(
         title="Senior Python Architect",
         company_name="TechCorp",
@@ -185,18 +212,28 @@ def test_langgraph_screening_traced_execution():
         },
     ]
 
-    result = run_job_application_graph(
-        card=card,
-        policy=policy,
-        jd_text="Looking for a Python Architect with distributed systems background.",
-        llm_client=mock_llm,
-    )
+    root = _tracing_root()
+    screener = CandidateScreener(llm_client=mock_llm)
+    with tracing_context(parent=root, client=root.client):
+        verdict = screener.evaluate_card(card, policy)
+        result = screener.evaluate_job(
+            card,
+            "Looking for a Python Architect with distributed systems background.",
+            policy=policy,
+        )
 
-    assert result["keyword_pass"] is True
-    assert result["deep_screen_pass"] is True
-    assert result["match_score"] == 90
-    assert "TechCorp" in result["greeting_message"]
-    assert result["status"] == "greeting_drafted"
+    spans = _spans(root)
+    assert "CandidateScreener.evaluate_card" in spans
+    assert "CandidateScreener.evaluate_job" in spans
+    assert spans["CandidateScreener.evaluate_card"].run_type == "chain"
+    assert spans["CandidateScreener.evaluate_job"].run_type == "chain"
+
+    assert verdict.passed is True
+    assert verdict.stage is CardVerdictStage.PASSED
+    assert result.passed is True
+    assert result.stage is JobVerdictStage.PASSED
+    assert result.match_score == 90
+    assert "TechCorp" in result.greeting_message
 
 
 def test_jd_semantic_screen_runs_traceable_through_the_screener():
@@ -275,8 +312,12 @@ def test_resume_memory_manager_traceable(tmp_path):
     assert "Python" in profile.core_skills
 
 
-def test_langgraph_screening_custom_tags_and_metadata():
-    """Verify run_job_application_graph merges caller tags and metadata."""
+def test_candidate_screener_inherits_caller_tags_and_metadata():
+    """Caller tags and metadata must reach the screener's own spans.
+
+    The retired graph took them through a LangGraph run config; without it they now
+    flow from the ambient traceable context into CandidateScreener's spans.
+    """
     card = JobCardBrief(
         title="Python Engineer",
         company_name="Acme",
@@ -289,21 +330,31 @@ def test_langgraph_screening_custom_tags_and_metadata():
     mock_llm = MagicMock()
     mock_llm.chat_completion_json.return_value = {"pass": False, "reason": "Not matching"}
 
-    custom_config = {
-        "tags": ["custom-tag-1"],
-        "metadata": {"task_id": "task-abc-123"},
-    }
+    root = _tracing_root()
+    screener = CandidateScreener(llm_client=mock_llm)
+    with tracing_context(
+        parent=root,
+        tags=["custom-tag-1"],
+        metadata={"task_id": "task-abc-123"},
+        client=root.client,
+    ):
+        verdict = screener.evaluate_card(card, ScreeningPolicy(jd_blacklist=["Outsourced"]))
+        result = screener.evaluate_job(
+            card,
+            "岗位职责：负责 Python 后端服务开发与维护，要求熟悉 FastAPI 与异步编程。",
+            policy=ScreeningPolicy(jd_blacklist=["Outsourced"]),
+        )
 
-    result = run_job_application_graph(
-        card=card,
-        policy=ScreeningPolicy(jd_blacklist=["Outsourced"]),
-        jd_text="Python job",
-        llm_client=mock_llm,
-        config=custom_config,
-    )
+    assert verdict.passed is True
+    assert verdict.stage is CardVerdictStage.PASSED
+    assert result.passed is False
+    assert result.stage is JobVerdictStage.FILTERED_BY_DEEP_SCREENER
 
-    assert result["keyword_pass"] is True
-    assert result["deep_screen_pass"] is False
+    spans = _spans(root)
+    for span_name in ("CandidateScreener.evaluate_card", "CandidateScreener.evaluate_job"):
+        span = spans[span_name]
+        assert "custom-tag-1" in span.tags, f"{span_name} lost the caller tags"
+        assert span.metadata["task_id"] == "task-abc-123", f"{span_name} lost the caller metadata"
 
 
 def test_openai_chat_client_error_propagation():

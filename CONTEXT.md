@@ -206,10 +206,6 @@ _Avoid_: config store, settings dir, user preference folder
 The unified deep module consolidating zero-token card preliminary keyword checks, App-Enforced Filters, Whitelist Relaxation, JD semantic blacklist evaluation, and living Greeting Prompt drafting behind a minimal two-method interface (`evaluate_card` and `evaluate_job`). Supersedes shallow pass-through graph wrappers.
 _Avoid_: filter runner, card checker, matcher script
 
-**Candidate Screener Graph (`JobApplicationState`)**:
-The LangGraph workflow that runs card screening and JD evaluation as two traced stages. It is a thin adapter over the Candidate Screener (ADR 0013): the graph contributes run configuration, tags and the serialized state contract, while every screening rule lives in the screener module.
-_Avoid_: Screening pipeline, match chain, agent workflow
-
 **Keyword Screener**:
 The zero-token deterministic gatekeeper stage of `CandidateScreener.evaluate_card`, evaluating visible job card metadata (title, tags, company, digest, location) against the active Screening Policy before triggering expensive mobile navigation. Confined to the compact card facets by design, where collateral over-rejection is tolerated because the short text mirrors the role's core; it never operates on the full Job Description.
 _Avoid_: Title filter, card checker, fast screener

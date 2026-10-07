@@ -14,15 +14,18 @@ The claim each test pins is unchanged — a drafted greeting reaches the operato
 card, and a posting turned down by an App-Enforced Filter never gets one.
 """
 
+import io
 from unittest.mock import MagicMock, patch
 
 import pytest
 from _feed_harness import ScriptedFeed, _card, _detail_page, _posting, script_pages
+from rich.console import Console
 
 from boss_agent.candidate_entities import CandidateProfile
 from boss_agent.enums import ChatButtonState
 from boss_agent.matching import MatchGreetingResult
 from boss_agent.pages import ChatPage
+from boss_agent.screening import CardScreeningVerdict
 from boss_agent.screening_policy import ScreeningPolicy
 from boss_agent.search_entities import FilterConfig
 from boss_agent.workflows import SmokeHarness, TakeoverHandler
@@ -101,7 +104,7 @@ def test_smoke_harness_drafts_and_renders_the_greeting_for_the_extracted_posting
     )
 
 
-def _headhunter_smoke_harness(channel_policy, whitelist=None):
+def _headhunter_smoke_harness(channel_policy, whitelist=None, **policy_overrides):
     """A harness whose feed's only card is a headhunter posting."""
     mock_driver = MagicMock()
     mock_driver.get_window_size.return_value = {"width": 1080, "height": 2400}
@@ -113,6 +116,7 @@ def _headhunter_smoke_harness(channel_policy, whitelist=None):
         screening_policy=ScreeningPolicy(
             channel_preference=channel_policy,
             title_whitelist=whitelist or [],
+            **policy_overrides,
         ),
     )
     chat_page = MagicMock(spec=ChatPage)
@@ -159,3 +163,77 @@ def test_smoke_harness_relaxed_headhunter_still_drafts_greeting():
         harness.run_smoke_test()
 
     matching_service.evaluate_and_draft_greeting.assert_called_once()
+
+
+def _record_console():
+    """Swap the verification run's Rich console for a wide, in-memory one, and return its buffer.
+
+    The harness no longer prints its own steps: every line the operator reads comes from the
+    pipeline's log sink, which prints through ``feed_verification``'s console. So that — not
+    the harness's — is where a test that wants to read a run's report has to listen.
+    """
+    buffer = io.StringIO()
+    return buffer, patch(
+        "boss_agent.feed_verification.console", Console(file=buffer, width=200, no_color=True)
+    )
+
+
+def test_smoke_harness_keyword_rejection_never_spends_a_jd_evaluation():
+    """A card the Keyword Screener turns away must stop before the JD stage.
+
+    Card screening is the zero-token gate: the blacklist hit has to be reported on the
+    console and the run has to end there, because a JD evaluation is where the first
+    real LLM tokens are spent.
+    """
+    harness, mock_matching_svc, _ = _headhunter_smoke_harness("all", title_blacklist=["平台负责人"])
+    buffer, console_patch = _record_console()
+
+    # No posting survived the card stage, so the run reports that it read nothing rather
+    # than reporting a greeting for a card it rejected.
+    with console_patch, patch("time.sleep", return_value=None), pytest.raises(RuntimeError):
+        harness.run_smoke_test()
+
+    output = buffer.getvalue()
+    assert "初筛淘汰" in output
+    # The blacklist hit the policy itself reports, not a placeholder.
+    assert "命中职位黑名单关键词: '平台负责人'" in output
+    mock_matching_svc.evaluate_and_draft_greeting.assert_not_called()
+    mock_matching_svc.render_match_card.assert_not_called()
+    harness.pipeline.detail_page.open_chat.assert_not_called()
+
+
+def test_smoke_harness_spends_nothing_on_a_rejection_it_has_never_seen():
+    """`CardScreeningVerdict.passed` is the whole gate, so a rejection stage this
+    run does not recognise by name still costs zero tokens.
+
+    Ticket #399's acceptance criteria put the typed fields in play precisely so the
+    screen stops hand-rolling a dispatcher over ``CardVerdictStage``: a new rejection
+    member added upstream must not fall through to a JD evaluation. The verdict below
+    stands in for one that does not exist yet -- a rejection in the shape of
+    ``rejected_by_keywords``, which leaves ``app_rule_pass`` at its default.
+    """
+    harness, mock_matching_svc, _ = _headhunter_smoke_harness("all")
+
+    # Rebinding the screener is the seam ``script_pages`` already uses for the page
+    # objects: the run composes its own engine, so there is nothing left to inject at
+    # construction time.
+    screener = MagicMock()
+    screener.evaluate_card.return_value = CardScreeningVerdict(
+        passed=False,
+        stage="filtered_by_a_future_rule",
+        reason="命中未来新增的过滤规则",
+        app_rule_violation="命中未来新增的过滤规则",
+    )
+    harness.pipeline.screener = screener
+
+    buffer, console_patch = _record_console()
+    with console_patch, patch("time.sleep", return_value=None), pytest.raises(RuntimeError):
+        harness.run_smoke_test()
+
+    screener.evaluate_job.assert_not_called()
+    mock_matching_svc.evaluate_and_draft_greeting.assert_not_called()
+    mock_matching_svc.render_match_card.assert_not_called()
+    harness.pipeline.detail_page.open_chat.assert_not_called()
+    # The rejection is still surfaced rather than silently swallowed: an unknown stage
+    # reads as a keyword rejection, because every card-stage rejection is 初筛.
+    assert "初筛淘汰" in buffer.getvalue()
