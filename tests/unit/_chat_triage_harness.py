@@ -21,7 +21,7 @@ from boss_agent.chat_triage import (
     CommunicationListAdapter,
     TriagePages,
 )
-from boss_agent.pages import CommunicationCard
+from boss_agent.pages.communication import CommunicationCard
 from boss_agent.rejection import (
     DISINTEREST_REASON,
     ChatAcknowledgmentSettings,

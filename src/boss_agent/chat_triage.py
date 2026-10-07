@@ -50,13 +50,13 @@ from enum import StrEnum
 from typing import Any, Protocol, runtime_checkable
 
 from .feed_pipeline import is_task_cancelled
-from .pages import (
+from .pages.communication import (
     OUTBOUND_STATUS_MARKERS,
     ChatPage,
     CommunicationCard,
     CommunicationListPage,
-    StartupDialogPage,
 )
+from .pages.system import StartupDialogPage
 from .rejection import DEFAULT_MAX_SCROLL_SWIPES, ChatAcknowledgmentSettings
 from .screening_policy import ScreeningPolicy
 
