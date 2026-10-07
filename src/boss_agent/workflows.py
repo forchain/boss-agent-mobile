@@ -10,14 +10,18 @@ from typing import Any
 
 from rich.console import Console
 
-from .async_bridge import run_sync
-from .enums import AuthStatus, TargetAction
-from .feed_pipeline import FeedStreamConfig, JobFeedPipeline
+from .enums import AuthStatus
+from .feed_verification import (
+    activate_app,
+    build_verification_pipeline,
+    load_candidate_profile,
+    render_greeting_match_card,
+    run_verification_feed,
+)
 from .job_entities import JobPosting
-from .matching import JobMatchGreetingService, MatchGreetingResult
+from .matching import JobMatchGreetingService
 from .memory import ResumeMemoryManager, StructuredCandidateProfile
 from .pages import LoginPage
-from .screening import CandidateScreener
 from .screening_policy import ScreeningPolicy, resolve_screening_policy
 from .search_entities import FilterConfig, SavedSearch, SearchConfig
 
@@ -84,6 +88,12 @@ class SmokeHarness:
     assumes a usable session, so the gate that proves one stays in front of it, where a
     captcha stops a verification run before it starts rather than after it has begun
     reading somebody's job list.
+
+    The composition *around* the engine — translating the options into one
+    ``FeedStreamConfig``, wiring the run's log to a console, loading the profile, refusing
+    to report a run that read nothing — is not here either. It lives in
+    :mod:`boss_agent.feed_verification`, because ``scripts/run_live_test.py`` composes the
+    same run and #391 left the two copies of it free to drift (issue #391).
     """
 
     def __init__(
@@ -110,40 +120,32 @@ class SmokeHarness:
         self.enable_greeting_draft = enable_greeting_draft
         self.memory_manager = memory_manager or ResumeMemoryManager()
         self.matching_service = matching_service or JobMatchGreetingService()
-        # Retained on the constructor because ``scripts/run_live_test.py`` passes it, and
-        # because an operator still sets it. It no longer paces anything: the pause it was
-        # written for watched a greeting being typed into a live chat box, and a smoke test
-        # types nothing into one (see ``_feed_config``).
+        # Kept on the constructor because it is part of the adapter's published signature —
+        # callers still pass it (``tests/unit/test_smoke_harness_greeting.py`` sets it to a
+        # tenth of a second) and ticket #394 migrates this constructor against it, so
+        # removing a parameter the seam is meant to carry forward is not this branch's call.
+        # It no longer paces anything: the pause it was written for watched a greeting being
+        # typed into a live chat box, and a verification run types nothing into one. The
+        # comment it used to carry claimed ``scripts/run_live_test.py`` passed it; #391
+        # dropped that argument, so the reason it names now is the only one left.
         self.preview_timeout_sec = (
             preview_timeout_sec
             if preview_timeout_sec is not None
             else float(self.memory_manager.candidate_config.get("preview_timeout_sec", 3.0))
         )
 
-        # Pre-flight upfront candidate memory initialization
+        # Pre-flight upfront candidate memory initialization. Loading is the expensive half of
+        # drafting a greeting — with ``force_refresh_memory`` it regenerates the profile from
+        # the resume through the LLM — so a greeting-less harness skips it rather than paying
+        # for an answer the run will not use.
         self.candidate_profile: StructuredCandidateProfile | None = None
         if self.enable_greeting_draft:
-            try:
-                self.candidate_profile = self.memory_manager.load_memory(
-                    force_refresh=self.force_refresh_memory,
-                    resume_file=self.resume_file,
-                )
-                if self.candidate_profile:
-                    self.matching_service.set_candidate_profile(self.candidate_profile)
-                    console.print(
-                        f"👤 [bold green]Candidate Memory Profile Active:[/bold green] "
-                        f"[bold cyan]{self.candidate_profile.name}[/bold cyan] "
-                        f"({self.candidate_profile.years_of_experience}年经验, "
-                        f"核心技能: {', '.join(self.candidate_profile.core_skills[:3])})"
-                    )
-            except FileNotFoundError:
-                console.print(
-                    "[dim]No candidate resume or memory profile configured. Greeting draft will be skipped.[/dim]"
-                )
-            except Exception as e:
-                console.print(
-                    f"[yellow]⚠️  Failed to pre-load candidate memory upfront: {e}[/yellow]"
-                )
+            self.candidate_profile = load_candidate_profile(
+                memory_manager=self.memory_manager,
+                resume_file=self.resume_file,
+                force_refresh_memory=self.force_refresh_memory,
+                matching_service=self.matching_service,
+            )
 
         if saved_search:
             self.search_config = saved_search.search
@@ -172,78 +174,25 @@ class SmokeHarness:
             self.filter_config = filter_config or FilterConfig()
             self.screening_policy = screening_policy or ScreeningPolicy()
 
-        # One engine, wired for the interactive runner: the volatile ledger of #389 (this
-        # harness has no broker behind it), the run's log going to the console a person is
-        # watching, and a screener holding *this* run's matching service — so the greeting
-        # is drafted by the service the caller injected and asserted on, rather than by a
-        # second one the pipeline built for itself.
-        self.pipeline = JobFeedPipeline(
-            driver=driver,
-            screener=CandidateScreener(matching_service=self.matching_service),
-            log=self._log,
-        )
-
-    async def _log(self, line: str) -> None:
-        """Print the pipeline's run log to the operator's console.
-
-        The pipeline reports every decision it makes — search entry, each screened card,
-        the greeting it drafted, why a card was turned down — through this sink. This
-        runner is the sink: it exists so a person can watch a run, so those lines belong
-        on the console where the old procedural prints were, not in a worker task log
-        nobody opened.
-        """
-        console.print(line)
+        # One engine, wired for the interactive runner. The composition itself — pipeline,
+        # screener, console log sink — is ``feed_verification``'s, because the CLI that an
+        # operator runs on a device composes the same run and the two drifting apart is
+        # what #390 and #391 existed to end (issue #391).
+        self.pipeline = build_verification_pipeline(driver, matching_service=self.matching_service)
 
     def ensure_app_active(
         self, package_name: str = "com.hpbr.bosszhipin", timeout_sec: float = 5.0
     ) -> bool:
         """Ensure Boss 直聘 application is activated and brought to foreground."""
-        if hasattr(self.driver, "activate_app"):
-            try:
-                self.driver.activate_app(package_name)
-                time.sleep(1.0)
-                return True
-            except Exception:
-                pass
-        return False
-
-    def _feed_config(self) -> FeedStreamConfig:
-        """Translate the operator's options into the one feed run that will execute."""
-        should_search = self.search_config.should_search
-        return FeedStreamConfig(
-            # A smoke test drafts a greeting; it never sends one. ``send_greeting=False``
-            # is the depth the pipeline reads for that: the screener still drafts, the
-            # record still lands re-sendable, and nothing is typed into the employer's
-            # chat window — a verification run has no business messaging a real recruiter.
-            target_action=(
-                TargetAction.AUTO_APPLY if self.enable_greeting_draft else TargetAction.SAVE_JD
-            ),
-            send_greeting=False,
-            # ``should_search`` is the whole search decision, keyword included: a run with
-            # no keyword states ``enable_search=False`` so the pipeline resets to the home
-            # feed and browses recommendations, which is what this harness always did with
-            # a keyword-less config — reset to home, then do not search.
-            keyword=self.search_config.keyword if should_search else None,
-            enable_search=should_search,
-            # The smoke test verifies one posting. The old flow opened the top card and
-            # stopped there; ``max_jobs=1`` says the same thing to the scanner.
-            max_jobs=1,
-            # The filter config carries its own enable flag and its own "nothing to
-            # apply", so handing it over unchanged gets both halves of the old step 4:
-            # apply what is configured, clear the dialog when nothing is.
-            filter_config=self.filter_config,
-            screening_policy=self.screening_policy,
-            candidate_profile=self.candidate_profile,
-        )
+        return activate_app(self.driver, package_name)
 
     def run_smoke_test(self) -> JobPosting:
         """Run the feed once and return the posting it extracted.
 
-        ``stream_jobs`` is the single entry point for feed discovery and extraction, so
-        this method is deliberately thin: activate the app, prove the session is usable,
-        delegate the run, return what came out of it. The auth gate is the one thing that
-        cannot move into the pipeline — it knows nothing about challenges — so it stays
-        here, in front of the run rather than behind it.
+        Thin on purpose: activate the app, prove the session is usable, delegate the run,
+        return what came out of it. The auth gate is the one thing that cannot move into the
+        pipeline — it knows nothing about challenges — so it stays here, in front of the run
+        rather than behind it.
         """
         self.ensure_app_active()
 
@@ -251,38 +200,19 @@ class SmokeHarness:
         if auth_status != AuthStatus.AUTHENTICATED:
             raise RuntimeError(f"Authentication failed: {auth_status}")
 
-        result = run_sync(self.pipeline.stream_jobs(self._feed_config()))
-        if not result.postings:
-            # The pipeline hands back only what it kept: a card whose detail page yielded
-            # nothing, or one the run withdrew at screening, is not a posting. The old
-            # runner returned the first card regardless of what screening then made of it,
-            # so it always had something to return; a run that extracted nothing now has
-            # nothing, and a verification run that verified nothing has failed — silently
-            # returning it would report success for a screen it never read. The outcome
-            # and reason are in the message because on a device "nothing extracted" is
-            # almost never a mystery: it is one screen's worth of explanation, which the
-            # caller is the only one who can see.
-            raise RuntimeError(
-                f"Smoke test extracted no job posting "
-                f"(outcome={result.outcome}, "
-                f"reason={result.reason or 'n/a'}, "
-                f"error={result.error_message or 'n/a'}, "
-                f"scanned={result.scanned}, processed={result.processed}, "
-                f"skipped={result.skipped})"
-            )
-
-        if self.enable_greeting_draft and self.candidate_profile and result.greeting_message:
-            # Rendering is presentation and the pipeline does not present — the run
-            # reports what it drafted, the operator reads it here. The match reasons are
-            # not part of that report (they are not persisted and `FeedStreamResult` does
-            # not carry them), but the pipeline logged them on the way through, so the
-            # operator sees the same reasoning one line earlier than before.
-            self.matching_service.render_match_card(
-                result.postings[0],
-                MatchGreetingResult(
-                    match_score=result.score,
-                    match_reasons=[],
-                    greeting_message=result.greeting_message,
-                ),
-            )
+        result = run_verification_feed(
+            pipeline=self.pipeline,
+            search_config=self.search_config,
+            filter_config=self.filter_config,
+            screening_policy=self.screening_policy,
+            candidate_profile=self.candidate_profile,
+            enable_greeting_draft=self.enable_greeting_draft,
+        )
+        render_greeting_match_card(
+            matching_service=self.matching_service,
+            posting=result.postings[0],
+            result=result,
+            candidate_profile=self.candidate_profile,
+            enable_greeting_draft=self.enable_greeting_draft,
+        )
         return result.postings[0]
