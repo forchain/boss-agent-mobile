@@ -22,9 +22,14 @@ entirely. Two properties of the old file are deliberately preserved:
   work, because the import system's attribute fallback and ``__getattr__`` agree.
 * **Optional dependencies.** Most imports were wrapped in
   ``contextlib.suppress(ImportError)`` so a missing extra skipped one name and left
-  the rest usable. That tolerance now lives in ``__getattr__``: a symbol whose module
-  cannot be imported raises a clean ``AttributeError`` naming the symbol, rather than
-  an ``ImportError`` escaping through unrelated attribute access.
+  the rest usable. That tolerance now lives in ``__getattr__``: when a symbol's module
+  cannot be imported, the attribute form (``boss_agent.X``) raises a clean
+  ``AttributeError`` naming the symbol, instead of an ``ImportError`` escaping through
+  unrelated attribute access. The ``from boss_agent import X`` form still reports
+  ``ImportError: cannot import name 'X'`` -- the import machinery rewrites the
+  ``AttributeError`` into that before the caller sees it. That is not a regression: a
+  caller written as ``try: from boss_agent import X / except ImportError`` behaves
+  exactly as it did against the eager file.
 
 ``__getattr__`` deliberately does not handle submodule names. ``from boss_agent import
 memory`` must keep working, and it does so through the import system's own submodule
@@ -101,7 +106,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "SearchPage": ".pages",
     "SmokeHarness": ".workflows",
     "StartupDialogPage": ".pages",
-    "StructuredCandidateProfile": ".memory",
+    "StructuredCandidateProfile": ".candidate_entities",
     "TakeoverHandler": ".workflows",
     "append_company_blacklist_entry": ".screening_config",
     "build_job_application_graph": ".graph",

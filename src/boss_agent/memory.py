@@ -16,7 +16,7 @@ from droid_agent_core.llm import LLMDecisionClient
 from .candidate_entities import (
     CandidateProfile,
     StructuredCandidateProfile,
-    _extract_education_from_text,
+    extract_education_from_text,
 )
 from .llm_config import create_llm_client
 
@@ -285,7 +285,7 @@ class ProfileNormalizer:
         ``CandidateProfile.from_dict`` can call it without importing this module.
         This method stays so existing callers keep working.
         """
-        return _extract_education_from_text(text)
+        return extract_education_from_text(text)
 
 
 class ResumeMemoryManager:

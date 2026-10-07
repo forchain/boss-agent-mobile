@@ -31,8 +31,10 @@ That keeps the assertion literal -- "nothing landed" -- instead of trusting a st
 stand in for the real thing. Substituting empty stub modules was the obvious cheaper
 route and it is wrong: ``matching.py`` calls ``Console(stderr=True)`` at module
 level, so a stub turns an honest finding into ``TypeError: 'module' object is not
-callable``. ``sys.modules`` and the ``droid_agent_core.llm`` parent binding are both
-snapshotted, so the rest of the session keeps the exact objects it started with.
+callable``. Eviction and restore are scoped to the keys the harness owns -- the
+``boss_agent`` tree and the forbidden roots -- and the ``droid_agent_core.llm`` parent
+binding is snapshotted, so the rest of the session keeps the exact objects it started
+with and an import made by another thread during the window is not thrown away.
 """
 
 from __future__ import annotations
@@ -106,14 +108,18 @@ def _fresh_package_import(
 ) -> Iterator[tuple[ModuleType, str | None]]:
     """Import ``module_name`` with no cached ``boss_agent`` and no real heavy modules.
 
-    Yields the module and any exception the import raised. Everything is restored on
-    the way out, so the rest of the session keeps the exact module objects it had.
+    Yields the module and any exception the import raised. Only the keys this harness
+    owns -- the ``boss_agent`` tree and the forbidden roots -- are evicted and restored;
+    anything another thread imported meanwhile is left alone.
     """
-    saved_modules = dict(sys.modules)
-    parent_attrs = _snapshot_parent_attrs(spy._forbidden)
+    forbidden = spy._forbidden
+    saved_modules = {
+        key: value for key, value in sys.modules.items() if _is_owned_key(key, forbidden)
+    }
+    parent_attrs = _snapshot_parent_attrs(forbidden)
     try:
         for key in list(sys.modules):
-            if key == "boss_agent" or key.startswith("boss_agent.") or spy.forbidden_root(key):
+            if _is_owned_key(key, forbidden):
                 del sys.modules[key]
 
         sys.meta_path.insert(0, spy)
@@ -124,12 +130,13 @@ def _fresh_package_import(
         except BaseException as exc:  # noqa: BLE001 - the failure is the assertion
             failure = f"{type(exc).__name__}: {exc}"
 
-        landed = sorted(root for root in spy._forbidden if root in sys.modules)
+        landed = sorted(root for root in forbidden if root in sys.modules)
         yield module, failure, landed
     finally:
         with contextlib.suppress(ValueError):
             sys.meta_path.remove(spy)
-        sys.modules.clear()
+        for key in [key for key in sys.modules if _is_owned_key(key, forbidden)]:
+            del sys.modules[key]
         sys.modules.update(saved_modules)
         for parent, child, value in parent_attrs:
             if value is _MISSING:
@@ -137,6 +144,19 @@ def _fresh_package_import(
                     delattr(parent, child)
             else:
                 setattr(parent, child, value)
+
+
+def _is_owned_key(key: str, forbidden: Sequence[str]) -> bool:
+    """True for the ``sys.modules`` keys this harness is responsible for.
+
+    The harness only ever evicts and restores its own keys -- the ``boss_agent`` tree
+    and the forbidden roots. A blanket ``sys.modules.clear()`` would also discard
+    whatever another thread imported during the window, which is unrelated work thrown
+    away on the way out.
+    """
+    if key == "boss_agent" or key.startswith("boss_agent."):
+        return True
+    return any(key == root or key.startswith(f"{root}.") for root in forbidden)
 
 
 def _snapshot_parent_attrs(names: Sequence[str]) -> list[tuple[ModuleType, str, object]]:
@@ -214,6 +234,31 @@ def test_an_unknown_name_raises_attribute_error() -> None:
         boss_agent.definitely_not_an_exported_symbol  # noqa: B018 - the access is the assertion
 
 
+def test_the_compatibility_alias_stays_on_the_light_module() -> None:
+    """The historical name must not become a toll gate back into ``memory``.
+
+    ``boss_agent.StructuredCandidateProfile`` is a compatibility alias for a symbol
+    that ``candidate_entities`` exports. Routing it through ``.memory`` made every
+    caller of the old name pay for langsmith, rich and httpx to reach a stdlib-only
+    dataclass. It resolves from the leaf now, and resolving it pulls in nothing heavy.
+    """
+    spy = _ImportSpy(FORBIDDEN_ROOTS)
+    with _fresh_package_import(spy, "boss_agent") as (boss_agent, failure, _):
+        assert failure is None, f"importing boss_agent failed: {failure}"
+        assert boss_agent is not None
+
+        from boss_agent.candidate_entities import CandidateProfile as leaf
+
+        # Identity, not merely equivalence: ``screening.py`` dispatches on ``isinstance``.
+        assert boss_agent.StructuredCandidateProfile is leaf
+        assert "boss_agent.memory" not in sys.modules, (
+            "resolving the compatibility alias imported boss_agent.memory"
+        )
+        assert spy.attempts == [], (
+            f"resolving the alias imported {len(spy.attempts)} modules under {spy.touched_roots}"
+        )
+
+
 def test_a_symbol_whose_module_cannot_import_raises_attribute_error() -> None:
     """Optional dependencies stay tolerated.
 
@@ -221,15 +266,19 @@ def test_a_symbol_whose_module_cannot_import_raises_attribute_error() -> None:
     so a missing dependency skipped one name and left the rest usable. Lazy loading has
     to keep that: the failure has to surface as a clean ``AttributeError`` on the one
     symbol, not as an ``ImportError`` that takes unrelated exports down with it.
+
+    ``.matching`` is the blocked module because it genuinely imports langsmith, rich and
+    ``droid_agent_core.llm`` at module level -- a proxy for "the module for this symbol
+    could not be imported", which is what the contract is actually about.
     """
 
-    class _BlockMemory(MetaPathFinder):
+    class _BlockMatching(MetaPathFinder):
         def find_spec(self, fullname, path=None, target=None) -> None:
-            if fullname == "boss_agent.memory":
+            if fullname == "boss_agent.matching":
                 raise ModuleNotFoundError(f"No module named {fullname!r}", name=fullname)
             return None
 
-    blocker = _BlockMemory()
+    blocker = _BlockMatching()
     spy = _ImportSpy(FORBIDDEN_ROOTS)
     with _fresh_package_import(spy, "boss_agent") as (boss_agent, failure, _):
         assert failure is None, f"importing boss_agent failed: {failure}"
@@ -238,7 +287,7 @@ def test_a_symbol_whose_module_cannot_import_raises_attribute_error() -> None:
         sys.meta_path.insert(0, blocker)
         try:
             with pytest.raises(AttributeError):
-                boss_agent.StructuredCandidateProfile  # noqa: B018 - the access is the assertion
+                boss_agent.JobMatchGreetingService  # noqa: B018 - the access is the assertion
 
             # An unrelated export from an untouched module still resolves.
             assert boss_agent.CandidateProfile is not None

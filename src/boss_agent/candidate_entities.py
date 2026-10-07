@@ -16,7 +16,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 
-def _extract_education_from_text(text: str) -> list[dict[str, str]]:
+def extract_education_from_text(text: str) -> list[dict[str, str]]:
     """Extract structured education entries from resume text or markdown profile document.
 
     This is the single implementation of the heuristic. It lives here, in the leaf
@@ -225,7 +225,7 @@ class CandidateProfile:
         doc = (data.get("profile_document") or data.get("raw_summary") or "").strip()
         raw_text = data.get("raw_resume_text") or ""
         if not raw_edu and (doc or raw_text):
-            raw_edu = _extract_education_from_text(f"{doc}\n{raw_text}")
+            raw_edu = extract_education_from_text(f"{doc}\n{raw_text}")
 
         return cls(
             name=data.get("name") or "求职者",

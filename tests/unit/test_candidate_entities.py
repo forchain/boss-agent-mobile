@@ -605,12 +605,12 @@ def test_memory_still_exports_its_legacy_surface():
 
 def test_profile_normalizer_education_extraction_delegates_to_the_entity_module():
     """There must be exactly one implementation of the education heuristic."""
-    from boss_agent.candidate_entities import _extract_education_from_text
+    from boss_agent.candidate_entities import extract_education_from_text
     from boss_agent.memory import ProfileNormalizer
 
     corpus = "- 沙迦美国大学 | 硕士 | 计算机工程\n- 湘潭大学 | 本科 | 计算机科学与技术"
 
-    assert ProfileNormalizer._extract_education_from_text(corpus) == _extract_education_from_text(
+    assert ProfileNormalizer._extract_education_from_text(corpus) == extract_education_from_text(
         corpus
     )
     assert len(ProfileNormalizer._extract_education_from_text(corpus)) == 2
