@@ -1,6 +1,6 @@
 # 0020. The 仅沟通 Feed Reset Is a Step of Its Own, and Narrates Only What It Did
 
-We decided that resetting the 仅沟通 feed to its newest messages is a step the caller performs and narrates, not a side effect of `CommunicationListPage.open_list()`. **This amends ADR 0016**, whose `open_list()` step list the reset was folded into.
+We decided that resetting the 仅沟通 feed to its newest messages is a step the caller performs and narrates, not a side effect of `CommunicationListPage.open_list()`. **This amends ADR 0016**: the `open_list()` step list that ADR enumerates is the contract, and the feed reset is not one of its steps.
 
 ## Context
 
