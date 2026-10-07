@@ -1834,6 +1834,10 @@ class CommunicationListPage(BaseBossPage):
         never see them. The settle pause after the gesture is what lets the
         scroll-to-top animation finish before any card is read.
 
+        The caller owns this, not ``open_list()``: the return value exists so a run
+        can narrate whether the reset actually happened, and a reset nested inside
+        the navigation loop would report it to no one.
+
         Returns False when the navigation bar is not on screen — there is nothing
         to double-tap, and pausing would only invent a wait.
         """
@@ -1859,11 +1863,12 @@ class CommunicationListPage(BaseBossPage):
         From anywhere else the loop spends at most ``max_steps`` screens trying to
         reach the message column, then clicks 消息 -> 仅沟通 and confirms the landing.
 
-        Landing is not the whole job: the 仅沟通 RecyclerView is shared state that
-        survives navigation, so the feed is reset to its newest messages with a
-        double-tap on 消息 before the caller reads a single card (spec #388). A reset
-        that cannot be performed is not a navigation failure — the list is showing
-        either way — so the return value keeps reporting the landing alone.
+        Landing is the whole job here. The 仅沟通 RecyclerView is shared state that
+        survives navigation, so the caller resets it to the newest messages with
+        ``scroll_to_top()`` (spec #388) once this returns: keeping the reset out of
+        the navigation loop is what lets its outcome reach the caller, which has to
+        narrate a reset that was actually performed. Two callers resetting here
+        would double-tap 消息 on every entry.
 
         A CHECK_CHAT dispatch can arrive while the app sits on a job detail, an open
         chat, a filter sheet or the launcher, so "the 消息 tab is right there" cannot
@@ -1877,7 +1882,6 @@ class CommunicationListPage(BaseBossPage):
         """
         for step in range(max_steps + 1):
             if self._open_message_column(timeout_sec=timeout_sec):
-                self.scroll_to_top()
                 return True
             if step == max_steps:
                 break

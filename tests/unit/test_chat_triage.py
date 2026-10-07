@@ -21,6 +21,7 @@ from _chat_triage_harness import (
     DESCRIPTOR,
     INVITATION_TEXT,
     REJECTION_TEXT,
+    SCROLL_TO_TOP_EVENT,
     EndlessOutboundHarness,
     FakeClassifier,
     Harness,
@@ -31,6 +32,8 @@ from _chat_triage_harness import (
 )
 
 from boss_agent.chat_triage import (
+    LIST_RESET_FAILED_LOG,
+    LIST_RESET_LOG,
     MAX_INSPECTED_CARDS,
     ChatActor,
     ChatActorAdapter,
@@ -398,9 +401,10 @@ async def test_empty_list_stops_without_interaction(policy):
 
     assert report.scanned == 0
     assert report.stop_reason is StopReason.EMPTY_LIST
-    # #388: entering the list now double-taps 消息 to reset the feed. That reset is the
-    # only device action an empty 仅沟通 list costs — no card was opened or touched.
-    assert [e for e in harness.events if e != "scroll_to_top"] == []
+    # #388: entering the list now double-taps 消息 to reset the feed. That reset is
+    # the only device action an empty 仅沟通 list costs — no card was opened or
+    # touched, and the reset happens exactly once.
+    assert harness.events == [SCROLL_TO_TOP_EVENT]
 
 
 @pytest.mark.asyncio
@@ -843,7 +847,9 @@ async def test_entering_the_list_resets_the_feed_to_the_newest_messages(policy):
     """#388: 仅沟通 was left scrolled into the middle of history; the run must see the newest.
 
     The scripted feed starts one viewport down, so a run that never resets it reads
-    the stale card first and scrolls straight past the fresh rejection.
+    the stale card first and scrolls straight past the fresh rejection. The reset
+    belongs to ``ChatTriage``: the harness no longer performs one inside its
+    ``open_list()``, so this fails if the production wiring is removed.
     """
     harness = Harness(
         [
@@ -858,7 +864,10 @@ async def test_entering_the_list_resets_the_feed_to_the_newest_messages(policy):
         harness, classifier=FakeClassifier({REJECTION_TEXT: True}), policy=policy
     ).scan()
 
-    assert "scroll_to_top" in harness.events
+    # Exactly one reset, and it is the first thing the run did: the feed has to be
+    # at its newest before a single card is read.
+    assert harness.events.count(SCROLL_TO_TOP_EVENT) == 1
+    assert harness.events[0] == SCROLL_TO_TOP_EVENT
     assert harness.scroll_offset == 0
     assert report.rejections == 1, "the newest rejection was never read"
 
@@ -873,9 +882,35 @@ async def test_entering_the_list_narrates_the_double_tap_reset(policy):
         harness, classifier=FakeClassifier({REJECTION_TEXT: True}), policy=policy, log=log
     ).scan()
 
-    assert any(
-        "🔝 [Navigation] 双击「消息」导航按钮，快速回到最新消息列表顶部" in line for line in lines
+    assert any(LIST_RESET_LOG in line for line in lines)
+
+
+@pytest.mark.asyncio
+async def test_a_declined_reset_is_not_narrated_as_one_that_happened(policy):
+    """A missing 消息 tab leaves the feed where it was; the run must not claim otherwise.
+
+    The page performs no gesture at all when the navigation bar is absent, so the
+    🔝 line would be a device action that never happened. The run still scans — the
+    list is showing — but says what it could not do.
+    """
+    harness = Harness(
+        [card(REJECTION_TEXT, sender="严胜", descriptor=DESCRIPTOR)],
+        entry_tab_present=False,
     )
+    harness.scroll_offset = 1
+    lines, log = recording_log()
+
+    report = await triage_run(
+        harness, classifier=FakeClassifier({REJECTION_TEXT: True}), policy=policy, log=log
+    ).scan()
+
+    assert harness.events.count(SCROLL_TO_TOP_EVENT) == 1, "the run must still have asked"
+    assert harness.scroll_offset == 1, "the page declines the reset; the offset must survive"
+    assert not any(LIST_RESET_LOG in line for line in lines), "narrated a reset that never happened"
+    assert any(LIST_RESET_FAILED_LOG in line for line in lines)
+    # The list is showing, so the run scans rather than reporting it unreachable.
+    assert report.stop_reason is not StopReason.LIST_UNREACHABLE
+    assert report.scanned == 1
 
 
 @pytest.mark.asyncio
@@ -888,4 +923,4 @@ async def test_an_unreachable_list_is_not_reset_to_the_top(policy):
     ).scan()
 
     assert report.stop_reason is StopReason.LIST_UNREACHABLE
-    assert "scroll_to_top" not in harness.events
+    assert SCROLL_TO_TOP_EVENT not in harness.events

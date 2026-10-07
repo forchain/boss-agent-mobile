@@ -424,16 +424,18 @@ def test_scroll_to_top_reports_failure_when_the_navigation_bar_is_absent():
     assert page.gestures.random_sleep.call_args_list == []
 
 
-def test_open_list_resets_the_feed_to_the_newest_messages_after_landing():
-    """#388: landing on 仅沟通 is not enough — the list must start at the newest message."""
+def test_open_list_does_not_reset_the_feed_itself():
+    """#388: landing is navigation's only job; the caller resets so it can narrate the result.
+
+    Resetting inside the recovery loop would double-tap 消息 on every entry and
+    swallow the outcome — the run has to know whether the gesture happened.
+    """
     driver = _NavDriver(on_list=True)
     page = _recovery_page(driver)
 
     assert page.open_list(timeout_sec=0.1) is True
 
-    assert [call.args[0].name for call in page.gestures.human_double_click.call_args_list] == [
-        "消息"
-    ]
+    assert page.gestures.human_double_click.call_args_list == []
 
 
 def test_recovery_steps_never_wait_out_the_element_timeout():
