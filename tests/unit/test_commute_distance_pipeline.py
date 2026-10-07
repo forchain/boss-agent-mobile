@@ -17,7 +17,7 @@ from boss_agent.graph import (
     JobApplicationState,
     run_job_application_graph,
 )
-from boss_agent.pages import JobCardBrief
+from boss_agent.job_entities import JobCardBrief
 from boss_agent.screening_policy import ScreeningPolicy
 
 DISTANT = 52.0

@@ -3,7 +3,7 @@
 from unittest.mock import MagicMock
 
 from boss_agent.job_entities import JobPosting
-from boss_agent.pages import IndustryFilterDialogPage
+from boss_agent.pages.job_feed import IndustryFilterDialogPage
 from boss_agent.search_entities import FilterConfig, SearchConfig
 from boss_agent.workflows import SmokeHarness, TakeoverHandler
 

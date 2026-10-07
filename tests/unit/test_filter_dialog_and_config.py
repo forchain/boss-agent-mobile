@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock, patch
 
-from boss_agent.pages import FilterDialogPage
+from boss_agent.pages.job_feed import FilterDialogPage
 from boss_agent.search_entities import FilterConfig
 
 

@@ -17,7 +17,7 @@ from boss_agent.card_parser import (
 )
 from boss_agent.identifier_helpers import clean_job_title
 from boss_agent.job_entities import JobCardBrief, JobPosting, JobRecord
-from boss_agent.pages import JobListPage
+from boss_agent.pages.job_feed import JobListPage
 
 
 def test_parse_recruiter_info_headhunter_detection():
