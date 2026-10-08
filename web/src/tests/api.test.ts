@@ -67,9 +67,9 @@ const realFetch = globalThis.fetch;
  * Evaluate the subset of PocketBase filter syntax the query builders emit.
  *
  * Deliberately small: `&&`-joined clauses of `field = 'v'`, `field != 'v'`,
- * `field ~ 'v'`, and parenthesised `||` groups of the same. A fake that ignored the
- * filter would answer every query with everything, which is the opposite of what these
- * tests check.
+ * `field ~ 'v'`, the unquoted `field = true|false` form, and parenthesised `||` groups
+ * of the same. A fake that ignored the filter would answer every query with everything,
+ * which is the opposite of what these tests check.
  */
 function matchesFilter(record: Record<string, any>, filter: string | null): boolean {
 	if (!filter) return true;
@@ -83,6 +83,17 @@ function evaluateClause(record: Record<string, any>, clause: string): boolean {
 	const group = clause.replace(/^\(|\)$/g, '');
 	if (group.includes(' || ')) {
 		return group.split(' || ').some((part) => evaluateClause(record, part.trim()));
+	}
+	// PocketBase writes booleans unquoted (`is_headhunter = false`), and both
+	// `buildJobFilter` and the count queries emit them that way. Without this arm the
+	// regex below missed the clause and the `return true` fallback below answered "every
+	// record matches" — a fake that quietly inverted the meaning of a filter, which is
+	// how a real count bug passed this file's tests unchallenged.
+	const booleanMatch = group.match(/^(\w+)\s*(!=|=)\s*(true|false)$/);
+	if (booleanMatch) {
+		const [, field, operator, value] = booleanMatch;
+		const actual = record[field] === true || String(record[field]) === 'true';
+		return operator === '=' ? actual === (value === 'true') : actual !== (value === 'true');
 	}
 	const match = group.match(/^(\w+)\s*(!=|=|~)\s*'([^']*)'$/);
 	if (!match) return true;
@@ -459,6 +470,71 @@ describe('SvelteKit Server Endpoints', () => {
 		} as any);
 		const getSearchJson = await getSearchRes.json();
 		expect(getSearchJson.records.some((r: any) => r.id === postJson.record.id)).toBe(true);
+	});
+
+	it('GET /api/jobs counts every channel inside the same scope the all tab browses', async () => {
+		// The dashboard draws "全部 (N)" from counts.all and "全部渠道 (N)" from
+		// counts.direct + counts.headhunter. Those two are the same question — "how many
+		// records am I looking at?" — asked in one breath, so they may not answer
+		// differently. They did: `all` excluded ignored records, so it read 578 while the
+		// channel row counted the same 902 records the excluded ones were hiding. The
+		// operator saw two "total"s for one list and could not tell which one the list
+		// actually held.
+		//
+		// The two rows also claimed totals the list could never produce: the all tab
+		// browses `status != 'ignored'`, so 仅直招 could never show the 332 the badge
+		// promised.
+		const { POST: handleJobsPost, GET: handleJobsGet } = await import('../routes/api/jobs/+server');
+
+		// Seeded here rather than leaned on from a sibling test: the invariant has to
+		// hold on its own data, and an ignored record on each channel is the exact case
+		// the two rows disagreed about.
+		const seed = async (title: string, status: string, isHeadhunter: boolean) => {
+			const res = await handleJobsPost({
+				request: {
+					json: async () => ({
+						title,
+						company_name: `范围一致性公司·${title}`,
+						recruiter_name: '钱女士·研发',
+						status,
+						is_headhunter: isHeadhunter
+					})
+				}
+			} as any);
+			trackJobRecord((await res.json()).record);
+		};
+
+		await seed('范围一致直招活跃', 'applied', false);
+		await seed('范围一致直招已淘汰', 'ignored', false);
+		await seed('范围一致猎头活跃', 'applied', true);
+		await seed('范围一致猎头已淘汰', 'ignored', true);
+
+		const res = await handleJobsGet({
+			url: new URL('http://localhost/api/jobs?status=all')
+		} as any);
+		const json = await res.json();
+		const counts = json.counts;
+
+		// The invariant, stated once: the channel row partitions the same set the all
+		// tab browses. Every record is either direct or headhunter, so the split is
+		// exhaustive and nothing may be counted twice.
+		expect(counts.direct + counts.headhunter).toBe(counts.all);
+
+		// And the badges must match the lists they label, or they are decoration.
+		const browse = await (
+			await handleJobsGet({ url: new URL('http://localhost/api/jobs?status=all&limit=100') } as any)
+		).json();
+		expect(browse.total).toBe(counts.all);
+
+		const direct = await (
+			await handleJobsGet({ url: new URL('http://localhost/api/jobs?status=all&channel=direct&limit=100') } as any)
+		).json();
+		expect(direct.total).toBe(counts.direct);
+
+		const headhunter = await (
+			await handleJobsGet({ url: new URL('http://localhost/api/jobs?status=all&channel=headhunter&limit=100') } as any)
+		).json();
+		expect(headhunter.total).toBe(counts.headhunter);
 	});
 
 	it('GET /api/jobs returns empty array when status has no matches and creates no fallback file', async () => {
