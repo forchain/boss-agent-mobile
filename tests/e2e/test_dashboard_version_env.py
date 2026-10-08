@@ -11,8 +11,10 @@ bundle, so `web/src/lib/server/version.ts` needs it to render the navbar badge.
 That block used to end with `export PUBLIC_APP_VERSION="${APP_VERSION}"`, an
 unconditional assignment. An operator who exported only `PUBLIC_APP_VERSION=v9.9.9`
 therefore silently lost their value to whatever `git describe` sniffed from the
-checkout. These tests pin the corrected rule: each variable falls through to the next
-tier only when it is *unset*, never when it is set.
+checkout. These tests pin the corrected rule: the sniff only ever populates a variable
+the operator left alone, and a value the operator *did* set is promoted into whichever
+name is unset -- necessary because the resolver reads `APP_VERSION` first, so a sniffed
+`APP_VERSION` would otherwise bury the operator's `PUBLIC_APP_VERSION` one tier deeper.
 
 Why the E2E tier: the block is bash, so proving it needs a real `bash` process and a
 real `git` in a real repository. `tests/unit/conftest.py` rejects every subprocess
@@ -128,16 +130,21 @@ def _resolve_version_env(cwd: Path, env_pairs: list[str]) -> tuple[str, str]:
 def test_operator_set_public_app_version_survives_the_git_sniff(tmp_path: Path) -> None:
     """`PUBLIC_APP_VERSION` alone must win even though the checkout has a tag.
 
-    This is the reported defect: the old unconditional `PUBLIC_APP_VERSION="${APP_VERSION}"`
-    overwrote the operator's value with the sniffed tag. `APP_VERSION` is still free to
-    sniff -- it was not pinned -- so the two are asserted separately, which is only
-    meaningful because the operator value differs from the tag.
+    This is the reported defect, and it has two halves. The old unconditional
+    `PUBLIC_APP_VERSION="${APP_VERSION}"` overwrote the operator's value outright. Merely
+    stopping that is not enough: the resolver reads `APP_VERSION` *before*
+    `PUBLIC_APP_VERSION`, so a version sniffed into the still-empty `APP_VERSION` would
+    bury the operator's choice one tier deeper. So the operator's value is promoted into
+    `APP_VERSION` as well, and the sniffed tag never enters the picture.
+
+    Ticket #421 promises *either* variable can drive the override, so the assertion is
+    that both names carry the operator's value -- never the tag.
     """
     app, public = _resolve_version_env(
         _tagged_repo(tmp_path), [f"PUBLIC_APP_VERSION={OPERATOR_PUBLIC}"]
     )
 
-    assert (app, public) == (REPO_TAG, OPERATOR_PUBLIC)
+    assert (app, public) == (OPERATOR_PUBLIC, OPERATOR_PUBLIC)
 
 
 def test_operator_set_app_version_reaches_both_variables(tmp_path: Path) -> None:
@@ -186,13 +193,13 @@ def test_operator_value_survives_a_failed_sniff(tmp_path: Path) -> None:
     exists, or a `.git`-free artifact, on a machine where the operator pinned the
     version by hand.
 
-    `APP_VERSION` stays empty here, and that is correct rather than a gap: it was never
-    set and there was nothing to sniff. The precedence is APP -> PUBLIC, so PUBLIC never
-    back-fills APP -- what matters is that the pinned value survives untouched.
+    The operator's value still lands in `APP_VERSION` -- that promotion is what stops a
+    *successful* sniff from burying it, and here it also means a failed one cannot leave
+    the resolver with an empty `APP_VERSION` to fall through on.
     """
     plain = tmp_path / "not-a-repository"
     plain.mkdir()
 
     app, public = _resolve_version_env(plain, [f"PUBLIC_APP_VERSION={OPERATOR_PUBLIC}"])
 
-    assert (app, public) == ("", OPERATOR_PUBLIC)
+    assert (app, public) == (OPERATOR_PUBLIC, OPERATOR_PUBLIC)

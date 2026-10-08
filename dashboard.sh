@@ -151,27 +151,41 @@ cmd_stop() {
 }
 
 resolve_version_env() {
-    # Navbar version badge (#421, #422). Each variable falls through to the next tier
-    # only when it is *unset*, so an operator-set value is never overwritten: an
-    # operator who exports just `PUBLIC_APP_VERSION` (the `PUBLIC_` prefix is what
-    # SvelteKit exposes to the client bundle) keeps it even though the checkout below
-    # carries a perfectly good tag. The `:-` form also keeps an unset reference from
-    # tripping `set -u` (line 26).
+    # Navbar version badge (#421, #422).
     #
-    # Otherwise APP_VERSION sniffs the live checkout's git tag, and PUBLIC_APP_VERSION
-    # mirrors it so both halves of `web/src/lib/server/version.ts` agree. Every `git
-    # describe` failure -- no git binary, not a repo, shallow clone, empty output --
-    # degrades to empty through `|| true`, and the server resolver then falls through
-    # to version.json / the v0.1 default instead of the dashboard aborting.
+    # Rule: whichever variable the operator set explicitly must win, and the sniff must
+    # only ever *populate* a variable the operator left alone -- never manufacture one
+    # that outranks an explicit choice. That matters because
+    # `web/src/lib/server/version.ts` reads APP_VERSION *before* PUBLIC_APP_VERSION: if
+    # we sniffed APP_VERSION unconditionally, an operator who exported only
+    # PUBLIC_APP_VERSION would see the git tag win and their value silently ignored.
+    # Ticket #421 promises either variable can drive the override, so we mirror the
+    # operator's value into whichever one they left unset.
+    #
+    # With neither set we sniff the live checkout's git tag and publish it under both
+    # names, so both halves of the resolver agree. Every `git describe` failure -- no
+    # git binary, not a repo, shallow clone, empty output -- degrades to empty through
+    # `|| true` (never tripping `set -euo pipefail`, line 26), leaving the server
+    # resolver to fall through to version.json and then the v0.1 default.
     #
     # Exported from a function rather than inlined in `cmd_start` so the E2E suite can
     # exercise this exact block (`tests/e2e/test_dashboard_version_env.py`) without
     # starting the dashboard. `export` inside a function still exports to the calling
     # shell, so the launch sites below are unchanged.
     local sniffed
-    sniffed="$(git describe --tags --always 2>/dev/null || true)"
-    export APP_VERSION="${APP_VERSION:-${sniffed}}"
-    export PUBLIC_APP_VERSION="${PUBLIC_APP_VERSION:-${APP_VERSION}}"
+    if [[ -z "${APP_VERSION:-}" && -z "${PUBLIC_APP_VERSION:-}" ]]; then
+        sniffed="$(git describe --tags --always 2>/dev/null || true)"
+        export APP_VERSION="${sniffed}"
+        export PUBLIC_APP_VERSION="${sniffed}"
+    elif [[ -z "${APP_VERSION:-}" ]]; then
+        # Operator set only PUBLIC_APP_VERSION: promote it so the resolver's
+        # APP_VERSION-first order cannot bury it under a sniffed tag.
+        export APP_VERSION="${PUBLIC_APP_VERSION}"
+    else
+        # APP_VERSION set (possibly with PUBLIC_APP_VERSION too): leave PUBLIC alone
+        # if the operator set it, otherwise mirror APP_VERSION across.
+        export PUBLIC_APP_VERSION="${PUBLIC_APP_VERSION:-${APP_VERSION}}"
+    fi
 }
 
 cmd_start() {
