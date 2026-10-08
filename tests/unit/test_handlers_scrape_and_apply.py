@@ -545,67 +545,89 @@ async def test_scrape_jobs_handler_eliminates_blacklisted_cards_and_persists_rea
 
 
 @pytest.mark.asyncio
-async def test_auto_apply_handler_preflight_blocks_already_ignored_job(broker, mock_driver):
-    """Verify AutoApplyHandler aborts immediately without driver action when target job is already ignored."""
-    existing = await broker.job_store.upsert_job_record(
+async def test_auto_apply_skips_an_already_ignored_posting_without_spending_quota(
+    broker, mock_driver
+):
+    """An already-rejected posting must never cost a communication slot (issue #428).
+
+    This protection used to be re-read from a targeted Job Record in `_preflight`. That
+    lookup is gone with the targeted-application path, so it is pinned here on the path that
+    survives: a search run whose feed shows a posting the Job Lifecycle State already
+    rejected. The card is skipped before any detail-page visit, so no LLM call and no
+    greeting slot is spent on it.
+    """
+    card = JobCardBrief(
+        title="运维工程师",
+        company_name="某知名外包",
+        recruiter_name="陈先生",
+        salary_range="20-30K",
+    )
+    await broker.job_store.upsert_job_record(
         {
-            "fingerprint": "fp-already-ignored",
-            "title": "运维工程师",
-            "company_name": "某知名外包",
+            "fingerprint": card.fingerprint,
+            "title": card.title,
+            "company_name": card.company_name,
+            "recruiter_name": card.recruiter_name,
             "status": "ignored",
             "screened_reason": "命中公司黑名单: 某知名外包",
         }
     )
 
-    config = WorkerConfig(worker_id="test-worker-preflight-defense", poll_interval_sec=0.01)
+    config = WorkerConfig(worker_id="test-worker-ignored-card", poll_interval_sec=0.01)
     context = WorkerContext(config=config, driver=mock_driver)
 
     mock_llm = MagicMock()
-    apply_handler = AutoApplyHandler(llm_client=mock_llm)
-
     worker = AutomationWorker(
         config=config,
         broker=broker,
         context=context,
-        handlers=[apply_handler],
+        handlers=[AutoApplyHandler(llm_client=mock_llm)],
     )
 
     task = await broker.create_task(
         task_type=TaskType.AUTO_APPLY,
         payload={
-            "direct_job_id": existing["id"],
-            "job_title": "运维工程师",
-            "company_name": "某知名外包",
-            "preview_only": False,
+            "keyword": "运维",
+            "target_action": "auto_apply",
             "auto_send": True,
+            "candidate_profile": {"name": "Candidate", "core_skills": ["Python"]},
         },
     )
 
-    executed = await worker.run_once()
-    assert executed is True
+    with (
+        patch("boss_agent.feed_pipeline.StartupDialogPage") as mock_startup_cls,
+        patch("boss_agent.feed_pipeline.JobListPage") as mock_list_cls,
+        patch("boss_agent.feed_pipeline.SearchPage") as mock_search_cls,
+        patch("boss_agent.feed_pipeline.JobDetailPage") as mock_detail_cls,
+    ):
+        mock_startup_cls.return_value.is_dialog_present.return_value = False
+        mock_list = mock_list_cls.return_value
+        mock_list.get_feed_bottom_boundary.return_value = None
+        mock_list.extract_visible_job_cards.return_value = [located(card)]
+        mock_search_cls.return_value.is_search_page.return_value = True
 
-    finished_task = await broker.get_task(task.id)
-    assert finished_task is not None
-    assert finished_task.status == TaskStatus.SUCCESS
-    assert any("定向投递防御" in log and "淘汰状态" in log for log in finished_task.logs)
+        assert await worker.run_once() is True
 
-    # Driver should NOT have navigated or clicked into chat
-    mock_driver.find_elements.assert_not_called()
+        # No detail page was opened: the state machine refused the card first.
+        mock_detail_cls.return_value.get_chat_button_state.assert_not_called()
+        mock_detail_cls.return_value.extract_job_posting.assert_not_called()
+
     mock_llm.chat_completion_json.assert_not_called()
+    assert await broker.job_store.count_today_applied_jobs() == 0
+
+    finished = await broker.get_task(task.id)
+    assert finished is not None
+    assert any("Ignored Job" in log for log in finished.logs), finished.logs
 
 
 @pytest.mark.asyncio
 async def test_auto_apply_handler_preflight_blocks_blacklisted_company(broker, mock_driver):
-    """Verify AutoApplyHandler preflight blocks direct application to a blacklisted company and updates DB."""
-    rec = await broker.job_store.upsert_job_record(
-        {
-            "fingerprint": "fp-to-be-blocked",
-            "title": "前端开发",
-            "company_name": "不良劳务派遣公司",
-            "status": "jd_saved",
-        }
-    )
+    """The initial-screen blacklist screen survives the targeted-application removal (#428).
 
+    `_preflight` used to read a targeted Job Record to name its target; it now reads only
+    `job_title` / `company_name` off the payload, and this proves any caller that can name
+    its target still gets the daily-quota protection for free — no driver interaction at all.
+    """
     config = WorkerConfig(worker_id="test-worker-preflight-blacklist", poll_interval_sec=0.01)
     context = WorkerContext(config=config, driver=mock_driver)
 
@@ -622,7 +644,6 @@ async def test_auto_apply_handler_preflight_blocks_blacklisted_company(broker, m
     task = await broker.create_task(
         task_type=TaskType.AUTO_APPLY,
         payload={
-            "direct_job_id": rec["id"],
             "job_title": "前端开发",
             "company_name": "不良劳务派遣公司",
             "screening_policy": {
@@ -637,16 +658,12 @@ async def test_auto_apply_handler_preflight_blocks_blacklisted_company(broker, m
     finished_task = await broker.get_task(task.id)
     assert finished_task is not None
     assert finished_task.status == TaskStatus.SUCCESS
-    assert any("定向投递防御" in log and "不良劳务派遣公司" in log for log in finished_task.logs)
-
-    # Verify record was marked as ignored
-    updated_rec = await broker.job_store.get_job_record(rec["id"])
-    assert updated_rec is not None
-    assert updated_rec.get("status") == "ignored"
-    assert "不良劳务派遣公司" in updated_rec.get("screened_reason", "")
+    assert any("投递前防御" in log and "不良劳务派遣公司" in log for log in finished_task.logs)
 
     # Zero driver clicks on chat or detail
     mock_driver.find_elements.assert_not_called()
+    mock_llm.chat_completion_json.assert_not_called()
+    assert await broker.job_store.count_today_applied_jobs() == 0
 
 
 @pytest.mark.asyncio

@@ -244,19 +244,17 @@ describe('rerun rebuilds through the builder', () => {
 				payload: {
 					saved_search_id: 's1',
 					target_action: 'auto_apply',
-					direct_job_id: 'job-9',
 					job_title: '工程师',
 					company_name: '深至科技'
 				}
 			},
 			'orig-2'
 		);
-		expect(rebuilt.payload.direct_job_id).toBe('job-9');
 		expect(rebuilt.payload.job_title).toBe('工程师');
 		expect(rebuilt.payload.company_name).toBe('深至科技');
 	});
 
-	it('rebuilds a queued 定向投递 through the search path, keeping its job identity', async () => {
+	it('rebuilds a queued targeted-application through the search path', async () => {
 		const { rebuildRerunPayload } = await import('../lib/taskLaunch');
 		// A legacy draft-only payload from before the preview tier was cancelled. Its
 		// Target Action still says outreach, and that is the only depth statement left.
@@ -268,7 +266,7 @@ describe('rerun rebuilds through the builder', () => {
 				payload: {
 					saved_search_id: 's1',
 					target_action: 'auto_apply',
-					direct_job_id: 'job-9',
+					job_title: '工程师',
 					preview_only: true,
 					auto_send: false
 				}
@@ -278,10 +276,9 @@ describe('rerun rebuilds through the builder', () => {
 		expect(rerun.payload.target_action).toBe('auto_apply');
 		expect(rerun.payload.preview_only).toBeUndefined();
 		expect(rerun.payload.auto_send).toBeUndefined();
-		// …but the worker still reads `direct_job_id` off tasks an older builder queued, so
-		// the rerun carries the identity forward rather than dropping it on the floor. That
-		// key is retired with the execution path (#428), not with the contract.
-		expect(rerun.payload.direct_job_id).toBe('job-9');
+		// Issue #428 retired the execution path, so the job identity an older builder
+		// queued no longer has a reader and is not carried forward.
+		expect(rerun.payload.job_title).toBe('工程师');
 	});
 
 	it('lets the configured drill mode win for a chat cleanup rerun', async () => {

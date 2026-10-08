@@ -284,7 +284,7 @@ The progression state of a Job Record tracking its data richness and application
 _Avoid_: job status flag, task progress, record phase
 
 **Greeting Provenance (`greeting_source`)**:
-Who wrote the greeting a Job Record holds: `human` — generated or edited in the Web Dashboard — or `agent_draft`. Provenance decides what the agent owes the text: a human copy is skipped by generation and sent verbatim, salutation and all, while anything else (including a record written before the field existed) is drafted for as usual. It exists because previewing stopped being a run mode: the way to read a greeting before it goes out is to write it here, and that only holds if the record remembers whose words they are. The 定向投递 modal's edited copy outranks the record's own.
+Who wrote the greeting a Job Record holds: `human` — generated or edited in the Web Dashboard — or `agent_draft`. Provenance decides what the agent owes the text: a human copy is skipped by generation and sent verbatim, salutation and all, while anything else (including a record written before the field existed) is drafted for as usual. It exists because previewing stopped being a run mode: the way to read a greeting before it goes out is to write it here, and that only holds if the record remembers whose words they are. The Job Record is the only place a run reads an authored greeting from — no payload key overrides it (issue #428).
 _Avoid_: greeting owner, approved flag, manual greeting
 
 **Draft Rung (`matched`)**:

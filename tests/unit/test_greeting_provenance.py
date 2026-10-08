@@ -9,10 +9,11 @@ record has to know which text is whose, and a run that finds a human's copy send
 verbatim and spends no token re-drafting it — otherwise "generate it, then let me edit
 it" is a loop that rewrites the edit on the next sweep.
 
-Two authorities, in order: the greeting in a 定向投递 payload (the human edited it in the
-modal for this send, and until this ticket nothing read it at all), then the record's own
-human-marked copy. An agent draft — and a legacy record whose provenance is unknown —
-keeps today's behaviour exactly: draft, then gate on the score.
+One authority: the record's own human-marked copy. No payload key outranks it — issue #428
+retired the targeted-application payload that used to carry an edited modal copy, and with
+it the only path by which a run could send text the Job Record never held. An agent draft —
+and a legacy record whose provenance is unknown — keeps today's behaviour exactly: draft,
+then gate on the score.
 """
 
 from unittest.mock import MagicMock
@@ -29,8 +30,7 @@ from _feed_harness import (
     _posting,
 )
 
-from boss_agent.enums import JobRecordStatus, TargetAction
-from boss_agent.feed_pipeline import FeedStreamConfig
+from boss_agent.enums import JobRecordStatus
 from boss_agent.job_entities import JobCardBrief
 from boss_agent.job_store import InMemoryJobRecordStore
 from boss_agent.keyword_constants import (
@@ -269,14 +269,51 @@ async def test_repeated_runs_over_a_human_copy_never_re_generate():
 
 
 @pytest.mark.asyncio
-async def test_a_targeted_application_greeting_outranks_the_record():
-    """The 定向投递 modal's edited copy is the highest-priority source.
+async def test_a_scan_that_read_no_card_still_evaluates_the_posting_on_screen():
+    """The empty-feed fallback is the last remaining caller of the on-screen evaluation.
 
-    It used to travel in the payload with no reader at all, so the button that says 模拟器将
-    自动执行沟通 sent something else.
+    A targeted-application task used to reach it deliberately through ``single_screen``;
+    issue #428 retired that branch, so the only way here is a scan that paginated and never
+    read a single card — the operator parked on a detail page, or a driver double standing
+    in for one. This pins that the run still acts on the posting in front of it, and that
+    it drafts a greeting rather than inheriting one from a record it never looked up.
     """
-    card = _card("AI Agent 平台工程师", "智元创新")
     store = InMemoryJobRecordStore()
+
+    detail = _detail_page()
+    detail.extract_job_posting.return_value = _posting("AI Agent 平台工程师", "智元创新")
+    chat = MagicMock()
+    chat.click_send.return_value = True
+    screener, llm = _screener()
+    logs: list[str] = []
+
+    async def log(line: str) -> None:
+        logs.append(line)
+
+    feed = ScriptedFeed([[]])
+    pipeline = _pipeline(store, feed=feed, detail=detail, chat=chat, screener=screener, log=log)
+
+    result = await pipeline.stream_jobs(_outreach())
+
+    # Only the fallback can raise `scanned` from 0 to 1: no card was ever read, so this is
+    # the on-screen evaluation rather than a card that happened to pass.
+    assert result.scanned == 1, "the empty-feed fallback never ran"
+    detail.extract_job_posting.assert_called_once()
+    assert llm.chat_completion_json.call_count == 1
+    assert chat.type_greeting_message.call_args[0][0] == DRAFTED_SENT
+    assert result.applied_count == 1
+
+
+@pytest.mark.asyncio
+async def test_an_empty_feed_run_never_inherits_a_greeting_from_a_record_it_never_read():
+    """No record stands behind the on-screen evaluation, so none of its copy is claimed.
+
+    The targeted-application path used to load a Job Record here and let its human copy
+    (or the modal's) win. With the lookup gone, ``existing_record`` stays empty and the run
+    drafts — an unread record is not a source.
+    """
+    store = InMemoryJobRecordStore()
+    card = _card("AI Agent 平台工程师", "智元创新")
     await store.upsert_job_record(
         _record(
             card.card,
@@ -285,28 +322,6 @@ async def test_a_targeted_application_greeting_outranks_the_record():
             status=JobRecordStatus.JD_SAVED.value,
         )
     )
-    modal_copy = "李工您好，这版是我刚在面板里改过的，请发这一版。"
-
-    config = FeedStreamConfig.from_payload(
-        {
-            "target_action": TargetAction.AUTO_APPLY.value,
-            "direct_job_id": "rec-1",
-            "job_title": card.card.title,
-            "company_name": card.card.company_name,
-            "greeting_message": modal_copy,
-            # Screening is not what this test is about, and the workspace's configured
-            # blacklist would spend a semantic-screen call on the way to the send. The
-            # quota and cool-down are pinned too, so the assertion measures the payload and
-            # not whatever this machine happens to have in config/settings.local.yaml.
-            "daily_greeting_limit": 20,
-            "communication_cooldown_days": 0,
-            "screening_policy": {"enable_screening": False},
-            "min_score": 0,
-            "auto_send": True,
-            "preview_only": False,
-        }
-    )
-    assert config.direct_greeting == modal_copy
 
     detail = _detail_page()
     detail.extract_job_posting.return_value = _posting(card.card.title, card.card.company_name)
@@ -319,18 +334,14 @@ async def test_a_targeted_application_greeting_outranks_the_record():
         logs.append(line)
 
     pipeline = _pipeline(
-        store, feed=ScriptedFeed([]), detail=detail, chat=chat, screener=screener, log=log
+        store, feed=ScriptedFeed([[]]), detail=detail, chat=chat, screener=screener, log=log
     )
 
-    result = await pipeline.stream_jobs(config)
+    result = await pipeline.stream_jobs(_outreach())
 
-    llm.chat_completion_json.assert_not_called()
-    assert chat.type_greeting_message.call_args[0][0] == modal_copy
+    assert chat.type_greeting_message.call_args[0][0] == DRAFTED_SENT
+    assert not any("复用人工招呼语" in line for line in logs), logs
     assert result.applied_count == 1
-    assert any("定向投递" in line and "人工招呼语" in line for line in logs), logs
-    stored = await store.get_job_record_by_fingerprint(card.card.fingerprint)
-    assert stored["greeting_message"] == modal_copy
-    assert stored["greeting_source"] == GREETING_SOURCE_HUMAN
 
 
 @pytest.mark.asyncio

@@ -16,9 +16,8 @@ from typing import Any
 from boss_agent.broker.models import AutomationTask, TaskType
 from boss_agent.broker.pocketbase_adapter import BaseTaskBroker
 from boss_agent.candidate_entities import CandidateProfile
-from boss_agent.enums import JobRecordStatus
 from boss_agent.errors import BrokerError, TransportError
-from boss_agent.feed_pipeline import FeedStreamConfig, JobFeedPipeline, card_rejection_stage
+from boss_agent.feed_pipeline import FeedStreamConfig, JobFeedPipeline
 from boss_agent.identifier_helpers import is_masked_company_name
 from boss_agent.screening import CandidateScreener
 from boss_agent.worker.context import WorkerContext
@@ -150,49 +149,15 @@ class AutoApplyHandler(BaseTaskHandler):
         store: Any,
         screener: CandidateScreener,
     ) -> HandlerResult | None:
-        """Refuse a targeted application that is not worth a single device interaction.
+        """Refuse an outreach run that is not worth a single device interaction.
 
-        These checks guard the daily greeting quota: an already-rejected posting, a
-        blacklisted company, or an employer already contacted under the same-employer
-        cool-down must never cost a communication slot.
+        These checks guard the daily greeting quota: a blacklisted company, or an employer
+        already contacted under the same-employer cool-down, must never cost a communication
+        slot. They read only the payload's own ``job_title`` / ``company_name``, so every
+        caller that can name its target gets both protections without naming a Job Record.
         """
-        direct_job_id = config.direct_job_id
-        existing_rec: dict[str, Any] | None = None
-        if direct_job_id:
-            try:
-                existing_rec = await store.get_job_record(direct_job_id)
-            except TransportError as err:
-                await broker.append_log(
-                    task.id,
-                    f"⚠️ [持久化降级] 查询定向岗位记录遇到持久化异常（{err}），已自动取消本次投递以保护沟通额度",
-                )
-                return HandlerResult(
-                    success=False,
-                    error_message=f"Persistence degradation: failed to query job record ({err})",
-                )
-            if existing_rec and existing_rec.get("status") == JobRecordStatus.IGNORED.value:
-                reason = existing_rec.get("screened_reason") or "已被标记为初筛淘汰/忽略"
-                await broker.append_log(
-                    task.id,
-                    f"🛑 [定向投递防御] 职位 '{existing_rec.get('title')}' @ "
-                    f"'{existing_rec.get('company_name')}' 处于淘汰状态 ({reason})，"
-                    f"已自动取消沟通以保护每日沟通额度。",
-                )
-                return HandlerResult(
-                    success=True,
-                    output={
-                        "applied": False,
-                        "status": "ignored_job_protected",
-                        "reason": reason,
-                    },
-                )
-
-        target_title = payload.get("job_title") or (
-            existing_rec.get("title") if existing_rec else None
-        )
-        target_company = payload.get("company_name") or (
-            existing_rec.get("company_name") if existing_rec else None
-        )
+        target_title = payload.get("job_title")
+        target_company = payload.get("company_name")
         if target_title or target_company:
             verdict = screener.evaluate_card(
                 {"title": target_title or "", "company_name": target_company or ""},
@@ -201,15 +166,9 @@ class AutoApplyHandler(BaseTaskHandler):
             if not verdict.passed:
                 await broker.append_log(
                     task.id,
-                    f"🛑 [定向投递防御] 职位 '{target_title}' @ '{target_company}' "
+                    f"🛑 [投递前防御] 职位 '{target_title}' @ '{target_company}' "
                     f"命中初筛黑名单: {verdict.reason}。已自动取消沟通以保护每日沟通额度。",
                 )
-                if direct_job_id and existing_rec:
-                    updated_data = dict(existing_rec)
-                    updated_data["status"] = JobRecordStatus.IGNORED.value
-                    updated_data["screened_reason"] = verdict.reason
-                    updated_data["screening_stage"] = card_rejection_stage(verdict).value
-                    await store.upsert_job_record(updated_data)
                 return HandlerResult(
                     success=True,
                     output={
@@ -223,8 +182,6 @@ class AutoApplyHandler(BaseTaskHandler):
         # pool means a second contact under the same employer is redundant. Fail open when the
         # recruitment channel is unknown, and let the cool-down window release stale contacts.
         target_is_headhunter = payload.get("is_headhunter")
-        if target_is_headhunter is None and existing_rec:
-            target_is_headhunter = existing_rec.get("is_headhunter")
         if (
             target_company
             and target_is_headhunter is False
