@@ -58,3 +58,18 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           python3 .github/scripts/publish_release.py --plan .release-tmp/plan.json
+
+      # #423: persist the resolved version next to the tag it was cut from, so a
+      # built artifact with no `.git` directory can still report its real version
+      # via the `version.json` tier in `web/src/lib/server/version.ts`.
+      - name: Generate Version Manifest
+        run: |
+          python3 scripts/sync_version.py --plan .release-tmp/plan.json
+          cat version.json
+
+      - name: Upload Version Manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: version-metadata
+          path: version.json
+          if-no-files-found: error

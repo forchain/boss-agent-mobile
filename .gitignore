@@ -42,6 +42,14 @@ web/build/
 # Local Agent Session Logs (machine-local, never part of the tree)
 codex-session-*.md
 
+# CI-generated release version manifest (#423).
+# Written by scripts/sync_version.py on every release and uploaded as a workflow
+# artifact; committing it would mean every release PR fights a stale value in the
+# tree. A dev checkout regenerates it on demand with
+# `uv run python scripts/sync_version.py`.
+version.json
+.release-tmp/
+
 # macOS
 .DS_Store
 

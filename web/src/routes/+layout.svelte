@@ -92,7 +92,7 @@
 							<span class="sm:hidden">Boss Agent</span>
 							<span class="hidden sm:inline">Boss Agent Mobile</span>
 						</h1>
-						<span class="text-[10px] px-1.5 py-0.2 rounded bg-cyan-950 text-cyan-400 border border-cyan-800 font-mono shrink-0">v0.1</span>
+						<span class="text-[10px] px-1.5 py-0.2 rounded bg-cyan-950 text-cyan-400 border border-cyan-800 font-mono shrink-0">{data?.appVersion}</span>
 					</div>
 					<p class="text-[11px] text-slate-400 truncate hidden sm:block">智能移动端求职自动化控制台</p>
 				</div>

@@ -150,6 +150,44 @@ cmd_stop() {
     fi
 }
 
+resolve_version_env() {
+    # Navbar version badge (#421, #422).
+    #
+    # Rule: whichever variable the operator set explicitly must win, and the sniff must
+    # only ever *populate* a variable the operator left alone -- never manufacture one
+    # that outranks an explicit choice. That matters because
+    # `web/src/lib/server/version.ts` reads APP_VERSION *before* PUBLIC_APP_VERSION: if
+    # we sniffed APP_VERSION unconditionally, an operator who exported only
+    # PUBLIC_APP_VERSION would see the git tag win and their value silently ignored.
+    # Ticket #421 promises either variable can drive the override, so we mirror the
+    # operator's value into whichever one they left unset.
+    #
+    # With neither set we sniff the live checkout's git tag and publish it under both
+    # names, so both halves of the resolver agree. Every `git describe` failure -- no
+    # git binary, not a repo, shallow clone, empty output -- degrades to empty through
+    # `|| true` (never tripping `set -euo pipefail`, line 26), leaving the server
+    # resolver to fall through to version.json and then the v0.1 default.
+    #
+    # Exported from a function rather than inlined in `cmd_start` so the E2E suite can
+    # exercise this exact block (`tests/e2e/test_dashboard_version_env.py`) without
+    # starting the dashboard. `export` inside a function still exports to the calling
+    # shell, so the launch sites below are unchanged.
+    local sniffed
+    if [[ -z "${APP_VERSION:-}" && -z "${PUBLIC_APP_VERSION:-}" ]]; then
+        sniffed="$(git describe --tags --always 2>/dev/null || true)"
+        export APP_VERSION="${sniffed}"
+        export PUBLIC_APP_VERSION="${sniffed}"
+    elif [[ -z "${APP_VERSION:-}" ]]; then
+        # Operator set only PUBLIC_APP_VERSION: promote it so the resolver's
+        # APP_VERSION-first order cannot bury it under a sniffed tag.
+        export APP_VERSION="${PUBLIC_APP_VERSION}"
+    else
+        # APP_VERSION set (possibly with PUBLIC_APP_VERSION too): leave PUBLIC alone
+        # if the operator set it, otherwise mirror APP_VERSION across.
+        export PUBLIC_APP_VERSION="${PUBLIC_APP_VERSION:-${APP_VERSION}}"
+    fi
+}
+
 cmd_start() {
     local IS_DAEMON=0
     local VITE_ARGS=()
@@ -206,6 +244,12 @@ cmd_start() {
     export POCKETBASE_URL="${POCKETBASE_URL:-$(runner_config_value pocketbase_url http://127.0.0.1:8090 pb_url)}"
     export VITE_POCKETBASE_URL="${POCKETBASE_URL}"
     export PUBLIC_POCKETBASE_URL="${POCKETBASE_URL}"
+
+    # Navbar version badge (#421, #422). The precedence rules and the git-sniff degradation
+    # are documented on `resolve_version_env`; the four launch sites below pass explicit
+    # `env VAR=…` allowlists, so the export alone would NOT reach the npm process in the
+    # daemon branch.
+    resolve_version_env
     HEALTH_URL="${POCKETBASE_URL%/}/api/health"
 
 
@@ -229,9 +273,9 @@ cmd_start() {
 
     if [[ "${IS_DAEMON}" -eq 1 || "${DAEMON:-0}" -eq 1 ]]; then
         if [[ ${#VITE_ARGS[@]} -gt 0 ]]; then
-            nohup env HOST="${WEB_HOST}" PORT="${WEB_PORT}" VITE_POCKETBASE_URL="${POCKETBASE_URL}" PUBLIC_POCKETBASE_URL="${POCKETBASE_URL}" npm --prefix web run dev -- --host "${WEB_HOST}" --port "${WEB_PORT}" "${VITE_ARGS[@]}" >> "${LOG_FILE}" 2>&1 &
+            nohup env HOST="${WEB_HOST}" PORT="${WEB_PORT}" VITE_POCKETBASE_URL="${POCKETBASE_URL}" PUBLIC_POCKETBASE_URL="${POCKETBASE_URL}" APP_VERSION="${APP_VERSION}" PUBLIC_APP_VERSION="${PUBLIC_APP_VERSION}" npm --prefix web run dev -- --host "${WEB_HOST}" --port "${WEB_PORT}" "${VITE_ARGS[@]}" >> "${LOG_FILE}" 2>&1 &
         else
-            nohup env HOST="${WEB_HOST}" PORT="${WEB_PORT}" VITE_POCKETBASE_URL="${POCKETBASE_URL}" PUBLIC_POCKETBASE_URL="${POCKETBASE_URL}" npm --prefix web run dev -- --host "${WEB_HOST}" --port "${WEB_PORT}" >> "${LOG_FILE}" 2>&1 &
+            nohup env HOST="${WEB_HOST}" PORT="${WEB_PORT}" VITE_POCKETBASE_URL="${POCKETBASE_URL}" PUBLIC_POCKETBASE_URL="${POCKETBASE_URL}" APP_VERSION="${APP_VERSION}" PUBLIC_APP_VERSION="${PUBLIC_APP_VERSION}" npm --prefix web run dev -- --host "${WEB_HOST}" --port "${WEB_PORT}" >> "${LOG_FILE}" 2>&1 &
         fi
         local PID=$!
         echo "${PID}" > "${PID_FILE}"
@@ -242,9 +286,9 @@ cmd_start() {
 
     # Start in background, capture PID, pipe to log and tail
     if [[ ${#VITE_ARGS[@]} -gt 0 ]]; then
-        HOST="${WEB_HOST}" PORT="${WEB_PORT}" VITE_POCKETBASE_URL="${POCKETBASE_URL}" PUBLIC_POCKETBASE_URL="${POCKETBASE_URL}" npm --prefix web run dev -- --host "${WEB_HOST}" --port "${WEB_PORT}" "${VITE_ARGS[@]}" >> "${LOG_FILE}" 2>&1 &
+        HOST="${WEB_HOST}" PORT="${WEB_PORT}" VITE_POCKETBASE_URL="${POCKETBASE_URL}" PUBLIC_POCKETBASE_URL="${POCKETBASE_URL}" APP_VERSION="${APP_VERSION}" PUBLIC_APP_VERSION="${PUBLIC_APP_VERSION}" npm --prefix web run dev -- --host "${WEB_HOST}" --port "${WEB_PORT}" "${VITE_ARGS[@]}" >> "${LOG_FILE}" 2>&1 &
     else
-        HOST="${WEB_HOST}" PORT="${WEB_PORT}" VITE_POCKETBASE_URL="${POCKETBASE_URL}" PUBLIC_POCKETBASE_URL="${POCKETBASE_URL}" npm --prefix web run dev -- --host "${WEB_HOST}" --port "${WEB_PORT}" >> "${LOG_FILE}" 2>&1 &
+        HOST="${WEB_HOST}" PORT="${WEB_PORT}" VITE_POCKETBASE_URL="${POCKETBASE_URL}" PUBLIC_POCKETBASE_URL="${POCKETBASE_URL}" APP_VERSION="${APP_VERSION}" PUBLIC_APP_VERSION="${PUBLIC_APP_VERSION}" npm --prefix web run dev -- --host "${WEB_HOST}" --port "${WEB_PORT}" >> "${LOG_FILE}" 2>&1 &
     fi
     local PID=$!
     echo "${PID}" > "${PID_FILE}"
