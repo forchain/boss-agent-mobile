@@ -8,8 +8,11 @@ const ANTHROPIC_VERSION = '2023-06-01';
 
 export interface ProbeRequest {
 	endpoint: string;
-	/** Protocol-specific auth header (OpenAI: `Authorization`, Anthropic: `x-api-key`). */
-	authHeader: [string, string];
+	/**
+	 * Protocol-specific auth header, named rather than a `[name, value]` pair so the
+	 * call site cannot transpose the two. OpenAI: `Authorization`. Anthropic: `x-api-key`.
+	 */
+	authHeader: { name: string; value: string };
 	headers: Record<string, string>;
 	body: Record<string, unknown>;
 }
@@ -28,12 +31,18 @@ export function buildProbe(
 	const baseUrl = (rawBaseUrl || '').replace(/\/+$/, '');
 	const contentType = { 'Content-Type': 'application/json' };
 	if (provider === 'anthropic') {
-		// A base already ending in `/v1` already carries the version segment, so
-		// appending another would produce the invalid `/v1/v1/messages`.
-		const endpoint = /\/v1$/i.test(baseUrl) ? `${baseUrl}/messages` : `${baseUrl}/v1/messages`;
+		// A base already carrying a version segment (`/v1`, `/v2`, `/v1beta`) already
+		// has it, so appending another would produce the invalid `/v1/v1/messages`.
+		// This rule mirrors `AnthropicChatClient._messages_url` in
+		// `src/droid_agent_core/llm.py`; the two are pinned to each other by
+		// `web/src/tests/llmConnectivityTest.test.ts`, because a probe that validates a
+		// URL the app never calls is worse than no probe.
+		const endpoint = /\/v\d+[a-zA-Z]*$/i.test(baseUrl)
+			? `${baseUrl}/messages`
+			: `${baseUrl}/v1/messages`;
 		return {
 			endpoint,
-			authHeader: ['x-api-key', apiKey],
+			authHeader: { name: 'x-api-key', value: apiKey },
 			headers: { ...contentType, 'anthropic-version': ANTHROPIC_VERSION },
 			body: {
 				model,
@@ -44,7 +53,7 @@ export function buildProbe(
 	}
 	return {
 		endpoint: `${baseUrl}/chat/completions`,
-		authHeader: ['Authorization', `Bearer ${apiKey}`],
+		authHeader: { name: 'Authorization', value: `Bearer ${apiKey}` },
 		headers: { ...contentType },
 		body: {
 			model,
@@ -112,7 +121,7 @@ export const POST: RequestHandler = async ({ request }) => {
 		try {
 			const res = await fetch(probe.endpoint, {
 				method: 'POST',
-				headers: { ...probe.headers, [probe.authHeader[0]]: probe.authHeader[1] },
+				headers: { ...probe.headers, [probe.authHeader.name]: probe.authHeader.value },
 				body: JSON.stringify(probe.body),
 				signal: controller.signal
 			});

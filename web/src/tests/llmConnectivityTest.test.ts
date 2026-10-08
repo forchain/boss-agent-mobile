@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
+import { getProjectRoot } from '../lib/server/pythonRunner';
 
 // The Python/config-realm boundary is irrelevant here: the contract under test
 // is the protocol-shaped probe this route builds and sends. Mock `loadMergedSettings`
@@ -46,7 +49,7 @@ describe('buildProbe — protocol shape', () => {
 	it('anthropic: appends /v1/messages and sends x-api-key + anthropic-version', () => {
 		const probe = buildProbe('anthropic', 'https://api.minimax.cn/anthropic', 'claude-sonnet-4-5', 'sk-key');
 		expect(probe.endpoint).toBe('https://api.minimax.cn/anthropic/v1/messages');
-		expect(probe.authHeader).toEqual(['x-api-key', 'sk-key']);
+		expect(probe.authHeader).toEqual({ name: 'x-api-key', value: 'sk-key' });
 		expect(probe.headers['anthropic-version']).toBe('2023-06-01');
 		expect(probe.body).toEqual({
 			model: 'claude-sonnet-4-5',
@@ -69,7 +72,7 @@ describe('buildProbe — protocol shape', () => {
 	it('openai: appends /chat/completions and sends a Bearer Authorization header', () => {
 		const probe = buildProbe('openai', 'https://api.minimaxi.com/v1', 'MiniMax-M3', 'sk-key');
 		expect(probe.endpoint).toBe('https://api.minimaxi.com/v1/chat/completions');
-		expect(probe.authHeader).toEqual(['Authorization', 'Bearer sk-key']);
+		expect(probe.authHeader).toEqual({ name: 'Authorization', value: 'Bearer sk-key' });
 		expect(probe.headers['anthropic-version']).toBeUndefined();
 		expect(probe.body).toEqual({
 			model: 'MiniMax-M3',
@@ -235,5 +238,69 @@ describe('normalizeLlmProvider', () => {
 		const data = await res.json();
 		expect(data.provider).toBe('openai');
 		expect(fetchMock.mock.calls[0][0]).toBe('https://api.minimaxi.com/v1/chat/completions');
+	});
+});
+// Cross-language endpoint parity — the probe must validate the URL the app calls.
+//
+// `AnthropicChatClient._messages_url` (src/droid_agent_core/llm.py) decides the real
+// Messages URL; this route re-derives it to probe the endpoint. That is the same
+// contract the Python side and this side must agree on, and the drift this catches
+// was real: the TypeScript rule matched only `/v1`, so a base ending in `/v1beta`
+// or `/v2` was probed at `.../v1beta/v1/messages` while the client called
+// `.../v1beta/messages` — a green "connection succeeded" on a URL never used.
+//
+// The Python pattern is read from source rather than restated here, so this test
+// fails the moment either side changes alone. Same spirit as defaultsParity.test.ts.
+describe('Anthropic endpoint parity with the Python client', () => {
+	const PY_SOURCE = path.join(
+		getProjectRoot(),
+		'src',
+		'droid_agent_core',
+		'llm.py'
+	);
+
+	/** The version-segment pattern `AnthropicChatClient._messages_url` tests against. */
+	function pythonVersionPattern(): RegExp {
+		const source = fs.readFileSync(PY_SOURCE, 'utf-8');
+		const match = source.match(/def _messages_url[\s\S]*?re\.search\(\s*r["']([^"']+)["']/);
+		expect(match, `could not read the version-segment rule out of ${PY_SOURCE}`).not.toBeNull();
+		return new RegExp(match![1], 'i');
+	}
+
+	function pythonEndpoint(baseUrl: string, pattern: RegExp): string {
+		const base = baseUrl.replace(/\/+$/, '');
+		return pattern.test(base) ? `${base}/messages` : `${base}/v1/messages`;
+	}
+
+	const BASES = [
+		'https://api.anthropic.com/v1',
+		'https://api.minimax.cn/anthropic',
+		'https://gateway.example.com/anthropic',
+		'https://gateway.example.com/v1beta',
+		'https://gateway.example.com/v2',
+		'https://gateway.example.com/v1alpha',
+		'https://gateway.example.com/anthropic/'
+	];
+
+	it.each(BASES)('probes the same Messages URL the client calls for %s', (baseUrl) => {
+		const pattern = pythonVersionPattern();
+		expect(buildProbe('anthropic', baseUrl, 'm', 'k').endpoint).toBe(
+			pythonEndpoint(baseUrl, pattern)
+		);
+	});
+
+	it('never doubles the version segment', () => {
+		for (const baseUrl of BASES) {
+			expect(buildProbe('anthropic', baseUrl, 'm', 'k').endpoint).not.toMatch(/\/v\d+\/v\d+/);
+		}
+	});
+
+	it('sends the same anthropic-version the Python client pins', () => {
+		const source = fs.readFileSync(PY_SOURCE, 'utf-8');
+		const pinned = source.match(/ANTHROPIC_VERSION: str = "([^"]+)"/);
+		expect(pinned, 'could not read ANTHROPIC_VERSION out of the Python client').not.toBeNull();
+		expect(buildProbe('anthropic', 'https://api.minimax.cn/anthropic', 'm', 'k').headers[
+			'anthropic-version'
+		]).toBe(pinned![1]);
 	});
 });

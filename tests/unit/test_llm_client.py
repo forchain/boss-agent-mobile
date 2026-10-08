@@ -571,15 +571,26 @@ def test_anthropic_client_maps_other_http_errors():
         client.chat_completion([{"role": "user", "content": "Hi"}])
 
 
-def test_anthropic_client_reuses_the_shared_json_helpers():
-    """The repair chain is one implementation, not a second copy per protocol."""
-    # The classmethod reaches the mixin through __func__; the staticmethods come back
-    # off the class as the plain function they already are.
-    assert AnthropicChatClient._robust_parse_json.__func__ is (
-        OpenAIChatClient._robust_parse_json.__func__
-    )
-    assert AnthropicChatClient._extract_json_block is OpenAIChatClient._extract_json_block
-    assert AnthropicChatClient._auto_close_json is OpenAIChatClient._auto_close_json
+def test_anthropic_client_parses_json_through_the_same_recovery_as_openai():
+    """Both protocols recover the same malformed JSON, rather than one owning a copy.
+
+    Asserted on behaviour, not on class layout: what matters to a caller is that a
+    broken reply is repaired under either protocol. A test that compared the
+    underlying functions would pin how the chain is shared and break on any
+    composition change, without proving anything a caller can observe.
+    """
+    # A truncated object, unclosed string, trailing comma and unescaped inner quote
+    # all at once — the shape `_auto_close_json` and the quote repair exist for.
+    malformed = '{"match_score": 91, "greeting_message": "您好，我是"资深 Python 工程师",,"'
+
+    parsed = AnthropicChatClient._robust_parse_json(malformed)
+    assert isinstance(parsed, dict)
+    assert parsed["match_score"] == 91
+    assert parsed["greeting_message"]
+
+    # The same input must resolve identically under the other protocol, which is only
+    # true if there is one repair chain rather than two.
+    assert parsed == OpenAIChatClient._robust_parse_json(malformed)
 
 
 # --------------------------------------------------------------------------

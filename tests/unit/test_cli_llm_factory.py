@@ -103,3 +103,43 @@ def test_script_client_carries_the_resolved_configuration(name: str, module) -> 
     assert isinstance(client.config, LLMConfig)
     assert client.config.base_url == "https://api.minimax.cn/anthropic"
     assert client.config.model == "MiniMax-M3"
+
+
+# --- Configuration Realm: the protocol is resolved, not just documented (#419) --------
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("openai", "openai"),
+        ("anthropic", "anthropic"),
+        ("  Anthropic  ", "anthropic"),
+        # Pre-protocol vendor names converge instead of failing: they name a model
+        # house that speaks the default protocol, and an existing config must keep
+        # loading rather than crash on startup.
+        ("minimax", "openai"),
+        ("deepseek", "openai"),
+        ("", "openai"),
+        (None, "openai"),
+        (123, "openai"),
+    ],
+)
+def test_realm_normalizes_provider_to_a_known_protocol(raw, expected: str) -> None:
+    from boss_agent.config_realm import LLM_PROTOCOLS, normalize_provider
+
+    assert normalize_provider(raw) == expected
+    assert normalize_provider(raw) in LLM_PROTOCOLS
+
+
+def test_realm_settings_resolve_a_legacy_provider_to_the_default_protocol() -> None:
+    """A saved config still naming a vendor must load, on a working protocol."""
+    from boss_agent.config_realm import llm_settings
+
+    resolved = llm_settings({"provider": "deepseek"})
+    assert resolved.provider == "openai"
+
+
+def test_realm_settings_keep_an_explicit_anthropic_provider() -> None:
+    from boss_agent.config_realm import llm_settings
+
+    assert llm_settings({"provider": "anthropic"}).provider == "anthropic"
