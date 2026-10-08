@@ -260,10 +260,44 @@ RUNNER_WATCH_TAIL_PID=""
 
 #: The wording an attached log stream announces when the service it follows is gone.
 #:
-#: Owned here for the same reason the lifecycle events are: five Dedicated Runner Scripts
-#: attach to their own service, and "which service stopped" is a contract with the operator
-#: that must not drift between copies. The PID is substituted by the seam below.
+#: Owned here for the same reason the lifecycle events are: four Dedicated Runner Scripts
+#: attach to their own service through `runner_attached_logs` — `appium.sh`, `dashboard.sh`,
+#: `pocketbase.sh` and `worker.sh` — and "which service stopped" is a contract with the
+#: operator that must not drift between copies. `emulator.sh` is the fifth Dedicated
+#: Runner Script and deliberately not in that count: a Virtual Device Session owns no
+#: runner-owned process to watch, so it follows its own `attach_logs`. The PID is
+#: substituted by the seam below.
 RUNNER_ATTACHED_STOP_EVENT="守护进程 (PID: {pid}) 已停止"
+
+#: ... and the wording for the one case that is provably not a plain stop.
+#:
+#: A log file cannot say whether its writer died or was replaced, so the watcher reaches for
+#: the one piece of evidence that can: the service's own pidfile naming a *different* live
+#: process. When it does, the operator's next move differs — after a stop they start the
+#: service, after a restart they decide whether to reattach — and silently staying on the
+#: same file would leave them attached to a process they can no longer Ctrl+C, believing
+#: they are watching the current one. Ticket #425 asks for exactly this.
+RUNNER_ATTACHED_RESTART_EVENT="守护进程 (PID: {pid}) 已停止并重启 (新 PID: {new_pid})"
+
+# Whether a PID string is one this watcher could actually observe.
+#
+# `runner_process_alive` requires a number, so anything else — the empty string a runner
+# passes when it resolved nothing, or the literal `unknown` that `appium.sh`, `pocketbase.sh`
+# and `dashboard.sh` substitute for it — makes `ps -p` fail, which `runner_process_alive`
+# reports as GONE. A watcher asking "is this gone?" about `unknown` would announce the stop
+# of a service it has never seen run, on the very route a runner takes when it can see its
+# service is up but could not resolve the PID owning it.
+#
+# An unwatchable PID is therefore *no information at all*, never a death: the watch degrades
+# to the plain `tail -f` it replaced and ends only with its own stream. Invariant for a
+# function this cheap to call: the only acceptable answer is yes or no, and anything the
+# kernel cannot be asked about is a no.
+runner_pid_watchable() {
+    local PID="${1:-}"
+    [[ -n "${PID}" ]] || return 1
+    [[ "${PID}" != *[!0-9]* ]] || return 1
+    return 0
+}
 
 # `runner_log_attached_stop LABEL PID`
 #
@@ -275,6 +309,46 @@ runner_log_attached_stop() {
     local LABEL="${1:-Service}"
     local PID="${2:-}"
     echo "🛑 [${LABEL}] ${RUNNER_ATTACHED_STOP_EVENT//\{pid\}/$PID}"
+}
+
+# `runner_log_attached_restart LABEL PID NEW_PID`
+#
+# The stop notice's sibling, for the case the watcher can substantiate: the PID it followed
+# is gone, and the service's pidfile now names a different live process. Same channel as
+# `runner_log_attached_stop` — the terminal, because whoever performed the restart is the
+# one writing the log.
+runner_log_attached_restart() {
+    local LABEL="${1:-Service}"
+    local PID="${2:-}"
+    local NEW_PID="${3:-}"
+    # `{new_pid}` is substituted first on purpose: it contains the letters `pid}`, but not
+    # the placeholder `{pid}`, so the order is safe either way — and doing it in two steps
+    # keeps this readable as bash 3.2, where the chaining form is easy to get wrong.
+    local MESSAGE="${RUNNER_ATTACHED_RESTART_EVENT//\{new_pid\}/$NEW_PID}"
+    echo "🛑 [${LABEL}] ${MESSAGE//\{pid\}/$PID}"
+}
+
+# The live PID `PID_FILE` names now, when it is not the PID this watch followed.
+#
+# Echoes the replacement PID, or nothing when the evidence does not support a restart: no
+# pidfile, an unreadable one, one still naming the dead process, or one naming something
+# that is not running. That last one matters most — a pidfile naming a *live* process other
+# than the watched one is the only shape a restart from another terminal leaves behind, and
+# claiming a restart from anything weaker would be exactly the dishonesty this notice
+# exists to avoid. Always returns 0: the answer is the output, not the status.
+runner_restart_replacement_pid() {
+    local PID="${1:-}"
+    local PID_FILE="${2:-}"
+    if [[ -n "${PID_FILE}" && -n "${PID}" ]]; then
+        local NEW_PID
+        NEW_PID="$(runner_pidfile_read "${PID_FILE}")"
+        if [[ "${NEW_PID}" != "${PID}" ]] \
+            && runner_pid_watchable "${NEW_PID}" \
+            && runner_process_alive "${NEW_PID}"; then
+            echo "${NEW_PID}"
+        fi
+    fi
+    return 0
 }
 
 # Stop following a log stream — and only that.
@@ -294,7 +368,7 @@ runner_watch_detach() {
 
 # Follow LOG_FILE until the watched service is gone, then announce the stop and return.
 #
-# `runner_watch_log_stream PID LOG_FILE LABEL [INITIAL_LINES]`
+# `runner_watch_log_stream PID LOG_FILE LABEL [INITIAL_LINES] [PID_FILE]`
 #
 # The `tail` runs in the background as a child of this shell and is polled alongside the
 # service:
@@ -306,6 +380,10 @@ runner_watch_detach() {
 #   * Ctrl+C ends the watch through `runner_watch_detach`, which signals the `tail` and
 #     nothing else.
 #
+# `PID_FILE` is what turns a plain stop into a stop-and-restart: without it the watcher has
+# no evidence of a replacement and says only what it saw. With it, a pidfile naming a
+# different live process is announced as the restart it is.
+#
 # Backgrounding the `tail` is not cosmetic. Bash does not run a trap handler while a
 # foreground child is still running, so a watcher written as a bare `tail -f` cannot be
 # detached from at all: the Ctrl+C is recorded and then ignored until the stream ends by
@@ -315,15 +393,29 @@ runner_watch_log_stream() {
     local LOG_FILE="${2:-}"
     local LABEL="${3:-service}"
     local INITIAL_LINES="${4:-30}"
+    local PID_FILE="${5:-}"
+    local NEW_PID=""
 
     touch "${LOG_FILE}"
     tail -n "${INITIAL_LINES}" -f "${LOG_FILE}" &
     RUNNER_WATCH_TAIL_PID=$!
 
+    # Decided once, before the loop, so the watch's meaning cannot shift mid-stream: a PID
+    # that cannot be watched is not a service that has stopped. See `runner_pid_watchable`.
+    local WATCHABLE=0
+    if runner_pid_watchable "${PID}"; then
+        WATCHABLE=1
+    fi
+
     while true; do
-        if runner_process_gone "${PID}"; then
+        if [[ ${WATCHABLE} -eq 1 ]] && runner_process_gone "${PID}"; then
             runner_watch_detach
-            runner_log_attached_stop "${LABEL}" "${PID}"
+            NEW_PID="$(runner_restart_replacement_pid "${PID}" "${PID_FILE}")" || true
+            if [[ -n "${NEW_PID}" ]]; then
+                runner_log_attached_restart "${LABEL}" "${PID}" "${NEW_PID}"
+            else
+                runner_log_attached_stop "${LABEL}" "${PID}"
+            fi
             return 0
         fi
         if runner_process_gone "${RUNNER_WATCH_TAIL_PID}"; then
@@ -336,7 +428,7 @@ runner_watch_log_stream() {
 }
 
 # Print the tail of a service log and follow it, without killing the daemon on
-# detach. `runner_attached_logs PID LOG_FILE LABEL ENDPOINT`.
+# detach. `runner_attached_logs PID LOG_FILE LABEL [ENDPOINT] [PID_FILE]`.
 #
 # Returns once the watched service is gone, so a daemon stopped from another terminal
 # unblocks the terminal instead of leaving it on a live cursor over an inert file.
@@ -345,6 +437,7 @@ runner_attached_logs() {
     local LOG_FILE="${2:-}"
     local LABEL="${3:-service}"
     local ENDPOINT="${4:-}"
+    local PID_FILE="${5:-}"
 
     echo "ℹ️ ${LABEL} is already running (PID: ${PID})${ENDPOINT:+ at ${ENDPOINT}}"
     echo "👀 Attaching to live log stream (${LOG_FILE})... (Press Ctrl+C to detach)"
@@ -353,7 +446,7 @@ runner_attached_logs() {
     # Detaching must not signal the background service.
     trap 'runner_watch_detach; echo -e "\n👋 Detached from '"${LABEL}"' logs ('"${LABEL}"' is still running in background)."; exit 0' INT TERM
 
-    runner_watch_log_stream "${PID}" "${LOG_FILE}" "${LABEL}" 30
+    runner_watch_log_stream "${PID}" "${LOG_FILE}" "${LABEL}" 30 "${PID_FILE}"
 }
 
 # --------------------------------------------------------------------------- #

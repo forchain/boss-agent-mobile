@@ -129,7 +129,7 @@ cmd_stop() {
         PORT_PID="$(runner_port_listener_pid "${WEB_PORT}")"
         if [[ -n "${PORT_PID}" ]]; then
             echo "⚠️ Port ${WEB_PORT} still held by PID ${PORT_PID}; reclaiming."
-            runner_graceful_stop "${PORT_PID}" "${WEB_STOP_TIMEOUT_SEC}" "port ${WEB_PORT} listener"
+            runner_graceful_stop "${PORT_PID}" "${WEB_STOP_TIMEOUT_SEC}" "port ${WEB_PORT} listener" "${LOG_FILE}"
         fi
     fi
 
@@ -165,7 +165,7 @@ cmd_start() {
     PORT_PID="$(runner_port_listener_pid "${WEB_PORT}")"
     if [[ -n "${PORT_PID}" ]] && ! runner_process_cwd_alive "${PORT_PID}"; then
         echo "⚠️ Port ${WEB_PORT} is held by stale process PID ${PORT_PID} whose working directory was deleted; reclaiming."
-        runner_graceful_stop "${PORT_PID}" "${WEB_STOP_TIMEOUT_SEC}" "stale web listener"
+        runner_graceful_stop "${PORT_PID}" "${WEB_STOP_TIMEOUT_SEC}" "stale web listener" "${LOG_FILE}"
         rm -f "${PID_FILE}"
     fi
 
@@ -177,7 +177,7 @@ cmd_start() {
             echo "ℹ️ SvelteKit Web Dashboard is already running in background (PID: ${RUNNING_PID:-unknown}) at ${WEB_URL}"
             return 0
         else
-            runner_attached_logs "${RUNNING_PID:-unknown}" "${LOG_FILE}" "SvelteKit Web Dashboard" "${WEB_URL}"
+            runner_attached_logs "${RUNNING_PID:-unknown}" "${LOG_FILE}" "SvelteKit Web Dashboard" "${WEB_URL}" "${PID_FILE}"
             return 0
         fi
     fi

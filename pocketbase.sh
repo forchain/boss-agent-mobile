@@ -165,7 +165,7 @@ cmd_start() {
             echo "ℹ️ PocketBase is already running in background (PID: ${RUNNING_PID:-unknown}) at ${HEALTH_URL}"
             exit 0
         else
-            runner_attached_logs "${RUNNING_PID:-unknown}" "${LOG_FILE}" "PocketBase" "http://${PB_HTTP}"
+            runner_attached_logs "${RUNNING_PID:-unknown}" "${LOG_FILE}" "PocketBase" "http://${PB_HTTP}" "${PID_FILE}"
             exit 0
         fi
     fi
@@ -233,7 +233,20 @@ cmd_restart() {
     sleep 0.5
     # In a subshell: `cmd_start` exits from inside its own health check when the broker is
     # already up, and an `exit` there would otherwise take this confirmation down with it.
-    (cmd_start "$@")
+    #
+    # The status is captured rather than propagated, so a start that failed cannot be
+    # recorded below as a broker that came back up. Not written as `( cmd_start ) || return 1`:
+    # a subshell used as an operand of `||` has errexit suspended *inside* it, which would
+    # let a failed pre-flight fall through to the foreground `tail -f` and hang forever.
+    # Suspension is therefore lifted only for the outer shell, and restored for the subshell
+    # where `cmd_start` depends on it to abort.
+    set +e
+    ( set -e; cmd_start "$@" )
+    local START_STATUS=$?
+    set -e
+    if [[ ${START_STATUS} -ne 0 ]]; then
+        return 1
+    fi
     runner_log_restart_complete "${LOG_FILE}" "PocketBase" "PocketBase State Stream broker back online"
 }
 

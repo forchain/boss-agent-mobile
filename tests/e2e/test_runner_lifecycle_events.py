@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -34,7 +35,7 @@ from pathlib import Path
 
 import pytest
 
-from _service_harness import REPO_ROOT, free_port, wait_for_port_bound
+from _service_harness import REPO_ROOT, free_port, held_free_port, wait_for_port_bound
 
 pytestmark = pytest.mark.e2e
 
@@ -434,6 +435,50 @@ def test_pocketbase_restart_records_the_stop_and_the_restart(tmp_path: Path):
     assert result.returncode != 0, "the start half was expected to abort without a broker"
 
 
+def test_a_restart_whose_start_failed_is_not_recorded_as_complete(tmp_path: Path):
+    """`Restart completed` means the service came back. A start that aborted must not claim it.
+
+    `cmd_restart` runs `cmd_start` in a subshell so that an `exit` inside `cmd_start`'s own
+    health check cannot take the confirmation down with it — and that same subshell threw
+    the start's exit status away. A restart whose start failed still wrote "back online" into
+    the very log the E2E Pre-Test Teardown Gate reads, which is how a service that is down
+    gets recorded as up.
+
+    The runner now captures that status and returns 1 itself. Asserting exactly 1 (rather
+    than merely non-zero) is what makes this a test of the fix and not of `set -e`: left
+    alone, the failed subshell aborted the runner from *inside* `cmd_restart`, so the exit
+    status was whatever `set -e` happened to produce rather than a decision the runner made.
+
+    The start half aborts where it always has in a throwaway root: the data directory is
+    pre-seeded so the real `pocketbase` binary is never run, and the schema provisioner has
+    no script to execute.
+    """
+    runtime_root = _runner_root(tmp_path, "pocketbase.sh")
+    data_dir = runtime_root / "pb-data"
+    data_dir.mkdir()
+    (data_dir / "data.db").write_bytes(b"")  # skip the real binary's `migrate up`
+    port = free_port()
+    with _owned_process(runtime_root, "pocketbase.pid") as process:
+        result = _run(
+            runtime_root,
+            "pocketbase.sh",
+            "restart",
+            PB_HTTP=f"127.0.0.1:{port}",
+            PB_DATA_DIR=str(data_dir),
+        )
+        assert result.returncode == 1, (
+            "a restart whose start failed must report the failure itself (1), not abort "
+            f"from inside set -e ({result.returncode})"
+        )
+        assert process.poll() is not None, "the PocketBase process survived restart"
+
+    recorded = _read(_log_of(runtime_root, "pocketbase.log"))
+    assert RESTART_REQUESTED in recorded, f"the restart itself was never recorded:\n{recorded}"
+    assert RESTART_COMPLETED not in recorded, (
+        f"a start that never came up was recorded as a completed restart:\n{recorded}"
+    )
+
+
 #: Stands in for the Appium binary: binds the port it is handed and answers its status check.
 _APPIUM_STUB_SOURCE = """
 import sys
@@ -561,14 +606,55 @@ def test_an_idle_stop_records_nothing(tmp_path: Path, script, pid_name, log_name
     A stop that logs unconditionally would create the service's log on every idle
     `./run.sh stop`, and the E2E Pre-Test Teardown Gate depends on an idle stop being a
     cheap no-op rather than a growing record of stops that never happened.
+
+    The port is *held* for the duration rather than merely reserved and released, which is
+    what makes "nothing is running" a fact instead of a hope. A released ephemeral port can
+    be won by any concurrent process between here and the runner's own probe — and a runner
+    resolving "who owns my port" would then adopt that stranger and log a perfectly correct
+    stop, failing this test for a product that did nothing wrong.
     """
     runtime_root = _runner_root(tmp_path, script)
-    overrides = {key: value.format(port=free_port()) for key, value in env.items()}
-    result = _run(runtime_root, script, "stop", **overrides)
+    with held_free_port() as port:
+        overrides = {key: value.format(port=port) for key, value in env.items()}
+        result = _run(runtime_root, script, "stop", **overrides)
     assert result.returncode == 0, result.stderr
     assert "No running" in result.stdout
     assert not (runtime_root / ".boss_agent" / log_name).exists(), (
         f"{script} stop fabricated a lifecycle event; events record real stops, not heartbeats"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# One log stream, one label
+# --------------------------------------------------------------------------- #
+
+
+def test_the_automation_worker_log_carries_one_label(tmp_path: Path):
+    """`worker.log` names the Automation Worker, or nothing at all.
+
+    `worker.sh` labelled its lifecycle events "Worker" and its escalations "Automation
+    Worker" — two names for one service inside one file, which is exactly the synonym
+    drift `GLOSSARY.md` exists to prevent. The domain term is **Automation Worker**, so
+    every line a runner writes into `worker.log` carries that one label.
+
+    The `[Worker]` prefix that survives in this repo belongs to the Python daemon's own
+    shutdown marker (`boss_agent.worker.daemon.SHUTDOWN_ACK_MARKER`, which the teardown
+    service greps). These shell lines do not produce it, and that marker is not touched
+    here — so this asserts on `worker.log` as the runner alone wrote it.
+    """
+    runtime_root = _runner_root(tmp_path, "worker.sh")
+    with _owned_process(runtime_root, "worker.pid") as process:
+        result = _run(runtime_root, "worker.sh", "stop")
+        assert result.returncode == 0, result.stderr
+        assert process.poll() is not None, "the Automation Worker daemon survived stop"
+
+    recorded = _read(_log_of(runtime_root, "worker.log"))
+    assert STOP_REQUESTED in recorded, f"stop left no confirmation in worker.log:\n{recorded}"
+
+    labels = set(re.findall(r"[🛑✅🔄⚠️] \[([^\]]+)\]", recorded))
+    assert labels == {"Automation Worker"}, (
+        f"worker.log named the Automation Worker by more than one name: {sorted(labels)}.\n"
+        f"{recorded}"
     )
 
 
