@@ -163,8 +163,7 @@ describe('JobGreetingRefinementPanel (Issue #318)', () => {
 });
 
 describe('JobActionsBar (Issue #318)', () => {
-	it('renders apply, ignore, and blacklist action buttons', async () => {
-		const onDispatchApply = vi.fn();
+	it('renders ignore and blacklist actions, and no longer offers the dispatch-apply entry point (Issue #426)', async () => {
 		const onIgnore = vi.fn();
 		const onBlacklist = vi.fn();
 
@@ -175,15 +174,15 @@ describe('JobActionsBar (Issue #318)', () => {
 				onRestore: () => {},
 				onClearCommunication: () => {},
 				onClearCompanyCommunication: () => {},
-				onDispatchApply,
 				onIgnore,
 				onBlacklist
 			}
 		});
 
-		const applyBtn = screen.getByRole('button', { name: /立即发起移动端打招呼/ });
-		await fireEvent.click(applyBtn);
-		expect(onDispatchApply).toHaveBeenCalledTimes(1);
+		// Retired, not relocated: the dispatch never navigated to the picked posting, it greeted
+		// whichever posting the emulator already sat on. No such button may remain reachable.
+		expect(screen.queryByRole('button', { name: /立即发起移动端打招呼/ })).toBeNull();
+		expect(screen.queryByText(/派发投递中/)).toBeNull();
 
 		const ignoreBtn = screen.getByRole('button', { name: /仅忽略此职位/ });
 		await fireEvent.click(ignoreBtn);
@@ -205,7 +204,6 @@ describe('JobActionsBar (Issue #318)', () => {
 				onRestore: () => {},
 				onClearCommunication,
 				onClearCompanyCommunication: () => {},
-				onDispatchApply: () => {},
 				onIgnore: () => {},
 				onBlacklist: () => {}
 			}

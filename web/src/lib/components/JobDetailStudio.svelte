@@ -13,7 +13,6 @@
 		clearJobCommunication,
 		postCommunicationAction
 	} from '$lib/stores/jobs';
-	import { createAutomationTask } from '$lib/stores/tasks';
 	import {
 		validateCanBlacklistCompany,
 		isMaskedCompanyName,
@@ -24,7 +23,6 @@
 	} from '$lib/screening';
 	import { apiGet, apiPost } from '$lib/apiClient';
 	import { confirmAction, alertAction } from '$lib/stores/confirm';
-	import { buildDirectApplyLaunch } from '$lib/taskLaunch';
 	import { greetingProvenance, greetingProvenanceLabel, humanGreetingPatch } from '$lib/greetingProvenance';
 
 	import JobIgnoredBanner from './studio/JobIgnoredBanner.svelte';
@@ -47,7 +45,7 @@
 		llmSettings?: LLMSettings | null;
 		onJobUpdated?: (updatedJob: JobRecord) => void;
 		onJobDeleted?: (jobId: string) => void;
-		onActionCompleted?: (action: 'ignore' | 'delete' | 'blacklist' | 'apply' | 'restore' | 'clear_communication' | 'clear_company') => void;
+		onActionCompleted?: (action: 'ignore' | 'delete' | 'blacklist' | 'restore' | 'clear_communication' | 'clear_company') => void;
 	} = $props();
 
 	let localOverride = $state<JobRecord | null>(null);
@@ -68,8 +66,6 @@
 	let customGreeting = $state('');
 	let isSavingGreeting = $state(false);
 	let saveGreetingNotice = $state('');
-	let isDispatchingApply = $state(false);
-	let applyNotice = $state('');
 
 	// Conversational Critique & Greeting Prompt Refinement State
 	let critiqueInput = $state('');
@@ -127,7 +123,6 @@
 			customGreeting = currentJob.greeting_message || '';
 			evaluationError = '';
 			saveGreetingNotice = '';
-			applyNotice = '';
 			blacklistNotice = '';
 			critiqueInput = '';
 			refinementDiff = null;
@@ -672,40 +667,6 @@
 		}
 	}
 
-	async function handleDispatchApply() {
-		if (!currentJob) return;
-		isDispatchingApply = true;
-		applyNotice = '正在下发定向投递任务至模拟器...';
-
-		try {
-			// Through the launch contract: this payload used to state no `target_action`, no
-			// preview pair and no threshold, so the worker's draft-only defaults decided and
-			// the app promised a communication it never sent — and the score gate could veto
-			// a posting the human had just picked.
-			const launch = buildDirectApplyLaunch(
-				{
-					job_id: currentJob.id,
-					title: currentJob.title,
-					company_name: currentJob.company_name,
-					greeting_message: customGreeting || currentJob.greeting_message,
-					candidate_profile: profile
-				},
-				{ source: 'manual' }
-			);
-			const task = await createAutomationTask(launch.task_type, launch.payload, launch.source);
-
-			applyNotice = `🚀 投递任务已成功派发 (Task ID: ${task.id})，模拟器将自动执行沟通！`;
-			onActionCompleted?.('apply');
-			setTimeout(() => {
-				applyNotice = '';
-			}, 5000);
-		} catch (e: any) {
-			applyNotice = '❌ 派发任务失败: ' + e.message;
-		} finally {
-			isDispatchingApply = false;
-		}
-	}
-
 	async function handleDeleteJob(jobToDel: JobRecord) {
 		const targetId = jobToDel.id;
 		const targetTitle = jobToDel.title;
@@ -835,9 +796,7 @@
 				{isRestoring}
 				{isClearingCommunication}
 				{isClearingCompany}
-				{isDispatchingApply}
 				{isBlacklisting}
-				{applyNotice}
 				{restoreNotice}
 				{blacklistNotice}
 				{communicationNotice}
@@ -845,7 +804,6 @@
 				onRestore={handleRestoreJob}
 				onClearCommunication={handleClearCommunication}
 				onClearCompanyCommunication={handleClearCompanyCommunication}
-				onDispatchApply={handleDispatchApply}
 				onIgnore={handleIgnoreJob}
 				onBlacklist={handleBlacklistCompany}
 				onCloseBlacklistNotice={() => (blacklistNotice = '')}
