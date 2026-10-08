@@ -828,6 +828,17 @@ cmd_stop() {
     local SERIAL
     SERIAL="$(get_running_device_serial)"
 
+    # The Virtual Device Session has no runner-owned PID to signal: `adb emu kill` is the
+    # stop *request* and the process sweep is what makes "stopped" mean the AVD is gone. So
+    # the handle recorded below is the ADB transport the kill is sent to — inventing a PID
+    # this script does not have would be the one thing the seam must never do.
+    local RUNNING_PIDS
+    RUNNING_PIDS="$(emulator_process_pids)"
+    if [[ -n "${SERIAL}" || -n "${RUNNING_PIDS}" ]]; then
+        runner_log_stop_request "${LOG_FILE}" "Emulator" "${SERIAL:-${RUNNING_PIDS}}" \
+            "Virtual Device Session '${TARGET_AVD}'"
+    fi
+
     if [[ -n "${SERIAL}" ]] && adb_query -s "${SERIAL}" emu kill >/dev/null; then
         echo "✅ Sent emu kill to ${SERIAL} (${TARGET_AVD})."
     elif [[ -n "${SERIAL}" ]]; then
@@ -849,6 +860,10 @@ cmd_stop() {
     # SIGKILL report a clean stop and then contradict itself a line later.
     if [[ ${REAP_STATUS} -eq 0 ]]; then
         echo "ℹ️ Stopped emulator processes for ${TARGET_AVD}."
+        if [[ -n "${SERIAL}" || -n "${RUNNING_PIDS}" ]]; then
+            runner_log_stop_complete "${LOG_FILE}" "Emulator" \
+                "Virtual Device Session '${TARGET_AVD}' stopped"
+        fi
     fi
     return "${REAP_STATUS}"
 }
@@ -950,8 +965,13 @@ cmd_start() {
 # forwarded so `--daemon` (and `--foreground`) still mean what they mean to `start`.
 cmd_restart() {
     echo "🔄 Restarting Dedicated AVD '${TARGET_AVD}'..."
+    runner_log_restart_request "${LOG_FILE}" "Emulator" "Virtual Device Session '${TARGET_AVD}'"
     cmd_stop
-    cmd_start "$@"
+    # In a subshell: `cmd_start` exits from inside its own boot path, and an `exit` there
+    # would otherwise take this confirmation down with it.
+    (cmd_start "$@")
+    runner_log_restart_complete "${LOG_FILE}" "Emulator" \
+        "Virtual Device Session '${TARGET_AVD}' back online"
 }
 
 ACTION="${1:-start}"

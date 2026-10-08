@@ -480,3 +480,97 @@ def test_the_dashboard_runner_no_longer_restates_the_ack_literal() -> None:
     assert f'"[Web] {WEB_SHUTDOWN_ACK}, shutting down' not in web, (
         "dashboard.sh restates the ack literal again; reference the shared constant instead"
     )
+
+
+#: The wording every Dedicated Runner Script records, and the seam functions that own it.
+#: This is the same duplication the shutdown-acknowledgment contract was written to kill:
+#: five scripts, one sentence each, drifting apart the moment a runner is copied.
+LIFECYCLE_LITERALS = (
+    "Stop requested",
+    "Stop completed",
+    "Restart requested",
+    "Restart completed",
+)
+LIFECYCLE_CONSTANTS = (
+    "RUNNER_LIFECYCLE_STOP_EVENT",
+    "RUNNER_LIFECYCLE_STOP_COMPLETE",
+    "RUNNER_LIFECYCLE_RESTART_EVENT",
+    "RUNNER_LIFECYCLE_RESTART_COMPLETE",
+)
+LIFECYCLE_SEAMS = (
+    "runner_log_stop_request",
+    "runner_log_stop_complete",
+    "runner_log_restart_request",
+    "runner_log_restart_complete",
+)
+#: The runners the Graceful Shutdown Protocol requires to write into their own log.
+#: `dashboard.sh` is the model the seam was generalised from, and keeps its own
+#: teardown-gate wording; it is deliberately not listed here.
+LIFECYCLE_RUNNERS = ("worker.sh", "pocketbase.sh", "appium.sh", "emulator.sh")
+
+
+def test_the_lifecycle_events_have_one_definition_per_service() -> None:
+    """The stop/restart wording lives in the library, exactly like the ack literal does."""
+    library = RUNNER_LIB.read_text(encoding="utf-8")
+    for constant, literal in zip(LIFECYCLE_CONSTANTS, LIFECYCLE_LITERALS, strict=True):
+        assert f'{constant}="{literal}"' in library, (
+            f"runner_lib.sh no longer defines {constant}={literal!r}; the runners reference it"
+        )
+    for seam in LIFECYCLE_SEAMS:
+        assert f"{seam}() {{" in library, f"runner_lib.sh no longer defines {seam}"
+
+
+def test_no_runner_restates_the_lifecycle_wording() -> None:
+    """A runner calls the seam; it does not carry its own copy of the sentence.
+
+    Naming the offender is what replaces the discipline: the constants are a cross-process
+    contract (the E2E Pre-Test Teardown Gate greps these logs), so a runner that spells the
+    same event differently is a silent fork of it, not a harmless local choice.
+    """
+    for runner in LIFECYCLE_RUNNERS:
+        source = (REPO_ROOT / runner).read_text(encoding="utf-8")
+        for literal in LIFECYCLE_LITERALS:
+            assert literal not in source, (
+                f"{runner} restates the lifecycle wording {literal!r}; call the "
+                "runner_lib.sh seam instead"
+            )
+        for constant in LIFECYCLE_CONSTANTS:
+            assert constant not in source, (
+                f"{runner} spells {constant} inline; the seam owns the wording"
+            )
+        for seam in LIFECYCLE_SEAMS:
+            assert seam in source, f"{runner} never calls {seam}"
+
+
+def test_a_graceful_stop_that_escalates_says_so_in_the_service_log(fake_toolchain: Path) -> None:
+    """The SIGKILL escalation is recorded, not just printed to the operator's terminal.
+
+    `runner_graceful_stop` returns 0 whether it stopped the process cooperatively or had to
+    kill it, so the escalation is invisible to a caller that only checks the return status —
+    and the log, which is what a supervisor and the teardown gate actually read, was silent
+    about the difference. The optional log argument is what makes it observable.
+    """
+    log_file = fake_toolchain.parent / "service.log"
+    result = _run_library(
+        fake_toolchain,
+        f'runner_graceful_stop 7 0.1 "Fake Service" "{log_file}"; echo "exit=$?"',
+        FAKE_PS_ALIVE="7",
+    )
+    assert result.stdout.strip().endswith("exit=0"), (
+        "the stop contract is unchanged: a process that is gone is still success"
+    )
+    recorded = log_file.read_text(encoding="utf-8") if log_file.exists() else ""
+    assert "SIGKILL" in recorded, f"the escalation was not recorded in the log:\n{recorded}"
+    assert recorded[:4].isdigit(), f"the escalation line is not timestamped:\n{recorded}"
+
+
+def test_a_cooperative_stop_records_no_escalation(fake_toolchain: Path) -> None:
+    """A process that exits on SIGTERM escalates to nothing, and says so by saying nothing."""
+    log_file = fake_toolchain.parent / "cooperative.log"
+    _run_library(
+        fake_toolchain,
+        f'runner_graceful_stop 7 1 "Fake Service" "{log_file}"',
+        FAKE_PS_ALIVE="",
+    )
+    recorded = log_file.read_text(encoding="utf-8") if log_file.exists() else ""
+    assert "SIGKILL" not in recorded

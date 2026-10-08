@@ -10,6 +10,7 @@
 #   ./pocketbase.sh start             # Start or attach to PocketBase in foreground
 #   ./pocketbase.sh start --daemon    # Start PocketBase in background
 #   ./pocketbase.sh stop              # Stop running background PocketBase
+#   ./pocketbase.sh restart           # Stop, then start PocketBase
 #   ./pocketbase.sh status            # Check PocketBase health and status
 #   ./pocketbase.sh provision         # Re-apply schema definitions to SQLite DB
 #   ./run.sh pb <cmd>                 # Short orchestrator route for ./pocketbase.sh
@@ -90,7 +91,8 @@ cmd_stop() {
     PID="$(runner_resolve_pid "${PID_FILE}" "${PB_HTTP##*:}")"
 
     if [[ -n "${PID}" ]]; then
-        runner_graceful_stop "${PID}" "${PB_STOP_TIMEOUT_SEC}" "PocketBase"
+        runner_log_stop_request "${LOG_FILE}" "PocketBase" "${PID}" "PocketBase State Stream broker"
+        runner_graceful_stop "${PID}" "${PB_STOP_TIMEOUT_SEC}" "PocketBase" "${LOG_FILE}"
         STOPPED=1
     fi
     runner_pidfile_clear "${PID_FILE}"
@@ -102,7 +104,7 @@ cmd_stop() {
     PORT_PID="$(runner_port_listener_pid "${PORT}")"
     if [[ -n "${PORT_PID}" ]]; then
         echo "⚠️ Port ${PORT} still held by PID ${PORT_PID}; reclaiming."
-        runner_graceful_stop "${PORT_PID}" "${PB_STOP_TIMEOUT_SEC}" "PocketBase listener"
+        runner_graceful_stop "${PORT_PID}" "${PB_STOP_TIMEOUT_SEC}" "PocketBase listener" "${LOG_FILE}"
         STOPPED=1
     fi
 
@@ -112,12 +114,13 @@ cmd_stop() {
     if [[ -n "${LINGER_PIDS}" ]]; then
         local LINGER_PID
         for LINGER_PID in ${LINGER_PIDS}; do
-            runner_graceful_stop "${LINGER_PID}" "${PB_STOP_TIMEOUT_SEC}" "PocketBase"
+            runner_graceful_stop "${LINGER_PID}" "${PB_STOP_TIMEOUT_SEC}" "PocketBase" "${LOG_FILE}"
         done
         STOPPED=1
     fi
 
     if [[ ${STOPPED} -eq 1 ]]; then
+        runner_log_stop_complete "${LOG_FILE}" "PocketBase" "PocketBase State Stream broker stopped"
         echo "✅ PocketBase stopped successfully."
     else
         echo "ℹ️ No running PocketBase process found."
@@ -223,6 +226,17 @@ cmd_start() {
     fi
 }
 
+cmd_restart() {
+    echo "🔄 Restarting local PocketBase instance..."
+    runner_log_restart_request "${LOG_FILE}" "PocketBase" "PocketBase State Stream broker"
+    cmd_stop
+    sleep 0.5
+    # In a subshell: `cmd_start` exits from inside its own health check when the broker is
+    # already up, and an `exit` there would otherwise take this confirmation down with it.
+    (cmd_start "$@")
+    runner_log_restart_complete "${LOG_FILE}" "PocketBase" "PocketBase State Stream broker back online"
+}
+
 ACTION="${1:-start}"
 case "${ACTION}" in
     start)
@@ -231,6 +245,10 @@ case "${ACTION}" in
         ;;
     stop)
         cmd_stop
+        ;;
+    restart)
+        shift || true
+        cmd_restart "$@"
         ;;
     status)
         cmd_status

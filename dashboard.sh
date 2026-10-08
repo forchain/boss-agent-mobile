@@ -116,10 +116,9 @@ cmd_stop() {
 
         # SIGTERM first, the full budget to exit cooperatively (in-flight tasks release
         # their leases), then SIGKILL. The escalation itself is the library's, so every
-        # service escalates identically.
-        if ! runner_graceful_stop "${PID}" "${WEB_STOP_TIMEOUT_SEC}" "Web Dashboard"; then
-            runner_log_event "${LOG_FILE}" "⚠️ [Web] Graceful shutdown timed out after ${WEB_STOP_TIMEOUT_SEC}s; sending SIGKILL to PID ${PID}."
-        fi
+        # service escalates identically — and it is recorded in this service's own log
+        # rather than checked off a return status the library cannot make meaningful.
+        runner_graceful_stop "${PID}" "${WEB_STOP_TIMEOUT_SEC}" "Web Dashboard" "${LOG_FILE}"
         STOPPED=1
     fi
 
