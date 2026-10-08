@@ -28,6 +28,31 @@ Two product decisions followed, and they constrain the design:
 
 ## Decision
 
+> **Superseded in part (2026-10-08).** Issues #426, #427 and #428 retired the 定向投递 /
+> Direct Apply capability, so four clauses below no longer describe shipped behaviour. The
+> text is left exactly as it was decided; this note records where the decision and the
+> shipped code now differ.
+>
+> - "a search **or targeted-application** payload states depth exactly once" — there is no
+>   targeted-application kind left to state a depth. A search still states it exactly once,
+>   and that invariant is unchanged.
+> - "a caller that passes a `LaunchMode` to a search **or a 定向投递** … gets a
+>   `LaunchContractError`" — only the search remains. The refusal itself still holds, and
+>   PR #297's hand-authored-key guard was re-pointed onto the `search` kind rather than
+>   deleted, so a hand-authored depth key is still a contract error.
+> - "outranks nothing: **the 定向投递 modal's edited copy outranks the record's own**" — the
+>   modal, and the `direct_greeting` payload field that carried its edit, are gone. What the
+>   second clause protects is now the whole rule: the Job Record's own human copy is the only
+>   copy that outranks the agent, and no payload shape can override it.
+> - "A legacy 定向投递 payload that stated no depth still drafts" — such a payload is now
+>   refused rather than drafted. It cannot be drafted *as a targeted application* any more,
+>   because that execution path no longer exists; a queued payload still carrying
+>   `direct_job_id` is stopped before any search starts, so it never degrades into a
+>   keyword sweep. See `FeedStreamConfig.retired_direct_target`.
+>
+> Everything else in this ADR — depth as one expression, the legacy pair's read-out, the
+> `matched` rung, and the zero-call human-copy path — stands as written.
+
 ### Depth is one expression, owned by the launch contract
 
 `target_action` is the single depth statement on the wire, and `task_launch`
