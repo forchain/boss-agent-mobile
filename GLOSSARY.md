@@ -404,5 +404,17 @@ _Avoid_: backend services, shared infra, base daemons
 The operational contract whereby executing `restart` on an application service (`dashboard.sh restart`, `worker.sh restart`, or `run.sh restart`) gracefully stops lingering processes from other worktrees per the Graceful Shutdown Protocol and binds the port or mobile device session exclusively to the active worktree.
 _Avoid_: port clash, session steal, silent conflict
 
+**App Version**:
+The version string the Web Dashboard nav badge displays. It is never hardcoded in a page: it is resolved per request by `resolveAppVersion` in `web/src/lib/server/version.ts` and handed to the layout through server load data. What the operator sees depends on where the code is running — a release tag in CI, a live git tag in a checkout, a persisted manifest in a `.git`-detached artifact, and a `v0.1` preset on an unconfigured install.
+_Avoid_: version label, build string, dashboard version
+
+**Version Resolution Chain**:
+The fixed precedence `resolveAppVersion` walks, highest first: an operator's `APP_VERSION`, then `PUBLIC_APP_VERSION`, then the sniffed git tag, then the Version Manifest, then the `v0.1` preset. An explicit environment setting always outranks an auto-detected one, so `dashboard.sh` populates only the variables the operator left alone and promotes a hand-set value into the unset name — the resolver reads `APP_VERSION` first, so a value left solely in `PUBLIC_APP_VERSION` would otherwise be buried one tier deeper by a sniffed tag. Every tier degrades to the next: no git binary, a non-repository, a shallow clone, or a bare commit hash all fall through rather than blocking startup.
+_Avoid_: version fallback chain, version lookup order
+
+**Version Manifest (`version.json`)**:
+The CI-generated metadata file holding the released App Version, written by `scripts/sync_version.py` during the `pr-tag-release` workflow and uploaded as a workflow artifact. It exists so a build detached from `.git` — an image or packaged release with no tag to sniff — can still report the version it shipped as. It is gitignored on purpose: committing it would leave every release PR carrying the previous release's value. The format matches the release tag exactly, `v<Major>.<Merged_PR_Count>.<commits>`, where Major comes from the repo-root `VERSION` file.
+_Avoid_: version file, build info, version cache
+
 
 
