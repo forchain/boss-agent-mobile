@@ -18,9 +18,9 @@ sys.path.insert(0, str(root_dir / "src"))
 
 from boss_agent.candidate_entities import CandidateProfile  # noqa: E402
 from boss_agent.job_entities import JobPosting  # noqa: E402
-from boss_agent.llm_config import load_llm_config  # noqa: E402
+from boss_agent.llm_config import create_llm_client, load_llm_config  # noqa: E402
 from boss_agent.matching import JobMatchGreetingService  # noqa: E402
-from droid_agent_core.llm import LLMConfig, OpenAIChatClient  # noqa: E402
+from droid_agent_core.llm import LLMConfig, LLMDecisionClient  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -71,7 +71,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def build_llm_client(llm_config_arg: str | None) -> OpenAIChatClient:
+def build_llm_client(llm_config_arg: str | None) -> LLMDecisionClient:
     if llm_config_arg:
         try:
             if llm_config_arg.strip().startswith("{"):
@@ -97,11 +97,11 @@ def build_llm_client(llm_config_arg: str | None) -> OpenAIChatClient:
                     model=model,
                     temperature=temp,
                 )
-                return OpenAIChatClient(llm_cfg)
+                return create_llm_client(config=llm_cfg)
         except Exception as e:
             sys.stderr.write(f"Warning: Failed to parse custom LLM config ({e}), falling back.\n")
 
-    return OpenAIChatClient(load_llm_config())
+    return create_llm_client()
 
 
 def main() -> None:
