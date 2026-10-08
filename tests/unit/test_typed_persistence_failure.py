@@ -25,6 +25,7 @@ from boss_agent.candidate_memory_store import PocketBaseCandidateMemoryStore
 from boss_agent.errors import TransportError, ValidationError
 from boss_agent.feed_pipeline import FeedStreamConfig, JobFeedPipeline
 from boss_agent.job_store import PocketBaseJobRecordStore
+from boss_agent.screening_policy import ScreeningPolicy
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.handlers.auto_apply import AutoApplyHandler
 
@@ -238,8 +239,19 @@ async def test_auto_apply_handler_logs_degradation_on_profile_transport_error():
 
 
 @pytest.mark.asyncio
-async def test_auto_apply_handler_logs_degradation_on_exclusion_pool_transport_error():
-    """AutoApplyHandler preflight must log degradation and refuse to apply if exclusion pool read fails."""
+async def test_auto_apply_handler_logs_degradation_on_exclusion_pool_transport_error(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """AutoApplyHandler preflight must log degradation and refuse to apply if exclusion pool read fails.
+
+    The screening policy is pinned to a blank one so this test exercises the
+    exclusion-pool path it is named for, rather than whatever blacklists the
+    machine running it happens to keep in an untracked ``settings.local.yaml``.
+    """
+    monkeypatch.setattr(
+        "boss_agent.feed_pipeline.resolve_screening_policy",
+        lambda base_policy, **_: ScreeningPolicy(),
+    )
     broker = InMemoryTaskBroker()
     task = await broker.create_task(
         task_type=TaskType.AUTO_APPLY,

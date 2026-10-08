@@ -58,10 +58,11 @@
 					class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-100 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition"
 				>
 					<option value="openai">OpenAI / 兼容接口 (通用标准)</option>
-					<option value="minimax">MiniMax (海螺大模型 / 国产首选)</option>
-					<option value="deepseek">DeepSeek (深度求索)</option>
+					<option value="anthropic">Anthropic / Messages 协议</option>
 				</select>
-				<p class="text-[11px] text-slate-500 mt-1">支持任何标准 OpenAI Chat Completions 兼容协议</p>
+				<p class="text-[11px] text-slate-500 mt-1">
+					仅支持两种标准协议：OpenAI Chat Completions 与 Anthropic Messages；厂商通过 Base URL 指定
+				</p>
 			</div>
 
 			<div>
@@ -71,7 +72,7 @@
 				<input
 					id="model-input"
 					type="text"
-					placeholder="例如 MiniMax-M3, deepseek-chat, gpt-4o-mini"
+					placeholder="例如 MiniMax-M3, gpt-4o-mini, claude-sonnet-4-5"
 					bind:value={$settingsStore.model}
 					class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-100 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition font-mono"
 				/>
@@ -86,7 +87,7 @@
 			<input
 				id="base-url-input"
 				type="text"
-				placeholder="例如 https://api.minimaxi.com/v1"
+				placeholder="OpenAI: 例如 https://api.minimaxi.com/v1 · Anthropic: 例如 https://api.minimax.cn/anthropic"
 				bind:value={$settingsStore.base_url}
 				class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs font-mono text-slate-200 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition"
 			/>

@@ -64,6 +64,31 @@ CONFIG_CHAIN: tuple[Path, ...] = (
 #: the realm and is kept as an explicit chain entry rather than as a hidden second pass.
 LEGACY_LLM_FILE: Path = Path("config/llm.local.yaml")
 
+#: The wire protocols this realm resolves `provider` to — OpenAI Chat Completions and
+#: Anthropic Messages. A vendor is *not* a protocol: it is chosen by `base_url` and
+#: `model`. Values predating protocol-keyed providers (`minimax`, `deepseek`) name a
+#: model house that speaks the default protocol, so they converge rather than fail.
+LLM_PROTOCOLS: tuple[str, ...] = ("openai", "anthropic")
+
+#: The protocol a `provider` lands on when it names none this realm speaks.
+DEFAULT_LLM_PROTOCOL: str = "openai"
+
+
+def normalize_provider(provider: Any) -> str:
+    """Resolve a configured ``provider`` to one of :data:`LLM_PROTOCOLS`.
+
+    Normalizing here rather than rejecting keeps an existing config working: a user
+    whose file still says ``provider: minimax`` gets a working client instead of a
+    crash on startup. The web dashboard applies the same rule at its own boundary
+    (``normalizeLlmProvider`` in ``web/src/lib/types.ts``), so both halves of the
+    console agree on what an unrecognized value means.
+    """
+    if not isinstance(provider, str):
+        return DEFAULT_LLM_PROTOCOL
+    resolved = provider.strip().lower()
+    return resolved if resolved in LLM_PROTOCOLS else DEFAULT_LLM_PROTOCOL
+
+
 #: The one defaults table. Every Python loader resolves its baseline from here, and
 #: `config/defaults.fixture.json` is generated from it so the TypeScript mirror can be
 #: asserted against the same values instead of against a comment.
@@ -614,6 +639,11 @@ class PocketBaseSettings:
 class LlmSettings:
     """The chat-completion client's connection and ceilings."""
 
+    #: The wire protocol to speak — ``openai`` (Chat Completions) or ``anthropic``
+    #: (Messages). This realm only carries the value; the protocol a client is built
+    #: from is resolved by :func:`boss_agent.llm_config.create_llm_client`, which falls
+    #: back to the default protocol for any other value. A vendor is chosen by
+    #: ``base_url`` and ``model``, never by this field.
     provider: str
     base_url: str
     api_key: str | None
@@ -679,7 +709,7 @@ def llm_settings(
 ) -> LlmSettings:
     merged = _section(settings, config_path)
     return LlmSettings(
-        provider=merged.get("provider") or DEFAULTS["provider"],
+        provider=normalize_provider(merged.get("provider")),
         base_url=merged.get("base_url") or DEFAULTS["base_url"],
         api_key=merged.get("api_key"),
         model=merged.get("model") or DEFAULTS["model"],
@@ -728,9 +758,11 @@ __all__ = [
     "CHAT_DEFAULTS",
     "CONFIG_CHAIN",
     "DEFAULTS",
+    "DEFAULT_LLM_PROTOCOL",
     "ENV_OVERRIDES",
     "KEY_ALIASES",
     "LEGACY_LLM_FILE",
+    "LLM_PROTOCOLS",
     "LlmSettings",
     "MASK_MARKERS",
     "PLACEHOLDER_API_KEY",
@@ -741,6 +773,7 @@ __all__ = [
     "is_mask_placeholder",
     "llm_settings",
     "load_settings",
+    "normalize_provider",
     "normalize_url",
     "pocketbase_settings",
     "resolve_chain",

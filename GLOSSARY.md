@@ -101,6 +101,18 @@ _Avoid_: hard stop, force quit, kill -9 policy
 The session-scoped, opt-in test fixture (`BOSS_AGENT_ENFORCE_TEARDOWN=1`) that stops residual Automation Worker and Web Dashboard instances located through the shared runtime directory and verifies their shutdown feedback, guaranteeing exclusive use of the Virtual Device Session and the dashboard port when a run genuinely needs it. Left unopted, E2E runs touch nothing outside their own temporary state. Shared infrastructure (State Stream Broker, Appium, AVD) is deliberately out of its scope either way.
 _Avoid_: test cleanup hook, pre-test reset script, teardown helper
 
+**Protocol (LLM)**:
+The wire format a client speaks to a model host — exactly one of `openai` (Chat Completions, `POST {base_url}/chat/completions`) or `anthropic` (Messages, `POST {base_url}/v1/messages`). It is what the `provider` setting names, and it is deliberately *not* a vendor: MiniMax, DeepSeek, OpenAI and Anthropic are reached by naming a Protocol plus their Base URL and Model, never by naming a brand as the provider. A base URL already carrying a version segment (`/v1`, `/v2`, `/v1beta`) is not given a second one. Values predating Protocol-keyed providers converge to the default Protocol rather than failing, so an existing configuration keeps loading.
+_Avoid_: provider brand, vendor type, model house, service type
+
+**Model Factory**:
+The single seam (`boss_agent.llm_config.create_llm_client`) that turns a configured Protocol into a concrete `LLMDecisionClient`, so every caller — the Automation Worker, the Mobile Job Feed Pipeline, and the CLI evaluation scripts — holds the decision interface rather than a protocol-specific class. It is the one place that knows what a provider name means; clients know only their own wire format.
+_Avoid_: client builder, LLM helper, provider switch
+
+**Anthropic Messages Client**:
+The `LLMDecisionClient` speaking the native Anthropic Messages protocol: `x-api-key` and `anthropic-version` headers instead of a Bearer token, a top-level `system` parameter lifted out of the message history, and replies joined from typed content blocks. It carries no JSON-mode flag of its own — Anthropic has no equivalent of `response_format` — so structured output is steered by the prompt and recovered by the shared JSON repair chain.
+_Avoid_: Claude client, Anthropic provider, messages API wrapper
+
 **Fast Unit Test**:
 The in-memory verification tier (`tests/unit/`) that exercises module interfaces against mocked collaborators — no Automation Worker, no Appium session, no bound host port, and no live LLM endpoint. It is the tier an unadorned `pytest` runs, and the one that must finish in under 60 seconds with zero side effects on the machine — a budget CI enforces.
 _Avoid_: quick check, small spec, unit suite

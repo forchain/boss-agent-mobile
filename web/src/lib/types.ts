@@ -66,8 +66,29 @@ export interface ResumeRevision {
 
 
 
+/**
+ * The two standard LLM wire protocols the dashboard can speak (issue #418).
+ * A "provider" is a protocol choice, not a vendor choice — any vendor reachable
+ * through one of these two protocols works by setting `base_url` + `model`.
+ */
+export const LLM_PROVIDER_PROTOCOLS = ['openai', 'anthropic'] as const;
+export type LlmProvider = (typeof LLM_PROVIDER_PROTOCOLS)[number];
+
+/**
+ * Boundary normalization for an untrusted `provider` value (saved YAML, an API
+ * request body). Legacy vendor values (`minimax`, `deepseek`) predate the
+ * protocol switch and are no longer selectable; anything unrecognized lands on
+ * the OpenAI-compatible default rather than failing the whole settings load.
+ */
+export function normalizeLlmProvider(raw: unknown): LlmProvider {
+	const value = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+	return (LLM_PROVIDER_PROTOCOLS as readonly string[]).includes(value)
+		? (value as LlmProvider)
+		: 'openai';
+}
+
 export interface LLMSettings {
-	provider: 'openai' | 'minimax' | 'deepseek' | string;
+	provider: LlmProvider;
 	model: string;
 	base_url: string;
 	api_key?: string;
@@ -83,8 +104,8 @@ export interface SystemSettings {
 	// PocketBase State Stream Broker
 	pocketbase_url: string;
 
-	// LLM Reasoning Provider
-	provider: 'openai' | 'minimax' | 'deepseek' | string;
+	// LLM Reasoning Provider protocol (openai | anthropic)
+	provider: LlmProvider;
 	model: string;
 	base_url: string;
 	api_key?: string;

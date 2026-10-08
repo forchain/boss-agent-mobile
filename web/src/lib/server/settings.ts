@@ -6,6 +6,7 @@ import * as yaml from 'js-yaml';
 import { execFileSync } from 'node:child_process';
 import { DEFAULT_CHAT_ACKNOWLEDGMENT, normalizeChatAcknowledgment } from '$lib/chatAcknowledgment';
 import type { SystemSettings } from '$lib/types';
+import { normalizeLlmProvider } from '$lib/types';
 import { normalizeCommuteLimit } from '$lib/commute';
 
 export { DEFAULT_CHAT_ACKNOWLEDGMENT, normalizeChatAcknowledgment };
@@ -201,7 +202,9 @@ export function loadMergedSettings(): SystemSettings {
 		avd_name: parsed.avd_name || 'boss_avd_arm64',
 		server_url: parsed.server_url || 'http://127.0.0.1:4723',
 		pocketbase_url: parsed.pocketbase_url || 'http://127.0.0.1:8090',
-		provider: parsed.provider || 'openai',
+		// Saved YAML may still carry a legacy vendor value (minimax/deepseek);
+		// normalize at this untrusted boundary so it lands on a real protocol (#418).
+		provider: parsed.provider ? normalizeLlmProvider(parsed.provider) : 'openai',
 		base_url: parsed.base_url || 'https://api.minimaxi.com/v1',
 		api_key: (parsed.api_key === 'your-api-key-here' || !parsed.api_key) ? '' : parsed.api_key,
 		model: parsed.model || 'MiniMax-M3',

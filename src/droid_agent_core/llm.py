@@ -213,143 +213,15 @@ def configure_langsmith(config: LLMConfig | None = None) -> None:
             os.environ["LANGSMITH_ENDPOINT"] = cfg.langsmith_endpoint
 
 
-class LLMDecisionClient(ABC):
-    """Abstract interface for LLM-driven UI decision making and information parsing."""
+class _JSONRepairMixin:
+    """The tolerant JSON recovery chain shared by every protocol client.
 
-    def __init__(self, config: LLMConfig):
-        self.config = config
-
-    @abstractmethod
-    def chat_completion(
-        self,
-        messages: list[dict[str, str]],
-        temperature: float | None = None,
-        max_tokens: int | None = None,
-        response_format: dict[str, Any] | None = None,
-        extra_payload: dict[str, Any] | None = None,
-    ) -> str:
-        """Send chat messages and return assistant text response."""
-
-    @abstractmethod
-    def chat_completion_json(
-        self,
-        messages: list[dict[str, str]],
-        temperature: float | None = None,
-        max_tokens: int | None = None,
-        response_format: dict[str, Any] | None = None,
-        extra_payload: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        """Send chat messages and return parsed JSON response."""
-
-    @abstractmethod
-    def evaluate_text_match(self, candidate_resume: str, job_description: str) -> dict[str, Any]:
-        """Evaluate match score between resume and job description."""
-
-
-class OpenAIChatClient(LLMDecisionClient):
-    """Concrete OpenAI-compatible REST chat completion client."""
-
-    def __init__(self, config: LLMConfig | None = None):
-        cfg = config or LLMConfig.from_env_or_file()
-        configure_langsmith(cfg)
-        super().__init__(cfg)
-
-    def _get_headers(self) -> dict[str, str]:
-        headers = {
-            "Content-Type": "application/json",
-        }
-        api_key = self.config.api_key
-        if api_key:
-            # A masked display value must never be sent as a bearer token.
-            s_key = str(api_key).strip()
-            if s_key and not _is_mask_placeholder(s_key):
-                headers["Authorization"] = f"Bearer {s_key}"
-        return headers
-
-    @traceable(name="OpenAIChatClient.chat_completion", run_type="llm")
-    def chat_completion(
-        self,
-        messages: list[dict[str, str]],
-        temperature: float | None = None,
-        max_tokens: int | None = None,
-        response_format: dict[str, Any] | None = None,
-        extra_payload: dict[str, Any] | None = None,
-    ) -> str:
-        url = f"{self.config.base_url}/chat/completions"
-        payload: dict[str, Any] = {
-            "model": self.config.model,
-            "messages": messages,
-            "temperature": temperature if temperature is not None else self.config.temperature,
-            "max_tokens": max_tokens or self.config.max_tokens,
-        }
-        if response_format is not None:
-            payload["response_format"] = response_format
-
-        # Default: disable thinking for MiniMax models to prevent long-running CoT timeouts on structured tasks
-        is_minimax = (
-            "minimax" in self.config.base_url.lower() or "minimax" in self.config.model.lower()
-        )
-        if is_minimax and (not extra_payload or "thinking" not in extra_payload):
-            payload["thinking"] = {"type": "disabled"}
-
-        if self.config.extra_params:
-            payload.update(self.config.extra_params)
-        if extra_payload:
-            payload.update(extra_payload)
-
-        try:
-            response = requests.post(
-                url,
-                headers=self._get_headers(),
-                json=payload,
-                timeout=self.config.timeout_sec,
-            )
-        except requests.exceptions.Timeout as e:
-            raise LLMTimeoutError(f"Request to LLM at {url} timed out: {e}") from e
-        except requests.exceptions.RequestException as e:
-            raise LLMError(f"LLM connection error: {e}") from e
-
-        # Handle fallback if response_format or thinking is not supported by a specific OpenAI-compatible provider
-        if response.status_code == 400:
-            try:
-                fallback_payload = {
-                    k: v for k, v in payload.items() if k not in ("response_format", "thinking")
-                }
-                response = requests.post(
-                    url,
-                    headers=self._get_headers(),
-                    json=fallback_payload,
-                    timeout=self.config.timeout_sec,
-                )
-            except Exception:
-                pass
-
-        if response.status_code in (401, 403):
-            raise LLMAuthError(
-                f"LLM authentication failed ({response.status_code}): {response.text}"
-            )
-        if response.status_code != 200:
-            raise LLMError(f"LLM API returned HTTP {response.status_code}: {response.text}")
-
-        try:
-            resp_data = response.json()
-            choices = resp_data.get("choices", [])
-            if not choices:
-                raise LLMError(f"LLM returned no choices in response: {resp_data}")
-            content = choices[0].get("message", {}).get("content", "")
-
-            run_tree = get_current_run_tree()
-            if run_tree:
-                run_tree.metadata["model"] = self.config.model
-                run_tree.metadata["base_url"] = self.config.base_url
-                if "usage" in resp_data and isinstance(resp_data["usage"], dict):
-                    run_tree.metadata["usage"] = resp_data["usage"]
-
-            return content
-        except Exception as e:
-            if isinstance(e, LLMError):
-                raise
-            raise LLMError(f"Failed to parse LLM response JSON: {e}") from e
+    LLM output arrives as prose, markdown fences, or a token-truncated object, and the
+    repair that rescues it is a property of the *model*, not of the wire protocol it
+    arrived over. It lives here so :class:`OpenAIChatClient` and
+    :class:`AnthropicChatClient` share one implementation — a per-protocol copy would be
+    free to drift into disagreeing with the other about what a broken payload means.
+    """
 
     @staticmethod
     def _extract_json_block(text: str) -> str:
@@ -585,6 +457,150 @@ class OpenAIChatClient(LLMDecisionClient):
         except Exception as e:
             raise LLMError(f"Failed to decode LLM response into JSON: {raw}") from e
 
+
+class LLMDecisionClient(ABC):
+    """Abstract interface for LLM-driven UI decision making and information parsing."""
+
+    def __init__(self, config: LLMConfig):
+        self.config = config
+
+    @abstractmethod
+    def chat_completion(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        response_format: dict[str, Any] | None = None,
+        extra_payload: dict[str, Any] | None = None,
+    ) -> str:
+        """Send chat messages and return assistant text response."""
+
+    @abstractmethod
+    def chat_completion_json(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        response_format: dict[str, Any] | None = None,
+        extra_payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Send chat messages and return parsed JSON response."""
+
+    @abstractmethod
+    def evaluate_text_match(self, candidate_resume: str, job_description: str) -> dict[str, Any]:
+        """Evaluate match score between resume and job description."""
+
+
+class OpenAIChatClient(_JSONRepairMixin, LLMDecisionClient):
+    """Concrete OpenAI-compatible REST chat completion client.
+
+    Carries the MiniMax brand sniff that disables extended thinking on structured
+    tasks; it stays here rather than in the mixin because it is knowledge about one
+    provider's models, not about repairing their output.
+    """
+
+    def __init__(self, config: LLMConfig | None = None):
+        cfg = config or LLMConfig.from_env_or_file()
+        configure_langsmith(cfg)
+        super().__init__(cfg)
+
+    def _get_headers(self) -> dict[str, str]:
+        headers = {
+            "Content-Type": "application/json",
+        }
+        api_key = self.config.api_key
+        if api_key:
+            # A masked display value must never be sent as a bearer token.
+            s_key = str(api_key).strip()
+            if s_key and not _is_mask_placeholder(s_key):
+                headers["Authorization"] = f"Bearer {s_key}"
+        return headers
+
+    @traceable(name="OpenAIChatClient.chat_completion", run_type="llm")
+    def chat_completion(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        response_format: dict[str, Any] | None = None,
+        extra_payload: dict[str, Any] | None = None,
+    ) -> str:
+        url = f"{self.config.base_url}/chat/completions"
+        payload: dict[str, Any] = {
+            "model": self.config.model,
+            "messages": messages,
+            "temperature": temperature if temperature is not None else self.config.temperature,
+            "max_tokens": max_tokens or self.config.max_tokens,
+        }
+        if response_format is not None:
+            payload["response_format"] = response_format
+
+        # Default: disable thinking for MiniMax models to prevent long-running CoT timeouts on structured tasks
+        is_minimax = (
+            "minimax" in self.config.base_url.lower() or "minimax" in self.config.model.lower()
+        )
+        if is_minimax and (not extra_payload or "thinking" not in extra_payload):
+            payload["thinking"] = {"type": "disabled"}
+
+        if self.config.extra_params:
+            payload.update(self.config.extra_params)
+        if extra_payload:
+            payload.update(extra_payload)
+
+        try:
+            response = requests.post(
+                url,
+                headers=self._get_headers(),
+                json=payload,
+                timeout=self.config.timeout_sec,
+            )
+        except requests.exceptions.Timeout as e:
+            raise LLMTimeoutError(f"Request to LLM at {url} timed out: {e}") from e
+        except requests.exceptions.RequestException as e:
+            raise LLMError(f"LLM connection error: {e}") from e
+
+        # Handle fallback if response_format or thinking is not supported by a specific OpenAI-compatible provider
+        if response.status_code == 400:
+            try:
+                fallback_payload = {
+                    k: v for k, v in payload.items() if k not in ("response_format", "thinking")
+                }
+                response = requests.post(
+                    url,
+                    headers=self._get_headers(),
+                    json=fallback_payload,
+                    timeout=self.config.timeout_sec,
+                )
+            except Exception:
+                pass
+
+        if response.status_code in (401, 403):
+            raise LLMAuthError(
+                f"LLM authentication failed ({response.status_code}): {response.text}"
+            )
+        if response.status_code != 200:
+            raise LLMError(f"LLM API returned HTTP {response.status_code}: {response.text}")
+
+        try:
+            resp_data = response.json()
+            choices = resp_data.get("choices", [])
+            if not choices:
+                raise LLMError(f"LLM returned no choices in response: {resp_data}")
+            content = choices[0].get("message", {}).get("content", "")
+
+            run_tree = get_current_run_tree()
+            if run_tree:
+                run_tree.metadata["model"] = self.config.model
+                run_tree.metadata["base_url"] = self.config.base_url
+                if "usage" in resp_data and isinstance(resp_data["usage"], dict):
+                    run_tree.metadata["usage"] = resp_data["usage"]
+
+            return content
+        except Exception as e:
+            if isinstance(e, LLMError):
+                raise
+            raise LLMError(f"Failed to parse LLM response JSON: {e}") from e
+
     @traceable(name="OpenAIChatClient.chat_completion_json", run_type="chain")
     def chat_completion_json(
         self,
@@ -608,20 +624,219 @@ class OpenAIChatClient(LLMDecisionClient):
 
     @traceable(name="OpenAIChatClient.evaluate_text_match", run_type="chain")
     def evaluate_text_match(self, candidate_resume: str, job_description: str) -> dict[str, Any]:
-        prompt = (
-            "请评估以下求职者简历与招聘岗位(JD)的匹配度：\n\n"
-            f"[求职者简历]\n{candidate_resume}\n\n"
-            f"[招聘岗位要求]\n{job_description}\n\n"
-            "请以 JSON 格式输出以下字段：\n"
-            "- match_score: 匹配度打分 (0 到 100 整数)\n"
-            "- match_reasons: 匹配核心亮点列表 (list of string)\n"
-            "- greeting_message: 适合发给招聘者的礼貌且突显匹配亮点的简短打招呼文案\n"
+        return self.chat_completion_json(
+            _match_evaluation_messages(candidate_resume, job_description)
         )
-        messages = [
-            {
-                "role": "system",
-                "content": "You are a professional HR and recruitment assistant. Output valid JSON only.",
-            },
-            {"role": "user", "content": prompt},
-        ]
-        return self.chat_completion_json(messages)
+
+
+def _match_evaluation_messages(candidate_resume: str, job_description: str) -> list[dict[str, str]]:
+    """The resume/job-description match prompt, in the shape every protocol accepts.
+
+    Built here rather than in either client so the two cannot drift on what a "match
+    score" is asked to mean; only the transport that carries it differs.
+    """
+    prompt = (
+        "请评估以下求职者简历与招聘岗位(JD)的匹配度：\n\n"
+        f"[求职者简历]\n{candidate_resume}\n\n"
+        f"[招聘岗位要求]\n{job_description}\n\n"
+        "请以 JSON 格式输出以下字段：\n"
+        "- match_score: 匹配度打分 (0 到 100 整数)\n"
+        "- match_reasons: 匹配核心亮点列表 (list of string)\n"
+        "- greeting_message: 适合发给招聘者的礼貌且突显匹配亮点的简短打招呼文案\n"
+    )
+    return [
+        {
+            "role": "system",
+            "content": "You are a professional HR and recruitment assistant. Output valid JSON only.",
+        },
+        {"role": "user", "content": prompt},
+    ]
+
+
+#: The Messages API version this client speaks. Sent verbatim as `anthropic-version`;
+#: hosts on a compatible endpoint are expected to pin the same date.
+ANTHROPIC_VERSION: str = "2023-06-01"
+
+#: Anthropic has no provider-native JSON mode (`response_format` is an OpenAI concept),
+#: so the prompt is the only lever for steering the reply — the shared repair chain in
+#: :meth:`AnthropicChatClient.chat_completion_json` handles whatever still arrives broken.
+_JSON_ONLY_INSTRUCTION: str = (
+    "Respond with a single valid JSON object for your answer and nothing else. "
+    "Do not wrap it in markdown fences or add commentary."
+)
+
+
+class AnthropicChatClient(_JSONRepairMixin, LLMDecisionClient):
+    """Client for the native Anthropic Messages protocol.
+
+    Not an OpenAI-compatible endpoint wearing a header change: the request shape
+    differs (a top-level ``system`` parameter instead of a system turn, ``max_tokens``
+    as a required field, content returned as typed blocks), and the wire format is what
+    this class exists to speak. It stays free of any provider brand sniffing — that
+    knowledge lives with the client that actually needs it.
+    """
+
+    def __init__(self, config: LLMConfig | None = None):
+        cfg = config or LLMConfig.from_env_or_file()
+        configure_langsmith(cfg)
+        super().__init__(cfg)
+
+    def _get_headers(self) -> dict[str, str]:
+        headers = {
+            "Content-Type": "application/json",
+            "anthropic-version": ANTHROPIC_VERSION,
+        }
+        api_key = self.config.api_key
+        if api_key:
+            # A masked display value must never be sent as a credential.
+            s_key = str(api_key).strip()
+            if s_key and not _is_mask_placeholder(s_key):
+                headers["x-api-key"] = s_key
+        return headers
+
+    def _messages_url(self) -> str:
+        """Resolve the Messages endpoint from a base URL with or without a version suffix.
+
+        Hosts configure either shape — ``https://api.anthropic.com/v1`` or a
+        versionless prefix such as ``https://gateway.example.com/anthropic`` — and both
+        must reach ``POST /v1/messages``.
+        """
+        base = self.config.base_url.rstrip("/")
+        if re.search(r"/v\d+[a-zA-Z]*$", base):
+            return f"{base}/messages"
+        return f"{base}/v1/messages"
+
+    @staticmethod
+    def _split_system(messages: list[dict[str, str]]) -> tuple[str, list[dict[str, str]]]:
+        """Separate the top-level ``system`` parameter from the conversation turns."""
+        system_parts: list[str] = []
+        turns: list[dict[str, str]] = []
+        for message in messages:
+            role = message.get("role")
+            if role == "system":
+                system_parts.append(str(message.get("content", "")))
+            elif role in ("user", "assistant"):
+                turns.append({"role": role, "content": message.get("content", "")})
+        return "\n\n".join(part for part in system_parts if part), turns
+
+    @staticmethod
+    def _join_content_blocks(resp_data: dict[str, Any]) -> str:
+        """Concatenate the ``text`` blocks of a Messages response, ignoring other block types.
+
+        A response also carries ``thinking`` and tool-use blocks; only text is the
+        answer the caller asked for.
+        """
+        blocks = resp_data.get("content")
+        if isinstance(blocks, str):
+            return blocks
+        if not isinstance(blocks, list):
+            return ""
+        return "".join(
+            str(block.get("text", ""))
+            for block in blocks
+            if isinstance(block, dict) and block.get("type", "text") == "text"
+        )
+
+    @classmethod
+    def _with_json_instruction(cls, messages: list[dict[str, str]]) -> list[dict[str, str]]:
+        """Fold the JSON-only instruction into the system turn, ahead of the turns."""
+        system, turns = cls._split_system(messages)
+        if _JSON_ONLY_INSTRUCTION not in system:
+            system = f"{system}\n\n{_JSON_ONLY_INSTRUCTION}" if system else _JSON_ONLY_INSTRUCTION
+        return ([{"role": "system", "content": system}] if system else []) + turns
+
+    @traceable(name="AnthropicChatClient.chat_completion", run_type="llm")
+    def chat_completion(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        response_format: dict[str, Any] | None = None,
+        extra_payload: dict[str, Any] | None = None,
+    ) -> str:
+        """Send messages and return the assistant's text.
+
+        ``response_format`` is accepted to satisfy the :class:`LLMDecisionClient`
+        contract and ignored: this protocol has no equivalent. Callers wanting JSON
+        should use :meth:`chat_completion_json`, which steers the reply with the prompt
+        and recovers the result.
+        """
+        del response_format  # No native JSON mode on this protocol; see chat_completion_json.
+
+        url = self._messages_url()
+        system, turns = self._split_system(messages)
+        payload: dict[str, Any] = {
+            "model": self.config.model,
+            "messages": turns,
+            # Required by the Messages API, unlike the OpenAI one where it may be omitted.
+            "max_tokens": max_tokens or self.config.max_tokens,
+            "temperature": temperature if temperature is not None else self.config.temperature,
+        }
+        if system:
+            payload["system"] = system
+
+        if self.config.extra_params:
+            payload.update(self.config.extra_params)
+        if extra_payload:
+            payload.update(extra_payload)
+
+        try:
+            response = requests.post(
+                url,
+                headers=self._get_headers(),
+                json=payload,
+                timeout=self.config.timeout_sec,
+            )
+        except requests.exceptions.Timeout as e:
+            raise LLMTimeoutError(f"Request to LLM at {url} timed out: {e}") from e
+        except requests.exceptions.RequestException as e:
+            raise LLMError(f"LLM connection error: {e}") from e
+
+        if response.status_code in (401, 403):
+            raise LLMAuthError(
+                f"LLM authentication failed ({response.status_code}): {response.text}"
+            )
+        if response.status_code != 200:
+            raise LLMError(f"LLM API returned HTTP {response.status_code}: {response.text}")
+
+        try:
+            resp_data = response.json()
+            content = self._join_content_blocks(resp_data)
+
+            run_tree = get_current_run_tree()
+            if run_tree:
+                run_tree.metadata["model"] = self.config.model
+                run_tree.metadata["base_url"] = self.config.base_url
+                if isinstance(resp_data.get("usage"), dict):
+                    run_tree.metadata["usage"] = resp_data["usage"]
+
+            return content
+        except Exception as e:
+            if isinstance(e, LLMError):
+                raise
+            raise LLMError(f"Failed to parse LLM response JSON: {e}") from e
+
+    @traceable(name="AnthropicChatClient.chat_completion_json", run_type="chain")
+    def chat_completion_json(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        response_format: dict[str, Any] | None = None,
+        extra_payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        del response_format  # No native JSON mode; the prompt carries the instruction.
+        raw_text = self.chat_completion(
+            messages=self._with_json_instruction(messages),
+            temperature=temperature,
+            max_tokens=max_tokens,
+            extra_payload=extra_payload,
+        )
+        json_str = self._extract_json_block(raw_text)
+        return self._robust_parse_json(json_str)
+
+    @traceable(name="AnthropicChatClient.evaluate_text_match", run_type="chain")
+    def evaluate_text_match(self, candidate_resume: str, job_description: str) -> dict[str, Any]:
+        return self.chat_completion_json(
+            _match_evaluation_messages(candidate_resume, job_description)
+        )

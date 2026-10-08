@@ -19,13 +19,13 @@ sys.path.insert(0, str(root_dir / "src"))
 
 from boss_agent.candidate_entities import CandidateProfile  # noqa: E402
 from boss_agent.graph import run_resume_lifecycle_graph  # noqa: E402
-from boss_agent.llm_config import load_llm_config  # noqa: E402
+from boss_agent.llm_config import create_llm_client, load_llm_config  # noqa: E402
 from boss_agent.memory import (  # noqa: E402
     ProfileNormalizer,
     ResumeMemoryManager,
     ResumeTextExtractor,
 )
-from droid_agent_core.llm import LLMConfig, OpenAIChatClient  # noqa: E402
+from droid_agent_core.llm import LLMConfig, LLMDecisionClient  # noqa: E402
 
 log_dir = root_dir / ".boss_agent"
 log_dir.mkdir(parents=True, exist_ok=True)
@@ -89,7 +89,7 @@ def _is_masked_key(val: str | None) -> bool:
     return not s or s == PLACEHOLDER_API_KEY or is_mask_placeholder(s)
 
 
-def build_llm_client(llm_config_arg: str | None) -> OpenAIChatClient:
+def build_llm_client(llm_config_arg: str | None) -> LLMDecisionClient:
     if llm_config_arg:
         try:
             if llm_config_arg.strip().startswith("{"):
@@ -117,16 +117,16 @@ def build_llm_client(llm_config_arg: str | None) -> OpenAIChatClient:
                     timeout_sec=float(config_data.get("timeout_sec") or 300.0),
                     max_tokens=int(config_data.get("max_tokens") or 16384),
                 )
-                return OpenAIChatClient(llm_cfg)
+                return create_llm_client(config=llm_cfg)
             else:
                 llm_cfg = load_llm_config(llm_config_arg)
-                return OpenAIChatClient(llm_cfg)
+                return create_llm_client(config=llm_cfg)
         except Exception as e:
             sys.stderr.write(
                 f"Warning: Failed to parse custom LLM config ({e}), falling back to default.\n"
             )
 
-    return OpenAIChatClient(load_llm_config())
+    return create_llm_client()
 
 
 def main() -> None:
