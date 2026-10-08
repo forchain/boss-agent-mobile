@@ -9,6 +9,7 @@ import type {
 	ChatAcknowledgmentConfig,
 	CommunicationSummary
 } from '$lib/types';
+import { normalizeLlmProvider } from '$lib/types';
 import { DEFAULT_CHAT_ACKNOWLEDGMENT, normalizeChatAcknowledgment } from '$lib/chatAcknowledgment';
 import { apiGet, apiPost } from '$lib/apiClient';
 import { getCommunicationSummary, postCommunicationAction } from '$lib/pocketbase';
@@ -125,7 +126,9 @@ export async function loadAllSettings(): Promise<void> {
 				avd_name: conf.avd_name || DEFAULT_SETTINGS.avd_name,
 				server_url: conf.server_url || DEFAULT_SETTINGS.server_url,
 				pocketbase_url: conf.pocketbase_url || DEFAULT_SETTINGS.pocketbase_url,
-				provider: conf.provider || DEFAULT_SETTINGS.provider,
+				// A saved legacy vendor value (minimax/deepseek) predates the protocol
+				// switch; it must still land on a selectable protocol (issue #418).
+				provider: conf.provider ? normalizeLlmProvider(conf.provider) : DEFAULT_SETTINGS.provider,
 				model: conf.model || DEFAULT_SETTINGS.model,
 				base_url: conf.base_url || DEFAULT_SETTINGS.base_url,
 				api_key: conf.api_key || '',
