@@ -27,23 +27,39 @@ pytestmark = pytest.mark.e2e
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = REPO_ROOT / "scripts" / "sync_version.py"
 
+REPO_TAG = "v9.9.9"
 
-def test_git_tag_lookup_reads_a_real_tag(tmp_path: Path) -> None:
-    """A real repository with a real tag resolves through the unstubbed git seam."""
+
+def _tagged_repo(tmp_path: Path) -> Path:
+    """A real git repository whose HEAD carries ``REPO_TAG``.
+
+    Built here rather than borrowed from the ambient checkout on purpose. CI runs
+    `actions/checkout` at its default `fetch-depth: 1`, which fetches no tags at all,
+    so any test leaning on "this checkout happens to be tagged" passes on a developer
+    machine and fails in CI. Owning the repository makes the tag a property of the
+    fixture rather than of the host.
+    """
     repo = tmp_path / "repo"
     repo.mkdir()
-    run = lambda *args: subprocess.run(  # noqa: E731
-        ["git", *args], cwd=repo, check=True, capture_output=True, text=True
-    )
+
+    def run(*args: str) -> None:
+        subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True, text=True)
+
     run("init", "-q")
     run("config", "user.email", "test@example.com")
     run("config", "user.name", "Test")
     (repo / "file.txt").write_text("hello", encoding="utf-8")
     run("add", "file.txt")
     run("commit", "-q", "-m", "initial")
-    run("tag", "v9.9.9")
+    run("tag", REPO_TAG)
+    return repo
 
-    assert git_tag_lookup(cwd=repo) == "v9.9.9"
+
+def test_git_tag_lookup_reads_a_real_tag(tmp_path: Path) -> None:
+    """A real repository with a real tag resolves through the unstubbed git seam."""
+    repo = _tagged_repo(tmp_path)
+
+    assert git_tag_lookup(cwd=repo) == REPO_TAG
 
 
 def test_git_tag_lookup_degrades_in_a_directory_without_git(tmp_path: Path) -> None:
@@ -155,13 +171,20 @@ def test_cli_check_detects_drift_without_writing(tmp_path: Path) -> None:
 
 def test_cli_survives_a_malformed_plan_and_falls_back_to_the_git_tag(tmp_path: Path) -> None:
     """Garbage plan input must degrade to the git tag tier, not crash the release."""
-    output = tmp_path / "version.json"
-    repo_tag = git_tag_lookup(cwd=REPO_ROOT)
-    assert repo_tag, "expected the repository checkout to have a reachable tag"
+    repo = _tagged_repo(tmp_path)
 
+    # `sync_version.py` derives its repo root from its own location, so dropping a copy
+    # inside the throwaway repository aims its git lookup at that repository. That is
+    # what lets this exercise the real CLI end to end on any host: a tagged one, an
+    # untagged CI checkout, or a detached artifact.
+    script = repo / "scripts" / "sync_version.py"
+    script.parent.mkdir()
+    script.write_bytes(SCRIPT_PATH.read_bytes())
+
+    output = repo / "version.json"
     result = subprocess.run(
-        [sys.executable, str(SCRIPT_PATH), "--plan", "not json at all", "--output", str(output)],
-        cwd=REPO_ROOT,
+        [sys.executable, str(script), "--plan", "not json at all", "--output", str(output)],
+        cwd=repo,
         capture_output=True,
         text=True,
         check=False,
@@ -169,5 +192,5 @@ def test_cli_survives_a_malformed_plan_and_falls_back_to_the_git_tag(tmp_path: P
 
     assert result.returncode == 0, result.stderr
     parsed = json.loads(output.read_text(encoding="utf-8"))
-    assert parsed["version"] == repo_tag
+    assert parsed["version"] == REPO_TAG
     assert parsed["source"] == "git-tag"
