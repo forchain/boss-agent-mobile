@@ -1,10 +1,9 @@
 {
-  "_comment": "The AutomationTask launch contract, shared by the pytest tier (tests/unit/test_task_launch_cases.py) and the vitest tier (web/src/tests/taskLaunchCases.test.ts). `source` is compared as a task attribute rather than a payload key. Only the keys listed in `contract` are compared: they are the ones the builder owns, so a difference in how each language normalizes a nested SavedSearch filter cannot masquerade as contract drift. `job` is the DirectApplyTarget a direct_apply case builds from, and is absent for every other kind. `depth_keys` is a payload field set a caller is not allowed to author; with `expect_error` the case names something the contract must refuse rather than a payload to build. Since issue #302 a search or targeted application carries exactly one depth expression — its `target_action` — and the legacy `preview_only` / `auto_send` pair is produced by nobody, so it never appears in an expected payload. Only 拒信清扫 still has a `mode`, because its `dry_run` is a drill rather than a greeting depth.",
+  "_comment": "The AutomationTask launch contract, shared by the pytest tier (tests/unit/test_task_launch_cases.py) and the vitest tier (web/src/tests/taskLaunchCases.test.ts). `source` is compared as a task attribute rather than a payload key. Only the keys listed in `contract` are compared: they are the ones the builder owns, so a difference in how each language normalizes a nested SavedSearch filter cannot masquerade as contract drift. `depth_keys` is a payload field set a caller is not allowed to author; with `expect_error` the case names something the contract must refuse rather than a payload to build. Since issue #302 a search carries exactly one depth expression — its `target_action` — and the legacy `preview_only` / `auto_send` pair is produced by nobody, so it never appears in an expected payload. The refusal is not a search-kind peculiarity: a hand-authored depth key is a contract error for every kind that greets, which is why each half of the pair is refused on a search rather than on the retired direct_apply kind (issue #427). Only 拒信清扫 still has a `mode`, because its `dry_run` is a drill rather than a greeting depth.",
   "defaults": {
     "min_score": 70,
     "max_jobs": 30,
-    "preview_timeout_sec": 3.0,
-    "direct_apply_min_score": 0
+    "preview_timeout_sec": 3.0
   },
   "cases": [
     {
@@ -320,78 +319,6 @@
       }
     },
     {
-      "case": "direct-apply-targeted-send",
-      "note": "定向投递 is outreach by definition: it declares auto_apply, exempt the posting the human just chose from the relevance gate, and states no depth of its own. Issue #302 collapses the depth to the single `target_action` expression: no `preview_only` / `auto_send` pair is produced any more.",
-      "kind": "direct_apply",
-      "source": "manual",
-      "mode": null,
-      "search": null,
-      "job": {
-        "job_id": "j_1",
-        "title": "AI Agent 工程师",
-        "company_name": "煦象",
-        "greeting_message": "您好,我看到岗位与我的 Agent 工程实践高度吻合"
-      },
-      "min_score": null,
-      "chat": null,
-      "contract": [
-        "target_action",
-        "direct_job_id",
-        "keyword",
-        "job_title",
-        "company_name",
-        "greeting_message",
-        "min_score",
-        "preview_timeout_sec"
-      ],
-      "expected": {
-        "task_type": "AUTO_APPLY",
-        "payload": {
-          "target_action": "auto_apply",
-          "direct_job_id": "j_1",
-          "keyword": "AI Agent 工程师",
-          "job_title": "AI Agent 工程师",
-          "company_name": "煦象",
-          "greeting_message": "您好,我看到岗位与我的 Agent 工程实践高度吻合",
-          "min_score": 0,
-          "preview_timeout_sec": 3.0
-        },
-        "source": "manual"
-      }
-    },
-    {
-      "case": "direct-apply-stated-depth-is-refused",
-      "note": "The modal's 预览 used to be reachable here too. A targeted application that promises to send cannot be talked out of it by its caller (issue #298). Issue #302 collapses the depth to the single `target_action` expression: no `preview_only` / `auto_send` pair is produced any more.",
-      "kind": "direct_apply",
-      "source": "manual",
-      "mode": "draft",
-      "search": null,
-      "job": {
-        "job_id": "j_1",
-        "title": "AI Agent 工程师",
-        "company_name": "煦象",
-        "greeting_message": "您好,我看到岗位与我的 Agent 工程实践高度吻合"
-      },
-      "min_score": null,
-      "chat": null,
-      "contract": [
-        "target_action",
-        "direct_job_id",
-        "keyword",
-        "job_title",
-        "company_name",
-        "greeting_message",
-        "min_score",
-        "preview_timeout_sec"
-      ],
-      "expect_error": true,
-      "expected": {
-        "task_type": null,
-        "payload": {},
-        "source": "manual"
-      }
-    },
-    {
       "case": "chat-configured-drill-wins",
       "kind": "chat_cleanup",
       "source": "manual",
@@ -530,7 +457,6 @@
         "target_action": "auto_apply",
         "max_jobs": 30
       },
-      "job": null,
       "min_score": null,
       "chat": null,
       "depth_keys": {
@@ -560,7 +486,6 @@
         "target_action": "auto_apply",
         "max_jobs": 30
       },
-      "job": null,
       "min_score": null,
       "chat": null,
       "depth_keys": {
@@ -575,17 +500,19 @@
       }
     },
     {
-      "case": "direct_apply-hand-authored-half-written-key-is-refused",
-      "note": "The defect class PR #297 came from was one intent written in two keys, where forgetting either half silently degraded the run to a draft. Issue #302 removes the pair from new payloads, so a caller that hand-authors one — or both — is a contract error now, not a depth.",
-      "kind": "direct_apply",
+      "case": "search-hand-authored-auto-send-key-is-refused",
+      "note": "The half-written-key arm of the PR #297 defect class, on the kind that survives issue #427. `auto_send` alone is the shape that used to look valid and draft silently, and the refusal is a property of the depth contract rather than of the retired direct_apply kind: a search greets too, so a caller that hands either half of the pair back is a contract error here as well.",
+      "kind": "search",
       "source": "manual",
       "mode": null,
-      "search": null,
-      "job": {
-        "job_id": "j_1",
-        "title": "AI Agent 工程师",
-        "company_name": "煦象",
-        "greeting_message": "您好,我看到岗位与我的 Agent 工程实践高度吻合"
+      "search": {
+        "id": "s_auto",
+        "name": "自动沟通",
+        "keyword": "agent",
+        "enable_search": true,
+        "enable_filter": true,
+        "target_action": "auto_apply",
+        "max_jobs": 30
       },
       "min_score": null,
       "chat": null,

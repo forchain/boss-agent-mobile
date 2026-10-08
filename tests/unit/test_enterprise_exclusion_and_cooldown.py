@@ -569,7 +569,12 @@ async def test_expired_communication_releases_record_back_to_candidate_pool(brok
 async def test_auto_apply_refuses_other_role_from_communicated_direct_hire_company(
     broker, mock_driver
 ):
-    """A dispatched application to another role of a contacted direct-hire company is refused."""
+    """A run naming another role of a contacted direct-hire company is refused.
+
+    Since issue #428 the payload itself declares the channel (``is_headhunter``) and the
+    company: nothing is looked up from a targeted Job Record any more, so this is the
+    coverage that keeps the 同企避嫌 guard alive for every caller that can name its target.
+    """
     await broker.job_store.upsert_job_record(
         {
             "fingerprint": "fp-dispatched-company-anchor",
@@ -606,7 +611,7 @@ async def test_auto_apply_refuses_other_role_from_communicated_direct_hire_compa
         task_type=TaskType.AUTO_APPLY,
         payload={
             "keyword": "agent",
-            "direct_job_id": target["id"],
+            "is_headhunter": False,
             "job_title": target["title"],
             "company_name": target["company_name"],
             "preview_only": False,
@@ -638,7 +643,11 @@ async def test_auto_apply_refuses_other_role_from_communicated_direct_hire_compa
 
 @pytest.mark.asyncio
 async def test_auto_apply_permits_headhunter_target_from_communicated_company(broker, mock_driver):
-    """Headhunter channels are exempt from enterprise exclusion even under a matching name."""
+    """Headhunter channels are exempt from enterprise exclusion even under a matching name.
+
+    The channel now arrives in the payload (issue #428) instead of being read off a targeted
+    Job Record, so the exemption is proved on the path every remaining caller takes.
+    """
     await broker.job_store.upsert_job_record(
         {
             "fingerprint": "fp-hh-company-anchor",
@@ -674,7 +683,7 @@ async def test_auto_apply_permits_headhunter_target_from_communicated_company(br
         task_type=TaskType.AUTO_APPLY,
         payload={
             "keyword": "agent",
-            "direct_job_id": target["id"],
+            "is_headhunter": True,
             "job_title": target["title"],
             "company_name": target["company_name"],
             "preview_only": False,

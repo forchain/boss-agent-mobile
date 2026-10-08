@@ -7,8 +7,9 @@
  * 2. Initial page load decoupling (modal is never opened on initial page load).
  * 3. User interaction triggers (clicking job card opens the modal).
  * 4. Action lifecycle enforcement:
- *    - Terminal actions (ignore, delete, blacklist, dispatch apply) auto-dismiss the modal.
+ *    - Terminal actions (ignore, delete, blacklist) auto-dismiss the modal.
  *    - In-place inspection actions (AI evaluation, prompt diffs, restore) remain open for review.
+ *    - The dispatch-apply entry point is retired (Issue #426): the modal offers no such control.
  */
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/svelte';
@@ -247,7 +248,7 @@ describe('Action lifecycle auto-dismissal (Issue #290)', () => {
 		await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
 	});
 
-	it('auto-dismisses modal when apply dispatch succeeds', async () => {
+	it('no longer offers the dispatch-apply entry point and never dispatches an AUTO_APPLY task (Issue #426)', async () => {
 		const calls = stubFetch(EVALUATED_JOB);
 		const onClose = vi.fn();
 
@@ -255,15 +256,14 @@ describe('Action lifecycle auto-dismissal (Issue #290)', () => {
 			props: { isOpen: true, job: EVALUATED_JOB, onClose }
 		});
 
-		const applyBtn = screen.getByRole('button', { name: /立即发起移动端打招呼/ });
-		await fireEvent.click(applyBtn);
+		// The retired button promised "greet this one posting" while the dispatch greeted
+		// whichever posting the emulator already sat on. Absence of the control is the spec.
+		expect(screen.queryByRole('button', { name: /立即发起移动端打招呼/ })).toBeNull();
+		expect(screen.queryByText(/派发投递中/)).toBeNull();
 
-		await waitFor(() => {
-			const task = calls.find((c) => c.method === 'POST' && c.url.includes('/api/tasks'));
-			expect(task).toBeDefined();
-			expect(task!.body.task_type).toBe('AUTO_APPLY');
-		});
-		await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+		// And nothing behind the scenes keeps the dispatch alive on this screen.
+		expect(calls.filter((c) => c.method === 'POST' && c.url.includes('/api/tasks'))).toHaveLength(0);
+		expect(onClose).not.toHaveBeenCalled();
 	});
 
 	it('keeps modal open during in-place AI match evaluation', async () => {

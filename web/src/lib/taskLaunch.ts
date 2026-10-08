@@ -16,9 +16,8 @@
  * PR #297 made the contract derive depth from the strategy. Issue #298 then deleted the
  * second switch: "preview it, do not send it" is not an execution depth any more, because
  * an operator picks between 深度存JD and 自动打招呼 and whether a message leaves the device
- * follows from that alone. A search and a targeted application therefore refuse a stated
- * mode. Only 拒信清扫 keeps a drill, and its dry_run is a different intent on a different
- * surface.
+ * follows from that alone. A search therefore refuses a stated mode. Only 拒信清扫 keeps a
+ * drill, and its dry_run is a different intent on a different surface.
  *
  * Issue #302 removes the second *key*. A payload used to answer "does this send?" with
  * `preview_only` and `auto_send`, both of which had to be right; a writer that supplied one
@@ -35,13 +34,6 @@ import { DEFAULT_CHAT_ACKNOWLEDGMENT } from './chatAcknowledgment';
 /** The baseline relevance threshold, declared once. */
 export const MIN_SCORE = 70;
 
-/**
- * The threshold a targeted application is exempt from. The human already chose the
- * posting, so an LLM score must not quietly veto the greeting the way it vetoes a feed
- * sweep — and a threshold left to the worker default would do exactly that.
- */
-export const DIRECT_APPLY_MIN_SCORE = 0;
-
 /** Baseline job ceiling for a search dispatch. */
 export const DEFAULT_MAX_JOBS = 30;
 
@@ -56,13 +48,13 @@ export type LaunchSource = 'manual' | 'test' | 'scheduler';
  *
  * `undefined` is the third, distinct state: *honour what the configuration already
  * decided*, which for a cleanup is the operator's `chat.dry_run`. It stopped being a
- * depth override for searches and targeted applications in issue #298: those kinds derive
- * their depth from their Target Action and refuse a stated mode, because reading a greeting
- * before it goes out is what the dashboard does, not a mode the agent runs in.
+ * depth override for a search in issue #298: that kind derives its depth from its Target
+ * Action and refuses a stated mode, because reading a greeting before it goes out is what
+ * the dashboard does, not a mode the agent runs in.
  */
 export type LaunchMode = 'draft' | 'live' | undefined;
 
-export type LaunchKind = 'search' | 'direct_apply' | 'chat_cleanup' | 'login_diagnostic';
+export type LaunchKind = 'search' | 'chat_cleanup' | 'login_diagnostic';
 
 export type TaskTypeName = 'SCRAPE_JOBS' | 'AUTO_APPLY' | 'CHECK_CHAT' | 'CHECK_LOGIN';
 
@@ -193,59 +185,6 @@ export function buildSearchLaunch(
 	};
 }
 
-/** The posting a 定向投递 acts on, as the launch contract needs it. */
-export interface DirectApplyTarget {
-	job_id: string;
-	title?: string;
-	company_name?: string;
-	/** The greeting the human edited; the record may still hold an older draft. */
-	greeting_message?: string;
-	candidate_profile?: unknown;
-}
-
-/**
- * Launch one targeted application: greet the posting already on screen.
- *
- * A targeted application is outreach by definition — that is what its button says — so it
- * declares `auto_apply` instead of leaving the worker to infer it, and states
- * DIRECT_APPLY_MIN_SCORE instead of leaving the baseline veto on a posting the human has
- * just chosen. It used to state neither: no `target_action`, no preview pair, no
- * threshold, so the worker's draft-only defaults decided, and a rerun of the same
- * payload fell through to a keyword sweep.
- */
-export function buildDirectApplyLaunch(
-	job: DirectApplyTarget,
-	options: {
-		source: LaunchSource;
-		/** Accepted only so it can be refused — 定向投递 sends, by definition. */
-		mode?: LaunchMode;
-		/** Accepted only so they can be refused (issue #302). */
-		preview_only?: boolean;
-		auto_send?: boolean;
-	}
-): TaskLaunch {
-	if (!job.job_id) {
-		throw new LaunchContractError('a direct apply launch requires the job it targets');
-	}
-	refuseStatedDepth(options.mode, 'A targeted application');
-	refuseHandAuthoredDepth('A targeted application', options);
-	const payload: Record<string, unknown> = {
-		target_action: 'auto_apply',
-		direct_job_id: job.job_id,
-		// The feed path labels records by the keyword it searched. A targeted run searches
-		// nothing, so the posting's own title is the only label it can carry.
-		keyword: job.title ?? '',
-		job_title: job.title ?? '',
-		company_name: job.company_name ?? '',
-		greeting_message: job.greeting_message ?? '',
-		min_score: DIRECT_APPLY_MIN_SCORE,
-		// `target_action: 'auto_apply'` above is the whole depth statement (issue #302).
-		preview_timeout_sec: DEFAULT_PREVIEW_TIMEOUT_SEC
-	};
-	if (job.candidate_profile) payload.candidate_profile = job.candidate_profile;
-	return { task_type: 'AUTO_APPLY', payload, source: options.source };
-}
-
 export function buildChatCleanupLaunch(options: {
 	source: LaunchSource;
 	search?: SearchLaunchInput | null;
@@ -283,15 +222,14 @@ export function buildLoginDiagnosticLaunch(options: { source: LaunchSource }): T
  * The one entry point: turn a launch request into a validated task.
  *
  * `mode` means "drill, or actually reply", and only the 拒信清扫 cleanup may state it. A
- * search and a targeted application derive their depth from their Target Action and refuse
- * the mode outright, so the vote every entry used to get is now cast once, here.
+ * search derives its depth from its Target Action and refuses the mode outright, so the
+ * vote every entry used to get is now cast once, here.
  */
 export function buildLaunch(
 	kind: LaunchKind,
 	options: {
 		source: LaunchSource;
 		search?: SearchLaunchInput | null;
-		job?: DirectApplyTarget | null;
 		mode?: LaunchMode;
 		/** Accepted only so they can be refused — depth is one expression (issue #302). */
 		preview_only?: boolean;
@@ -304,10 +242,6 @@ export function buildLaunch(
 	if (kind === 'search') {
 		if (!options.search) throw new LaunchContractError('a search launch requires a SavedSearch');
 		return buildSearchLaunch(options.search, options);
-	}
-	if (kind === 'direct_apply') {
-		if (!options.job) throw new LaunchContractError('a direct apply launch requires the job it targets');
-		return buildDirectApplyLaunch(options.job, options);
 	}
 	if (kind === 'chat_cleanup') {
 		// A cleanup has a drill, not a greeting depth, so the pair means nothing here.
@@ -325,9 +259,12 @@ export function buildLaunch(
  * them from a previous payload — so they are named explicitly rather than
  * spread-copied. A blind spread is what let a stale `min_score` or an inverted
  * preview flag survive into a rerun.
+ *
+ * `direct_job_id` was one of these until issue #428 retired the execution path that read
+ * it. Nothing produces it and nothing consumes it now, so a rerun no longer carries a job
+ * identity forward — the strategy's own search is the only thing a rerun replays.
  */
 const RERUN_CARRIED_INPUTS = [
-	'direct_job_id',
 	'job_title',
 	'company_name',
 	'candidate_profile',
@@ -390,24 +327,6 @@ export function rebuildRerunPayload(
 	// A rerun states no depth. Since issue #298 the depth is the Target Action the original
 	// carried, so a rerun of an 自动沟通 task greets and a rerun of a 深度存JD task does not —
 	// the same task the first run was, with no preview tier left to inherit.
-
-	// A targeted application is not a search dispatch: it names a Job Record, and the
-	// search's Target Action has nothing to do with it. It used to fall through to the
-	// search builder, which resolved an absent target_action to save_jd and turned the
-	// rerun of a 定向投递 into a keyword sweep.
-	if (prior.direct_job_id) {
-		const launch = buildDirectApplyLaunch(
-			{
-				job_id: String(prior.direct_job_id),
-				title: prior.job_title ?? prior.keyword,
-				company_name: prior.company_name,
-				greeting_message: prior.greeting_message,
-				candidate_profile: prior.candidate_profile
-			},
-			{ source }
-		);
-		return { task_type: launch.task_type, payload: { ...launch.payload, rerun_of: rerunOf }, source };
-	}
 
 	const launch = buildSearchLaunch(
 		{

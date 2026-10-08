@@ -20,13 +20,13 @@
 		onClose: () => void;
 		onJobUpdated?: (updatedJob: JobRecord) => void;
 		onJobDeleted?: (jobId: string) => void;
-		onActionCompleted?: (action: 'ignore' | 'delete' | 'blacklist' | 'apply' | 'restore' | 'clear_communication' | 'clear_company') => void;
+		onActionCompleted?: (action: 'ignore' | 'delete' | 'blacklist' | 'restore' | 'clear_communication' | 'clear_company') => void;
 	} = $props();
 
-	const TERMINAL_ACTIONS = ['ignore', 'delete', 'blacklist', 'apply'];
+	const TERMINAL_ACTIONS = ['ignore', 'delete', 'blacklist'];
 
 	function handleActionCompleted(
-		action: 'ignore' | 'delete' | 'blacklist' | 'apply' | 'restore' | 'clear_communication' | 'clear_company'
+		action: 'ignore' | 'delete' | 'blacklist' | 'restore' | 'clear_communication' | 'clear_company'
 	) {
 		onActionCompleted?.(action);
 		if (TERMINAL_ACTIONS.includes(action)) {
