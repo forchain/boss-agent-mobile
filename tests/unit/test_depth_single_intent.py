@@ -36,7 +36,6 @@ from boss_agent.job_store import InMemoryJobRecordStore
 from boss_agent.screening import CandidateScreener
 from boss_agent.search_entities import FilterConfig, SavedSearch, SearchConfig
 from boss_agent.task_launch import (
-    DirectApplyTarget,
     LaunchContractError,
     LaunchSource,
     TaskKind,
@@ -114,20 +113,6 @@ def test_a_new_payload_states_its_depth_once():
         ),
     ).payload
     assert FeedStreamConfig.from_payload(save_only).send_greeting is False
-
-
-def test_a_targeted_application_states_its_depth_once_too():
-    payload = build_launch(
-        TaskKind.DIRECT_APPLY,
-        source=LaunchSource.MANUAL,
-        job=DirectApplyTarget(job_id="rec-1", title="AI Agent 平台工程师", company_name="智元创新"),
-    ).payload
-    assert _depth_keys(payload) == {"target_action"}
-    assert payload["target_action"] == "auto_apply"
-
-    config = FeedStreamConfig.from_payload(payload)
-    assert config.send_greeting is True
-    assert config.direct_greeting == ""
 
 
 @pytest.mark.parametrize(
@@ -282,9 +267,9 @@ def test_a_producer_cannot_write_the_pair_by_hand():
         build_launch(TaskKind.SEARCH, source=LaunchSource.MANUAL, search=search, auto_send=True)
     with pytest.raises(LaunchContractError, match="preview_only"):
         build_launch(
-            TaskKind.DIRECT_APPLY,
+            TaskKind.SEARCH,
             source=LaunchSource.MANUAL,
-            job=DirectApplyTarget(job_id="rec-1"),
+            search=search,
             preview_only=True,
         )
     with pytest.raises(LaunchContractError, match="preview_only"):
