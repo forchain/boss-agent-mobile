@@ -824,7 +824,6 @@ def test_config_from_payload_carries_the_task_contract():
             "auto_send": True,
             "communication_cooldown_days": 45,
             "daily_greeting_limit": 5,
-            "direct_job_id": "rec-1",
             "filter": {"education": "硕士", "industries": ["人工智能"]},
             "screening_policy": {"title_blacklist": ["销售"]},
         }
@@ -834,13 +833,32 @@ def test_config_from_payload_carries_the_task_contract():
     assert config.max_jobs == 7
     assert config.target_action == TargetAction.AUTO_APPLY
     assert config.min_score == 82.0
-    assert config.single_screen is True
-    assert config.direct_job_id == "rec-1"
     assert config.cooldown_days == 45
     assert config.daily_greeting_limit == 5
     assert config.filter_config is not None
     assert config.filter_config.industries == ["人工智能"]
     assert config.screening_policy.title_blacklist == ["销售"]
+
+
+def test_the_config_no_longer_exposes_the_retired_single_screen_target():
+    """Issue #428: the config parses a target out of nothing.
+
+    A queued task may still carry the keys — an older builder wrote them — but the config
+    keeps no field to hold them, so there is no code path that could act on one.
+    """
+    config = FeedStreamConfig.from_payload(
+        {
+            "keyword": "Agent",
+            "target_action": "auto_apply",
+            "direct_job_id": "rec-1",
+            "greeting_message": "我在面板里改过这版。",
+        }
+    )
+
+    assert not hasattr(config, "single_screen")
+    assert not hasattr(config, "direct_job_id")
+    assert not hasattr(config, "direct_greeting")
+    assert config.keyword == "Agent"
 
 
 # ---------------------------------------------------------------------------

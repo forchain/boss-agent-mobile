@@ -74,12 +74,12 @@ REPORTED_TASK_PAYLOAD = {
     "target_action": "auto_apply",
 }
 
-#: The 定向投递 payload as the jobs page hand-built it before PR #297: no `target_action`, no
-#: depth key at all. It has to keep doing what it always did — draft, don't send — even
-#: though the handler names the run AUTO_APPLY once it is claimed.
-LEGACY_DIRECT_APPLY_PAYLOAD = {
+#: A payload from before PR #297: no `target_action`, no depth key at all. It has to keep
+#: doing what it always did — draft, don't send — even though the handler names the run
+#: AUTO_APPLY once it is claimed. Issue #428 retired the key that used to mark this shape,
+#: so it is pinned by what it omits rather than by what it used to name.
+LEGACY_UNDECLARED_DEPTH_PAYLOAD = {
     "keyword": "AI Agent 平台工程师",
-    "direct_job_id": "rec-9",
     "greeting_message": "李工您好，我在面板里改过这版。",
     "company_name": "智元创新",
     "job_title": "AI Agent 平台工程师",
@@ -152,17 +152,15 @@ def test_the_reported_task_payload_is_read_exactly_as_before():
 
 
 def test_a_payload_that_states_no_depth_at_all_keeps_its_old_default():
-    """The pre-#297 定向投递 shape stated nothing, and the default was: do not send.
+    """The pre-#297 shape stated nothing, and the default was: do not send.
 
     The handler names the run AUTO_APPLY after parsing, so the parse-time answer is what
     protects a queued task from becoming a message nobody approved.
     """
-    config = FeedStreamConfig.from_payload(dict(LEGACY_DIRECT_APPLY_PAYLOAD))
+    config = FeedStreamConfig.from_payload(dict(LEGACY_UNDECLARED_DEPTH_PAYLOAD))
 
     assert config.send_greeting is False
     assert config.depth_expression == DEPTH_UNSTATED
-    assert config.single_screen is True
-    assert config.direct_greeting == "李工您好，我在面板里改过这版。"
 
 
 #: The shape PR #297 documented the dashboard's "run scheduled now" producing: one half of

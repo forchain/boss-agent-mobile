@@ -260,14 +260,11 @@ export function buildLaunch(
  * spread-copied. A blind spread is what let a stale `min_score` or an inverted
  * preview flag survive into a rerun.
  *
- * `direct_job_id` stays even though no builder produces it any more (issue #427). It is a
- * *reader* concern, not a producer one: tasks queued by the retired targeted-application
- * builder are still in real queues, and the worker still reads the key off them. Dropping
- * it here would lose the identity of a queued task before the execution path (#428) has
- * finished retiring it.
+ * `direct_job_id` was one of these until issue #428 retired the execution path that read
+ * it. Nothing produces it and nothing consumes it now, so a rerun no longer carries a job
+ * identity forward — the strategy's own search is the only thing a rerun replays.
  */
 const RERUN_CARRIED_INPUTS = [
-	'direct_job_id',
 	'job_title',
 	'company_name',
 	'candidate_profile',

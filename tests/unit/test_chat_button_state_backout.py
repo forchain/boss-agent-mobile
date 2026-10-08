@@ -225,7 +225,12 @@ async def test_scrape_marks_expired_posting_as_ignored_and_backs_out(broker):
 
 @pytest.mark.asyncio
 async def test_auto_apply_aborts_without_llm_waste_on_communicated_job(broker):
-    """AutoApplyHandler must abort drafting/sending when btn_chat shows '继续沟通'."""
+    """A platform-already-communicated posting must cost no token and no greeting slot.
+
+    Reached through the empty-feed fallback now that a targeted-application task cannot ask
+    for the on-screen evaluation directly (issue #428): the scan reads no card, and the run
+    backs off from `继续沟通` without extracting a posting or drafting a message.
+    """
     mock_driver = MagicMock()
     mock_driver.get_window_size.return_value = {"width": 1080, "height": 2400}
 
@@ -256,7 +261,6 @@ async def test_auto_apply_aborts_without_llm_waste_on_communicated_job(broker):
         task_type=TaskType.AUTO_APPLY,
         payload={
             "keyword": "算法",
-            "direct_job_id": dispatched["id"],
             "job_title": dispatched["title"],
             "company_name": dispatched["company_name"],
             "preview_only": False,
@@ -277,6 +281,9 @@ async def test_auto_apply_aborts_without_llm_waste_on_communicated_job(broker):
 
         assert await worker.run_once() is True
 
+        # The chat button was read — that is the on-screen evaluation the empty feed falls
+        # back to — and the posting behind it was never extracted.
+        mock_detail.get_chat_button_state.assert_called()
         mock_detail.extract_job_posting.assert_not_called()
         mock_detail.navigate_back.assert_called()
 
@@ -286,7 +293,7 @@ async def test_auto_apply_aborts_without_llm_waste_on_communicated_job(broker):
     assert finished is not None
     assert any("既有沟通" in log for log in finished.logs)
 
-    records = await broker.job_store.list_job_records(status="applied")
-    assert len(records) == 1
-    assert records[0].get("applied_source") == "platform_historical"
+    # No record is written and no greeting slot is spent: a contact the platform already
+    # holds is not a communication this run made.
+    assert await broker.job_store.list_job_records(status="applied") == []
     assert await broker.job_store.count_today_applied_jobs() == 0
