@@ -1,11 +1,86 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { loadMergedSettings } from '$lib/server/settings';
+import { normalizeLlmProvider, type LlmProvider } from '$lib/types';
+
+const PROBE_TIMEOUT_MS = 8000;
+const ANTHROPIC_VERSION = '2023-06-01';
+
+export interface ProbeRequest {
+	endpoint: string;
+	/** Protocol-specific auth header (OpenAI: `Authorization`, Anthropic: `x-api-key`). */
+	authHeader: [string, string];
+	headers: Record<string, string>;
+	body: Record<string, unknown>;
+}
+
+/**
+ * Build the connectivity probe for the selected protocol (issue #418). The two
+ * protocols differ in endpoint, auth header and payload shape, so the probe is
+ * derived here once instead of branching at the call site.
+ */
+export function buildProbe(
+	provider: LlmProvider,
+	rawBaseUrl: string,
+	model: string,
+	apiKey: string
+): ProbeRequest {
+	const baseUrl = (rawBaseUrl || '').replace(/\/+$/, '');
+	const contentType = { 'Content-Type': 'application/json' };
+	if (provider === 'anthropic') {
+		// A base already ending in `/v1` already carries the version segment, so
+		// appending another would produce the invalid `/v1/v1/messages`.
+		const endpoint = /\/v1$/i.test(baseUrl) ? `${baseUrl}/messages` : `${baseUrl}/v1/messages`;
+		return {
+			endpoint,
+			authHeader: ['x-api-key', apiKey],
+			headers: { ...contentType, 'anthropic-version': ANTHROPIC_VERSION },
+			body: {
+				model,
+				max_tokens: 1,
+				messages: [{ role: 'user', content: 'Ping' }]
+			}
+		};
+	}
+	return {
+		endpoint: `${baseUrl}/chat/completions`,
+		authHeader: ['Authorization', `Bearer ${apiKey}`],
+		headers: { ...contentType },
+		body: {
+			model,
+			messages: [{ role: 'user', content: 'Ping' }],
+			max_tokens: 1,
+			temperature: 0.1
+		}
+	};
+}
+
+/**
+ * Pull a human-readable reason out of an error body. Both protocols nest under
+ * `error`, but Anthropic adds a `type`, OpenAI may return a bare `message`, and
+ * gateways return plain text — so all three shapes are handled.
+ */
+export function extractErrorMessage(rawBody: string, statusText?: string): string {
+	const text = (rawBody || '').trim();
+	if (!text) return statusText || 'HTTP 错误';
+	try {
+		const parsed = JSON.parse(text);
+		const errorNode = parsed?.error;
+		if (typeof errorNode === 'string' && errorNode.trim()) return errorNode.trim();
+		if (errorNode && typeof errorNode.message === 'string' && errorNode.message.trim()) {
+			return errorNode.message.trim();
+		}
+		if (typeof parsed?.message === 'string' && parsed.message.trim()) return parsed.message.trim();
+	} catch {
+		// Not JSON — fall through to the raw text below.
+	}
+	return text.slice(0, 150) || statusText || 'HTTP 错误';
+}
 
 export const POST: RequestHandler = async ({ request }) => {
 	try {
 		const payload = await request.json();
-		const provider = payload.provider || 'openai';
+		const provider = normalizeLlmProvider(payload.provider);
 		const baseUrl = (payload.base_url || 'https://api.minimaxi.com/v1').replace(/\/+$/, '');
 		let apiKey = payload.api_key?.trim();
 		const model = payload.model || 'MiniMax-M3';
@@ -29,27 +104,16 @@ export const POST: RequestHandler = async ({ request }) => {
 		}
 
 		const startTime = Date.now();
-
-		// Use OpenAI-compatible chat completions probe
-		const endpoint = `${baseUrl}/chat/completions`;
-		const testBody = {
-			model: model,
-			messages: [{ role: 'user', content: 'Ping' }],
-			max_tokens: 1,
-			temperature: 0.1
-		};
+		const probe = buildProbe(provider, baseUrl, model, apiKey);
 
 		const controller = new AbortController();
-		const timeoutId = setTimeout(() => controller.abort(), 8000);
+		const timeoutId = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
 
 		try {
-			const res = await fetch(endpoint, {
+			const res = await fetch(probe.endpoint, {
 				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json',
-					Authorization: `Bearer ${apiKey}`
-				},
-				body: JSON.stringify(testBody),
+				headers: { ...probe.headers, [probe.authHeader[0]]: probe.authHeader[1] },
+				body: JSON.stringify(probe.body),
 				signal: controller.signal
 			});
 
@@ -57,22 +121,17 @@ export const POST: RequestHandler = async ({ request }) => {
 			const latency = Date.now() - startTime;
 
 			if (res.ok) {
-				const data = await res.json().catch(() => ({}));
+				await res.json().catch(() => ({}));
 				return json({
 					success: true,
 					latency_ms: latency,
-					message: `✅ 大模型连接成功！(模型: ${model}, 响应耗时: ${latency}ms)`,
+					message: `✅ 大模型连接成功！(协议: ${provider}, 模型: ${model}, 响应耗时: ${latency}ms)`,
+					provider,
 					model
 				});
 			} else {
 				const errText = await res.text().catch(() => '');
-				let errMsg = `HTTP ${res.status} 错误`;
-				try {
-					const parsed = JSON.parse(errText);
-					errMsg = parsed.error?.message || parsed.message || errText.slice(0, 150);
-				} catch {
-					errMsg = errText.slice(0, 150) || res.statusText;
-				}
+				const errMsg = extractErrorMessage(errText, res.statusText);
 				return json({
 					success: false,
 					status_code: res.status,
@@ -84,7 +143,7 @@ export const POST: RequestHandler = async ({ request }) => {
 			if (fetchErr.name === 'AbortError') {
 				return json({
 					success: false,
-					message: `❌ 连接超时 (超过 8 秒未响应)，请检查 Base URL (${baseUrl}) 是否正确或网络是否通畅`
+					message: `❌ 连接超时 (超过 ${PROBE_TIMEOUT_MS / 1000} 秒未响应)，请检查 Base URL (${baseUrl}) 是否正确或网络是否通畅`
 				});
 			}
 			return json({
