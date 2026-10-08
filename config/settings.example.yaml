@@ -22,16 +22,22 @@ pocketbase_url: "http://127.0.0.1:8090" # PocketBase URL (env: POCKETBASE_URL, c
 # ------------------------------------------------------------------------------
 # 3. LLM Reasoning Provider
 # ------------------------------------------------------------------------------
-# Provider type (default: "openai" for all OpenAI-compatible REST endpoints)
+# Wire protocol, not a vendor. Exactly two values are spoken:
+#   "openai"    — OpenAI Chat Completions (`POST {base_url}/chat/completions`)
+#   "anthropic" — Anthropic Messages      (`POST {base_url}/v1/messages`)
+# A vendor is chosen by its base_url and model below, never by this key. Any other
+# value falls back to "openai", so a legacy `minimax` / `deepseek` keeps working.
 provider: "openai"
 
-# OpenAI-compatible API base URL (e.g. MiniMax, DeepSeek, OpenAI)
+# API base URL, whose shape depends on the protocol above:
+#   openai    — e.g. https://api.minimaxi.com/v1, https://api.deepseek.com/v1
+#   anthropic — e.g. https://api.minimax.cn/anthropic (a bare `/v1` suffix is also accepted)
 base_url: "https://api.minimaxi.com/v1"
 
 # API Key (replace with your real secret key in config/settings.local.yaml)
 api_key: "your-api-key-here"
 
-# Model name (e.g. MiniMax-M3, deepseek-chat, gpt-4o-mini)
+# Model name (e.g. MiniMax-M3, gpt-4o-mini, claude-sonnet-4-5)
 model: "MiniMax-M3"
 
 # Sampling temperature (0.0 to 1.0, lower means more deterministic, default: 0.2)

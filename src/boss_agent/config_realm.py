@@ -614,6 +614,11 @@ class PocketBaseSettings:
 class LlmSettings:
     """The chat-completion client's connection and ceilings."""
 
+    #: The wire protocol to speak — ``openai`` (Chat Completions) or ``anthropic``
+    #: (Messages). This realm only carries the value; the protocol a client is built
+    #: from is resolved by :func:`boss_agent.llm_config.create_llm_client`, which falls
+    #: back to the default protocol for any other value. A vendor is chosen by
+    #: ``base_url`` and ``model``, never by this field.
     provider: str
     base_url: str
     api_key: str | None
