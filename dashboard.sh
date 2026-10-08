@@ -207,11 +207,16 @@ cmd_start() {
     export VITE_POCKETBASE_URL="${POCKETBASE_URL}"
     export PUBLIC_POCKETBASE_URL="${POCKETBASE_URL}"
 
-    # Navbar version badge (#421). Left empty unless the operator sets it, so the
-    # server resolver falls through to the version.json manifest / v0.1 default.
+    # Navbar version badge (#421, #422). An operator-set APP_VERSION always wins;
+    # otherwise sniff the live checkout's git tag so a dev install shows the real
+    # version with no manual env setup. Every `git describe` failure — no git
+    # binary, not a repo, shallow clone, empty output — degrades to empty, and the
+    # server resolver then falls through to version.json / the v0.1 default.
+    # `|| true` keeps `set -euo pipefail` (line ~26) from aborting the dashboard.
     # The four launch sites below pass explicit `env VAR=…` allowlists, so the
     # export alone would NOT reach the npm process in the daemon branch.
-    export APP_VERSION="${APP_VERSION:-}"
+    APP_VERSION_SNIFFED="$(git describe --tags --always 2>/dev/null || true)"
+    export APP_VERSION="${APP_VERSION:-${APP_VERSION_SNIFFED}}"
     export PUBLIC_APP_VERSION="${APP_VERSION}"
     HEALTH_URL="${POCKETBASE_URL%/}/api/health"
 

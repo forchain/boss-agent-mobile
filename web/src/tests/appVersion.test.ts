@@ -14,6 +14,14 @@ vi.mock('$lib/server/pythonRunner', () => ({
 	runPythonScript: vi.fn()
 }));
 
+// #422 added the git tier, which would otherwise spawn a real `git describe`
+// against the scratch project root on every assertion. Stub the seam to report
+// "no tag" so this file stays a pure env/manifest contract with no subprocess.
+const { runGitDescribe } = vi.hoisted(() => ({ runGitDescribe: vi.fn(() => null) }));
+vi.mock('$lib/server/gitDescribe', () => ({
+	runGitDescribe: () => runGitDescribe()
+}));
+
 // The loader shares this module with the version contract but not its subject:
 // settings resolution shells out to the real config realm, which the scratch
 // project root has no script for. Stub it so the test measures the version

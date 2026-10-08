@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { runGitDescribe } from '$lib/server/gitDescribe';
 import { getProjectRoot } from '$lib/server/pythonRunner';
 
 /**
@@ -43,14 +44,35 @@ function readManifestVersion(): string | null {
 }
 
 /**
+ * Sniff the current git tag, so a live checkout renders its real version with no
+ * manual env setup (#422). Wrapped in its own `try/catch` because this sits on
+ * the page-load path: `runGitDescribe` already degrades internally, and this
+ * guards the seam itself so an env-configured install can never be broken by a
+ * git problem.
+ */
+function readGitVersion(): string | null {
+	try {
+		const tag = runGitDescribe();
+		return tag && tag.trim() ? tag.trim() : null;
+	} catch {
+		return null;
+	}
+}
+
+/**
  * Resolve the display version for the navbar. Precedence, highest first:
- * `APP_VERSION` → `PUBLIC_APP_VERSION` → the static `version.json` manifest →
- * {@link DEFAULT_APP_VERSION}.
+ * `APP_VERSION` → `PUBLIC_APP_VERSION` → the live git tag → the static
+ * `version.json` manifest → {@link DEFAULT_APP_VERSION}.
+ *
+ * Git outranks the manifest on purpose: in a checkout the tag is more current
+ * than a manifest frozen at build time, and the manifest tier is what serves a
+ * `.git`-detached artifact that has no tag to sniff.
  */
 export function resolveAppVersion(): string {
 	return (
 		readEnvVersion('APP_VERSION') ??
 		readEnvVersion('PUBLIC_APP_VERSION') ??
+		readGitVersion() ??
 		readManifestVersion() ??
 		DEFAULT_APP_VERSION
 	);
