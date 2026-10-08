@@ -193,16 +193,16 @@ class FeedStreamConfig:
     # Set when the payload was read through a shape producers are no longer allowed to
     # write. The run says so in its own log instead of failing the queued task.
     depth_warning: str = ""
+    # A payload written before issue #428 can still name one posting through
+    # ``direct_job_id``, and the broker is PocketBase-backed, so such a task can be
+    # sitting in a queue when this code is deployed. No producer writes the key any more
+    # and no execution path can act on it, so ``stream_jobs`` refuses the run outright
+    # rather than reading the same payload as an ordinary keyword search — which would
+    # turn "greet the one posting on screen" into a quota-consuming sweep of the board.
+    retired_direct_target: bool = False
     candidate_profile: CandidateProfile | None = None
     source_task_id: str | None = None
-    # A targeted application acts on the posting already on screen instead of scanning.
-    single_screen: bool = False
-    direct_job_id: str | None = None
     is_headhunter: bool | None = None
-    # The greeting a human edited in the 定向投递 modal. It outranks whatever the record
-    # already holds (issue #300) — and until then it travelled in the payload unread, so
-    # the button that promises to send *this* text sent a regenerated draft instead.
-    direct_greeting: str = ""
 
     @classmethod
     def from_payload(
@@ -288,6 +288,31 @@ class FeedStreamConfig:
         else:
             send_greeting = bool(legacy_auto_send) and not bool(legacy_preview)
             depth_expression = DEPTH_LEGACY_PAIR
+
+        # ---- a retired execution path, read through a key nobody writes any more ----
+        # `direct_job_id` named the one posting a targeted application greeted on screen.
+        # Issue #428 retired that path, so the key is now unreadable by anything: the
+        # config keeps no field to hold it and no code path can act on it. A producer
+        # stopped writing it at the same time, but the queue outlives the deployment —
+        # ``BaseTaskBroker`` is PocketBase-backed, so a task written by the pre-#428
+        # builder can still be delivered to this worker. Such a payload also carries
+        # `keyword` (the target's title) and `target_action=auto_apply`, so with nothing
+        # gating it the run would fall into the keyword sweep below: "greet the one
+        # posting on screen" silently becoming "sweep the board and greet up to the
+        # ceiling", which spends real quota on a task the operator never read that way.
+        # That is the meaning-change this module's own doctrine forbids, so the shape is
+        # named in ``depth_warning`` and the run fails closed before any search starts.
+        legacy_direct_job_id = data.get("direct_job_id")
+        retired_direct_target = bool(legacy_direct_job_id)
+        retired_target_warning = ""
+        if retired_direct_target:
+            retired_target_warning = (
+                f"task payload states `direct_job_id={legacy_direct_job_id}` — the "
+                f"single-screen targeted-application path is retired (issues #426-#428). "
+                f"The run is refused rather than read as a keyword search for "
+                f"`{data.get('keyword')}`, which would greet postings this task never "
+                f"named. Re-launch it from a Saved Search to sweep by keyword."
+            )
 
         raw_policy = data.get("screening_policy")
         daily_limit = int(
@@ -376,15 +401,10 @@ class FeedStreamConfig:
             send_greeting=send_greeting,
             states_target_action=states_target_action,
             depth_expression=depth_expression,
-            depth_warning=legacy_half_warning,
-            # Only a targeted application carries the human's own copy in its payload, and
-            # only that payload shape may override what the record holds. A search dispatch
-            # that happened to include the key must not send one text to every card.
-            direct_greeting=(
-                str(data.get("greeting_message") or "") if data.get("direct_job_id") else ""
-            ),
-            single_screen=bool(data.get("direct_job_id")),
-            direct_job_id=data.get("direct_job_id"),
+            # A payload can be wrong about both depth *and* the retired target, so the two
+            # warnings are joined rather than one silently overwriting the other.
+            depth_warning=" ".join(w for w in (legacy_half_warning, retired_target_warning) if w),
+            retired_direct_target=retired_direct_target,
             is_headhunter=data.get("is_headhunter"),
         )
 
@@ -580,10 +600,21 @@ class JobFeedPipeline:
                 f"probing detail page bottom for the distance widget (direct-hire postings only)."
             )
 
-        if config.single_screen:
-            await self._evaluate_current_posting(
-                _CardRun(config=config, result=result, on_job=on_job)
+        if config.retired_direct_target:
+            # The single-screen branch, kept as a refusal. Issue #428 removed the path that
+            # could greet one posting on screen, but a task queued by the pre-#428 builder
+            # can still arrive carrying `direct_job_id`, and that payload also carries a
+            # keyword. Failing closed here is the whole point: falling through to the
+            # search below would sweep the board for that keyword and greet up to the
+            # ceiling, spending quota the queued task never asked to spend.
+            if config.depth_warning:
+                await self._log(f"⚠️ [Legacy Depth] {config.depth_warning}")
+            await self._log(
+                "🛑 [Retired Path] 定向投递 single-screen execution is retired; this task "
+                "is refused without searching, greeting or reading a card."
             )
+            result.outcome = "retired_direct_target"
+            result.reason = config.depth_warning
             return result
 
         if config.enable_search and config.keyword:
@@ -1147,19 +1178,12 @@ class JobFeedPipeline:
     def _resolve_human_greeting(self, run: _CardRun) -> tuple[str, str]:
         """The human-authored greeting this run must send verbatim, and where it came from.
 
-        Two sources outrank the agent (issue #300):
-
-        1. the copy in a 定向投递 payload — the operator edited it in the modal for *this*
-           send, so it outranks even the text the record already holds;
-        2. the record's own greeting, when its provenance says a human wrote it.
-
-        Anything else — an agent draft, a record predating provenance, a marker whose text
-        is empty — returns ``("", "")`` and the run drafts as it always did. The origin
-        comes back with the text so the log can name the source instead of guessing.
+        One source outranks the agent (issue #300): the record's own greeting, when its
+        provenance says a human wrote it. Anything else — an agent draft, a record predating
+        provenance, a marker whose text is empty — returns ``("", "")`` and the run drafts
+        as it always did. The origin comes back with the text so the log can name the source
+        instead of guessing.
         """
-        direct = (run.config.direct_greeting or "").strip()
-        if direct:
-            return direct, "定向投递编辑稿"
         if greeting_is_human(run.existing_record):
             return str(run.existing_record.get("greeting_message")).strip(), "岗位记录人工稿"
         return "", ""
@@ -1655,7 +1679,7 @@ class JobFeedPipeline:
         return saved
 
     # ------------------------------------------------------------------
-    # Single-screen evaluation (direct targets and empty feeds)
+    # On-screen evaluation (the empty-feed fallback)
     # ------------------------------------------------------------------
     async def _evaluate_current_posting(self, run: _CardRun) -> None:
         """Evaluate whichever posting is already on screen, without scanning a feed."""
@@ -1664,8 +1688,6 @@ class JobFeedPipeline:
             return
 
         run.result.scanned = max(run.result.scanned, 1)
-        target_record = await self._target_record(run.config)
-        run.existing_record = target_record
 
         chat_state = self.detail_page.get_chat_button_state()
         if chat_state in (ChatButtonState.COMMUNICATED, ChatButtonState.CLOSED):
@@ -1678,35 +1700,22 @@ class JobFeedPipeline:
                 JobRecordStatus.APPLIED.value if is_historical else JobRecordStatus.IGNORED.value
             )
             run.result.skipped += 1
-            if target_record:
-                terminal = dict(target_record)
-                if is_historical:
-                    terminal["status"] = JobRecordStatus.APPLIED.value
-                    terminal["applied_source"] = APPLIED_SOURCE_PLATFORM_HISTORICAL
-                else:
-                    terminal["status"] = JobRecordStatus.IGNORED.value
-                    terminal["screened_reason"] = EXPIRED_POSTING_REASON
-                    terminal["screening_stage"] = ScreeningStage.EXPIRED.value
-                await self.store.upsert_job_record(terminal)
             self.detail_page.navigate_back()
             return
 
         policy = run.config.screening_policy or ScreeningPolicy()
         target_is_headhunter = run.config.is_headhunter
-        if target_is_headhunter is None and target_record:
-            target_is_headhunter = target_record.get("is_headhunter")
-        target_location = str((target_record or {}).get("location") or "")
-        probe_commute_distance = policy.should_probe_commute_distance(
-            target_is_headhunter, location=target_location
-        )
+        # No stored record stands behind this screen: a scan that read no card never opened a
+        # detail page, so the posting's district is unknown and the commute list is matched
+        # against nothing — the same fail-open an unread card location would get.
+        probe_commute_distance = policy.should_probe_commute_distance(target_is_headhunter)
         if policy.is_commute_filter_active and not probe_commute_distance:
-            target_desc = (target_record and target_record.get("title")) or "当前岗位"
             reason = (
                 HEADHUNTER_COMMUTE_PROBE_SKIP_REASON
                 if target_is_headhunter
                 else NOT_INSPECTED_DISTRICT_SKIP_REASON
             )
-            await self._log(f"📍 [App端强制过滤] '{target_desc}' {reason}")
+            await self._log(f"📍 [App端强制过滤] '当前岗位' {reason}")
 
         try:
             posting = self.detail_page.extract_job_posting(
@@ -1791,12 +1800,6 @@ class JobFeedPipeline:
     # ------------------------------------------------------------------
     # Plumbing
     # ------------------------------------------------------------------
-    async def _target_record(self, config: FeedStreamConfig) -> dict[str, Any] | None:
-        """The record a targeted application is about, when the task names one."""
-        if not config.direct_job_id:
-            return None
-        return await self.store.get_job_record(config.direct_job_id)
-
     async def _emit(self, run: _CardRun, outcome: JobOutcome) -> None:
         if run.on_job is not None:
             await run.on_job(outcome)

@@ -36,7 +36,6 @@ from boss_agent.job_store import InMemoryJobRecordStore
 from boss_agent.screening import CandidateScreener
 from boss_agent.search_entities import FilterConfig, SavedSearch, SearchConfig
 from boss_agent.task_launch import (
-    DirectApplyTarget,
     LaunchContractError,
     LaunchSource,
     TaskKind,
@@ -75,12 +74,12 @@ REPORTED_TASK_PAYLOAD = {
     "target_action": "auto_apply",
 }
 
-#: The 定向投递 payload as the jobs page hand-built it before PR #297: no `target_action`, no
-#: depth key at all. It has to keep doing what it always did — draft, don't send — even
-#: though the handler names the run AUTO_APPLY once it is claimed.
-LEGACY_DIRECT_APPLY_PAYLOAD = {
+#: A payload from before PR #297: no `target_action`, no depth key at all. It has to keep
+#: doing what it always did — draft, don't send — even though the handler names the run
+#: AUTO_APPLY once it is claimed. Issue #428 retired the key that used to mark this shape,
+#: so it is pinned by what it omits rather than by what it used to name.
+LEGACY_UNDECLARED_DEPTH_PAYLOAD = {
     "keyword": "AI Agent 平台工程师",
-    "direct_job_id": "rec-9",
     "greeting_message": "李工您好，我在面板里改过这版。",
     "company_name": "智元创新",
     "job_title": "AI Agent 平台工程师",
@@ -114,20 +113,6 @@ def test_a_new_payload_states_its_depth_once():
         ),
     ).payload
     assert FeedStreamConfig.from_payload(save_only).send_greeting is False
-
-
-def test_a_targeted_application_states_its_depth_once_too():
-    payload = build_launch(
-        TaskKind.DIRECT_APPLY,
-        source=LaunchSource.MANUAL,
-        job=DirectApplyTarget(job_id="rec-1", title="AI Agent 平台工程师", company_name="智元创新"),
-    ).payload
-    assert _depth_keys(payload) == {"target_action"}
-    assert payload["target_action"] == "auto_apply"
-
-    config = FeedStreamConfig.from_payload(payload)
-    assert config.send_greeting is True
-    assert config.direct_greeting == ""
 
 
 @pytest.mark.parametrize(
@@ -167,17 +152,15 @@ def test_the_reported_task_payload_is_read_exactly_as_before():
 
 
 def test_a_payload_that_states_no_depth_at_all_keeps_its_old_default():
-    """The pre-#297 定向投递 shape stated nothing, and the default was: do not send.
+    """The pre-#297 shape stated nothing, and the default was: do not send.
 
     The handler names the run AUTO_APPLY after parsing, so the parse-time answer is what
     protects a queued task from becoming a message nobody approved.
     """
-    config = FeedStreamConfig.from_payload(dict(LEGACY_DIRECT_APPLY_PAYLOAD))
+    config = FeedStreamConfig.from_payload(dict(LEGACY_UNDECLARED_DEPTH_PAYLOAD))
 
     assert config.send_greeting is False
     assert config.depth_expression == DEPTH_UNSTATED
-    assert config.single_screen is True
-    assert config.direct_greeting == "李工您好，我在面板里改过这版。"
 
 
 #: The shape PR #297 documented the dashboard's "run scheduled now" producing: one half of
@@ -282,9 +265,9 @@ def test_a_producer_cannot_write_the_pair_by_hand():
         build_launch(TaskKind.SEARCH, source=LaunchSource.MANUAL, search=search, auto_send=True)
     with pytest.raises(LaunchContractError, match="preview_only"):
         build_launch(
-            TaskKind.DIRECT_APPLY,
+            TaskKind.SEARCH,
             source=LaunchSource.MANUAL,
-            job=DirectApplyTarget(job_id="rec-1"),
+            search=search,
             preview_only=True,
         )
     with pytest.raises(LaunchContractError, match="preview_only"):

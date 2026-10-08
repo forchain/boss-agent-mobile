@@ -48,7 +48,7 @@ ALL_DEPTH_KEYS = frozenset(
 
 def assert_depth_stated_once(case: dict, payload: dict) -> None:
     """The one shared payload shape's depth invariant: a single expression, no legacy pair."""
-    if case["kind"] not in ("search", "direct_apply"):
+    if case["kind"] != "search":
         return
     stated = set(payload) & ALL_DEPTH_KEYS
     assert stated == {"target_action"}, f"{case['case']} states depth as {sorted(stated)}"
@@ -69,17 +69,6 @@ def _saved_search(spec: dict | None) -> SavedSearch | None:
     )
 
 
-def _direct_apply_target(spec: dict | None) -> task_launch.DirectApplyTarget | None:
-    if spec is None:
-        return None
-    return task_launch.DirectApplyTarget(
-        job_id=spec["job_id"],
-        title=spec["title"],
-        company_name=spec["company_name"],
-        greeting_message=spec["greeting_message"],
-    )
-
-
 @pytest.mark.parametrize("case", CASES, ids=[c["case"] for c in CASES])
 def test_python_builder_matches_the_shared_case(case: dict) -> None:
     """Every shipped case is one the Python builder must reproduce exactly."""
@@ -88,7 +77,6 @@ def test_python_builder_matches_the_shared_case(case: dict) -> None:
         "source": task_launch.LaunchSource(case["source"]),
         "search": _saved_search(case["search"]),
         "mode": None if case["mode"] is None else task_launch.LaunchMode(case["mode"]),
-        "job": _direct_apply_target(case.get("job")),
     }
     if case["min_score"] is not None:
         kwargs["min_score"] = case["min_score"]
@@ -123,7 +111,6 @@ def test_the_declared_defaults_are_the_shared_ones() -> None:
     assert defaults["min_score"] == task_launch.MIN_SCORE
     assert defaults["max_jobs"] == task_launch.DEFAULT_MAX_JOBS
     assert defaults["preview_timeout_sec"] == task_launch.DEFAULT_PREVIEW_TIMEOUT_SEC
-    assert defaults["direct_apply_min_score"] == task_launch.DIRECT_APPLY_MIN_SCORE
 
 
 def test_the_job_ceiling_is_the_schemas_declared_default() -> None:
@@ -252,18 +239,52 @@ def test_an_auto_apply_strategy_launch_reaches_the_dispatch_gate() -> None:
         )
 
 
-def test_a_directed_application_sends_and_is_not_vetoed_by_the_score_gate() -> None:
-    """The human already chose this posting, so neither depth nor threshold may default.
+def test_neither_half_of_the_legacy_depth_pair_can_be_authored() -> None:
+    """The PR #297 guard, on the kind that outlived direct_apply (issue #427).
 
-    The 定向投递 payload used to state neither, which left the worker to draft silently
-    and let a 70-point threshold refuse a job the operator had just clicked.
+    The refusal used to be pinned against the retired direct-apply builder, which made it
+    look like a property of that kind rather than of the depth contract. It is the
+    contract's: ``preview_only`` and ``auto_send`` were one intent written twice, so a
+    caller that supplies one half produced a payload that looked valid and drafted instead
+    of greeting. Every kind that greets refuses them, and ``search`` is the one left that
+    does — so it is the kind this is pinned against now.
     """
-    payload = task_launch.build_direct_apply_launch(
-        task_launch.DirectApplyTarget(job_id="j1", title="AI Agent 工程师", company_name="煦象"),
-        source=task_launch.LaunchSource.MANUAL,
-    ).payload
-    config = FeedStreamConfig.from_payload(payload)
+    search = SavedSearch(
+        id="s", name="自动沟通", search=SearchConfig(keyword="agent"), target_action="auto_apply"
+    )
 
-    assert config.single_screen and config.direct_job_id == "j1"
-    assert config.send_greeting
-    assert config.min_score == task_launch.DIRECT_APPLY_MIN_SCORE
+    # One half alone: the shape that used to degrade silently, in either direction.
+    with pytest.raises(task_launch.LaunchContractError, match="preview_only"):
+        task_launch.build_launch(
+            task_launch.TaskKind.SEARCH,
+            source=task_launch.LaunchSource.MANUAL,
+            search=search,
+            preview_only=True,
+        )
+    with pytest.raises(task_launch.LaunchContractError, match="auto_send"):
+        task_launch.build_launch(
+            task_launch.TaskKind.SEARCH,
+            source=task_launch.LaunchSource.MANUAL,
+            search=search,
+            auto_send=True,
+        )
+    # And the pair "correctly" spelled out is still a refusal: there is nothing left for a
+    # caller to get half right, and the search's Target Action already states the depth.
+    with pytest.raises(task_launch.LaunchContractError, match="preview_only, auto_send"):
+        task_launch.build_launch(
+            task_launch.TaskKind.SEARCH,
+            source=task_launch.LaunchSource.MANUAL,
+            search=search,
+            preview_only=False,
+            auto_send=True,
+        )
+
+    # A false half counts as stated too — the gate was `auto_send and not preview_only`,
+    # so `preview_only=False` alone is exactly as able to look valid as `True`.
+    with pytest.raises(task_launch.LaunchContractError, match="preview_only"):
+        task_launch.build_launch(
+            task_launch.TaskKind.SEARCH,
+            source=task_launch.LaunchSource.MANUAL,
+            search=search,
+            preview_only=False,
+        )

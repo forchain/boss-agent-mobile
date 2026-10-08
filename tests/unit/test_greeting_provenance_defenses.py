@@ -25,6 +25,7 @@ from _feed_harness import (
 )
 
 from boss_agent.enums import JobRecordStatus
+from boss_agent.feed_pipeline import FeedStreamConfig
 from boss_agent.job_store import InMemoryJobRecordStore
 from boss_agent.keyword_constants import (
     APPLIED_SOURCE_AGENT,
@@ -34,6 +35,9 @@ from boss_agent.screening import CandidateScreener
 from boss_agent.screening_policy import ScreeningPolicy
 
 HUMAN_COPY = "李工您好，看到贵司在招 Agent 平台方向，我做过端侧推理编排，想具体聊聊。"
+#: A copy the payload tries to broadcast to every card in a sweep. Named once so both
+#: halves of #300 c4 — the behavioural and the structural — assert against the same text.
+STRAY_PAYLOAD_COPY = "我在面板里改过的文案"
 # A policy that spends no model call before the greeting decision is reached.
 NO_SCREEN = ScreeningPolicy(enable_screening=False, max_commute_distance_km=None)
 
@@ -203,28 +207,67 @@ async def test_the_score_that_approved_a_human_copy_survives_the_send():
 
 
 @pytest.mark.asyncio
-async def test_a_payload_with_no_direct_target_ignores_a_stray_greeting():
-    """`greeting_message` is a 定向投递 field, not a broadcast knob (#300 c4).
+async def test_a_stray_greeting_key_in_a_payload_never_overrides_the_record():
+    """`greeting_message` is not a broadcast knob (#300 c4).
 
-    A search payload that happened to carry the key must not send one text to every card in
-    the sweep, so only a payload naming its target may override the record.
+    A search payload that happens to carry the key must not send one text to every card in
+    the sweep. Since issue #428 there is no payload shape whose copy outranks the Job
+    Record's, so the record's approved human copy is what goes out — verbatim — and no
+    drafting call is spent on top of it.
+
+    The config here is parsed from the wire (``from_payload``), not constructed directly,
+    because that is the only way the stray key ever reached a config field in the first
+    place. Building it with the harness helper would assert the pipeline's behaviour
+    without ever exercising the parser the finding is about.
     """
-    from boss_agent.feed_pipeline import FeedStreamConfig
+    store = InMemoryJobRecordStore()
+    card = _card("AI Agent 平台工程师", "智元创新")
+    await _seed(store, card)
 
-    search_like = FeedStreamConfig.from_payload(
+    detail = _detail_page()
+    detail.extract_job_posting.return_value = _posting(card.card.title, card.card.company_name)
+    chat = MagicMock()
+    chat.click_send.return_value = True
+    screener, llm = _screener()
+
+    pipeline = _pipeline(
+        store, feed=ScriptedFeed([[card]]), detail=detail, chat=chat, screener=screener
+    )
+
+    config = FeedStreamConfig.from_payload(
         {
             "target_action": "auto_apply",
             "keyword": "Agent",
-            "greeting_message": "误放的文案",
+            "max_jobs": 5,
+            # The stray key: a broadcast copy the payload has no business carrying.
+            "greeting_message": STRAY_PAYLOAD_COPY,
+            "screening_policy": {"enable_screening": False},
         }
     )
-    assert search_like.direct_greeting == ""
+    result = await pipeline.stream_jobs(config)
 
-    direct = FeedStreamConfig.from_payload(
+    assert config.send_greeting is True, "the run must be a live one for this to mean anything"
+    assert chat.type_greeting_message.call_args[0][0] == HUMAN_COPY
+    assert result.applied_count == 1
+    stored = await store.get_job_record_by_fingerprint(card.card.fingerprint)
+    assert stored["greeting_message"] == HUMAN_COPY
+    assert stored["greeting_source"] == GREETING_SOURCE_HUMAN
+
+
+def test_a_payload_cannot_carry_a_greeting_override_at_all():
+    """The structural half of #300 c4: no config field exists for one to fill.
+
+    The behaviour above proves what a stray key does end to end; this proves there is no
+    second way in, so a future producer cannot reintroduce a payload-supplied copy behind
+    its back — the assertion is about the parser's output shape, not about a run.
+    """
+    config = FeedStreamConfig.from_payload(
         {
             "target_action": "auto_apply",
-            "direct_job_id": "rec-7",
-            "greeting_message": "我在面板里改过的文案",
+            "keyword": "Agent",
+            "greeting_message": STRAY_PAYLOAD_COPY,
         }
     )
-    assert direct.direct_greeting == "我在面板里改过的文案"
+
+    assert not hasattr(config, "direct_greeting")
+    assert STRAY_PAYLOAD_COPY not in vars(config).values(), vars(config)

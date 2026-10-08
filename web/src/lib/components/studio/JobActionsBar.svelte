@@ -7,9 +7,7 @@
 		isRestoring = false,
 		isClearingCommunication = false,
 		isClearingCompany = false,
-		isDispatchingApply = false,
 		isBlacklisting = false,
-		applyNotice = '',
 		restoreNotice = '',
 		blacklistNotice = '',
 		communicationNotice = '',
@@ -17,7 +15,6 @@
 		onRestore,
 		onClearCommunication,
 		onClearCompanyCommunication,
-		onDispatchApply,
 		onIgnore,
 		onBlacklist,
 		onCloseBlacklistNotice,
@@ -27,9 +24,7 @@
 		isRestoring?: boolean;
 		isClearingCommunication?: boolean;
 		isClearingCompany?: boolean;
-		isDispatchingApply?: boolean;
 		isBlacklisting?: boolean;
-		applyNotice?: string;
 		restoreNotice?: string;
 		blacklistNotice?: string;
 		communicationNotice?: string;
@@ -37,7 +32,6 @@
 		onRestore: () => void;
 		onClearCommunication: () => void;
 		onClearCompanyCommunication: () => void;
-		onDispatchApply: () => void;
 		onIgnore: () => void;
 		onBlacklist: () => void;
 		onCloseBlacklistNotice?: () => void;
@@ -93,18 +87,6 @@
 					{/if}
 				{/if}
 				<button
-					onclick={onDispatchApply}
-					disabled={isDispatchingApply}
-					class="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold px-4 py-2 rounded-xl text-xs shadow-lg shadow-emerald-600/20 transition flex items-center space-x-1.5 disabled:opacity-50"
-				>
-					{#if isDispatchingApply}
-						<span class="animate-spin">🌀</span>
-						<span>派发投递中...</span>
-					{:else}
-						<span>🚀 立即发起移动端打招呼</span>
-					{/if}
-				</button>
-				<button
 					onclick={onIgnore}
 					class="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-400 hover:text-slate-200 px-3.5 py-2 rounded-xl text-xs transition"
 				>
@@ -137,9 +119,6 @@
 			{/if}
 		</div>
 
-		{#if applyNotice}
-			<p class="text-xs text-emerald-400 font-medium">{applyNotice}</p>
-		{/if}
 		{#if restoreNotice}
 			<p class="text-xs text-cyan-400 font-medium">{restoreNotice}</p>
 		{/if}

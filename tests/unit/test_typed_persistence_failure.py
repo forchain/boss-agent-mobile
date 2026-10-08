@@ -245,7 +245,7 @@ async def test_auto_apply_handler_logs_degradation_on_exclusion_pool_transport_e
         task_type=TaskType.AUTO_APPLY,
         payload={
             "keyword": "AI",
-            "company_name": "腾讯科技",
+            "company_name": "测试合规公司",
             "job_title": "AI 工程师",
             "is_headhunter": False,
         },

@@ -5,12 +5,10 @@ import { getProjectRoot } from '../lib/server/pythonRunner';
 import {
 	MIN_SCORE,
 	DEFAULT_MAX_JOBS,
-	DIRECT_APPLY_MIN_SCORE,
 	DEFAULT_PREVIEW_TIMEOUT_SEC,
 	buildLaunch,
 	buildSearchLaunch,
 	LaunchContractError,
-	type DirectApplyTarget,
 	type ChatAcknowledgment,
 	type LaunchKind,
 	type LaunchMode,
@@ -34,7 +32,6 @@ interface LaunchCase {
 	search: SearchLaunchInput | null;
 	/** A case that states something the contract must refuse instead of a payload. */
 	expect_error?: boolean;
-	job?: DirectApplyTarget | null;
 	min_score: number | null;
 	chat: ChatAcknowledgment | null;
 	/** Depth keys a caller is not allowed to author; expects the contract to refuse them. */
@@ -60,7 +57,6 @@ describe('AutomationTask launch contract parity', () => {
 			const request = {
 				source: testCase.source,
 				search: testCase.search,
-				job: testCase.job ?? null,
 				mode: testCase.mode === null ? undefined : testCase.mode,
 				chat: testCase.chat,
 				minScore: testCase.min_score === null ? undefined : testCase.min_score,
@@ -90,7 +86,6 @@ describe('AutomationTask launch contract parity', () => {
 		expect(MIN_SCORE).toBe(defaults.min_score);
 		expect(DEFAULT_MAX_JOBS).toBe(defaults.max_jobs);
 		expect(DEFAULT_PREVIEW_TIMEOUT_SEC).toBe(defaults.preview_timeout_sec);
-		expect(DIRECT_APPLY_MIN_SCORE).toBe(defaults.direct_apply_min_score);
 	});
 
 	it('makes a manual and a scheduled launch of one search the same task', () => {
@@ -147,27 +142,38 @@ describe('AutomationTask launch contract parity', () => {
 		).toThrow(/preview_only, auto_send/);
 	});
 
-	it('sends a 定向投递 without letting the score gate veto it', () => {
-		const job: DirectApplyTarget = {
-			job_id: 'j1',
-			title: 'AI Agent 工程师',
-			company_name: '煦象',
-			greeting_message: '您好'
-		};
-		const payload = buildLaunch('direct_apply', { source: 'manual', job }).payload;
-		expect(payload.target_action).toBe('auto_apply');
-		expect(payload.direct_job_id).toBe('j1');
-		expect(payload.auto_send).toBeUndefined();
-		expect(payload.preview_only).toBeUndefined();
-		expect(payload.min_score).toBe(DIRECT_APPLY_MIN_SCORE);
+	it('refuses either half of the legacy depth pair on a search (PR #297)', () => {
+		// This guard used to be pinned against the retired direct_apply builder, which made
+		// it read as a property of that kind. It is a property of the depth contract: a
+		// search greets too, so a caller that hands back one half of the pair still
+		// produces a payload that looks valid and drafts instead of sending. Pinning it
+		// against `search` keeps it biting now that direct_apply is gone (issue #427).
+		const search: SearchLaunchInput = { id: 's', name: '自动沟通', keyword: 'agent', target_action: 'auto_apply' };
 
-		expect(() => buildLaunch('direct_apply', { source: 'manual', job: { job_id: '' } })).toThrow(
-			LaunchContractError
-		);
-		// A hand-authored depth key is refused on a targeted application too (#302).
-		expect(() => buildLaunch('direct_apply', { source: 'manual', job, preview_only: true })).toThrow(
+		// One half alone, in either direction: `preview_only: false` counts as stated too,
+		// because the old gate was `auto_send && !preview_only`.
+		expect(() => buildSearchLaunch(search, { source: 'manual', preview_only: true })).toThrow(
 			/does not take preview_only/
 		);
+		expect(() => buildSearchLaunch(search, { source: 'manual', preview_only: false })).toThrow(
+			/does not take preview_only/
+		);
+		expect(() => buildSearchLaunch(search, { source: 'manual', auto_send: true })).toThrow(
+			/does not take auto_send/
+		);
+		expect(() => buildSearchLaunch(search, { source: 'manual', auto_send: false })).toThrow(
+			/does not take auto_send/
+		);
+
+		// …and the pair "correctly" spelled out is still a refusal.
+		expect(() =>
+			buildSearchLaunch(search, { source: 'manual', preview_only: false, auto_send: true })
+		).toThrow(/preview_only, auto_send/);
+
+		// The refusal reaches the one entry point too, not only the per-kind builder.
+		expect(() =>
+			buildLaunch('search', { source: 'manual', search, auto_send: true })
+		).toThrow(LaunchContractError);
 	});
 
 	it('rejects a malformed target_action instead of defaulting to save_jd', () => {
@@ -238,29 +244,29 @@ describe('rerun rebuilds through the builder', () => {
 				payload: {
 					saved_search_id: 's1',
 					target_action: 'auto_apply',
-					direct_job_id: 'job-9',
 					job_title: '工程师',
 					company_name: '深至科技'
 				}
 			},
 			'orig-2'
 		);
-		expect(rebuilt.payload.direct_job_id).toBe('job-9');
 		expect(rebuilt.payload.job_title).toBe('工程师');
 		expect(rebuilt.payload.company_name).toBe('深至科技');
 	});
 
-	it('reruns a 定向投递 as an application, whatever depth keys the original carried', async () => {
+	it('rebuilds a queued targeted-application through the search path', async () => {
 		const { rebuildRerunPayload } = await import('../lib/taskLaunch');
 		// A legacy draft-only payload from before the preview tier was cancelled. Its
 		// Target Action still says outreach, and that is the only depth statement left.
+		// Issue #427 retired the targeted-application builder, so there is no dedicated
+		// rerun branch any more: the depth still comes from the Target Action…
 		const rerun = rebuildRerunPayload(
 			{
 				task_type: 'AUTO_APPLY',
 				payload: {
 					saved_search_id: 's1',
 					target_action: 'auto_apply',
-					direct_job_id: 'job-9',
+					job_title: '工程师',
 					preview_only: true,
 					auto_send: false
 				}
@@ -270,6 +276,9 @@ describe('rerun rebuilds through the builder', () => {
 		expect(rerun.payload.target_action).toBe('auto_apply');
 		expect(rerun.payload.preview_only).toBeUndefined();
 		expect(rerun.payload.auto_send).toBeUndefined();
+		// Issue #428 retired the execution path, so the job identity an older builder
+		// queued no longer has a reader and is not carried forward.
+		expect(rerun.payload.job_title).toBe('工程师');
 	});
 
 	it('lets the configured drill mode win for a chat cleanup rerun', async () => {

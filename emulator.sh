@@ -15,8 +15,9 @@
 #   ./emulator.sh list                # List all installed local AVDs
 #   ./emulator.sh logs                # Attach to live log stream of running AVD
 #   ./emulator.sh stop                # Stop the running dedicated AVD and its ADB bridge
-#   ./emulator.sh restart             # Stop, then start, then attach to logs (like start)
-#   ./emulator.sh restart --daemon    # Restart in background (do not attach)
+#   ./emulator.sh restart             # Reuse online AVD if running, else restart and attach to logs
+#   ./emulator.sh restart --daemon    # Reuse online AVD if running, else restart in background
+#   ./emulator.sh restart --force     # Force stop and cold restart even if already online
 #   ./emulator.sh reconnect           # Restore LAN ADB access without restarting the AVD
 #
 # Lifecycle:
@@ -143,16 +144,49 @@ clamp_int() {
 ADB_QUERY_TIMEOUT_SEC="$(clamp_int "${ADB_QUERY_TIMEOUT_SEC:-2}" 2 1 2)"
 
 # Run one external command under a hard wall-clock limit, printing its stdout (empty when
-# the command had to be killed). macOS ships no coreutils `timeout`, so the bound is
-# enforced by a watchdog that SIGTERMs - then SIGKILLs - the child. Pass a simple external
-# command only: a pipeline would leave its earlier stages running past the bound.
+# the command had to be killed).
+#
+# When Python is available, the command is executed directly in memory without writing any
+# temporary files to disk. This completely prevents temporary file leaks, avoids macOS
+# privileged desktop-services trash prompts in system temp directories, and cleanly escalates
+# from SIGTERM to SIGKILL on stubborn processes.
+# A pure-shell fallback is retained for environments without Python.
 bounded_run() {
     local TIMEOUT_SEC="$1"
     shift
+    if [[ -n "${PYTHON_BIN}" ]]; then
+        "${PYTHON_BIN}" -c '
+import contextlib, os, signal, subprocess, sys
+
+timeout = float(sys.argv[1])
+cmd = sys.argv[2:]
+proc = subprocess.Popen(
+    cmd,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.DEVNULL,
+    start_new_session=True,
+)
+try:
+    stdout, _ = proc.communicate(timeout=timeout)
+    sys.stdout.buffer.write(stdout)
+    sys.exit(proc.returncode)
+except subprocess.TimeoutExpired:
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(proc.pid, signal.SIGTERM)
+    try:
+        proc.wait(timeout=0.5)
+    except subprocess.TimeoutExpired:
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(proc.pid, signal.SIGKILL)
+    sys.exit(124)
+' "${TIMEOUT_SEC}" "$@"
+        return $?
+    fi
+
     local OUT_FILE
     OUT_FILE="$(mktemp "${RUNNER_TMP_DIR}/boss_agent_bounded.XXXXXX")"
-    trap 'rm -f "${OUT_FILE}" 2>/dev/null || true; exit 143' INT TERM
-    trap 'rm -f "${OUT_FILE}" 2>/dev/null || true' EXIT
+    trap '/bin/rm -f "${OUT_FILE}" 2>/dev/null || true; exit 143' INT TERM
+    trap '/bin/rm -f "${OUT_FILE}" 2>/dev/null || true' EXIT
 
     "$@" >"${OUT_FILE}" 2>/dev/null &
     local CMD_PID=$!
@@ -185,7 +219,7 @@ bounded_run() {
     fi
 
     cat "${OUT_FILE}" 2>/dev/null || true
-    rm -f "${OUT_FILE}" 2>/dev/null || true
+    /bin/rm -f "${OUT_FILE}" 2>/dev/null || true
     trap - EXIT INT TERM
     return "${EXIT_CODE}"
 }
@@ -887,13 +921,10 @@ cmd_start() {
         esac
     done
 
-    if [[ -z "${EMULATOR_BIN}" ]]; then
-        echo "❌ Error: Android 'emulator' binary not found." >&2
-        echo "💡 Install Android Command Line Tools or configure ANDROID_HOME." >&2
-        exit 1
-    fi
-
-    # Check if already booted and ready
+    # Check if already booted and ready before requiring the emulator binary:
+    # when the AVD is already running we only need to re-validate ADB / bridge,
+    # which never launches a new emulator. The binary check is only relevant
+    # when we are actually about to start one.
     local SERIAL
     SERIAL="$(get_running_device_serial)"
     if [[ -n "${SERIAL}" ]]; then
@@ -907,6 +938,12 @@ cmd_start() {
             fi
             attach_logs "${SERIAL}" 1
         fi
+    fi
+
+    if [[ -z "${EMULATOR_BIN}" ]]; then
+        echo "❌ Error: Android 'emulator' binary not found." >&2
+        echo "💡 Install Android Command Line Tools or configure ANDROID_HOME." >&2
+        exit 1
     fi
 
     if [[ ${FOREGROUND} -eq 1 ]]; then
@@ -957,13 +994,40 @@ cmd_start() {
     fi
 }
 
-# `restart` is a stop followed by a start, in that order and in one invocation.
-#
-# It used to fall through the dispatcher's catch-all arm to `cmd_start`, which found the
-# running instance, reported it as already running and stopped nothing: the old AVD and its
-# bridge both survived, so a "restart" was a no-op wearing a restart's name. The flags are
-# forwarded so `--daemon` (and `--foreground`) still mean what they mean to `start`.
+# `restart` restarts the dedicated AVD when it is absent, wedged, or explicitly forced (--force).
+# When the AVD is already online and fully booted, it skips the expensive 30-60s cold stop/start
+# cycle and reuses the running instance — re-validating the ADB and remote bridge connections
+# (matching the lifecycle contract in GLOSSARY.md). The flags are forwarded so `--daemon` (and
+# `--foreground`) still mean what they mean to `start`.
 cmd_restart() {
+    local FORCE=0
+    local ARGS=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --force)
+                FORCE=1
+                shift
+                ;;
+            *)
+                ARGS+=("$1")
+                shift
+                ;;
+        esac
+    done
+
+    local SERIAL
+    SERIAL="$(get_running_device_serial)"
+    local BOOT_STATUS=""
+    if [[ -n "${SERIAL}" ]]; then
+        BOOT_STATUS="$(adb_getprop "${SERIAL}" sys.boot_completed)"
+    fi
+
+    if [[ ${FORCE} -eq 0 && -n "${SERIAL}" && "${BOOT_STATUS}" == "1" ]]; then
+        echo "♻️  Dedicated AVD '${TARGET_AVD}' is already online — reusing existing instance (${SERIAL})."
+        cmd_start ${ARGS[@]+"${ARGS[@]}"}
+        return 0
+    fi
+
     echo "🔄 Restarting Dedicated AVD '${TARGET_AVD}'..."
     runner_log_restart_request "${LOG_FILE}" "Emulator" "Virtual Device Session '${TARGET_AVD}'"
     cmd_stop
@@ -976,8 +1040,11 @@ cmd_restart() {
     # suspended *inside* it, which would let a failed boot path run on past its own guard.
     # Suspension is therefore lifted only for the outer shell, and restored for the subshell
     # where `cmd_start` depends on it to abort.
+    #
+    # Forwarded through `ARGS`, not `"$@"`: the `--force` scan above shifts every argument,
+    # so `"$@"` is empty by this point and would drop `--daemon`/`--foreground` on the floor.
     set +e
-    ( set -e; cmd_start "$@" )
+    ( set -e; cmd_start ${ARGS[@]+"${ARGS[@]}"} )
     local START_STATUS=$?
     set -e
     if [[ ${START_STATUS} -ne 0 ]]; then
