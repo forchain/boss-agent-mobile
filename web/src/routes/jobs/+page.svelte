@@ -189,10 +189,15 @@
 			if (isCountedStatus(targetJob.status)) {
 				counts[targetJob.status] = Math.max(0, counts[targetJob.status] - 1);
 			}
-			if (targetJob.is_headhunter) {
-				counts.headhunter = Math.max(0, counts.headhunter - 1);
-			} else {
-				counts.direct = Math.max(0, counts.direct - 1);
+			// The channel badges are scoped like `all`, so they step down under the same
+			// condition. An ignored record was never in either count, and decrementing one
+			// without the other would re-open the very gap this page just closed.
+			if (targetJob.status !== 'ignored') {
+				if (targetJob.is_headhunter) {
+					counts.headhunter = Math.max(0, counts.headhunter - 1);
+				} else {
+					counts.direct = Math.max(0, counts.direct - 1);
+				}
 			}
 		}
 

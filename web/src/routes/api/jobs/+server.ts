@@ -54,8 +54,14 @@ export const GET: RequestHandler = async ({ url }) => {
 				fetchCount("status = 'matched'"),
 				fetchCount("status = 'applied'"),
 				fetchCount("status = 'ignored'"),
-				fetchCount('is_headhunter = false'),
-				fetchCount('is_headhunter = true')
+				// The channel badges answer the same question the `all` badge answers, so they
+				// are read through the same lens: the browsable set, which excludes records
+				// the operator rejected on purpose (`buildJobFilter`, and `all` above).
+				// Counting ignored records here made the two rows report different totals
+				// for one list, and each badge promise a count its channel tab could never
+				// show.
+				fetchCount("is_headhunter = false && status != 'ignored'"),
+				fetchCount("is_headhunter = true && status != 'ignored'")
 			]);
 
 		items = dataPage.items || [];
