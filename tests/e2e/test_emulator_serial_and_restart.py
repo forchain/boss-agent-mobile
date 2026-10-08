@@ -291,7 +291,7 @@ def test_stop_lets_the_emulator_go_before_tearing_the_bridge_down(
     )
     runner.start_bridge()
 
-    result = runner.run("stop", env={"ANDROID_AVD": HARNESS_AVD})
+    result = runner.run("stop", env={"ANDROID_AVD": HARNESS_AVD}, budget=10.0)
 
     reaped_at = runner.call_index("emulator: signal TERM")
     bridge_down_at = runner.call_index("bridge: signal 15")
@@ -403,3 +403,52 @@ def test_restart_is_not_the_same_as_start(runner: RunnerScriptHarness):
     assert runner.call_index("bridge: signal 15") >= 0, (
         "`restart` behaved like `start`: the running bridge was never stopped"
     )
+
+
+def test_restart_reuses_already_online_avd(runner: RunnerScriptHarness):
+    """AC: when the dedicated AVD is already online and booted, restart reuses it without stopping."""
+    runner.script(
+        devices=[(NATIVE_SERIAL, "device")],
+        avd_name=TARGET_AVD,
+        boot_completed="1",
+    )
+    runner.start_bridge()
+
+    result = runner.run("restart", "--daemon")
+
+    assert result.returncode == 0, f"restart failed:\n{result.output}"
+    assert runner.call_index(f"{NATIVE_SERIAL} emu kill") < 0, (
+        f"`restart` killed the online AVD instead of reusing it:\n{runner.calls()}"
+    )
+    assert runner.call_index("bridge: signal 15") < 0, (
+        f"`restart` stopped the bridge instead of reusing the online AVD:\n{runner.calls()}"
+    )
+    assert "reusing" in result.stdout.lower() or "already" in result.stdout.lower(), result.stdout
+
+
+def test_restart_force_kills_and_restarts_online_avd(runner: RunnerScriptHarness):
+    """AC: with --force, restart terminates the online AVD and performs a cold restart."""
+    runner.install_fake_emulator()
+    runner.script(
+        devices=[(NATIVE_SERIAL, "device")],
+        avd_name=TARGET_AVD,
+        boot_completed="1",
+    )
+    runner.start_bridge()
+
+    result = runner.run(
+        "restart",
+        "--force",
+        "--daemon",
+        budget=RESTART_BUDGET_SEC,
+        env={"FAKE_EMULATOR_REGISTERS_DEVICE": "1"},
+    )
+
+    assert result.returncode == 0, f"restart --force failed:\n{result.output}"
+    assert runner.call_index(f"{NATIVE_SERIAL} emu kill") >= 0, (
+        f"`restart --force` did not kill the running AVD:\n{runner.calls()}"
+    )
+    assert runner.call_index("bridge: signal 15") >= 0, (
+        f"`restart --force` did not stop the bridge:\n{runner.calls()}"
+    )
+    assert "restarting" in result.stdout.lower(), result.stdout
