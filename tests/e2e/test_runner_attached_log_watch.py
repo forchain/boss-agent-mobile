@@ -32,6 +32,7 @@ import subprocess
 import sys
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -634,9 +635,12 @@ def worker_runtime(tmp_path: Path):
     """A `worker.sh` root whose pre-flight gates pass and whose daemon is a local stub.
 
     `worker.sh` refuses to start without a reachable State Stream Broker, an AVD that
-    reports ready, and a reachable Appium. The first and third are cheap real services on
-    ephemeral ports; the AVD is a stub script that exits 0, because waking a real Virtual
-    Device Session is precisely what this suite must never do.
+    reports ready, and a reachable Appium server. All three are satisfied by local
+    stand-ins: the two HTTP dependencies run on their own ephemeral ports, and the AVD is a
+    stub script that exits 0, because waking a real Virtual Device Session is precisely what
+    this suite must never do.
+
+    Yields `(root, broker_port, appium_port)`.
     """
     root = tmp_path / "repo"
     (root / ".boss_agent").mkdir(parents=True)
@@ -648,20 +652,36 @@ def worker_runtime(tmp_path: Path):
     (root / "scripts").mkdir()
     (root / "scripts" / "worker.py").write_text(_DAEMON_STUB, encoding="utf-8")
 
+    # `worker.sh` has two pre-flight gates: the State Stream Broker health probe and the
+    # Appium server reachability probe. Both are satisfied by `_ALWAYS_OK_SERVER`, and both
+    # must be answered by *this* suite on its own ephemeral port.
+    #
+    # Leaving APPIUM_URL unset made these tests silently depend on whatever happens to be
+    # listening on the real 4723 — a shared, machine-wide service that any other worktree can
+    # stop at any moment. They then failed for reasons that had nothing to do with the liveness
+    # watch under test, and passed or failed depending on another checkout's schedule. See
+    # docs/agents/testing.md: an E2E test allocates its own ephemeral port and never collides
+    # with services belonging to other worktrees.
+    broker = _start_always_ok_server()
+    appium = _start_always_ok_server()
+    try:
+        yield root, broker.port, appium.port
+    finally:
+        for server in (broker, appium):
+            server.terminate()
+
+
+def _start_always_ok_server() -> _StubServer:
+    """Run `_ALWAYS_OK_SERVER` on its own free port and return a handle that owns it."""
     port = free_port()
-    broker = subprocess.Popen(
+    process = subprocess.Popen(
         [sys.executable, "-c", _ALWAYS_OK_SERVER, str(port)],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         start_new_session=True,
     )
-    try:
-        wait_for_port_bound(port)
-        yield root, port
-    finally:
-        if broker.poll() is None:
-            broker.kill()
-            broker.wait(timeout=10)
+    wait_for_port_bound(port)
+    return _StubServer(port, process)
 
 
 #: An HTTP server answering 200 to every path — the shape both pre-flight gates probe.
@@ -684,7 +704,22 @@ HTTPServer(("127.0.0.1", int(sys.argv[1])), Handler).serve_forever()
 """
 
 
-def _run_worker(runtime_root: Path, broker_port: int, *args: str) -> subprocess.Popen:
+@dataclass
+class _StubServer:
+    """An `_ALWAYS_OK_SERVER` process and the ephemeral port it was given."""
+
+    port: int
+    process: subprocess.Popen
+
+    def terminate(self) -> None:
+        if self.process.poll() is None:
+            self.process.kill()
+            self.process.wait(timeout=10)
+
+
+def _run_worker(
+    runtime_root: Path, broker_port: int, appium_port: int, *args: str
+) -> subprocess.Popen:
     worker = subprocess.Popen(
         [_bash(), "worker.sh", *args],
         cwd=str(runtime_root),
@@ -692,6 +727,7 @@ def _run_worker(runtime_root: Path, broker_port: int, *args: str) -> subprocess.
             **os.environ,
             "PATH": f"{Path(sys.executable).parent}:{os.environ.get('PATH', '')}",
             "POCKETBASE_URL": f"http://127.0.0.1:{broker_port}",
+            "APPIUM_URL": f"http://127.0.0.1:{appium_port}",
         },
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -702,13 +738,15 @@ def _run_worker(runtime_root: Path, broker_port: int, *args: str) -> subprocess.
     return worker
 
 
-def _launch_foreground_worker(runtime_root: Path, broker_port: int) -> subprocess.Popen:
+def _launch_foreground_worker(
+    runtime_root: Path, broker_port: int, appium_port: int
+) -> subprocess.Popen:
     """`./worker.sh` with no arguments: launch the Automation Worker and follow its log.
 
     This is the path bare `./run.sh` lands on, and it is the one the ticket calls out by
     name — it used to end in a bare `tail -n 0 -f` with no PID watch at all.
     """
-    worker = _run_worker(runtime_root, broker_port)
+    worker = _run_worker(runtime_root, broker_port, appium_port)
     pid_file = runtime_root / ".boss_agent" / "worker.pid"
     deadline = time.monotonic() + WATCH_RETURN_BUDGET_SEC
     while time.monotonic() < deadline:
@@ -735,8 +773,8 @@ def _stop_the_launched_daemon(runtime_root: Path) -> int:
 
 def test_the_foreground_start_mode_watches_the_daemon_it_launched(worker_runtime):
     """`./worker.sh` in the foreground must unblock when its daemon is killed elsewhere."""
-    runtime_root, broker_port = worker_runtime
-    worker = _launch_foreground_worker(runtime_root, broker_port)
+    runtime_root, broker_port, appium_port = worker_runtime
+    worker = _launch_foreground_worker(runtime_root, broker_port, appium_port)
 
     with contextlib.suppress(subprocess.TimeoutExpired):
         worker.wait(timeout=ATTACH_HOLD_SEC)
@@ -752,11 +790,11 @@ def test_the_foreground_start_mode_watches_the_daemon_it_launched(worker_runtime
 
 def test_the_worker_attach_route_watches_the_daemon(worker_runtime):
     """`./worker.sh attach` is what `run.sh` execs for its bare and restart routes."""
-    runtime_root, broker_port = worker_runtime
-    launcher = _launch_daemon_only(runtime_root, broker_port)
+    runtime_root, broker_port, appium_port = worker_runtime
+    launcher = _launch_daemon_only(runtime_root, broker_port, appium_port)
     daemon_pid = int((runtime_root / ".boss_agent" / "worker.pid").read_text().strip())
 
-    attach = _run_worker(runtime_root, broker_port, "attach")
+    attach = _run_worker(runtime_root, broker_port, appium_port, "attach")
     _drain_output(attach)
     _wait_for_text(attach, "Attaching to live log stream", budget=WATCH_RETURN_BUDGET_SEC)
 
@@ -768,9 +806,9 @@ def test_the_worker_attach_route_watches_the_daemon(worker_runtime):
     _terminate(launcher)
 
 
-def _launch_daemon_only(runtime_root: Path, broker_port: int) -> subprocess.Popen:
+def _launch_daemon_only(runtime_root: Path, broker_port: int, appium_port: int) -> subprocess.Popen:
     """Start the Automation Worker in the background — no log stream of its own."""
-    started = _run_worker(runtime_root, broker_port, "start", "--daemon")
+    started = _run_worker(runtime_root, broker_port, appium_port, "start", "--daemon")
     pid_file = runtime_root / ".boss_agent" / "worker.pid"
     deadline = time.monotonic() + WATCH_RETURN_BUDGET_SEC
     while time.monotonic() < deadline:
