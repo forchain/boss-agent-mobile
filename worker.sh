@@ -87,7 +87,7 @@ cmd_attach() {
         echo "   Cannot attach to log stream. Start worker first via: ./worker.sh" >&2
         return 1
     fi
-    runner_attached_logs "${PID}" "${WORKER_LOG_FILE}" "Automation Worker daemon"
+    runner_attached_logs "${PID}" "${WORKER_LOG_FILE}" "Automation Worker daemon" "" "${WORKER_PID_FILE}"
 }
 
 
@@ -114,7 +114,7 @@ cmd_stop() {
     PID="$(get_running_worker_pid)"
 
     if [[ -n "${PID}" ]]; then
-        runner_log_stop_request "${WORKER_LOG_FILE}" "Worker" "${PID}" "Automation Worker daemon"
+        runner_log_stop_request "${WORKER_LOG_FILE}" "Automation Worker" "${PID}" "Automation Worker daemon"
         # Children first: the recorded PID is the launcher, and the Automation Worker holding
         # the Virtual Device Session is its child. Signalling the parent first re-parents the
         # child to init, where it can no longer be found or stopped at all.
@@ -136,7 +136,7 @@ cmd_stop() {
     rm -f "${WORKER_PID_FILE}"
 
     if [[ ${STOPPED} -eq 1 ]]; then
-        runner_log_stop_complete "${WORKER_LOG_FILE}" "Worker" "Automation Worker daemon released the Virtual Device Session"
+        runner_log_stop_complete "${WORKER_LOG_FILE}" "Automation Worker" "Automation Worker daemon released the Virtual Device Session"
         echo "✅ Automation Worker daemon stopped."
     else
         echo "ℹ️ No running Worker daemon found."
@@ -219,7 +219,7 @@ cmd_start() {
             echo "   Logs: ${WORKER_LOG_FILE}"
             return 0
         else
-            runner_attached_logs "${RUNNING_PID}" "${WORKER_LOG_FILE}" "Automation Worker daemon"
+            runner_attached_logs "${RUNNING_PID}" "${WORKER_LOG_FILE}" "Automation Worker daemon" "" "${WORKER_PID_FILE}"
             return 0
         fi
     fi
@@ -265,18 +265,18 @@ cmd_start() {
     # another terminal. Here Ctrl+C legitimately *does* stop the daemon — this process
     # launched it and owns it — so the handler above still signals it; the watch only decides
     # when the stream ends on its own.
-    runner_watch_log_stream "${PID}" "${WORKER_LOG_FILE}" "Automation Worker daemon" 0
+    runner_watch_log_stream "${PID}" "${WORKER_LOG_FILE}" "Automation Worker daemon" 0 "${WORKER_PID_FILE}"
 }
 
 cmd_restart() {
     echo "🔄 Restarting Automation Worker daemon..."
-    runner_log_restart_request "${WORKER_LOG_FILE}" "Worker" "Automation Worker daemon"
+    runner_log_restart_request "${WORKER_LOG_FILE}" "Automation Worker" "Automation Worker daemon"
     cmd_stop || true
     sleep 0.5
     cmd_start "$@"
     # Only reached when `cmd_start` returns rather than attaching the live log stream; in
     # daemon mode that is the point at which the replacement daemon is genuinely up.
-    runner_log_restart_complete "${WORKER_LOG_FILE}" "Worker" "Automation Worker daemon back online"
+    runner_log_restart_complete "${WORKER_LOG_FILE}" "Automation Worker" "Automation Worker daemon back online"
 }
 
 ACTION="${1:-start}"

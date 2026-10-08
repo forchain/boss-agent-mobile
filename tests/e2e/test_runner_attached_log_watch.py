@@ -56,6 +56,14 @@ ATTACH_HOLD_SEC = 1.5
 #: the library owns the wording (see `test_the_stop_notice_has_one_definition`).
 STOP_NOTICE = "🛑 [{label}] 守护进程 (PID: {pid}) 已停止"
 
+#: The stop-and-restart notice: the same stop, plus the replacement PID that proves the
+#: service was restarted rather than merely killed.
+RESTART_NOTICE = "🛑 [{label}] 守护进程 (PID: {pid}) 已停止并重启 (新 PID: {new_pid})"
+
+#: The literal three Dedicated Runner Scripts substitute when they can see their service is
+#: up but could not resolve the PID owning it.
+UNRESOLVED_PID = "unknown"
+
 #: The Automation Worker's label as the Dedicated Runner Scripts pass it to the watcher.
 WORKER_LABEL = "Automation Worker daemon"
 
@@ -156,10 +164,11 @@ time.sleep(300)
 
 def _start_watch(
     runtime_root: Path,
-    pid: int,
+    pid: int | str,
     log_file: Path,
     label: str = WORKER_LABEL,
     *,
+    pid_file: Path | None = None,
     function: str = "runner_attached_logs",
 ) -> subprocess.Popen:
     """Attach to a service log in a child shell, and leave it there.
@@ -167,17 +176,23 @@ def _start_watch(
     The child gets its own session so that a signal the test sends to the watcher never
     reaches the watched service by way of a shared process group — the watcher's own
     decision to signal (or not to) is the only thing under test.
+
+    `pid_file` is the service's own pidfile, handed to the watch so a restart from another
+    terminal can be told apart from a plain stop; see `test_a_restart_from_another_terminal
+    _is_announced_as_a_stop_and_restart`.
     """
     log_file.parent.mkdir(parents=True, exist_ok=True)
     watcher = subprocess.Popen(
         [
             _bash(),
             "-c",
-            f'source "{runtime_root / "runner_lib.sh"}"; {function} "$1" "$2" "$3"',
+            f'source "{runtime_root / "runner_lib.sh"}"; {function} "$1" "$2" "$3" "$4" "$5"',
             "watcher",
             str(pid),
             str(log_file),
             label,
+            "",  # ENDPOINT
+            str(pid_file) if pid_file else "",
         ],
         cwd=str(runtime_root),
         stdout=subprocess.PIPE,
@@ -301,14 +316,22 @@ def test_the_attached_log_stream_returns_when_the_service_exits(lib_runtime: Pat
 
 
 def test_the_stop_notice_names_the_service_and_the_pid(lib_runtime: Path, owned_service):
-    """The operator must be told *which* service stopped, and at which PID."""
+    """The operator must be told *which* service stopped, and at which PID.
+
+    The service is stopped the way every runner stops it: the pidfile is cleared. That is
+    the case that must stay a plain stop — the pidfile's mere presence says nothing, and
+    only a *different live* PID in it means the service was restarted.
+    """
     service = owned_service()
+    pid_file = lib_runtime / ".boss_agent" / "service.pid"
+    pid_file.write_text(f"{service.pid}\n", encoding="utf-8")
     log_file = lib_runtime / ".boss_agent" / "service.log"
     log_file.write_text("service started\n", encoding="utf-8")
 
-    watcher = _start_watch(lib_runtime, service.pid, log_file, label=WORKER_LABEL)
+    watcher = _start_watch(lib_runtime, service.pid, log_file, pid_file=pid_file)
     service.kill()
     service.wait(timeout=10)
+    pid_file.unlink()  # `runner_pidfile_clear`, which every runner does on stop
     output = _assert_returns(watcher)
 
     expected = STOP_NOTICE.format(label=WORKER_LABEL, pid=service.pid)
@@ -360,30 +383,78 @@ def test_the_watch_has_one_wording_for_every_service(lib_runtime: Path, owned_se
         assert STOP_NOTICE.format(label=label, pid=service.pid) in output
 
 
-def test_a_restart_from_another_terminal_is_announced_not_silently_followed(
+def test_a_restart_from_another_terminal_is_announced_as_a_stop_and_restart(
     lib_runtime: Path, owned_service
 ):
-    """The old PID is gone and a new service exists: the watcher announces and returns.
+    """The old PID is gone and the pidfile now names a *different live* PID: say so.
 
-    Silently continuing to follow the same file would leave the operator attached to a
-    process they can no longer Ctrl+C, believing they are watching the current one.
+    Issue #425 asks for a restart to be announced as a stop-and-restart, not silently
+    followed — and silently *following* is what staying on the same file would mean, leaving
+    the operator attached to a process they can no longer Ctrl+C and believing they are
+    watching the current one.
+
+    Telling the two apart takes evidence only the runner has. A log file cannot say whether
+    its writer died or was replaced, and the port may have been handed to an unrelated
+    process; the service's own pidfile naming a different live process is the one thing that
+    substantiates "restarted". So the notice names the replacement PID — and without that
+    evidence the same watcher still claims the plain stop.
     """
+    pid_file = lib_runtime / ".boss_agent" / "service.pid"
     first = owned_service()
+    pid_file.write_text(f"{first.pid}\n", encoding="utf-8")
     log_file = lib_runtime / ".boss_agent" / "service.log"
     log_file.write_text("first instance\n", encoding="utf-8")
-    watcher = _start_watch(lib_runtime, first.pid, log_file)
+
+    watcher = _start_watch(lib_runtime, first.pid, log_file, pid_file=pid_file)
 
     first.kill()
     first.wait(timeout=10)
 
-    # The replacement daemon, started from "another terminal", writing to the same log.
+    # The replacement daemon, started from "another terminal", now owning the same pidfile.
     replacement = owned_service()
+    pid_file.write_text(f"{replacement.pid}\n", encoding="utf-8")
     log_file.write_text("second instance\n", encoding="utf-8")
 
     output = _assert_returns(watcher)
-    assert STOP_NOTICE.format(label=WORKER_LABEL, pid=first.pid) in output
+    expected = RESTART_NOTICE.format(label=WORKER_LABEL, pid=first.pid, new_pid=replacement.pid)
+    assert expected in output, (
+        f"a restart was announced as something other than a stop-and-restart:\n{output}"
+    )
+    # Compared as whole lines: the stop notice is a *prefix* of the restart notice, so a
+    # substring test would call a correctly-reported restart a plain stop.
+    notices = [line for line in output.splitlines() if line.startswith("🛑 [")]
+    assert notices == [expected], (
+        f"expected exactly the stop-and-restart notice and nothing else, got {notices!r}"
+    )
     assert replacement.poll() is None, "the replacement daemon must be left alone"
     _terminate(watcher)
+
+
+def test_a_stop_whose_pidfile_names_a_dead_pid_is_not_claimed_as_a_restart(
+    lib_runtime: Path, owned_service
+):
+    """Only a *live* replacement proves a restart.
+
+    A pidfile that still names the PID that just died — the state every runner leaves
+    behind between the service exiting and the pidfile being cleared — is not evidence of
+    anything. Claiming a restart from it would be the dishonesty #425 warns about, in the
+    opposite direction.
+    """
+    service = owned_service()
+    pid_file = lib_runtime / ".boss_agent" / "service.pid"
+    pid_file.write_text(f"{service.pid}\n", encoding="utf-8")
+    log_file = lib_runtime / ".boss_agent" / "service.log"
+    log_file.write_text("first instance\n", encoding="utf-8")
+
+    watcher = _start_watch(lib_runtime, service.pid, log_file, pid_file=pid_file)
+    service.kill()
+    service.wait(timeout=10)
+
+    output = _assert_returns(watcher)
+    assert STOP_NOTICE.format(label=WORKER_LABEL, pid=service.pid) in output
+    assert "已停止并重启" not in output, (
+        f"a restart was claimed from a pidfile naming a dead process:\n{output}"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -484,6 +555,42 @@ def _unallocatable_pid() -> int:
     with contextlib.suppress(OSError, ValueError):
         ceiling = max(ceiling, int(Path("/proc/sys/kernel/pid_max").read_text().strip()))
     return ceiling + 1
+
+
+def test_an_unresolvable_pid_keeps_streaming_and_announces_nothing(lib_runtime: Path):
+    """`unknown` is not a death certificate: the watch degrades to the old `tail -f`.
+
+    Three Dedicated Runner Scripts pass this literal when they can see their service is up
+    — its health check answered — but could not resolve the PID owning it. `appium.sh`,
+    `pocketbase.sh` and `dashboard.sh` all reach the attach path that way, so it is an
+    anticipated route, not an edge case.
+
+    `runner_process_alive` requires a number, so `ps -p unknown` fails and the watch read
+    that as GONE: the terminal announced the stop of a service that was answering a moment
+    earlier, then detached from a perfectly live stream. An unwatchable PID is *no
+    information*, never a death — the watcher must keep following and must never print the
+    notice. This is the old `tail -f` behaviour, restored for exactly the case the watch
+    cannot substantiate anything about.
+    """
+    log_file = lib_runtime / ".boss_agent" / "service.log"
+    log_file.write_text("service started\n", encoding="utf-8")
+
+    watcher = _start_watch(lib_runtime, UNRESOLVED_PID, log_file)
+
+    with contextlib.suppress(subprocess.TimeoutExpired):
+        watcher.wait(timeout=ATTACH_HOLD_SEC)
+        pytest.fail("the watcher announced a stop for a PID it cannot watch")
+    assert watcher.poll() is None, "the watcher exited on a PID it cannot watch"
+
+    # The stream itself is untouched: a line written after the watch started still arrives.
+    log_file.write_text("service still running\n", encoding="utf-8")
+    _wait_for_text(watcher, "service still running", budget=WATCH_RETURN_BUDGET_SEC)
+
+    output = _terminate(watcher)
+    assert "已停止" not in output, (
+        f"the watcher announced a stop it could not substantiate:\n{output}"
+    )
+    assert "service still running" in output, f"the log stream itself was lost:\n{output}"
 
 
 def test_a_defunct_service_is_announced_as_stopped(lib_runtime: Path, defunct_pid: int):

@@ -969,7 +969,20 @@ cmd_restart() {
     cmd_stop
     # In a subshell: `cmd_start` exits from inside its own boot path, and an `exit` there
     # would otherwise take this confirmation down with it.
-    (cmd_start "$@")
+    #
+    # The status is captured rather than propagated, so a start that failed cannot be
+    # recorded below as a Virtual Device Session that came back up. Not written as
+    # `( cmd_start ) || return 1`: a subshell used as an operand of `||` has errexit
+    # suspended *inside* it, which would let a failed boot path run on past its own guard.
+    # Suspension is therefore lifted only for the outer shell, and restored for the subshell
+    # where `cmd_start` depends on it to abort.
+    set +e
+    ( set -e; cmd_start "$@" )
+    local START_STATUS=$?
+    set -e
+    if [[ ${START_STATUS} -ne 0 ]]; then
+        return 1
+    fi
     runner_log_restart_complete "${LOG_FILE}" "Emulator" \
         "Virtual Device Session '${TARGET_AVD}' back online"
 }
