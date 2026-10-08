@@ -1,4 +1,5 @@
 import { loadMergedSettings } from '$lib/server/settings';
+import { resolveAppVersion } from '$lib/server/version';
 import type { LayoutServerLoad } from './$types';
 
 export const load: LayoutServerLoad = async () => {
@@ -6,7 +7,8 @@ export const load: LayoutServerLoad = async () => {
 	const pocketbaseUrl = settings.pocketbase_url || 'http://127.0.0.1:8090';
 
 	return {
-		pocketbaseUrl: pocketbaseUrl.trim().replace(/\/+$/, '')
+		pocketbaseUrl: pocketbaseUrl.trim().replace(/\/+$/, ''),
+		appVersion: resolveAppVersion()
 	};
 };
 
