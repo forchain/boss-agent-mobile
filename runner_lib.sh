@@ -167,10 +167,19 @@ runner_pidfile_clear() {
 # SIGKILL as a last resort.
 #
 # Prints the escalation it took; returns 0 when the process is gone.
+#
+# The return contract is deliberately "gone", not "cooperative": a process that had to be
+# killed *is* gone, and reporting that as a stop failure would abort every runner that
+# runs under `set -e` at the worst possible moment. The escalation is therefore reported
+# on a second channel instead — the same line goes to stdout always, and into `LOG_FILE`
+# when the caller names the service's log, so "stopped cooperatively" and "had to be
+# SIGKILLed" are distinguishable in the log the E2E Pre-Test Teardown Gate greps, not just
+# in the operator's terminal.
 runner_graceful_stop() {
     local PID="${1:-}"
     local TIMEOUT_SEC="${2:-10}"
     local LABEL="${3:-process}"
+    local LOG_FILE="${4:-}"
 
     if ! runner_process_alive "${PID}"; then
         return 0
@@ -181,7 +190,11 @@ runner_graceful_stop() {
         return 0
     fi
 
-    echo "⚠️ ${LABEL} did not shut down gracefully within ${TIMEOUT_SEC}s; sending SIGKILL to PID ${PID}."
+    local ESCALATION="did not shut down gracefully within ${TIMEOUT_SEC}s; sending SIGKILL to PID ${PID}."
+    echo "⚠️ ${LABEL} ${ESCALATION}"
+    if [[ -n "${LOG_FILE}" ]]; then
+        runner_log_event "${LOG_FILE}" "⚠️ [${LABEL}] Graceful shutdown timed out: ${ESCALATION}"
+    fi
     kill -9 "${PID}" 2>/dev/null || true
     runner_wait_until 2 runner_process_gone "${PID}" || true
     return 0
@@ -299,6 +312,75 @@ runner_ack_shutdown() {
     local PID="${3:-}"
     local EXTRA="${4:-}"
     runner_log_event "${LOG_FILE}" "🛑 [${LABEL}] ${RUNNER_WEB_SHUTDOWN_ACK}, shutting down ${EXTRA}... (PID: ${PID})"
+}
+
+# --------------------------------------------------------------------------- #
+# Lifecycle-event contract
+# --------------------------------------------------------------------------- #
+# The Graceful Shutdown Protocol has one more obligation than the acknowledgment above:
+# a service confirms *completion* in its own log stream, so a supervisor can tell "accepted
+# the signal" apart from "actually stopped" without guessing. `dashboard.sh` honoured that
+# end to end; the other four Dedicated Runner Scripts narrated their stop to the operator's
+# terminal and left their own log files silent — and the log, not the terminal, is what the
+# E2E Pre-Test Teardown Gate reads.
+#
+# So the wording lives here, once, in the same shape as the shutdown acknowledgment: the
+# runners reference these four functions and never spell an event of their own.
+#
+# Every function here is a pure writer: no process is touched and no decision is made, so a
+# runner stays in control of *when* a service really was found. That is deliberate. A stop
+# that finds nothing running must write nothing at all — an idle stop is a cheap no-op, and
+# a runner that logged unconditionally would create a service's log file on every idle
+# `./run.sh stop` and fill it with phantom stops.
+
+#: A runner records this once it has found a live service and is about to signal it.
+RUNNER_LIFECYCLE_STOP_EVENT="Stop requested"
+
+#: ... and this once the service is confirmed gone.
+RUNNER_LIFECYCLE_STOP_COMPLETE="Stop completed"
+
+#: ... and these at the top of a restart, and once the replacement service is up.
+RUNNER_LIFECYCLE_RESTART_EVENT="Restart requested"
+RUNNER_LIFECYCLE_RESTART_COMPLETE="Restart completed"
+
+# The stop-confirmation. `HANDLE` is whatever identifies the service to this runner — a PID
+# for the process-backed runners, an ADB transport for the Virtual Device Session, which has
+# no runner-owned process to signal. It is deliberately not called a PID: a runner must not
+# invent one it does not have.
+#
+# `runner_log_stop_request LOG_FILE LABEL HANDLE DETAIL`
+runner_log_stop_request() {
+    local LOG_FILE="${1:-}"
+    local LABEL="${2:-Service}"
+    local HANDLE="${3:-}"
+    local DETAIL="${4:-}"
+    runner_log_event "${LOG_FILE}" "🛑 [${LABEL}] ${RUNNER_LIFECYCLE_STOP_EVENT}: ${DETAIL} (handle: ${HANDLE})"
+}
+
+# The completion event, logged only once the service is actually gone.
+#
+# `runner_log_stop_complete LOG_FILE LABEL DETAIL`
+runner_log_stop_complete() {
+    local LOG_FILE="${1:-}"
+    local LABEL="${2:-Service}"
+    local DETAIL="${3:-}"
+    runner_log_event "${LOG_FILE}" "✅ [${LABEL}] ${RUNNER_LIFECYCLE_STOP_COMPLETE}: ${DETAIL}"
+}
+
+# `runner_log_restart_request LOG_FILE LABEL DETAIL`
+runner_log_restart_request() {
+    local LOG_FILE="${1:-}"
+    local LABEL="${2:-Service}"
+    local DETAIL="${3:-}"
+    runner_log_event "${LOG_FILE}" "🔄 [${LABEL}] ${RUNNER_LIFECYCLE_RESTART_EVENT}: ${DETAIL}"
+}
+
+# `runner_log_restart_complete LOG_FILE LABEL DETAIL`
+runner_log_restart_complete() {
+    local LOG_FILE="${1:-}"
+    local LABEL="${2:-Service}"
+    local DETAIL="${3:-}"
+    runner_log_event "${LOG_FILE}" "✅ [${LABEL}] ${RUNNER_LIFECYCLE_RESTART_COMPLETE}: ${DETAIL}"
 }
 
 # --------------------------------------------------------------------------- #

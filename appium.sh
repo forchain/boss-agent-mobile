@@ -115,7 +115,8 @@ cmd_stop() {
     PID="$(runner_resolve_pid "${PID_FILE}" "${APPIUM_PORT}")"
 
     if [[ -n "${PID}" ]]; then
-        runner_graceful_stop "${PID}" "${APPIUM_STOP_TIMEOUT_SEC}" "Appium"
+        runner_log_stop_request "${LOG_FILE}" "Appium" "${PID}" "Appium automation server"
+        runner_graceful_stop "${PID}" "${APPIUM_STOP_TIMEOUT_SEC}" "Appium" "${LOG_FILE}"
         STOPPED=1
     fi
     runner_pidfile_clear "${PID_FILE}"
@@ -126,7 +127,7 @@ cmd_stop() {
     PORT_PID="$(runner_port_listener_pid "${APPIUM_PORT}")"
     if [[ -n "${PORT_PID}" ]]; then
         echo "⚠️ Port ${APPIUM_PORT} still held by PID ${PORT_PID}; reclaiming."
-        runner_graceful_stop "${PORT_PID}" "${APPIUM_STOP_TIMEOUT_SEC}" "Appium listener"
+        runner_graceful_stop "${PORT_PID}" "${APPIUM_STOP_TIMEOUT_SEC}" "Appium listener" "${LOG_FILE}"
         STOPPED=1
     fi
 
@@ -136,11 +137,12 @@ cmd_stop() {
     if [[ -n "${LINGER_PIDS}" ]]; then
         local LINGER_PID
         for LINGER_PID in ${LINGER_PIDS}; do
-            runner_graceful_stop "${LINGER_PID}" "${APPIUM_STOP_TIMEOUT_SEC}" "Appium"
+            runner_graceful_stop "${LINGER_PID}" "${APPIUM_STOP_TIMEOUT_SEC}" "Appium" "${LOG_FILE}"
         done
     fi
 
     if [[ ${STOPPED} -eq 1 ]]; then
+        runner_log_stop_complete "${LOG_FILE}" "Appium" "Appium automation server stopped"
         echo "✅ Appium server stopped successfully."
     else
         echo "ℹ️ No running Appium process found."
@@ -228,9 +230,14 @@ cmd_start() {
 }
 
 cmd_restart() {
+    echo "🔄 Restarting Appium server..."
+    runner_log_restart_request "${LOG_FILE}" "Appium" "Appium automation server"
     cmd_stop
     sleep 0.5
-    cmd_start "$@"
+    # In a subshell: `cmd_start` exits from inside its own health check when the server is
+    # already up, and an `exit` there would otherwise take this confirmation down with it.
+    (cmd_start "$@")
+    runner_log_restart_complete "${LOG_FILE}" "Appium" "Appium automation server back online"
 }
 
 ACTION="${1:-start}"
