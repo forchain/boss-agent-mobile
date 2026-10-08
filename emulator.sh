@@ -873,13 +873,10 @@ cmd_start() {
         esac
     done
 
-    if [[ -z "${EMULATOR_BIN}" ]]; then
-        echo "❌ Error: Android 'emulator' binary not found." >&2
-        echo "💡 Install Android Command Line Tools or configure ANDROID_HOME." >&2
-        exit 1
-    fi
-
-    # Check if already booted and ready
+    # Check if already booted and ready before requiring the emulator binary:
+    # when the AVD is already running we only need to re-validate ADB / bridge,
+    # which never launches a new emulator. The binary check is only relevant
+    # when we are actually about to start one.
     local SERIAL
     SERIAL="$(get_running_device_serial)"
     if [[ -n "${SERIAL}" ]]; then
@@ -893,6 +890,12 @@ cmd_start() {
             fi
             attach_logs "${SERIAL}" 1
         fi
+    fi
+
+    if [[ -z "${EMULATOR_BIN}" ]]; then
+        echo "❌ Error: Android 'emulator' binary not found." >&2
+        echo "💡 Install Android Command Line Tools or configure ANDROID_HOME." >&2
+        exit 1
     fi
 
     if [[ ${FOREGROUND} -eq 1 ]]; then
