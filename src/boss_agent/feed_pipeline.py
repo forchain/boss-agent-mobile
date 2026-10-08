@@ -193,6 +193,13 @@ class FeedStreamConfig:
     # Set when the payload was read through a shape producers are no longer allowed to
     # write. The run says so in its own log instead of failing the queued task.
     depth_warning: str = ""
+    # A payload written before issue #428 can still name one posting through
+    # ``direct_job_id``, and the broker is PocketBase-backed, so such a task can be
+    # sitting in a queue when this code is deployed. No producer writes the key any more
+    # and no execution path can act on it, so ``stream_jobs`` refuses the run outright
+    # rather than reading the same payload as an ordinary keyword search — which would
+    # turn "greet the one posting on screen" into a quota-consuming sweep of the board.
+    retired_direct_target: bool = False
     candidate_profile: CandidateProfile | None = None
     source_task_id: str | None = None
     is_headhunter: bool | None = None
@@ -282,6 +289,31 @@ class FeedStreamConfig:
             send_greeting = bool(legacy_auto_send) and not bool(legacy_preview)
             depth_expression = DEPTH_LEGACY_PAIR
 
+        # ---- a retired execution path, read through a key nobody writes any more ----
+        # `direct_job_id` named the one posting a targeted application greeted on screen.
+        # Issue #428 retired that path, so the key is now unreadable by anything: the
+        # config keeps no field to hold it and no code path can act on it. A producer
+        # stopped writing it at the same time, but the queue outlives the deployment —
+        # ``BaseTaskBroker`` is PocketBase-backed, so a task written by the pre-#428
+        # builder can still be delivered to this worker. Such a payload also carries
+        # `keyword` (the target's title) and `target_action=auto_apply`, so with nothing
+        # gating it the run would fall into the keyword sweep below: "greet the one
+        # posting on screen" silently becoming "sweep the board and greet up to the
+        # ceiling", which spends real quota on a task the operator never read that way.
+        # That is the meaning-change this module's own doctrine forbids, so the shape is
+        # named in ``depth_warning`` and the run fails closed before any search starts.
+        legacy_direct_job_id = data.get("direct_job_id")
+        retired_direct_target = bool(legacy_direct_job_id)
+        retired_target_warning = ""
+        if retired_direct_target:
+            retired_target_warning = (
+                f"task payload states `direct_job_id={legacy_direct_job_id}` — the "
+                f"single-screen targeted-application path is retired (issues #426-#428). "
+                f"The run is refused rather than read as a keyword search for "
+                f"`{data.get('keyword')}`, which would greet postings this task never "
+                f"named. Re-launch it from a Saved Search to sweep by keyword."
+            )
+
         raw_policy = data.get("screening_policy")
         daily_limit = int(
             data.get("daily_greeting_limit") or load_settings().get("daily_greeting_limit", 20)
@@ -369,7 +401,10 @@ class FeedStreamConfig:
             send_greeting=send_greeting,
             states_target_action=states_target_action,
             depth_expression=depth_expression,
-            depth_warning=legacy_half_warning,
+            # A payload can be wrong about both depth *and* the retired target, so the two
+            # warnings are joined rather than one silently overwriting the other.
+            depth_warning=" ".join(w for w in (legacy_half_warning, retired_target_warning) if w),
+            retired_direct_target=retired_direct_target,
             is_headhunter=data.get("is_headhunter"),
         )
 
@@ -564,6 +599,23 @@ class JobFeedPipeline:
                 f"📍 [App端强制过滤] Active ceiling {config.screening_policy.max_commute_distance_km:.1f}km; "
                 f"probing detail page bottom for the distance widget (direct-hire postings only)."
             )
+
+        if config.retired_direct_target:
+            # The single-screen branch, kept as a refusal. Issue #428 removed the path that
+            # could greet one posting on screen, but a task queued by the pre-#428 builder
+            # can still arrive carrying `direct_job_id`, and that payload also carries a
+            # keyword. Failing closed here is the whole point: falling through to the
+            # search below would sweep the board for that keyword and greet up to the
+            # ceiling, spending quota the queued task never asked to spend.
+            if config.depth_warning:
+                await self._log(f"⚠️ [Legacy Depth] {config.depth_warning}")
+            await self._log(
+                "🛑 [Retired Path] 定向投递 single-screen execution is retired; this task "
+                "is refused without searching, greeting or reading a card."
+            )
+            result.outcome = "retired_direct_target"
+            result.reason = config.depth_warning
+            return result
 
         if config.enable_search and config.keyword:
             if not await self._enter_search(config.keyword):

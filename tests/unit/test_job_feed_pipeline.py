@@ -844,7 +844,9 @@ def test_the_config_no_longer_exposes_the_retired_single_screen_target():
     """Issue #428: the config parses a target out of nothing.
 
     A queued task may still carry the keys — an older builder wrote them — but the config
-    keeps no field to hold them, so there is no code path that could act on one.
+    keeps no field to hold them, so there is no code path that could act on one. What it
+    does keep is a flag saying the payload named a target this build cannot honour, which
+    is what stops the run below; see ``test_a_queued_direct_target_never_becomes_a_search``.
     """
     config = FeedStreamConfig.from_payload(
         {
@@ -859,6 +861,71 @@ def test_the_config_no_longer_exposes_the_retired_single_screen_target():
     assert not hasattr(config, "direct_job_id")
     assert not hasattr(config, "direct_greeting")
     assert config.keyword == "Agent"
+    assert config.retired_direct_target is True
+    assert "direct_job_id=rec-1" in config.depth_warning
+
+
+@pytest.mark.asyncio
+async def test_a_queued_direct_target_never_becomes_a_search():
+    """A task queued before #428 is refused, never reinterpreted as a keyword sweep.
+
+    ``BaseTaskBroker`` is PocketBase-backed, so a payload written by the pre-#428 builder
+    can still be delivered when the path that understood it is gone. Such a payload
+    carries ``direct_job_id``, the target's title as ``keyword``, and
+    ``target_action: auto_apply``. The single-screen branch that used to read it is gone,
+    and without a gate the run falls into ``if config.enable_search and config.keyword`` —
+    so "greet the one posting on screen" silently becomes "greet the whole board for that
+    title", spending the daily quota on postings nobody asked to be greeted.
+
+    The guarantee proved here is the negative at the pipeline level: ``_enter_search`` is
+    never reached. A field assertion alone would not catch a future reordering that lets
+    the search entry run first.
+    """
+    store = InMemoryJobRecordStore()
+    card = _card("AI Agent 工程师", "智元创新")
+    feed = ScriptedFeed([[card]])
+    detail = _detail_page()
+    chat = MagicMock()
+    chat.click_send.return_value = True
+    logs: list[str] = []
+
+    async def log(line: str) -> None:
+        logs.append(line)
+
+    pipeline = _pipeline(
+        store,
+        feed=feed,
+        detail=detail,
+        chat=chat,
+        screener=CandidateScreener(llm_client=_llm()),
+        log=log,
+    )
+    entered_search = AsyncMock(return_value=True)
+    pipeline._enter_search = entered_search
+
+    config = FeedStreamConfig.from_payload(
+        {
+            "direct_job_id": "rec-1",
+            "keyword": "AI Agent 工程师",
+            "target_action": "auto_apply",
+        }
+    )
+
+    result = await pipeline.stream_jobs(config)
+
+    # The negative, stated where the behaviour is: no search, no card, no greeting.
+    entered_search.assert_not_called()
+    pipeline.search_page.search.assert_not_called()
+    chat.type_greeting_message.assert_not_called()
+    assert result.scanned == 0
+    assert result.jobs == []
+    assert result.applied is False
+
+    # And the run says why, in the log the operator reads.
+    assert config.retired_direct_target is True
+    assert any("Legacy Depth" in line and "direct_job_id" in line for line in logs), logs
+    assert any("Retired Path" in line for line in logs), logs
+    assert result.outcome == "retired_direct_target"
 
 
 # ---------------------------------------------------------------------------

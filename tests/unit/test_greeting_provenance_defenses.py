@@ -25,6 +25,7 @@ from _feed_harness import (
 )
 
 from boss_agent.enums import JobRecordStatus
+from boss_agent.feed_pipeline import FeedStreamConfig
 from boss_agent.job_store import InMemoryJobRecordStore
 from boss_agent.keyword_constants import (
     APPLIED_SOURCE_AGENT,
@@ -34,6 +35,9 @@ from boss_agent.screening import CandidateScreener
 from boss_agent.screening_policy import ScreeningPolicy
 
 HUMAN_COPY = "李工您好，看到贵司在招 Agent 平台方向，我做过端侧推理编排，想具体聊聊。"
+#: A copy the payload tries to broadcast to every card in a sweep. Named once so both
+#: halves of #300 c4 — the behavioural and the structural — assert against the same text.
+STRAY_PAYLOAD_COPY = "我在面板里改过的文案"
 # A policy that spends no model call before the greeting decision is reached.
 NO_SCREEN = ScreeningPolicy(enable_screening=False, max_commute_distance_km=None)
 
@@ -210,6 +214,11 @@ async def test_a_stray_greeting_key_in_a_payload_never_overrides_the_record():
     the sweep. Since issue #428 there is no payload shape whose copy outranks the Job
     Record's, so the record's approved human copy is what goes out — verbatim — and no
     drafting call is spent on top of it.
+
+    The config here is parsed from the wire (``from_payload``), not constructed directly,
+    because that is the only way the stray key ever reached a config field in the first
+    place. Building it with the harness helper would assert the pipeline's behaviour
+    without ever exercising the parser the finding is about.
     """
     store = InMemoryJobRecordStore()
     card = _card("AI Agent 平台工程师", "智元创新")
@@ -225,8 +234,19 @@ async def test_a_stray_greeting_key_in_a_payload_never_overrides_the_record():
         store, feed=ScriptedFeed([[card]]), detail=detail, chat=chat, screener=screener
     )
 
-    result = await pipeline.stream_jobs(_outreach(screening_policy=NO_SCREEN))
+    config = FeedStreamConfig.from_payload(
+        {
+            "target_action": "auto_apply",
+            "keyword": "Agent",
+            "max_jobs": 5,
+            # The stray key: a broadcast copy the payload has no business carrying.
+            "greeting_message": STRAY_PAYLOAD_COPY,
+            "screening_policy": {"enable_screening": False},
+        }
+    )
+    result = await pipeline.stream_jobs(config)
 
+    assert config.send_greeting is True, "the run must be a live one for this to mean anything"
     assert chat.type_greeting_message.call_args[0][0] == HUMAN_COPY
     assert result.applied_count == 1
     stored = await store.get_job_record_by_fingerprint(card.card.fingerprint)
@@ -237,18 +257,17 @@ async def test_a_stray_greeting_key_in_a_payload_never_overrides_the_record():
 def test_a_payload_cannot_carry_a_greeting_override_at_all():
     """The structural half of #300 c4: no config field exists for one to fill.
 
-    The behaviour above proves what a stray key does; this proves there is no second way
-    in, so a future producer cannot reintroduce a payload-supplied copy behind its back.
+    The behaviour above proves what a stray key does end to end; this proves there is no
+    second way in, so a future producer cannot reintroduce a payload-supplied copy behind
+    its back — the assertion is about the parser's output shape, not about a run.
     """
-    from boss_agent.feed_pipeline import FeedStreamConfig
-
     config = FeedStreamConfig.from_payload(
         {
             "target_action": "auto_apply",
             "keyword": "Agent",
-            "greeting_message": "我在面板里改过的文案",
+            "greeting_message": STRAY_PAYLOAD_COPY,
         }
     )
 
     assert not hasattr(config, "direct_greeting")
-    assert "我在面板里改过的文案" not in vars(config).values(), vars(config)
+    assert STRAY_PAYLOAD_COPY not in vars(config).values(), vars(config)
