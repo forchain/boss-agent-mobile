@@ -2,6 +2,24 @@ import { spawnSync } from 'node:child_process';
 import { getProjectRoot } from '$lib/server/pythonRunner';
 
 /**
+ * The shape of a commit hash rather than a version.
+ *
+ * `--always` means `git describe` does *not* fail when no tag is reachable: it falls
+ * back to the abbreviated commit hash and exits **0**. A shallow clone (`--depth 1`,
+ * the default shape of a CI checkout artifact) has no tag to describe, so without
+ * this guard the navbar renders a bare commit id as if it were a version (#422).
+ *
+ * A tag-derived description always begins with the tag — `v1.2.3`, or
+ * `v1.2.3-1-gabc1234` for a commit past one — so it can never be pure hex. The
+ * `--always` fallback, by contrast, is nothing but hex digits at git's abbreviation
+ * length: 7 at the low end (git's default minimum) up to a full object id. Requiring
+ * the *whole* string to be hex is what keeps a genuine tag from being discarded, and
+ * matching the shape rather than one fixed length is what catches both the short and
+ * the full form.
+ */
+const BARE_COMMIT_HASH = /^[0-9a-f]{7,64}$/i;
+
+/**
  * Sniff the version out of the live checkout with `git describe --tags --always`,
  * so a dev or runtime install reports the real repo version without anyone having
  * to set `APP_VERSION` by hand (#422).
@@ -37,7 +55,12 @@ export function runGitDescribe(): string | null {
 
 		const stdout = typeof result.stdout === 'string' ? result.stdout : '';
 		const tag = stdout.trim();
-		return tag ? tag : null;
+		if (!tag) {
+			return null;
+		}
+		// Exit 0 with a bare hash means "no tag is reachable here", which is not a
+		// version: degrade so the caller falls through to version.json, then v0.1.
+		return BARE_COMMIT_HASH.test(tag) ? null : tag;
 	} catch {
 		// Any unexpected error: degrade, never break page load.
 		return null;

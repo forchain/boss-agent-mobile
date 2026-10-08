@@ -95,3 +95,42 @@ describe('runGitDescribe degradation', () => {
 		expect(runGitDescribe()).toBeNull();
 	});
 });
+
+/**
+ * `--always` does not fail when no tag is reachable: git falls back to the
+ * abbreviated commit hash and exits **0**. That is the shape of every shallow clone
+ * (`git clone --depth 1`, the default for CI checkout artifacts), where no tag was
+ * fetched — so a "successful" exit carrying a bare hash must not be reported to the
+ * navbar as a version. `tests/e2e/test_git_describe_shallow_clone.py` pins that git
+ * really does behave this way against a real shallow clone; these cases pin the rule.
+ */
+describe('runGitDescribe shallow-clone hash fallback', () => {
+	it('returns null for the bare abbreviated hash --always produces', () => {
+		spawnSync.mockReturnValue(result({ stdout: 'e20dc39\n' }));
+		expect(runGitDescribe()).toBeNull();
+	});
+
+	it('returns null for a full 40-character commit SHA', () => {
+		spawnSync.mockReturnValue(result({ stdout: `${'a1b2c3d4'.repeat(5)}\n` }));
+		expect(runGitDescribe()).toBeNull();
+	});
+
+	it('returns null for an uppercase bare hash, whatever git prints it as', () => {
+		spawnSync.mockReturnValue(result({ stdout: 'E20DC39\n' }));
+		expect(runGitDescribe()).toBeNull();
+	});
+
+	it('still returns a tag-derived description that ends in a hash', () => {
+		// `v1.2.3-1-gabc1234` also contains hex, but it is not *only* hex: the leading
+		// tag is what distinguishes a real version from a leaked commit id.
+		spawnSync.mockReturnValue(result({ stdout: 'v1.2.3-1-gabc1234\n' }));
+		expect(runGitDescribe()).toBe('v1.2.3-1-gabc1234');
+	});
+
+	it('still returns a bare tag that looks hex-adjacent', () => {
+		for (const tag of ['v1.2.3', '2024.10-release', 'deadbeef-v1', 'v0.98.1']) {
+			spawnSync.mockReturnValue(result({ stdout: `${tag}\n` }));
+			expect(runGitDescribe()).toBe(tag);
+		}
+	});
+});

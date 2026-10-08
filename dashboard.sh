@@ -150,6 +150,30 @@ cmd_stop() {
     fi
 }
 
+resolve_version_env() {
+    # Navbar version badge (#421, #422). Each variable falls through to the next tier
+    # only when it is *unset*, so an operator-set value is never overwritten: an
+    # operator who exports just `PUBLIC_APP_VERSION` (the `PUBLIC_` prefix is what
+    # SvelteKit exposes to the client bundle) keeps it even though the checkout below
+    # carries a perfectly good tag. The `:-` form also keeps an unset reference from
+    # tripping `set -u` (line 26).
+    #
+    # Otherwise APP_VERSION sniffs the live checkout's git tag, and PUBLIC_APP_VERSION
+    # mirrors it so both halves of `web/src/lib/server/version.ts` agree. Every `git
+    # describe` failure -- no git binary, not a repo, shallow clone, empty output --
+    # degrades to empty through `|| true`, and the server resolver then falls through
+    # to version.json / the v0.1 default instead of the dashboard aborting.
+    #
+    # Exported from a function rather than inlined in `cmd_start` so the E2E suite can
+    # exercise this exact block (`tests/e2e/test_dashboard_version_env.py`) without
+    # starting the dashboard. `export` inside a function still exports to the calling
+    # shell, so the launch sites below are unchanged.
+    local sniffed
+    sniffed="$(git describe --tags --always 2>/dev/null || true)"
+    export APP_VERSION="${APP_VERSION:-${sniffed}}"
+    export PUBLIC_APP_VERSION="${PUBLIC_APP_VERSION:-${APP_VERSION}}"
+}
+
 cmd_start() {
     local IS_DAEMON=0
     local VITE_ARGS=()
@@ -207,17 +231,11 @@ cmd_start() {
     export VITE_POCKETBASE_URL="${POCKETBASE_URL}"
     export PUBLIC_POCKETBASE_URL="${POCKETBASE_URL}"
 
-    # Navbar version badge (#421, #422). An operator-set APP_VERSION always wins;
-    # otherwise sniff the live checkout's git tag so a dev install shows the real
-    # version with no manual env setup. Every `git describe` failure — no git
-    # binary, not a repo, shallow clone, empty output — degrades to empty, and the
-    # server resolver then falls through to version.json / the v0.1 default.
-    # `|| true` keeps `set -euo pipefail` (line ~26) from aborting the dashboard.
-    # The four launch sites below pass explicit `env VAR=…` allowlists, so the
-    # export alone would NOT reach the npm process in the daemon branch.
-    APP_VERSION_SNIFFED="$(git describe --tags --always 2>/dev/null || true)"
-    export APP_VERSION="${APP_VERSION:-${APP_VERSION_SNIFFED}}"
-    export PUBLIC_APP_VERSION="${APP_VERSION}"
+    # Navbar version badge (#421, #422). The precedence rules and the git-sniff degradation
+    # are documented on `resolve_version_env`; the four launch sites below pass explicit
+    # `env VAR=…` allowlists, so the export alone would NOT reach the npm process in the
+    # daemon branch.
+    resolve_version_env
     HEALTH_URL="${POCKETBASE_URL%/}/api/health"
 
 

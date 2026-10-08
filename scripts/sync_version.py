@@ -139,29 +139,46 @@ def git_tag_lookup(cwd: str | Path | None = None) -> str | None:
         return None
 
 
-def resolve_version(plan: Any, tag_lookup: Any = git_tag_lookup) -> str | None:
-    """Resolve the version for a manifest: the release plan first, the git tag second.
+def resolve_version_and_source(
+    plan: Any, tag_lookup: Any = git_tag_lookup
+) -> tuple[str | None, str]:
+    """Resolve the manifest version *and* its provenance in a single pass.
 
-    ``tag_lookup`` is injected rather than called directly so unit tests can exercise
-    this logic without spawning a process; it is called only when the plan yields nothing.
+    Returns ``(version, source)``, where ``version`` is ``None`` when nothing resolved and
+    the caller must apply ``FALLBACK_VERSION`` itself. Reporting the source alongside the
+    version is what lets ``main()`` write both fields from one resolution: previously it
+    asked ``version_from_plan`` a second time purely to work out where the answer came
+    from, and ``build_metadata`` resolved a third time through a hidden default.
+
+    ``tag_lookup`` stays injectable -- the fast unit tier forbids spawning a process --
+    and is consulted at most once, and only when the plan yields nothing.
     """
-    version = version_from_plan(plan)
-    if version:
-        return version
+    planned = version_from_plan(plan)
+    if planned:
+        return planned, "release-plan"
 
     try:
         tag = tag_lookup()
     except Exception:
         # A git problem must not fail the build; the caller falls back to FALLBACK_VERSION.
-        return None
+        return None, "git-tag"
     if isinstance(tag, str) and tag.strip():
-        return tag.strip()
-    return None
+        return tag.strip(), "git-tag"
+    return None, "git-tag"
+
+
+def resolve_version(plan: Any, tag_lookup: Any = git_tag_lookup) -> str | None:
+    """Resolve the version for a manifest: the release plan first, the git tag second.
+
+    A thin wrapper over :func:`resolve_version_and_source`, so both entry points share
+    the one resolution path instead of drifting apart.
+    """
+    return resolve_version_and_source(plan, tag_lookup)[0]
 
 
 def build_metadata(
     plan: Any,
-    version: str | None = None,
+    version: str,
     source: str = "release-plan",
 ) -> dict[str, Any]:
     """Build the `version.json` payload.
@@ -170,11 +187,22 @@ def build_metadata(
     string `version` field and ignores everything else. The extra keys are provenance for
     humans and for `--check`, and the key set is identical on every path so a consumer can
     rely on it. No timestamp: a stable payload is what lets `--check` compare exactly.
+
+    `version` is a required argument and is used verbatim. It used to default to `None`
+    and re-resolve internally through `resolve_version(plan, tag_lookup=lambda: None)` --
+    a hidden default that silently meant "never consult git", so a caller who forgot to
+    pass the version got a *different* answer from one who did, rather than an error.
+    Resolution now happens exactly once, in `resolve_version_and_source`, and the
+    explicit guard turns the remaining mistake -- passing nothing usable -- into a loud
+    failure at the boundary instead of a manifest that disagrees with its release.
     """
+    if not isinstance(version, str) or not version.strip():
+        raise ValueError(f"build_metadata requires a resolved version string, got {version!r}")
+
     current = plan.get("current_pr") if isinstance(plan, dict) else None
     current = current if isinstance(current, dict) else {}
 
-    resolved = version or resolve_version(plan, tag_lookup=lambda: None) or FALLBACK_VERSION
+    resolved = version.strip()
     return {
         "version": resolved,
         "tag_name": current.get("tag_name") or resolved,
@@ -229,14 +257,16 @@ def main() -> int:
 
     output = Path(args.output) if args.output else MANIFEST_PATH
     plan = load_json_data(args.plan)
-    source = "release-plan" if version_from_plan(plan) else "git-tag"
-    version = resolve_version(plan)
+    # One resolution, one provenance: both fields below come from the same call, so the
+    # manifest can never report a version from one tier and a source from another.
+    version, source = resolve_version_and_source(plan)
 
     if version is None:
         print(
             f"Warning: no release plan and no local git tag; falling back to {FALLBACK_VERSION}.",
             file=sys.stderr,
         )
+        version = FALLBACK_VERSION
 
     metadata = build_metadata(plan, version=version, source=source)
 
