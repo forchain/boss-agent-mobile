@@ -230,8 +230,116 @@ runner_log_event() {
     printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "${MESSAGE}" >> "${LOG_FILE}"
 }
 
+# --------------------------------------------------------------------------- #
+# Attached log streams
+# --------------------------------------------------------------------------- #
+# The Graceful Shutdown Protocol tells a supervisor how to *stop* a service. This section
+# is the other half: how a supervisor watching a service learns that something else already
+# stopped it.
+#
+# `tail -f` alone cannot do that. It follows a *file*, and a service stopped from another
+# terminal neither truncates, rotates, nor removes its log — so an attached terminal kept a
+# live cursor on an inert file and the operator could not tell a busy Automation Worker from
+# one killed thirty seconds ago. The watch below pairs the stream with a liveness check on
+# the service's own PID, which is the only party that actually knows.
+
+#: How often the watch re-asks whether the service is still there.
+#:
+#: Deliberately a poll rather than an event: `tail --pid` is GNU-only and absent from the
+#: BSD `tail` this repo runs on (and CI runs `ubuntu-latest` while development is macOS),
+#: and bash 3.2 has no `wait -n` to await either the stream or the service. A bounded
+#: polling loop over the primitives above is the one shape that works on both.
+RUNNER_WATCH_POLL_SEC="${RUNNER_WATCH_POLL_SEC:-0.2}"
+
+#: The `tail` child currently following a service log, if any.
+#:
+#: A global rather than a local because the INT/TERM traps have to reach it: bash does not
+#: reap background children when a script exits, so a detached watcher would otherwise leave
+#: a `tail -f` behind holding the terminal's stdout open.
+RUNNER_WATCH_TAIL_PID=""
+
+#: The wording an attached log stream announces when the service it follows is gone.
+#:
+#: Owned here for the same reason the lifecycle events are: five Dedicated Runner Scripts
+#: attach to their own service, and "which service stopped" is a contract with the operator
+#: that must not drift between copies. The PID is substituted by the seam below.
+RUNNER_ATTACHED_STOP_EVENT="守护进程 (PID: {pid}) 已停止"
+
+# `runner_log_attached_stop LABEL PID`
+#
+# Printed to the operator's terminal, not to the service's log: the service is already gone,
+# and whoever stopped it has already recorded the stop in that log via
+# `runner_log_stop_complete`. This line exists to answer the question the log cannot —
+# *why did my terminal just go quiet?* — at the moment the stream ends.
+runner_log_attached_stop() {
+    local LABEL="${1:-Service}"
+    local PID="${2:-}"
+    echo "🛑 [${LABEL}] ${RUNNER_ATTACHED_STOP_EVENT//\{pid\}/$PID}"
+}
+
+# Stop following a log stream — and only that.
+#
+# Deliberately narrower than `runner_graceful_stop`: a watcher told to stop watching has no
+# business signalling the service it was watching. Detaching is not stopping, and the
+# distinction is load-bearing: the operator detaches with Ctrl+C precisely when they intend
+# to go on using the running daemon. Only this watcher's own `tail` is signalled here.
+runner_watch_detach() {
+    local TAIL_PID="${RUNNER_WATCH_TAIL_PID:-}"
+    RUNNER_WATCH_TAIL_PID=""
+    [[ -n "${TAIL_PID}" ]] || return 0
+    kill "${TAIL_PID}" 2>/dev/null || true
+    wait "${TAIL_PID}" 2>/dev/null || true
+    return 0
+}
+
+# Follow LOG_FILE until the watched service is gone, then announce the stop and return.
+#
+# `runner_watch_log_stream PID LOG_FILE LABEL [INITIAL_LINES]`
+#
+# The `tail` runs in the background as a child of this shell and is polled alongside the
+# service:
+#
+#   * the service disappearing ends the watch — that is the whole point of it;
+#   * the `tail` disappearing ends the watch too, so a stream that dies on its own (log
+#     rotated away, `tail` killed by something else) cannot leave the loop spinning
+#     forever on a child that will never produce another line;
+#   * Ctrl+C ends the watch through `runner_watch_detach`, which signals the `tail` and
+#     nothing else.
+#
+# Backgrounding the `tail` is not cosmetic. Bash does not run a trap handler while a
+# foreground child is still running, so a watcher written as a bare `tail -f` cannot be
+# detached from at all: the Ctrl+C is recorded and then ignored until the stream ends by
+# itself, which for a log stream is never.
+runner_watch_log_stream() {
+    local PID="${1:-}"
+    local LOG_FILE="${2:-}"
+    local LABEL="${3:-service}"
+    local INITIAL_LINES="${4:-30}"
+
+    touch "${LOG_FILE}"
+    tail -n "${INITIAL_LINES}" -f "${LOG_FILE}" &
+    RUNNER_WATCH_TAIL_PID=$!
+
+    while true; do
+        if runner_process_gone "${PID}"; then
+            runner_watch_detach
+            runner_log_attached_stop "${LABEL}" "${PID}"
+            return 0
+        fi
+        if runner_process_gone "${RUNNER_WATCH_TAIL_PID}"; then
+            # The stream ended on its own. `runner_process_alive` already reads a defunct
+            # PID as gone, so an unreaped `tail` ends this branch instead of hanging it.
+            return 0
+        fi
+        sleep "${RUNNER_WATCH_POLL_SEC}"
+    done
+}
+
 # Print the tail of a service log and follow it, without killing the daemon on
 # detach. `runner_attached_logs PID LOG_FILE LABEL ENDPOINT`.
+#
+# Returns once the watched service is gone, so a daemon stopped from another terminal
+# unblocks the terminal instead of leaving it on a live cursor over an inert file.
 runner_attached_logs() {
     local PID="${1:-}"
     local LOG_FILE="${2:-}"
@@ -243,10 +351,9 @@ runner_attached_logs() {
     echo "----------------------------------------------------------------------"
 
     # Detaching must not signal the background service.
-    trap 'echo -e "\n👋 Detached from '"${LABEL}"' logs ('"${LABEL}"' is still running in background)."; exit 0' INT TERM
+    trap 'runner_watch_detach; echo -e "\n👋 Detached from '"${LABEL}"' logs ('"${LABEL}"' is still running in background)."; exit 0' INT TERM
 
-    touch "${LOG_FILE}"
-    tail -n 30 -f "${LOG_FILE}"
+    runner_watch_log_stream "${PID}" "${LOG_FILE}" "${LABEL}" 30
 }
 
 # --------------------------------------------------------------------------- #
