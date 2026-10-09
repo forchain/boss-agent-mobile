@@ -220,9 +220,16 @@ cmd_start() {
         echo "${PID}" > "${PID_FILE}"
 
         # Handle shutdown on Ctrl+C for foreground mode: graceful SIGTERM then wait for process to checkpoint WAL
-        trap 'echo -e "\n🛑 Stopping PocketBase (PID: '"${PID}"')..."; kill '"${PID}"' 2>/dev/null || true; wait '"${PID}"' 2>/dev/null || true; rm -f '"${PID_FILE}"'; exit 0' INT TERM
+        # `runner_watch_detach` first: the watch below forks its own `tail`, and a background job
+        # in a non-interactive shell ignores SIGINT — only an explicit signal takes it down.
+        trap 'runner_watch_detach; echo -e "\n🛑 Stopping PocketBase (PID: '"${PID}"')..."; kill '"${PID}"' 2>/dev/null || true; wait '"${PID}"' 2>/dev/null || true; rm -f '"${PID_FILE}"'; exit 0' INT TERM
 
-        tail -n 0 -f "${LOG_FILE}"
+        # The same liveness watch the attach path uses (ticket #425). A bare `tail -n 0 -f`
+        # follows a *file*, and a broker stopped from another terminal neither truncates,
+        # rotates, nor removes its log — so the terminal kept a live cursor on an inert file
+        # and could not tell a busy State Stream broker from one killed thirty seconds ago.
+        # The pidfile is what lets a restart from another terminal be announced as one.
+        runner_watch_log_stream "${PID}" "${LOG_FILE}" "PocketBase" 0 "${PID_FILE}"
     fi
 }
 

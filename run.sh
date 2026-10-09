@@ -153,11 +153,12 @@ cmd_restart_app() {
     fi
 }
 
-# Restart the dedicated AVD only when it is not already usable.
+# Restart the dedicated AVD's services, keeping the AVD process whenever it is usable.
 #
-# `./emulator.sh stop` issues `emu kill`, and a cold AVD boot costs 30-60s. Restarting
-# PocketBase and Appium is cheap, so killing a perfectly healthy device to bring the rest
-# of the infrastructure back up made every restart pay a full cold boot.
+# A cold AVD boot costs 30-60s and no command in `emulator.sh` stops the AVD, so there is
+# nothing here to escalate to — the decision is entirely "is there an online AVD to keep".
+# Restarting PocketBase and Appium is cheap, so tearing a healthy device down to bring the
+# rest of the infrastructure back up charged every restart a full cold boot for nothing.
 #
 # `emulator.sh status` is the single bounded authority on whether the AVD is online and
 # booted (the drift ticket #242 removed from this file), so the decision is made from the
@@ -172,12 +173,12 @@ restart_emulator_reusing_if_online() {
         return 0
     fi
 
-    # The verdict and its reason are printed on both paths: "absent", "still booting" and
-    # "adb is missing" all mean "cold restart", and without the reason the operator cannot
-    # tell which of the three they are looking at.
-    echo "🌙 No online dedicated AVD found — performing a cold restart."
+    # The verdict and its reason are printed on both paths: "absent" and "still booting" both
+    # mean the runner has to bring the services up itself, and without the reason the operator
+    # cannot tell which of the two they are looking at. A still-booting AVD process is left
+    # exactly as it is — `./emulator.sh restart` refuses to boot a second emulator beside it.
+    echo "🌙 No online dedicated AVD found — restarting its services."
     printf '%s\n' "${STATUS_OUT}" | sed 's/^/   /'
-    ./emulator.sh stop || true
 }
 
 cmd_infra() {
@@ -194,9 +195,14 @@ cmd_infra() {
         stop)
             echo "🛑 Stopping Infrastructure Services..."
             ./appium.sh stop || true
+            # No flag is forwarded, and none is accepted: `emulator.sh stop` stops the
+            # Remote ADB Bridge and keeps the AVD process (a cold boot costs 30-60s), and
+            # that is true of every caller. The device outliving an `infra stop` is the
+            # contract, not an oversight to be corrected with a flag.
             ./emulator.sh stop || true
             ./pocketbase.sh stop || true
             echo "✅ Infrastructure services stopped."
+            echo "   The dedicated AVD is still running; quit the emulator by hand to close it."
             ;;
         restart)
             echo "🔄 Restarting Infrastructure Services..."
@@ -235,7 +241,7 @@ cmd_all() {
             ;;
         stop)
             cmd_app stop
-            cmd_infra stop
+            cmd_infra stop "$@"
             ;;
         restart)
             cmd_app stop

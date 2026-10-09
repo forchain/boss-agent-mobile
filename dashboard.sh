@@ -248,9 +248,14 @@ cmd_start() {
     local PID=$!
     echo "${PID}" > "${PID_FILE}"
 
-    trap 'echo -e "\n🛑 Stopping Web Dashboard (PID: '"${PID}"')..."; kill '"${PID}"' 2>/dev/null || true; rm -f '"${PID_FILE}"'; exit 0' INT TERM
+    trap 'runner_watch_detach; echo -e "\n🛑 Stopping Web Dashboard (PID: '"${PID}"')..."; kill '"${PID}"' 2>/dev/null || true; rm -f '"${PID_FILE}"'; exit 0' INT TERM
 
-    tail -n 0 -f "${LOG_FILE}"
+    # The same liveness watch the attach path uses (ticket #425): a bare `tail -n 0 -f` left
+    # the terminal on a live cursor over an inert file after this server was killed from
+    # another terminal. Here Ctrl+C legitimately *does* stop the server — this process
+    # launched it and owns it — so the handler above still signals it; the watch only decides
+    # when the stream ends on its own.
+    runner_watch_log_stream "${PID}" "${LOG_FILE}" "SvelteKit Web Dashboard" 0 "${PID_FILE}"
 }
 
 cmd_restart() {

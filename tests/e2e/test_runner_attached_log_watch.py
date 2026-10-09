@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -851,3 +852,396 @@ def test_the_orchestrator_reaches_the_watch_through_the_worker_attach_route(
 def _code_only(script: str) -> str:
     """The script with its `#` comment lines stripped, so prose cannot satisfy a code assertion."""
     return "\n".join(line for line in script.splitlines() if not line.lstrip().startswith("#"))
+
+
+# --------------------------------------------------------------------------- #
+# Every Dedicated Runner Script, not just the one `run.sh` happens to reach
+# --------------------------------------------------------------------------- #
+# Ticket #425 was written against `worker.sh` and `run.sh`, and that is exactly as far as it
+# was implemented: bare `./run.sh` execs `./worker.sh attach`, so the one runner the
+# orchestrator reaches by default got the watch and the three beside it kept a bare
+# `tail -n 0 -f`. The symptom therefore looked like a property of `run.sh` — "only run.sh
+# tells me the server stopped" — when it is a property of which runner a given command
+# happens to land on.
+#
+# These tests pin the property on the *runners*, which is where it belongs: every service a
+# Dedicated Runner Script starts in the foreground must announce that service's death and
+# return, whichever runner the operator typed.
+
+
+@dataclass(frozen=True)
+class _RunnerSpec:
+    """How to stand up one Dedicated Runner Script's foreground start path against a stub.
+
+    Each runner discovers its own service differently — a binary on PATH for `appium.sh` and
+    `pocketbase.sh`, an `npm` invocation for `dashboard.sh` — so the shape of the throwaway
+    root differs per runner even though the property under test does not.
+    """
+
+    script: str
+    label: str
+    pid_file: str
+    log_file: str
+    args: tuple[str, ...]
+    env: dict[str, str]
+    #: Names placed on PATH and `exec`'d instead of the real binary. `{"npm": ("ls",)}`
+    #: means: `npm --prefix web ls --depth=0` must succeed without a real install.
+    stub_binaries: dict[str, tuple[str, ...]]
+
+
+def _spec_for(runner: str, port: int, broker_port: int) -> _RunnerSpec:
+    """Build the per-runner fixture recipe for the given throwaway port."""
+    if runner == "appium.sh":
+        return _RunnerSpec(
+            script=runner,
+            label="Appium server",
+            pid_file=".boss_agent/appium.pid",
+            log_file=".boss_agent/appium.log",
+            args=("start", "--address", "127.0.0.1", "--port", str(port)),
+            env={"APPIUM_HOST": "127.0.0.1", "APPIUM_PORT": str(port)},
+            stub_binaries={"appium": ()},
+        )
+
+    if runner == "pocketbase.sh":
+        return _RunnerSpec(
+            script=runner,
+            label="PocketBase",
+            pid_file=".boss_agent/pocketbase.pid",
+            log_file=".boss_agent/pocketbase.log",
+            args=("start",),
+            env={"PB_HTTP": f"127.0.0.1:{port}", "PB_DATA_DIR": "${ROOT}/pb_data"},
+            stub_binaries={"pocketbase": (), "uv": ()},
+        )
+
+    if runner == "dashboard.sh":
+        return _RunnerSpec(
+            script=runner,
+            label="SvelteKit Web Dashboard",
+            pid_file=".boss_agent/web.pid",
+            log_file=".boss_agent/web.log",
+            args=("start",),
+            env={
+                "WEB_HOST": "127.0.0.1",
+                "WEB_PORT": str(port),
+                "POCKETBASE_URL": f"http://127.0.0.1:{broker_port}",
+            },
+            stub_binaries={"npm": ("ls",)},
+        )
+
+    raise AssertionError(f"no fixture recipe for {runner}")
+
+
+#: A service that announces itself and then stays alive, until something kills it.
+_STUB_SERVICE_PY = """
+import sys
+import time
+
+sys.stdout.write("stub service ready\\n")
+sys.stdout.flush()
+time.sleep(300)
+"""
+
+
+def _write_executable(path: Path, body: str) -> None:
+    path.write_text(body, encoding="utf-8")
+    path.chmod(0o755)
+
+
+@pytest.fixture
+def foreground_runner(request, tmp_path: Path):
+    """A throwaway root where one runner's foreground path starts a stub service.
+
+    Yields a `_RunnerRuntime`: the root, the environment to run it under, and where its
+    pidfile and log live. The service runs on a port nothing is serving, which the runner's
+    own health check must answer "no" to — see the note on `free_port` below.
+
+    The service is a local stub for the same reason the rest of this file uses one: these
+    tests must never point a watch at a real PocketBase, Appium server, or Dashboard that
+    belongs to another worktree.
+    """
+    runner = request.param
+    root = tmp_path / "repo"
+    (root / ".boss_agent").mkdir(parents=True)
+    shutil.copy2(REPO_ROOT / runner, root / runner)
+    shutil.copy2(RUNNER_LIB, root / "runner_lib.sh")
+    (root / runner).chmod(0o755)
+
+    stub_dir = root / "stubs"
+    stub_dir.mkdir()
+    _write_executable(root / "stub_service.py", _STUB_SERVICE_PY)
+
+    python = sys.executable
+    stub_service = root / "stub_service.py"
+
+    with contextlib.ExitStack() as stack:
+        # `free_port`, deliberately *not* `held_free_port`. The held variant keeps the bind
+        # open without ever calling `listen`, which is invisible to the runners' LISTEN-only
+        # probes but not to their HTTP health checks: the kernel drops the SYN to a
+        # bound-but-not-listening socket instead of answering it with RST, so every
+        # `curl -f http://127.0.0.1:<port>` blocks for its full connect timeout before the
+        # runner ever gets as far as launching. An unbound port is refused immediately,
+        # which is both the state these tests want (nothing serving there) and the fast one.
+        port = free_port()
+        broker = _start_always_ok_server()
+        stack.callback(broker.terminate)
+
+        spec = _spec_for(runner, port, broker.port)
+        base_path = f"{stub_dir}:{Path(python).parent}:{os.environ.get('PATH', '')}"
+
+        for binary, succeed_args in spec.stub_binaries.items():
+            if binary == "uv":
+                # `pocketbase.sh` provisions the SQLite schema before every start, through
+                # `uv run python3 src/...`. A real `uv` would resolve a project in the
+                # throwaway root that does not exist, so the stub drops the `run` verb and
+                # execs the rest — which lands on the no-op provisioner written below.
+                _write_executable(
+                    stub_dir / "uv",
+                    '#!/bin/sh\nif [ "$1" = "run" ]; then shift; fi\nexec "$@"\n',
+                )
+                continue
+
+            # `exec` so the PID the runner records (`$!`) is the service itself rather than
+            # a shell wrapper that could exit first and leave the watch announcing a stop
+            # for a PID the service never owned.
+            body = f'#!/bin/sh\nexec "{python}" "{stub_service}"\n'
+            if succeed_args:
+                # `dashboard.sh` runs `npm --prefix web ls --depth=0` to decide whether the
+                # frontend needs installing; a stub that answered honestly would trigger a
+                # real `npm install` against a fixture with no package.json.
+                condition = " ".join(f'case "$*" in *{a}*) exit 0 ;; esac' for a in succeed_args)
+                body = f'#!/bin/sh\n{condition}\nexec "{python}" "{stub_service}"\n'
+            _write_executable(stub_dir / binary, body)
+
+        env: dict[str, str] = {
+            **os.environ,
+            "PATH": base_path,
+            "PYTHONUNBUFFERED": "1",
+        }
+
+        if runner == "pocketbase.sh":
+            # Skip the offline `migrate up` (the DB is pre-created) and make the schema
+            # provisioner a no-op, so no part of this test reaches the real broker code.
+            provisioner = root / "src" / "boss_agent" / "broker" / "provisioner.py"
+            provisioner.parent.mkdir(parents=True)
+            # A pre-existing `data.db` short-circuits the offline `migrate up`, so the stub
+            # binary is never asked to do real schema work.
+            (root / "pb_data").mkdir(parents=True)
+            (root / "pb_data" / "data.db").write_text("", encoding="utf-8")
+            provisioner.write_text("raise SystemExit(0)\n", encoding="utf-8")
+            env["PB_DATA_DIR"] = str(root / "pb_data")
+            env["PB_PUBLIC_DIR"] = str(root / "pb_public")
+
+        if runner == "dashboard.sh":
+            # Both sentinels short-circuit the dependency-install and svelte-kit sync steps.
+            (root / "web" / "node_modules").mkdir(parents=True)
+            (root / "web" / ".svelte-kit").mkdir(parents=True)
+            (root / "web" / ".svelte-kit" / "tsconfig.json").write_text("{}", encoding="utf-8")
+
+        for key, value in spec.env.items():
+            env[key] = value.replace("${ROOT}", str(root))
+
+        yield _RunnerRuntime(
+            root=root,
+            runner=runner,
+            label=spec.label,
+            pid_file=root / spec.pid_file,
+            log_file=root / spec.log_file,
+            args=spec.args,
+            env=env,
+        )
+
+
+@dataclass(frozen=True)
+class _RunnerRuntime:
+    """One throwaway runner root, ready to be started in the foreground."""
+
+    root: Path
+    runner: str
+    label: str
+    pid_file: Path
+    log_file: Path
+    args: tuple[str, ...]
+    env: dict[str, str]
+
+
+#: The runners whose foreground start path is driven by a stubbed service binary.
+FOREGROUND_RUNNERS = ["appium.sh", "dashboard.sh", "pocketbase.sh"]
+
+
+def _launch_foreground(runtime: _RunnerRuntime) -> subprocess.Popen:
+    """Start `runtime.runner` in the foreground, and wait until it has recorded its PID."""
+    process = subprocess.Popen(
+        [_bash(), runtime.runner, *runtime.args],
+        cwd=str(runtime.root),
+        env=runtime.env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        start_new_session=True,
+    )
+    _drain_output(process)
+
+    deadline = time.monotonic() + WATCH_RETURN_BUDGET_SEC
+    while time.monotonic() < deadline:
+        if runtime.pid_file.exists():
+            recorded = runtime.pid_file.read_text(encoding="utf-8").strip()
+            if recorded.isdigit():
+                return process
+        if process.poll() is not None:
+            pytest.fail(f"{runtime.runner} exited before recording a PID:\n{_output_of(process)}")
+        time.sleep(0.05)
+    _terminate(process)
+    pytest.fail(f"{runtime.runner} never recorded a service PID")
+
+
+@pytest.mark.parametrize("foreground_runner", FOREGROUND_RUNNERS, indirect=True)
+def test_every_runner_announces_a_stop_in_its_foreground_start_path(foreground_runner):
+    """The ticket's property, asserted on every runner rather than on `run.sh`.
+
+    A service killed from another terminal must unblock the foreground terminal that started
+    it, naming itself and its PID. Before this was generalised, `./run.sh` satisfied it and
+    `./appium.sh`, `./dashboard.sh` and `./pocketbase.sh` did not — each ended in a bare
+    `tail -n 0 -f` that follows a file and so never learns its writer died.
+    """
+    runtime = foreground_runner
+    process = _launch_foreground(runtime)
+
+    # Still following a live service: it must not have detached early.
+    with contextlib.suppress(subprocess.TimeoutExpired):
+        process.wait(timeout=ATTACH_HOLD_SEC)
+        pytest.fail(f"{runtime.runner} gave up on a service that was still running")
+    assert process.poll() is None, f"{runtime.runner} exited while its service was running"
+
+    pid = int(runtime.pid_file.read_text(encoding="utf-8").strip())
+    os.kill(pid, signal.SIGKILL)
+    deadline = time.monotonic() + WATCH_RETURN_BUDGET_SEC
+    while time.monotonic() < deadline and not _is_gone(pid):
+        time.sleep(0.05)
+    assert _is_gone(pid), f"the stub service {pid} survived SIGKILL"
+
+    output = _assert_returns(process)
+    expected = STOP_NOTICE.format(label=runtime.label, pid=pid)
+    assert expected in output, (
+        f"{runtime.runner} announced no stop for the service it started; it printed:\n{output}"
+    )
+
+
+@pytest.mark.parametrize("foreground_runner", FOREGROUND_RUNNERS, indirect=True)
+def test_every_runner_detaches_without_leaving_its_tail_child_behind(foreground_runner):
+    """The backgrounded `tail` belongs to the runner, and Ctrl+C must take it down.
+
+    The watch backgrounds its `tail` so the poll loop can run, and a background job in a
+    non-interactive shell *ignores* SIGINT — which is precisely why `RUNNER_WATCH_TAIL_PID`
+    is a global the traps reach. A runner that adopted the watch without also calling
+    `runner_watch_detach` would leave an orphan `tail` holding the terminal's stdout open
+    after its own service had already been stopped.
+    """
+    runtime = foreground_runner
+    process = _launch_foreground(runtime)
+
+    tail_pid = _tail_child_of(process)
+    pid = int(runtime.pid_file.read_text(encoding="utf-8").strip())
+
+    os.kill(process.pid, signal.SIGINT)
+    _assert_returns(process)
+
+    assert process.returncode == 0, f"Ctrl+C should exit cleanly, got {process.returncode}"
+    assert _is_gone(tail_pid), f"the tail child {tail_pid} outlived {runtime.runner}"
+    # This runner owns the service it launched, so Ctrl+C legitimately stops it too.
+    deadline = time.monotonic() + WATCH_RETURN_BUDGET_SEC
+    while time.monotonic() < deadline and not _is_gone(pid):
+        time.sleep(0.05)
+    assert _is_gone(pid), f"Ctrl+C left the service {pid} running"
+
+
+def test_every_runner_ends_its_foreground_start_path_in_the_watch():
+    """No Dedicated Runner Script may fall back to a bare `tail -f` for its own log.
+
+    The behavioural tests above prove three of them at runtime. This one is the structural
+    guard that also covers the paths a test cannot cheaply drive — the Virtual Device
+    Session's `attach_logs`, and any runner added later — because the regression is always
+    the same line: a script reaching for `tail` directly instead of through the library.
+    """
+    for runner in ("appium.sh", "dashboard.sh", "emulator.sh", "pocketbase.sh", "worker.sh"):
+        code = _code_only((REPO_ROOT / runner).read_text(encoding="utf-8"))
+        bare_tail = re.search(r"\btail\b[^\n|]*?-f\b", code)
+        assert bare_tail is None, (
+            f"{runner} follows its own log with a bare `tail -f` "
+            f"({bare_tail.group(0).strip() if bare_tail else ''}); "
+            "use runner_attached_logs / runner_watch_log_stream instead"
+        )
+
+    # The watch is only half the contract: the traps must also reach the `tail` it forks.
+    for runner in ("appium.sh", "dashboard.sh", "pocketbase.sh", "worker.sh"):
+        code = _code_only((REPO_ROOT / runner).read_text(encoding="utf-8"))
+        assert "runner_watch_log_stream" in code, (
+            f"{runner}'s foreground start path does not watch the service it started"
+        )
+
+
+def test_the_attach_labels_match_the_foreground_labels():
+    """A runner must not announce two different names for the same service.
+
+    `runner_attached_logs` and `runner_watch_log_stream` print whatever label the runner
+    hands them, so the *runner* owns the wording. A foreground stop announced under a
+    different name than the attached stop would contradict itself in one terminal.
+    """
+    expected = {
+        "appium.sh": "Appium server",
+        "dashboard.sh": "SvelteKit Web Dashboard",
+        "pocketbase.sh": "PocketBase",
+        "worker.sh": "Automation Worker daemon",
+    }
+    for runner, label in expected.items():
+        code = (REPO_ROOT / runner).read_text(encoding="utf-8")
+        assert code.count(f'"{label}"') >= 2, (
+            f"{runner} announces {label!r} on one path but not both; "
+            "the attached and foreground watches must use one label"
+        )
+
+
+def test_the_emulator_attach_path_watches_the_avd_it_launched():
+    """`emulator.sh` keeps its own `attach_logs`, but it must still watch.
+
+    The Virtual Device Session is the one service with no runner-owned process in the usual
+    sense, which is why it does not call `runner_attached_logs`. It is not exempt from the
+    property, though: when this runner launched the AVD, `.boss_agent/emulator.pid` holds
+    the emulator's own PID (`detached_spawn` execs the target, so it cannot be a wrapper
+    that dies first). Watching it is what lets `./emulator.sh` tell a running AVD from one
+    that was `emu kill`ed from another terminal.
+    """
+    emulator = _code_only((REPO_ROOT / "emulator.sh").read_text(encoding="utf-8"))
+    assert "runner_watch_log_stream" in emulator, (
+        "emulator.sh attach_logs still follows its log without watching the AVD"
+    )
+    assert "runner_watch_detach" in emulator, (
+        "emulator.sh attach_logs does not detach its own tail child on Ctrl+C"
+    )
+
+
+def test_an_avd_started_elsewhere_keeps_streaming_and_announces_nothing(lib_runtime: Path):
+    """The literal `active` is no information, so it must never be read as a death.
+
+    `emulator.sh attach_logs` substitutes `active` when the AVD was not started by this
+    runner and there is no pidfile to read. That is the same shape as the `unknown` the
+    other three runners pass: the service is demonstrably up, but nothing here can prove
+    which process owns it. `runner_pid_watchable` must classify it unwatchable, so the
+    stream keeps following and no stop is claimed.
+    """
+    log_file = lib_runtime / ".boss_agent" / "emulator.log"
+    log_file.write_text("avd booted\n", encoding="utf-8")
+
+    watcher = _start_watch(lib_runtime, "active", log_file, label="Dedicated AVD")
+
+    with contextlib.suppress(subprocess.TimeoutExpired):
+        watcher.wait(timeout=ATTACH_HOLD_SEC)
+        pytest.fail("the watcher announced a stop for a handle it cannot watch")
+    assert watcher.poll() is None, "the watcher exited on a handle it cannot watch"
+
+    log_file.write_text("avd still running\n", encoding="utf-8")
+    _wait_for_text(watcher, "avd still running", budget=WATCH_RETURN_BUDGET_SEC)
+
+    output = _terminate(watcher)
+    assert "已停止" not in output, (
+        f"the watcher announced a stop it could not substantiate:\n{output}"
+    )

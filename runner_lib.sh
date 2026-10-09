@@ -260,13 +260,13 @@ RUNNER_WATCH_TAIL_PID=""
 
 #: The wording an attached log stream announces when the service it follows is gone.
 #:
-#: Owned here for the same reason the lifecycle events are: four Dedicated Runner Scripts
-#: attach to their own service through `runner_attached_logs` — `appium.sh`, `dashboard.sh`,
-#: `pocketbase.sh` and `worker.sh` — and "which service stopped" is a contract with the
-#: operator that must not drift between copies. `emulator.sh` is the fifth Dedicated
-#: Runner Script and deliberately not in that count: a Virtual Device Session owns no
-#: runner-owned process to watch, so it follows its own `attach_logs`. The PID is
-#: substituted by the seam below.
+#: Owned here for the same reason the lifecycle events are: all five Dedicated Runner
+#: Scripts follow their own service through this watch, and "which service stopped" is a
+#: contract with the operator that must not drift between copies. Four reach it through
+#: `runner_attached_logs` — `appium.sh`, `dashboard.sh`, `pocketbase.sh` and `worker.sh` —
+#: and `emulator.sh` calls `runner_watch_log_stream` from its own `attach_logs`, because a
+#: Virtual Device Session is followed by ADB serial rather than by an attach banner. The PID
+#: is substituted by the seam below.
 RUNNER_ATTACHED_STOP_EVENT="守护进程 (PID: {pid}) 已停止"
 
 #: ... and the wording for the one case that is provably not a plain stop.
@@ -366,9 +366,9 @@ runner_watch_detach() {
     return 0
 }
 
-# Follow LOG_FILE until the watched service is gone, then announce the stop and return.
+# Follow LOG_FILE until a watched service is gone, then announce the stop and return.
 #
-# `runner_watch_log_stream PID LOG_FILE LABEL [INITIAL_LINES] [PID_FILE]`
+# `runner_watch_log_stream PID LOG_FILE LABEL [INITIAL_LINES] [PID_FILE] [SECOND_PID] [SECOND_LABEL]`
 #
 # The `tail` runs in the background as a child of this shell and is polled alongside the
 # service:
@@ -384,6 +384,21 @@ runner_watch_detach() {
 # no evidence of a replacement and says only what it saw. With it, a pidfile naming a
 # different live process is announced as the restart it is.
 #
+# `SECOND_PID`/`SECOND_LABEL` watch a *second* process under its own name, for the runners
+# whose service is not the only thing their stream depends on. `emulator.sh` is the case
+# that makes it necessary: the Remote ADB Bridge is the process a shutdown signal is
+# actually sent to, while the AVD is the process whose log is being displayed — and since
+# no shutdown signal stops the AVD, watching only one of the two leaves a terminal that
+# never notices a stop it was attached to see. Either handle ending the watch is correct,
+# and each is announced under the name of the process that actually stopped.
+#
+# The primary handle is checked first, so when both are gone in the same poll the service
+# proper is the one named — the AVD outliving its bridge is the ordinary case, and a notice
+# about the wrong one of the two would misreport it. The secondary is never treated as a
+# restart: only the primary has a pidfile to supply that evidence, and claiming a restart
+# from the *other* service's pidfile would be exactly the dishonesty
+# `runner_restart_replacement_pid` exists to prevent.
+#
 # Backgrounding the `tail` is not cosmetic. Bash does not run a trap handler while a
 # foreground child is still running, so a watcher written as a bare `tail -f` cannot be
 # detached from at all: the Ctrl+C is recorded and then ignored until the stream ends by
@@ -394,6 +409,8 @@ runner_watch_log_stream() {
     local LABEL="${3:-service}"
     local INITIAL_LINES="${4:-30}"
     local PID_FILE="${5:-}"
+    local SECOND_PID="${6:-}"
+    local SECOND_LABEL="${7:-service}"
     local NEW_PID=""
 
     touch "${LOG_FILE}"
@@ -406,6 +423,10 @@ runner_watch_log_stream() {
     if runner_pid_watchable "${PID}"; then
         WATCHABLE=1
     fi
+    local SECOND_WATCHABLE=0
+    if runner_pid_watchable "${SECOND_PID}"; then
+        SECOND_WATCHABLE=1
+    fi
 
     while true; do
         if [[ ${WATCHABLE} -eq 1 ]] && runner_process_gone "${PID}"; then
@@ -416,6 +437,11 @@ runner_watch_log_stream() {
             else
                 runner_log_attached_stop "${LABEL}" "${PID}"
             fi
+            return 0
+        fi
+        if [[ ${SECOND_WATCHABLE} -eq 1 ]] && runner_process_gone "${SECOND_PID}"; then
+            runner_watch_detach
+            runner_log_attached_stop "${SECOND_LABEL}" "${SECOND_PID}"
             return 0
         fi
         if runner_process_gone "${RUNNER_WATCH_TAIL_PID}"; then

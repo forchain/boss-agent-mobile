@@ -297,10 +297,20 @@ def _fake_sdk(tmp_path: Path, adb_script: str) -> Path:
 
 
 def emulator_environment(sdk: Path, **env: str) -> dict[str, str]:
-    """Environment in which the runner can only reach the stub SDK."""
+    """Environment in which the runner can only reach the stub SDK.
+
+    `REMOTE_ADB_PORT` is pinned to a free port, and that is load-bearing rather than
+    cosmetic. The runner's default is 6555 — the *developer's real* bridge port — and it
+    resolves the port's owner by looking at live processes. A test that left it on the
+    default would point `stop` at whatever is really listening there, and an "idle stop"
+    asserting no lifecycle event was recorded would instead record a perfect one against the
+    developer's own bridge, and signal it. The same reason `_runner_harness` renames the AVD.
+    """
     base = {k: v for k, v in os.environ.items() if k != "ANDROID_SDK_ROOT"}
     base["ANDROID_HOME"] = str(sdk)
     base["PATH"] = f"{sdk / 'platform-tools'}:{base.get('PATH', '')}"
+    base["REMOTE_ADB_PORT"] = str(free_port())
+    base["TARGET_ADB_PORT"] = "5555"
     base.update(env)
     return base
 
@@ -309,18 +319,48 @@ def _emulator_root(tmp_path: Path) -> Path:
     return _runner_root(tmp_path, "emulator.sh")
 
 
-def _fake_emulator_process(avd: str = PROBE_AVD) -> subprocess.Popen:
-    """A host process whose argv is the one `emulator.sh` recognises as the AVD's own.
+@contextlib.contextmanager
+def _fake_bridge_process(runtime_root: Path):
+    """A live process recorded in `remote_bridge.pid`, wearing the bridge's argv.
 
-    `adb emu kill` is a request, not a guarantee — the process sweep is what actually makes
-    "stopped" mean stopped — so the sweep needs a real process to reap, or the test would
-    pass over the reap path that never ran.
+    The AVD stopped being what `stop` releases, so the Remote ADB Bridge is the service whose
+    shutdown these lifecycle events now record. The argv has to carry `remote_adb_bridge`
+    because `get_running_bridge_pid` refuses a pidfile naming anything else — a fixture that
+    did not look like a bridge would be ignored, and the test would pass by observing nothing.
     """
     process = subprocess.Popen(
         [
             sys.executable,
             "-c",
-            'import os; os.execv("/bin/sleep", [f"emulator @{avd} -no-snapshot-load", "120"])',
+            'import os; os.execv("/bin/sleep", ["remote_adb_bridge --port 6555", "120"])',
+        ]
+    )
+    try:
+        time.sleep(0.3)  # let the exec land, so the argv is already the bridge's spelling
+        pid_file = runtime_root / ".boss_agent" / "remote_bridge.pid"
+        pid_file.parent.mkdir(parents=True, exist_ok=True)
+        pid_file.write_text(str(process.pid), encoding="utf-8")
+        yield process
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait(timeout=5)
+
+
+def _fake_emulator_process(avd: str = PROBE_AVD) -> subprocess.Popen:
+    """A host process whose argv is the one `emulator.sh` recognises as the AVD's own.
+
+    Its purpose inverted when the AVD stopped being stoppable: it used to be a process for
+    the runner to reap, and is now one that must *survive* every command in the runner. So a
+    test that starts one is asserting that nothing signalled it, which is only meaningful
+    because the argv is a spelling `emulator.sh` really scans for — otherwise the fixture
+    would pass by never being visible to the scan.
+    """
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            f'import os; os.execv("/bin/sleep", ["emulator @{avd} -no-snapshot-load", "120"])',
         ]
     )
     time.sleep(0.3)  # let the exec land, so the argv is already the emulator's spelling
@@ -335,18 +375,22 @@ def test_emulator_stop_records_the_lifecycle_events(tmp_path: Path):
         (runtime_root / ".boss_agent" / "emulator.pid").write_text(
             str(process.pid), encoding="utf-8"
         )
-        result = subprocess.run(
-            [_bash(), "emulator.sh", "--avd", PROBE_AVD, "stop"],
-            cwd=str(runtime_root),
-            env=emulator_environment(sdk),
-            capture_output=True,
-            text=True,
-            timeout=STOP_BUDGET_SEC,
-        )
+        with _fake_bridge_process(runtime_root) as bridge:
+            result = subprocess.run(
+                [_bash(), "emulator.sh", "--avd", PROBE_AVD, "stop"],
+                cwd=str(runtime_root),
+                env=emulator_environment(sdk),
+                capture_output=True,
+                text=True,
+                timeout=STOP_BUDGET_SEC,
+            )
+            assert bridge.poll() is not None, "the Remote ADB Bridge survived the stop"
         assert result.returncode == 0, f"{result.stdout}\n{result.stderr}"
-        assert process.poll() is not None, "the emulator process survived the sweep"
-        assert "emu kill" in result.stdout, (
-            "the Virtual Device Session's own stop request was skipped"
+        assert process.poll() is None, (
+            "the AVD process was signalled; no command in this runner stops it"
+        )
+        assert "emu kill" not in result.stdout, (
+            f"`stop` reached for the emulator console:\n{result.stdout}"
         )
     finally:
         if process.poll() is None:
@@ -356,9 +400,11 @@ def test_emulator_stop_records_the_lifecycle_events(tmp_path: Path):
     recorded = _read(_log_of(runtime_root, "emulator.log"))
     assert STOP_REQUESTED in recorded, f"stop left no confirmation in emulator.log:\n{recorded}"
     assert STOP_COMPLETED in recorded, f"stop left no completion event:\n{recorded}"
-    # The AVD is stopped through `adb emu kill`, not by signalling a runner-owned PID, so
-    # the recorded handle is the transport the kill went to — never an invented PID.
-    assert "emulator-5554" in recorded, f"the stop was not attributed to the device:\n{recorded}"
+    # What `stop` actually releases is the Remote ADB Bridge, and the recorded handle is the
+    # process it signalled — never an invented PID, and never the AVD.
+    assert "emulator-5554" not in recorded, (
+        f"the stop was attributed to the AVD, which nothing here stops:\n{recorded}"
+    )
 
 
 def test_emulator_stop_records_nothing_when_no_device_is_running(tmp_path: Path):
@@ -565,6 +611,8 @@ def test_emulator_restart_records_the_stop_and_the_restart(tmp_path: Path):
     sdk = _fake_sdk(tmp_path, _FAKE_ADB.format(avd=PROBE_AVD))
     process = _fake_emulator_process()
     (runtime_root / ".boss_agent" / "emulator.pid").write_text(str(process.pid), encoding="utf-8")
+    _BRIDGE_RESTART_CTX = _fake_bridge_process(runtime_root)
+    bridge = _BRIDGE_RESTART_CTX.__enter__()
     runner = subprocess.Popen(
         [_bash(), "emulator.sh", "--avd", PROBE_AVD, "restart", "--daemon"],
         cwd=str(runtime_root),
@@ -577,9 +625,11 @@ def test_emulator_restart_records_the_stop_and_the_restart(tmp_path: Path):
     try:
         with contextlib.suppress(subprocess.TimeoutExpired):
             runner.wait(timeout=BOOT_WAIT_CEILING_SEC)
-        assert process.poll() is not None, "the emulator process survived restart"
+        assert process.poll() is None, "the AVD process was signalled; `restart` must not stop it"
+        assert bridge.poll() is not None, "the Remote ADB Bridge survived the restart"
     finally:
         _kill_process_group(runner)
+        _BRIDGE_RESTART_CTX.__exit__(None, None, None)
         if process.poll() is None:
             process.kill()
             process.wait(timeout=5)

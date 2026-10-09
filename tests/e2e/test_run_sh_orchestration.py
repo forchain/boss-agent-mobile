@@ -304,18 +304,27 @@ def test_infra_restart_reuses_an_online_avd(orchestrator_runtime: Path):
     assert "Reusing" in res.stdout, res.stdout
 
 
-def test_infra_restart_cold_restarts_when_no_avd_is_online(orchestrator_runtime: Path):
-    """With no usable AVD, restart falls back to the full stop/start cycle."""
+def test_infra_restart_starts_the_avd_when_none_is_online(orchestrator_runtime: Path):
+    """With no usable AVD, restart brings the services up and lets `start` boot a device.
+
+    The orchestrator no longer issues a stop of its own: nothing here can stop an AVD, so
+    there is nothing for it to escalate to. The verdict is still asked for, because "is there
+    a device to keep" is the only decision this path has to make.
+    """
     calls_log = orchestrator_runtime / "calls.log"
 
     res = _run(orchestrator_runtime, "infra", "restart")
 
     assert res.returncode == 0
     content = calls_log.read_text(encoding="utf-8")
-    assert "emulator.sh status" in content
-    assert "emulator.sh stop" in content, "an absent AVD still has to be stopped cleanly"
+    assert "emulator.sh status" in content, (
+        f"the reuse decision needs the runner's own verdict:\n{content}"
+    )
+    assert "emulator.sh stop" not in content, (
+        f"`infra restart` must not stop anything itself; no AVD can be stopped by a script:\n{content}"
+    )
     assert "emulator.sh start --daemon" in content
-    assert "cold restart" in res.stdout.lower(), res.stdout
+    assert "--force" not in content, f"nothing is forwarded any more:\n{content}"
 
 
 def test_infra_restart_stops_the_avd_when_it_is_still_booting(orchestrator_runtime: Path):
@@ -332,25 +341,29 @@ def test_infra_restart_stops_the_avd_when_it_is_still_booting(orchestrator_runti
 
     assert res.returncode == 0
     content = calls_log.read_text(encoding="utf-8")
-    assert "emulator.sh stop" in content, "a booting AVD must still be stopped rather than reused"
+    # A booting device is not reused, and it is not stopped either — no script stops an AVD.
+    # `emulator.sh restart` is what refuses to boot a second emulator beside it, so the
+    # orchestrator's job is only to not paper over the verdict.
     assert "emulator.sh start --daemon" in content
-    assert "cold restart" in res.stdout.lower(), res.stdout
+    assert "emulator.sh stop" not in content, (
+        f"`infra restart` must not stop the AVD's process:\n{content}"
+    )
     # The verdict is not swallowed: an operator has to be able to tell "still booting" from
     # "no device at all" from "adb is broken".
     assert "BOOTING" in res.stdout, res.stdout
 
 
 def test_infra_restart_reports_why_the_avd_could_not_be_reused(orchestrator_runtime: Path):
-    """The cold-restart path prints the status verdict, not just its own conclusion."""
+    """The non-reuse path prints the status verdict, not just its own conclusion."""
     calls_log = orchestrator_runtime / "calls.log"
 
     res = _run(orchestrator_runtime, "infra", "restart")
 
     assert res.returncode == 0
     assert "NOT RUNNING" in res.stdout, (
-        f"the cold-restart path discarded the reason it could not reuse the AVD:\n{res.stdout}"
+        f"the non-reuse path discarded the reason it could not reuse the AVD:\n{res.stdout}"
     )
-    assert "emulator.sh stop" in calls_log.read_text(encoding="utf-8")
+    assert "emulator.sh start --daemon" in calls_log.read_text(encoding="utf-8")
 
 
 def test_infra_start_never_waits_on_the_avd_log_stream(orchestrator_runtime: Path):
@@ -386,9 +399,12 @@ def test_all_restart_reuses_an_online_avd(orchestrator_runtime: Path):
 
 
 def test_infra_stop_still_stops_the_avd(orchestrator_runtime: Path):
-    """An explicit `stop` is a user request and must keep tearing the AVD down.
+    """`infra stop` stops the AVD's services, and the AVD itself keeps running.
 
-    Reuse belongs to restart only: `stop` exists precisely to release the device session.
+    The AVD is machine-wide infrastructure and a cold boot costs 30-60s, so a routine
+    shutdown of the services must not charge that. There is no flag that escalates it
+    further, so the assertion is a single one: the orchestrator stops the services and
+    forwards nothing that could stop the device.
     """
     (orchestrator_runtime / "avd_online").touch()
     calls_log = orchestrator_runtime / "calls.log"
@@ -397,8 +413,28 @@ def test_infra_stop_still_stops_the_avd(orchestrator_runtime: Path):
 
     assert res.returncode == 0
     content = calls_log.read_text(encoding="utf-8")
-    assert "emulator.sh stop" in content, "`infra stop` must always stop the AVD"
+    assert "emulator.sh stop" in content, "`infra stop` must still stop the AVD's services"
+    assert "--force" not in content, (
+        f"`infra stop` must not forward anything that could stop the AVD process:\n{content}"
+    )
     assert "emulator.sh start" not in content
+
+
+def test_infra_stop_tells_the_operator_how_to_close_the_avd(orchestrator_runtime: Path):
+    """The AVD outliving `infra stop` has to be stated, or it reads as a failed teardown.
+
+    Nothing in the command set closes the AVD any more, so an operator who runs `infra stop`
+    and finds the device still up has to be told that this is the contract rather than a
+    failure — otherwise the first thing they reach for is the emulator's own window.
+    """
+    (orchestrator_runtime / "avd_online").touch()
+
+    res = _run(orchestrator_runtime, "infra", "stop")
+
+    assert res.returncode == 0
+    assert "still running" in res.stdout.lower(), (
+        f"`infra stop` did not say the dedicated AVD is still running:\n{res.stdout}"
+    )
 
 
 def test_run_sh_status_dashboard(orchestrator_runtime: Path):
