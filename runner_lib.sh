@@ -167,10 +167,19 @@ runner_pidfile_clear() {
 # SIGKILL as a last resort.
 #
 # Prints the escalation it took; returns 0 when the process is gone.
+#
+# The return contract is deliberately "gone", not "cooperative": a process that had to be
+# killed *is* gone, and reporting that as a stop failure would abort every runner that
+# runs under `set -e` at the worst possible moment. The escalation is therefore reported
+# on a second channel instead — the same line goes to stdout always, and into `LOG_FILE`
+# when the caller names the service's log, so "stopped cooperatively" and "had to be
+# SIGKILLed" are distinguishable in the log the E2E Pre-Test Teardown Gate greps, not just
+# in the operator's terminal.
 runner_graceful_stop() {
     local PID="${1:-}"
     local TIMEOUT_SEC="${2:-10}"
     local LABEL="${3:-process}"
+    local LOG_FILE="${4:-}"
 
     if ! runner_process_alive "${PID}"; then
         return 0
@@ -181,7 +190,11 @@ runner_graceful_stop() {
         return 0
     fi
 
-    echo "⚠️ ${LABEL} did not shut down gracefully within ${TIMEOUT_SEC}s; sending SIGKILL to PID ${PID}."
+    local ESCALATION="did not shut down gracefully within ${TIMEOUT_SEC}s; sending SIGKILL to PID ${PID}."
+    echo "⚠️ ${LABEL} ${ESCALATION}"
+    if [[ -n "${LOG_FILE}" ]]; then
+        runner_log_event "${LOG_FILE}" "⚠️ [${LABEL}] Graceful shutdown timed out: ${ESCALATION}"
+    fi
     kill -9 "${PID}" 2>/dev/null || true
     runner_wait_until 2 runner_process_gone "${PID}" || true
     return 0
@@ -217,23 +230,249 @@ runner_log_event() {
     printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "${MESSAGE}" >> "${LOG_FILE}"
 }
 
+# --------------------------------------------------------------------------- #
+# Attached log streams
+# --------------------------------------------------------------------------- #
+# The Graceful Shutdown Protocol tells a supervisor how to *stop* a service. This section
+# is the other half: how a supervisor watching a service learns that something else already
+# stopped it.
+#
+# `tail -f` alone cannot do that. It follows a *file*, and a service stopped from another
+# terminal neither truncates, rotates, nor removes its log — so an attached terminal kept a
+# live cursor on an inert file and the operator could not tell a busy Automation Worker from
+# one killed thirty seconds ago. The watch below pairs the stream with a liveness check on
+# the service's own PID, which is the only party that actually knows.
+
+#: How often the watch re-asks whether the service is still there.
+#:
+#: Deliberately a poll rather than an event: `tail --pid` is GNU-only and absent from the
+#: BSD `tail` this repo runs on (and CI runs `ubuntu-latest` while development is macOS),
+#: and bash 3.2 has no `wait -n` to await either the stream or the service. A bounded
+#: polling loop over the primitives above is the one shape that works on both.
+RUNNER_WATCH_POLL_SEC="${RUNNER_WATCH_POLL_SEC:-0.2}"
+
+#: The `tail` child currently following a service log, if any.
+#:
+#: A global rather than a local because the INT/TERM traps have to reach it: bash does not
+#: reap background children when a script exits, so a detached watcher would otherwise leave
+#: a `tail -f` behind holding the terminal's stdout open.
+RUNNER_WATCH_TAIL_PID=""
+
+#: The wording an attached log stream announces when the service it follows is gone.
+#:
+#: Owned here for the same reason the lifecycle events are: all five Dedicated Runner
+#: Scripts follow their own service through this watch, and "which service stopped" is a
+#: contract with the operator that must not drift between copies. Four reach it through
+#: `runner_attached_logs` — `appium.sh`, `dashboard.sh`, `pocketbase.sh` and `worker.sh` —
+#: and `emulator.sh` calls `runner_watch_log_stream` from its own `attach_logs`, because a
+#: Virtual Device Session is followed by ADB serial rather than by an attach banner. The PID
+#: is substituted by the seam below.
+RUNNER_ATTACHED_STOP_EVENT="守护进程 (PID: {pid}) 已停止"
+
+#: ... and the wording for the one case that is provably not a plain stop.
+#:
+#: A log file cannot say whether its writer died or was replaced, so the watcher reaches for
+#: the one piece of evidence that can: the service's own pidfile naming a *different* live
+#: process. When it does, the operator's next move differs — after a stop they start the
+#: service, after a restart they decide whether to reattach — and silently staying on the
+#: same file would leave them attached to a process they can no longer Ctrl+C, believing
+#: they are watching the current one. Ticket #425 asks for exactly this.
+RUNNER_ATTACHED_RESTART_EVENT="守护进程 (PID: {pid}) 已停止并重启 (新 PID: {new_pid})"
+
+# Whether a PID string is one this watcher could actually observe.
+#
+# `runner_process_alive` requires a number, so anything else — the empty string a runner
+# passes when it resolved nothing, or the literal `unknown` that `appium.sh`, `pocketbase.sh`
+# and `dashboard.sh` substitute for it — makes `ps -p` fail, which `runner_process_alive`
+# reports as GONE. A watcher asking "is this gone?" about `unknown` would announce the stop
+# of a service it has never seen run, on the very route a runner takes when it can see its
+# service is up but could not resolve the PID owning it.
+#
+# An unwatchable PID is therefore *no information at all*, never a death: the watch degrades
+# to the plain `tail -f` it replaced and ends only with its own stream. Invariant for a
+# function this cheap to call: the only acceptable answer is yes or no, and anything the
+# kernel cannot be asked about is a no.
+runner_pid_watchable() {
+    local PID="${1:-}"
+    [[ -n "${PID}" ]] || return 1
+    [[ "${PID}" != *[!0-9]* ]] || return 1
+    return 0
+}
+
+# `runner_log_attached_stop LABEL PID`
+#
+# Printed to the operator's terminal, not to the service's log: the service is already gone,
+# and whoever stopped it has already recorded the stop in that log via
+# `runner_log_stop_complete`. This line exists to answer the question the log cannot —
+# *why did my terminal just go quiet?* — at the moment the stream ends.
+runner_log_attached_stop() {
+    local LABEL="${1:-Service}"
+    local PID="${2:-}"
+    echo "🛑 [${LABEL}] ${RUNNER_ATTACHED_STOP_EVENT//\{pid\}/$PID}"
+}
+
+# `runner_log_attached_restart LABEL PID NEW_PID`
+#
+# The stop notice's sibling, for the case the watcher can substantiate: the PID it followed
+# is gone, and the service's pidfile now names a different live process. Same channel as
+# `runner_log_attached_stop` — the terminal, because whoever performed the restart is the
+# one writing the log.
+runner_log_attached_restart() {
+    local LABEL="${1:-Service}"
+    local PID="${2:-}"
+    local NEW_PID="${3:-}"
+    # `{new_pid}` is substituted first on purpose: it contains the letters `pid}`, but not
+    # the placeholder `{pid}`, so the order is safe either way — and doing it in two steps
+    # keeps this readable as bash 3.2, where the chaining form is easy to get wrong.
+    local MESSAGE="${RUNNER_ATTACHED_RESTART_EVENT//\{new_pid\}/$NEW_PID}"
+    echo "🛑 [${LABEL}] ${MESSAGE//\{pid\}/$PID}"
+}
+
+# The live PID `PID_FILE` names now, when it is not the PID this watch followed.
+#
+# Echoes the replacement PID, or nothing when the evidence does not support a restart: no
+# pidfile, an unreadable one, one still naming the dead process, or one naming something
+# that is not running. That last one matters most — a pidfile naming a *live* process other
+# than the watched one is the only shape a restart from another terminal leaves behind, and
+# claiming a restart from anything weaker would be exactly the dishonesty this notice
+# exists to avoid. Always returns 0: the answer is the output, not the status.
+runner_restart_replacement_pid() {
+    local PID="${1:-}"
+    local PID_FILE="${2:-}"
+    if [[ -n "${PID_FILE}" && -n "${PID}" ]]; then
+        local NEW_PID
+        NEW_PID="$(runner_pidfile_read "${PID_FILE}")"
+        if [[ "${NEW_PID}" != "${PID}" ]] \
+            && runner_pid_watchable "${NEW_PID}" \
+            && runner_process_alive "${NEW_PID}"; then
+            echo "${NEW_PID}"
+        fi
+    fi
+    return 0
+}
+
+# Stop following a log stream — and only that.
+#
+# Deliberately narrower than `runner_graceful_stop`: a watcher told to stop watching has no
+# business signalling the service it was watching. Detaching is not stopping, and the
+# distinction is load-bearing: the operator detaches with Ctrl+C precisely when they intend
+# to go on using the running daemon. Only this watcher's own `tail` is signalled here.
+runner_watch_detach() {
+    local TAIL_PID="${RUNNER_WATCH_TAIL_PID:-}"
+    RUNNER_WATCH_TAIL_PID=""
+    [[ -n "${TAIL_PID}" ]] || return 0
+    kill "${TAIL_PID}" 2>/dev/null || true
+    wait "${TAIL_PID}" 2>/dev/null || true
+    return 0
+}
+
+# Follow LOG_FILE until a watched service is gone, then announce the stop and return.
+#
+# `runner_watch_log_stream PID LOG_FILE LABEL [INITIAL_LINES] [PID_FILE] [SECOND_PID] [SECOND_LABEL]`
+#
+# The `tail` runs in the background as a child of this shell and is polled alongside the
+# service:
+#
+#   * the service disappearing ends the watch — that is the whole point of it;
+#   * the `tail` disappearing ends the watch too, so a stream that dies on its own (log
+#     rotated away, `tail` killed by something else) cannot leave the loop spinning
+#     forever on a child that will never produce another line;
+#   * Ctrl+C ends the watch through `runner_watch_detach`, which signals the `tail` and
+#     nothing else.
+#
+# `PID_FILE` is what turns a plain stop into a stop-and-restart: without it the watcher has
+# no evidence of a replacement and says only what it saw. With it, a pidfile naming a
+# different live process is announced as the restart it is.
+#
+# `SECOND_PID`/`SECOND_LABEL` watch a *second* process under its own name, for the runners
+# whose service is not the only thing their stream depends on. `emulator.sh` is the case
+# that makes it necessary: the Remote ADB Bridge is the process a shutdown signal is
+# actually sent to, while the AVD is the process whose log is being displayed — and since
+# no shutdown signal stops the AVD, watching only one of the two leaves a terminal that
+# never notices a stop it was attached to see. Either handle ending the watch is correct,
+# and each is announced under the name of the process that actually stopped.
+#
+# The primary handle is checked first, so when both are gone in the same poll the service
+# proper is the one named — the AVD outliving its bridge is the ordinary case, and a notice
+# about the wrong one of the two would misreport it. The secondary is never treated as a
+# restart: only the primary has a pidfile to supply that evidence, and claiming a restart
+# from the *other* service's pidfile would be exactly the dishonesty
+# `runner_restart_replacement_pid` exists to prevent.
+#
+# Backgrounding the `tail` is not cosmetic. Bash does not run a trap handler while a
+# foreground child is still running, so a watcher written as a bare `tail -f` cannot be
+# detached from at all: the Ctrl+C is recorded and then ignored until the stream ends by
+# itself, which for a log stream is never.
+runner_watch_log_stream() {
+    local PID="${1:-}"
+    local LOG_FILE="${2:-}"
+    local LABEL="${3:-service}"
+    local INITIAL_LINES="${4:-30}"
+    local PID_FILE="${5:-}"
+    local SECOND_PID="${6:-}"
+    local SECOND_LABEL="${7:-service}"
+    local NEW_PID=""
+
+    touch "${LOG_FILE}"
+    tail -n "${INITIAL_LINES}" -f "${LOG_FILE}" &
+    RUNNER_WATCH_TAIL_PID=$!
+
+    # Decided once, before the loop, so the watch's meaning cannot shift mid-stream: a PID
+    # that cannot be watched is not a service that has stopped. See `runner_pid_watchable`.
+    local WATCHABLE=0
+    if runner_pid_watchable "${PID}"; then
+        WATCHABLE=1
+    fi
+    local SECOND_WATCHABLE=0
+    if runner_pid_watchable "${SECOND_PID}"; then
+        SECOND_WATCHABLE=1
+    fi
+
+    while true; do
+        if [[ ${WATCHABLE} -eq 1 ]] && runner_process_gone "${PID}"; then
+            runner_watch_detach
+            NEW_PID="$(runner_restart_replacement_pid "${PID}" "${PID_FILE}")" || true
+            if [[ -n "${NEW_PID}" ]]; then
+                runner_log_attached_restart "${LABEL}" "${PID}" "${NEW_PID}"
+            else
+                runner_log_attached_stop "${LABEL}" "${PID}"
+            fi
+            return 0
+        fi
+        if [[ ${SECOND_WATCHABLE} -eq 1 ]] && runner_process_gone "${SECOND_PID}"; then
+            runner_watch_detach
+            runner_log_attached_stop "${SECOND_LABEL}" "${SECOND_PID}"
+            return 0
+        fi
+        if runner_process_gone "${RUNNER_WATCH_TAIL_PID}"; then
+            # The stream ended on its own. `runner_process_alive` already reads a defunct
+            # PID as gone, so an unreaped `tail` ends this branch instead of hanging it.
+            return 0
+        fi
+        sleep "${RUNNER_WATCH_POLL_SEC}"
+    done
+}
+
 # Print the tail of a service log and follow it, without killing the daemon on
-# detach. `runner_attached_logs PID LOG_FILE LABEL ENDPOINT`.
+# detach. `runner_attached_logs PID LOG_FILE LABEL [ENDPOINT] [PID_FILE]`.
+#
+# Returns once the watched service is gone, so a daemon stopped from another terminal
+# unblocks the terminal instead of leaving it on a live cursor over an inert file.
 runner_attached_logs() {
     local PID="${1:-}"
     local LOG_FILE="${2:-}"
     local LABEL="${3:-service}"
     local ENDPOINT="${4:-}"
+    local PID_FILE="${5:-}"
 
     echo "ℹ️ ${LABEL} is already running (PID: ${PID})${ENDPOINT:+ at ${ENDPOINT}}"
     echo "👀 Attaching to live log stream (${LOG_FILE})... (Press Ctrl+C to detach)"
     echo "----------------------------------------------------------------------"
 
     # Detaching must not signal the background service.
-    trap 'echo -e "\n👋 Detached from '"${LABEL}"' logs ('"${LABEL}"' is still running in background)."; exit 0' INT TERM
+    trap 'runner_watch_detach; echo -e "\n👋 Detached from '"${LABEL}"' logs ('"${LABEL}"' is still running in background)."; exit 0' INT TERM
 
-    touch "${LOG_FILE}"
-    tail -n 30 -f "${LOG_FILE}"
+    runner_watch_log_stream "${PID}" "${LOG_FILE}" "${LABEL}" 30 "${PID_FILE}"
 }
 
 # --------------------------------------------------------------------------- #
@@ -299,6 +538,75 @@ runner_ack_shutdown() {
     local PID="${3:-}"
     local EXTRA="${4:-}"
     runner_log_event "${LOG_FILE}" "🛑 [${LABEL}] ${RUNNER_WEB_SHUTDOWN_ACK}, shutting down ${EXTRA}... (PID: ${PID})"
+}
+
+# --------------------------------------------------------------------------- #
+# Lifecycle-event contract
+# --------------------------------------------------------------------------- #
+# The Graceful Shutdown Protocol has one more obligation than the acknowledgment above:
+# a service confirms *completion* in its own log stream, so a supervisor can tell "accepted
+# the signal" apart from "actually stopped" without guessing. `dashboard.sh` honoured that
+# end to end; the other four Dedicated Runner Scripts narrated their stop to the operator's
+# terminal and left their own log files silent — and the log, not the terminal, is what the
+# E2E Pre-Test Teardown Gate reads.
+#
+# So the wording lives here, once, in the same shape as the shutdown acknowledgment: the
+# runners reference these four functions and never spell an event of their own.
+#
+# Every function here is a pure writer: no process is touched and no decision is made, so a
+# runner stays in control of *when* a service really was found. That is deliberate. A stop
+# that finds nothing running must write nothing at all — an idle stop is a cheap no-op, and
+# a runner that logged unconditionally would create a service's log file on every idle
+# `./run.sh stop` and fill it with phantom stops.
+
+#: A runner records this once it has found a live service and is about to signal it.
+RUNNER_LIFECYCLE_STOP_EVENT="Stop requested"
+
+#: ... and this once the service is confirmed gone.
+RUNNER_LIFECYCLE_STOP_COMPLETE="Stop completed"
+
+#: ... and these at the top of a restart, and once the replacement service is up.
+RUNNER_LIFECYCLE_RESTART_EVENT="Restart requested"
+RUNNER_LIFECYCLE_RESTART_COMPLETE="Restart completed"
+
+# The stop-confirmation. `HANDLE` is whatever identifies the service to this runner — a PID
+# for the process-backed runners, an ADB transport for the Virtual Device Session, which has
+# no runner-owned process to signal. It is deliberately not called a PID: a runner must not
+# invent one it does not have.
+#
+# `runner_log_stop_request LOG_FILE LABEL HANDLE DETAIL`
+runner_log_stop_request() {
+    local LOG_FILE="${1:-}"
+    local LABEL="${2:-Service}"
+    local HANDLE="${3:-}"
+    local DETAIL="${4:-}"
+    runner_log_event "${LOG_FILE}" "🛑 [${LABEL}] ${RUNNER_LIFECYCLE_STOP_EVENT}: ${DETAIL} (handle: ${HANDLE})"
+}
+
+# The completion event, logged only once the service is actually gone.
+#
+# `runner_log_stop_complete LOG_FILE LABEL DETAIL`
+runner_log_stop_complete() {
+    local LOG_FILE="${1:-}"
+    local LABEL="${2:-Service}"
+    local DETAIL="${3:-}"
+    runner_log_event "${LOG_FILE}" "✅ [${LABEL}] ${RUNNER_LIFECYCLE_STOP_COMPLETE}: ${DETAIL}"
+}
+
+# `runner_log_restart_request LOG_FILE LABEL DETAIL`
+runner_log_restart_request() {
+    local LOG_FILE="${1:-}"
+    local LABEL="${2:-Service}"
+    local DETAIL="${3:-}"
+    runner_log_event "${LOG_FILE}" "🔄 [${LABEL}] ${RUNNER_LIFECYCLE_RESTART_EVENT}: ${DETAIL}"
+}
+
+# `runner_log_restart_complete LOG_FILE LABEL DETAIL`
+runner_log_restart_complete() {
+    local LOG_FILE="${1:-}"
+    local LABEL="${2:-Service}"
+    local DETAIL="${3:-}"
+    runner_log_event "${LOG_FILE}" "✅ [${LABEL}] ${RUNNER_LIFECYCLE_RESTART_COMPLETE}: ${DETAIL}"
 }
 
 # --------------------------------------------------------------------------- #

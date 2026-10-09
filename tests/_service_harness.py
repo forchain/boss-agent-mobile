@@ -13,6 +13,7 @@ A suite that starts a *process group* (npm plus the server it spawns, say) reaps
 itself: the `spawn` fixture ends the one process it started, which cannot reach children.
 """
 
+import contextlib
 import os
 import socket
 import subprocess
@@ -30,6 +31,31 @@ def free_port() -> int:
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         return int(sock.getsockname()[1])
+
+
+@contextlib.contextmanager
+def held_free_port() -> Iterator[int]:
+    """Reserve a port by *keeping* it bound for the whole block, then release it.
+
+    `free_port()` releases the port it just reserved, which leaves the caller hoping the
+    ephemeral number stays unclaimed for the rest of the test. It usually does — until a
+    concurrent process wins the port in that gap, at which point a runner resolving "who
+    owns my port" adopts the stranger, logs a perfectly correct stop, and a test asserting
+    an *idle* stop finds a log where it expected none. The runner was right; the
+    precondition was never pinned.
+
+    Holding the bind closes the gap instead of narrowing it: the kernel will not hand this
+    port to anyone else while this socket owns it, and because the socket never calls
+    `listen`, a LISTEN-only probe still finds nothing on it — which is exactly the state an
+    idle stop is supposed to see. The bind is released when the block ends, after which the
+    port is as free as `free_port()` ever promised it to be.
+    """
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    try:
+        yield int(sock.getsockname()[1])
+    finally:
+        sock.close()
 
 
 def is_port_free(port: int) -> bool:

@@ -115,7 +115,8 @@ cmd_stop() {
     PID="$(runner_resolve_pid "${PID_FILE}" "${APPIUM_PORT}")"
 
     if [[ -n "${PID}" ]]; then
-        runner_graceful_stop "${PID}" "${APPIUM_STOP_TIMEOUT_SEC}" "Appium"
+        runner_log_stop_request "${LOG_FILE}" "Appium" "${PID}" "Appium automation server"
+        runner_graceful_stop "${PID}" "${APPIUM_STOP_TIMEOUT_SEC}" "Appium" "${LOG_FILE}"
         STOPPED=1
     fi
     runner_pidfile_clear "${PID_FILE}"
@@ -126,7 +127,7 @@ cmd_stop() {
     PORT_PID="$(runner_port_listener_pid "${APPIUM_PORT}")"
     if [[ -n "${PORT_PID}" ]]; then
         echo "⚠️ Port ${APPIUM_PORT} still held by PID ${PORT_PID}; reclaiming."
-        runner_graceful_stop "${PORT_PID}" "${APPIUM_STOP_TIMEOUT_SEC}" "Appium listener"
+        runner_graceful_stop "${PORT_PID}" "${APPIUM_STOP_TIMEOUT_SEC}" "Appium listener" "${LOG_FILE}"
         STOPPED=1
     fi
 
@@ -136,11 +137,12 @@ cmd_stop() {
     if [[ -n "${LINGER_PIDS}" ]]; then
         local LINGER_PID
         for LINGER_PID in ${LINGER_PIDS}; do
-            runner_graceful_stop "${LINGER_PID}" "${APPIUM_STOP_TIMEOUT_SEC}" "Appium"
+            runner_graceful_stop "${LINGER_PID}" "${APPIUM_STOP_TIMEOUT_SEC}" "Appium" "${LOG_FILE}"
         done
     fi
 
     if [[ ${STOPPED} -eq 1 ]]; then
+        runner_log_stop_complete "${LOG_FILE}" "Appium" "Appium automation server stopped"
         echo "✅ Appium server stopped successfully."
     else
         echo "ℹ️ No running Appium process found."
@@ -187,7 +189,7 @@ cmd_start() {
             echo "ℹ️ Appium is already running in background (PID: ${RUNNING_PID:-unknown}) at http://${APPIUM_HOST}:${APPIUM_PORT}"
             exit 0
         else
-            runner_attached_logs "${RUNNING_PID:-unknown}" "${LOG_FILE}" "Appium server" "http://${APPIUM_HOST}:${APPIUM_PORT}"
+            runner_attached_logs "${RUNNING_PID:-unknown}" "${LOG_FILE}" "Appium server" "http://${APPIUM_HOST}:${APPIUM_PORT}" "${PID_FILE}"
             exit 0
         fi
     fi
@@ -221,16 +223,39 @@ cmd_start() {
         local PID=$!
         echo "${PID}" > "${PID_FILE}"
 
-        trap 'echo -e "\n🛑 Stopping Appium (PID: '"${PID}"')..."; kill '"${PID}"' 2>/dev/null || true; rm -f '"${PID_FILE}"'; exit 0' INT TERM
+        trap 'runner_watch_detach; echo -e "\n🛑 Stopping Appium (PID: '"${PID}"')..."; kill '"${PID}"' 2>/dev/null || true; rm -f '"${PID_FILE}"'; exit 0' INT TERM
 
-        tail -n 0 -f "${LOG_FILE}"
+        # The same liveness watch the attach path uses (ticket #425): a bare `tail -n 0 -f`
+        # left the terminal on a live cursor over an inert file after this server was killed
+        # from another terminal. Ctrl+C legitimately *does* stop the server here — this
+        # process launched it and owns it — so the handler above still signals it; the watch
+        # only decides when the stream ends on its own.
+        runner_watch_log_stream "${PID}" "${LOG_FILE}" "Appium server" 0 "${PID_FILE}"
     fi
 }
 
 cmd_restart() {
+    echo "🔄 Restarting Appium server..."
+    runner_log_restart_request "${LOG_FILE}" "Appium" "Appium automation server"
     cmd_stop
     sleep 0.5
-    cmd_start "$@"
+    # In a subshell: `cmd_start` exits from inside its own health check when the server is
+    # already up, and an `exit` there would otherwise take this confirmation down with it.
+    #
+    # The status is captured rather than propagated, so a start that failed cannot be
+    # recorded below as a server that came back up. Not written as `( cmd_start ) || return 1`:
+    # a subshell used as an operand of `||` has errexit suspended *inside* it, which would
+    # let a failed pre-flight fall through to the foreground `tail -f` and hang forever.
+    # Suspension is therefore lifted only for the outer shell, and restored for the subshell
+    # where `cmd_start` depends on it to abort.
+    set +e
+    ( set -e; cmd_start "$@" )
+    local START_STATUS=$?
+    set -e
+    if [[ ${START_STATUS} -ne 0 ]]; then
+        return 1
+    fi
+    runner_log_restart_complete "${LOG_FILE}" "Appium" "Appium automation server back online"
 }
 
 ACTION="${1:-start}"

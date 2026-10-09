@@ -170,22 +170,26 @@ def test_scan_continues_past_several_unresponsive_devices(runner: RunnerScriptHa
     _assert_returned_within_budget(result)
 
 
-def test_stop_does_not_claim_success_when_the_kill_goes_unanswered(runner: RunnerScriptHarness):
-    """`emu kill` is bounded too, and a bounded-away kill must not report a clean stop."""
-    # `cmd_stop` falls back to `pkill -f "emulator.*@<avd>"`, so this test must not name a
-    # real AVD: a live emulator for the dedicated target must never be signalled by the suite.
+def test_stop_is_bounded_even_when_the_device_never_answers(runner: RunnerScriptHarness):
+    """A wedged device must not make `stop` hang, even though it signals no device at all.
+
+    This used to test the `emu kill` fallback: a kill the device never acknowledged, and the
+    process sweep behind it. No command in this runner kills the AVD any more, so the wedge
+    is now a question about `stop` alone — it still resolves a serial, still queries it, and
+    must still return inside the bound rather than sitting on a query that never answers.
+    """
     runner.script(
         devices=[("emulator-5554", "device")],
         avd_name=HARNESS_ONLY_AVD,
-        hangs=["emulator-5554.emu.kill"],
+        hangs=["emulator-5554.getprop"],
     )
 
     result = runner.run("stop", env={"ANDROID_AVD": HARNESS_ONLY_AVD})
 
     _assert_returned_within_budget(result)
-    assert "did not acknowledge" in result.stdout, result.stdout
-    assert "Stopped emulator processes" in result.stdout, "the fallback cleanup did not run"
-    assert "✅" not in result.stdout, f"stop reported success it never confirmed:\n{result.stdout}"
+    assert "emu kill" not in runner.calls(), (
+        f"`stop` reached for the emulator console again:\n{runner.calls()}"
+    )
 
 
 def test_unresponsive_boot_probe_degrades_to_booting(runner: RunnerScriptHarness):

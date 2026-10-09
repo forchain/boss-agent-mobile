@@ -8,6 +8,21 @@ real runner scripts into a throwaway runtime root and puts a scripted fake `adb`
 so script behaviour (wall-clock bound, exit status, stdout) can be asserted without ever
 touching the shared AVD or the shared `.boss_agent/` runtime directory.
 
+That claim is only true because of `TARGET_AVD` and `REMOTE_ADB_PORT` below, and both are
+load-bearing in a way that is easy to miss. The fake `adb` makes a fake *transport*; it
+cannot make a fake *process*, and a port number is not a sandbox. `emulator.sh` locates its
+AVD with a machine-wide `pgrep -f` over the AVD name and finds its bridge by asking who is
+listening on `REMOTE_ADB_PORT`. Both read the developer's real machine, so the only things
+separating the suite from it are the *name* and the *port* it hands the runner:
+
+* `TARGET_AVD` must be a name no machine can have, or a test that forgets to override it
+  signals the developer's live emulator. This cost a real AVD once.
+* `REMOTE_ADB_PORT` must be a free port, or a test's `stop` resolves the port's real owner
+  and signals the developer's own bridge. This cost a real bridge once.
+
+Neither is caught by the fakes, so both are asserted in the suite rather than trusted:
+`test_the_harness_avd_name_cannot_be_a_real_avd`, and the free-port reservation below.
+
 Two properties of the `adb` fake are load-bearing rather than decorative, so keep them
 faithful:
 
@@ -49,7 +64,17 @@ SIGKILL_GRACE_SEC = 0.5
 # Long enough that a leaked, unkilled query is unmistakable while the suite runs.
 HANG_SECONDS = 600
 
-TARGET_AVD = "boss_avd_arm64"
+#: The AVD name every runner script under test is pointed at.
+#:
+#: This must be a name that cannot exist on a developer's machine, and that is the whole
+#: reason it is not simply the project's real AVD. `emulator.sh` finds its AVD's process with
+#: a machine-wide `pgrep -f` over the AVD name, so a test that inherits this constant points
+#: that scan at whatever the developer actually has running — and on the old value, which was
+#: the real `boss_avd_arm64`, the suite killed the developer's live emulator and left its LAN
+#: bridge transport offline. Tests that spawn their own AVD process pass
+#: `ANDROID_AVD=HARNESS_AVD` explicitly for the same reason; this constant is the belt to
+#: that braces, and `test_the_harness_avd_name_cannot_be_a_real_avd` checks it.
+TARGET_AVD = "boss_avd_e2e_fixture"
 BASH = shutil.which("bash") or "/bin/bash"
 
 # A fixed RFC 1918 address, so every LAN-dependent line of output is deterministic and never

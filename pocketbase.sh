@@ -10,6 +10,7 @@
 #   ./pocketbase.sh start             # Start or attach to PocketBase in foreground
 #   ./pocketbase.sh start --daemon    # Start PocketBase in background
 #   ./pocketbase.sh stop              # Stop running background PocketBase
+#   ./pocketbase.sh restart           # Stop, then start PocketBase
 #   ./pocketbase.sh status            # Check PocketBase health and status
 #   ./pocketbase.sh provision         # Re-apply schema definitions to SQLite DB
 #   ./run.sh pb <cmd>                 # Short orchestrator route for ./pocketbase.sh
@@ -90,7 +91,8 @@ cmd_stop() {
     PID="$(runner_resolve_pid "${PID_FILE}" "${PB_HTTP##*:}")"
 
     if [[ -n "${PID}" ]]; then
-        runner_graceful_stop "${PID}" "${PB_STOP_TIMEOUT_SEC}" "PocketBase"
+        runner_log_stop_request "${LOG_FILE}" "PocketBase" "${PID}" "PocketBase State Stream broker"
+        runner_graceful_stop "${PID}" "${PB_STOP_TIMEOUT_SEC}" "PocketBase" "${LOG_FILE}"
         STOPPED=1
     fi
     runner_pidfile_clear "${PID_FILE}"
@@ -102,7 +104,7 @@ cmd_stop() {
     PORT_PID="$(runner_port_listener_pid "${PORT}")"
     if [[ -n "${PORT_PID}" ]]; then
         echo "⚠️ Port ${PORT} still held by PID ${PORT_PID}; reclaiming."
-        runner_graceful_stop "${PORT_PID}" "${PB_STOP_TIMEOUT_SEC}" "PocketBase listener"
+        runner_graceful_stop "${PORT_PID}" "${PB_STOP_TIMEOUT_SEC}" "PocketBase listener" "${LOG_FILE}"
         STOPPED=1
     fi
 
@@ -112,12 +114,13 @@ cmd_stop() {
     if [[ -n "${LINGER_PIDS}" ]]; then
         local LINGER_PID
         for LINGER_PID in ${LINGER_PIDS}; do
-            runner_graceful_stop "${LINGER_PID}" "${PB_STOP_TIMEOUT_SEC}" "PocketBase"
+            runner_graceful_stop "${LINGER_PID}" "${PB_STOP_TIMEOUT_SEC}" "PocketBase" "${LOG_FILE}"
         done
         STOPPED=1
     fi
 
     if [[ ${STOPPED} -eq 1 ]]; then
+        runner_log_stop_complete "${LOG_FILE}" "PocketBase" "PocketBase State Stream broker stopped"
         echo "✅ PocketBase stopped successfully."
     else
         echo "ℹ️ No running PocketBase process found."
@@ -162,7 +165,7 @@ cmd_start() {
             echo "ℹ️ PocketBase is already running in background (PID: ${RUNNING_PID:-unknown}) at ${HEALTH_URL}"
             exit 0
         else
-            runner_attached_logs "${RUNNING_PID:-unknown}" "${LOG_FILE}" "PocketBase" "http://${PB_HTTP}"
+            runner_attached_logs "${RUNNING_PID:-unknown}" "${LOG_FILE}" "PocketBase" "http://${PB_HTTP}" "${PID_FILE}"
             exit 0
         fi
     fi
@@ -217,10 +220,41 @@ cmd_start() {
         echo "${PID}" > "${PID_FILE}"
 
         # Handle shutdown on Ctrl+C for foreground mode: graceful SIGTERM then wait for process to checkpoint WAL
-        trap 'echo -e "\n🛑 Stopping PocketBase (PID: '"${PID}"')..."; kill '"${PID}"' 2>/dev/null || true; wait '"${PID}"' 2>/dev/null || true; rm -f '"${PID_FILE}"'; exit 0' INT TERM
+        # `runner_watch_detach` first: the watch below forks its own `tail`, and a background job
+        # in a non-interactive shell ignores SIGINT — only an explicit signal takes it down.
+        trap 'runner_watch_detach; echo -e "\n🛑 Stopping PocketBase (PID: '"${PID}"')..."; kill '"${PID}"' 2>/dev/null || true; wait '"${PID}"' 2>/dev/null || true; rm -f '"${PID_FILE}"'; exit 0' INT TERM
 
-        tail -n 0 -f "${LOG_FILE}"
+        # The same liveness watch the attach path uses (ticket #425). A bare `tail -n 0 -f`
+        # follows a *file*, and a broker stopped from another terminal neither truncates,
+        # rotates, nor removes its log — so the terminal kept a live cursor on an inert file
+        # and could not tell a busy State Stream broker from one killed thirty seconds ago.
+        # The pidfile is what lets a restart from another terminal be announced as one.
+        runner_watch_log_stream "${PID}" "${LOG_FILE}" "PocketBase" 0 "${PID_FILE}"
     fi
+}
+
+cmd_restart() {
+    echo "🔄 Restarting local PocketBase instance..."
+    runner_log_restart_request "${LOG_FILE}" "PocketBase" "PocketBase State Stream broker"
+    cmd_stop
+    sleep 0.5
+    # In a subshell: `cmd_start` exits from inside its own health check when the broker is
+    # already up, and an `exit` there would otherwise take this confirmation down with it.
+    #
+    # The status is captured rather than propagated, so a start that failed cannot be
+    # recorded below as a broker that came back up. Not written as `( cmd_start ) || return 1`:
+    # a subshell used as an operand of `||` has errexit suspended *inside* it, which would
+    # let a failed pre-flight fall through to the foreground `tail -f` and hang forever.
+    # Suspension is therefore lifted only for the outer shell, and restored for the subshell
+    # where `cmd_start` depends on it to abort.
+    set +e
+    ( set -e; cmd_start "$@" )
+    local START_STATUS=$?
+    set -e
+    if [[ ${START_STATUS} -ne 0 ]]; then
+        return 1
+    fi
+    runner_log_restart_complete "${LOG_FILE}" "PocketBase" "PocketBase State Stream broker back online"
 }
 
 ACTION="${1:-start}"
@@ -231,6 +265,10 @@ case "${ACTION}" in
         ;;
     stop)
         cmd_stop
+        ;;
+    restart)
+        shift || true
+        cmd_restart "$@"
         ;;
     status)
         cmd_status

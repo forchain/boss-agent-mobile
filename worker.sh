@@ -42,6 +42,15 @@ else
     exit 1
 fi
 
+# The daemon's stdout is a redirected file, and a redirected stdout is block-buffered by
+# default. The Automation Worker logs its shutdown acknowledgment the instant it accepts
+# SIGTERM, and the E2E Pre-Test Teardown Gate reads that exact line back out of worker.log
+# to prove a clean stop — so unbuffered output is the difference between a gate that sees the
+# acknowledgment and one that fails it, or hides a real "exited without logging shutdown
+# feedback" behind a flake. Injected on the launch line rather than exported, so an
+# inherited PYTHONUNBUFFERED=0 in the operator's shell cannot re-buffer it.
+WORKER_DAEMON=(env PYTHONUNBUFFERED=1 "${RUNNER[@]}")
+
 WORKER_PID_FILE=".boss_agent/worker.pid"
 WORKER_LOG_FILE=".boss_agent/worker.log"
 WORKER_STOP_TIMEOUT_SEC="${WORKER_STOP_TIMEOUT_SEC:-10}"
@@ -78,7 +87,7 @@ cmd_attach() {
         echo "   Cannot attach to log stream. Start worker first via: ./worker.sh" >&2
         return 1
     fi
-    runner_attached_logs "${PID}" "${WORKER_LOG_FILE}" "Automation Worker daemon"
+    runner_attached_logs "${PID}" "${WORKER_LOG_FILE}" "Automation Worker daemon" "" "${WORKER_PID_FILE}"
 }
 
 
@@ -105,13 +114,12 @@ cmd_stop() {
     PID="$(get_running_worker_pid)"
 
     if [[ -n "${PID}" ]]; then
-        kill "${PID}" 2>/dev/null || true
+        runner_log_stop_request "${WORKER_LOG_FILE}" "Automation Worker" "${PID}" "Automation Worker daemon"
+        # Children first: the recorded PID is the launcher, and the Automation Worker holding
+        # the Virtual Device Session is its child. Signalling the parent first re-parents the
+        # child to init, where it can no longer be found or stopped at all.
         pkill -P "${PID}" 2>/dev/null || true
-        if ! runner_wait_until "${WORKER_STOP_TIMEOUT_SEC}" runner_process_gone "${PID}"; then
-            echo "⚠️ Graceful shutdown timed out after ${WORKER_STOP_TIMEOUT_SEC}s; sending SIGKILL."
-            kill -9 "${PID}" 2>/dev/null || true
-            runner_wait_until 2 runner_process_gone "${PID}" || true
-        fi
+        runner_graceful_stop "${PID}" "${WORKER_STOP_TIMEOUT_SEC}" "Automation Worker" "${WORKER_LOG_FILE}"
         STOPPED=1
     fi
 
@@ -120,10 +128,7 @@ cmd_stop() {
     RESIDUAL_PIDS="$(pgrep -f "scripts/worker.py" 2>/dev/null || true)"
     if [[ -n "${RESIDUAL_PIDS}" ]]; then
         for r_pid in ${RESIDUAL_PIDS}; do
-            kill "${r_pid}" 2>/dev/null || true
-            if ! runner_wait_until 2 runner_process_gone "${r_pid}"; then
-                kill -9 "${r_pid}" 2>/dev/null || true
-            fi
+            runner_graceful_stop "${r_pid}" 2 "Automation Worker" "${WORKER_LOG_FILE}"
             STOPPED=1
         done
     fi
@@ -131,6 +136,7 @@ cmd_stop() {
     rm -f "${WORKER_PID_FILE}"
 
     if [[ ${STOPPED} -eq 1 ]]; then
+        runner_log_stop_complete "${WORKER_LOG_FILE}" "Automation Worker" "Automation Worker daemon released the Virtual Device Session"
         echo "✅ Automation Worker daemon stopped."
     else
         echo "ℹ️ No running Worker daemon found."
@@ -213,7 +219,7 @@ cmd_start() {
             echo "   Logs: ${WORKER_LOG_FILE}"
             return 0
         else
-            runner_attached_logs "${RUNNING_PID}" "${WORKER_LOG_FILE}" "Automation Worker daemon"
+            runner_attached_logs "${RUNNING_PID}" "${WORKER_LOG_FILE}" "Automation Worker daemon" "" "${WORKER_PID_FILE}"
             return 0
         fi
     fi
@@ -230,9 +236,9 @@ cmd_start() {
 
     if [[ "${IS_DAEMON}" -eq 1 || "${DAEMON:-0}" -eq 1 ]]; then
         if [[ ${#WORKER_ARGS[@]} -gt 0 ]]; then
-            nohup "${RUNNER[@]}" scripts/worker.py "${WORKER_ARGS[@]}" >> "${WORKER_LOG_FILE}" 2>&1 &
+            nohup "${WORKER_DAEMON[@]}" scripts/worker.py "${WORKER_ARGS[@]}" >> "${WORKER_LOG_FILE}" 2>&1 &
         else
-            nohup "${RUNNER[@]}" scripts/worker.py >> "${WORKER_LOG_FILE}" 2>&1 &
+            nohup "${WORKER_DAEMON[@]}" scripts/worker.py >> "${WORKER_LOG_FILE}" 2>&1 &
         fi
         local PID=$!
         echo "${PID}" > "${WORKER_PID_FILE}"
@@ -245,23 +251,32 @@ cmd_start() {
     echo ""
 
     if [[ ${#WORKER_ARGS[@]} -gt 0 ]]; then
-        "${RUNNER[@]}" scripts/worker.py "${WORKER_ARGS[@]}" >> "${WORKER_LOG_FILE}" 2>&1 &
+        "${WORKER_DAEMON[@]}" scripts/worker.py "${WORKER_ARGS[@]}" >> "${WORKER_LOG_FILE}" 2>&1 &
     else
-        "${RUNNER[@]}" scripts/worker.py >> "${WORKER_LOG_FILE}" 2>&1 &
+        "${WORKER_DAEMON[@]}" scripts/worker.py >> "${WORKER_LOG_FILE}" 2>&1 &
     fi
     local PID=$!
     echo "${PID}" > "${WORKER_PID_FILE}"
 
-    trap 'echo -e "\n🛑 Stopping Worker daemon (PID: '"${PID}"')..."; kill '"${PID}"' 2>/dev/null || true; rm -f '"${WORKER_PID_FILE}"'; exit 0' INT TERM
+    trap 'runner_watch_detach; echo -e "\n🛑 Stopping Worker daemon (PID: '"${PID}"')..."; kill '"${PID}"' 2>/dev/null || true; rm -f '"${WORKER_PID_FILE}"'; exit 0' INT TERM
 
-    tail -n 0 -f "${WORKER_LOG_FILE}"
+    # The same liveness watch the attach path uses (ticket #425): a bare `tail -n 0 -f` left
+    # the terminal on a live cursor over an inert file after this daemon was killed from
+    # another terminal. Here Ctrl+C legitimately *does* stop the daemon — this process
+    # launched it and owns it — so the handler above still signals it; the watch only decides
+    # when the stream ends on its own.
+    runner_watch_log_stream "${PID}" "${WORKER_LOG_FILE}" "Automation Worker daemon" 0 "${WORKER_PID_FILE}"
 }
 
 cmd_restart() {
     echo "🔄 Restarting Automation Worker daemon..."
+    runner_log_restart_request "${WORKER_LOG_FILE}" "Automation Worker" "Automation Worker daemon"
     cmd_stop || true
     sleep 0.5
     cmd_start "$@"
+    # Only reached when `cmd_start` returns rather than attaching the live log stream; in
+    # daemon mode that is the point at which the replacement daemon is genuinely up.
+    runner_log_restart_complete "${WORKER_LOG_FILE}" "Automation Worker" "Automation Worker daemon back online"
 }
 
 ACTION="${1:-start}"

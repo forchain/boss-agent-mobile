@@ -116,10 +116,9 @@ cmd_stop() {
 
         # SIGTERM first, the full budget to exit cooperatively (in-flight tasks release
         # their leases), then SIGKILL. The escalation itself is the library's, so every
-        # service escalates identically.
-        if ! runner_graceful_stop "${PID}" "${WEB_STOP_TIMEOUT_SEC}" "Web Dashboard"; then
-            runner_log_event "${LOG_FILE}" "⚠️ [Web] Graceful shutdown timed out after ${WEB_STOP_TIMEOUT_SEC}s; sending SIGKILL to PID ${PID}."
-        fi
+        # service escalates identically — and it is recorded in this service's own log
+        # rather than checked off a return status the library cannot make meaningful.
+        runner_graceful_stop "${PID}" "${WEB_STOP_TIMEOUT_SEC}" "Web Dashboard" "${LOG_FILE}"
         STOPPED=1
     fi
 
@@ -130,7 +129,7 @@ cmd_stop() {
         PORT_PID="$(runner_port_listener_pid "${WEB_PORT}")"
         if [[ -n "${PORT_PID}" ]]; then
             echo "⚠️ Port ${WEB_PORT} still held by PID ${PORT_PID}; reclaiming."
-            runner_graceful_stop "${PORT_PID}" "${WEB_STOP_TIMEOUT_SEC}" "port ${WEB_PORT} listener"
+            runner_graceful_stop "${PORT_PID}" "${WEB_STOP_TIMEOUT_SEC}" "port ${WEB_PORT} listener" "${LOG_FILE}"
         fi
     fi
 
@@ -204,7 +203,7 @@ cmd_start() {
     PORT_PID="$(runner_port_listener_pid "${WEB_PORT}")"
     if [[ -n "${PORT_PID}" ]] && ! runner_process_cwd_alive "${PORT_PID}"; then
         echo "⚠️ Port ${WEB_PORT} is held by stale process PID ${PORT_PID} whose working directory was deleted; reclaiming."
-        runner_graceful_stop "${PORT_PID}" "${WEB_STOP_TIMEOUT_SEC}" "stale web listener"
+        runner_graceful_stop "${PORT_PID}" "${WEB_STOP_TIMEOUT_SEC}" "stale web listener" "${LOG_FILE}"
         rm -f "${PID_FILE}"
     fi
 
@@ -216,7 +215,7 @@ cmd_start() {
             echo "ℹ️ SvelteKit Web Dashboard is already running in background (PID: ${RUNNING_PID:-unknown}) at ${WEB_URL}"
             return 0
         else
-            runner_attached_logs "${RUNNING_PID:-unknown}" "${LOG_FILE}" "SvelteKit Web Dashboard" "${WEB_URL}"
+            runner_attached_logs "${RUNNING_PID:-unknown}" "${LOG_FILE}" "SvelteKit Web Dashboard" "${WEB_URL}" "${PID_FILE}"
             return 0
         fi
     fi
@@ -293,9 +292,14 @@ cmd_start() {
     local PID=$!
     echo "${PID}" > "${PID_FILE}"
 
-    trap 'echo -e "\n🛑 Stopping Web Dashboard (PID: '"${PID}"')..."; kill '"${PID}"' 2>/dev/null || true; rm -f '"${PID_FILE}"'; exit 0' INT TERM
+    trap 'runner_watch_detach; echo -e "\n🛑 Stopping Web Dashboard (PID: '"${PID}"')..."; kill '"${PID}"' 2>/dev/null || true; rm -f '"${PID_FILE}"'; exit 0' INT TERM
 
-    tail -n 0 -f "${LOG_FILE}"
+    # The same liveness watch the attach path uses (ticket #425): a bare `tail -n 0 -f` left
+    # the terminal on a live cursor over an inert file after this server was killed from
+    # another terminal. Here Ctrl+C legitimately *does* stop the server — this process
+    # launched it and owns it — so the handler above still signals it; the watch only decides
+    # when the stream ends on its own.
+    runner_watch_log_stream "${PID}" "${LOG_FILE}" "SvelteKit Web Dashboard" 0 "${PID_FILE}"
 }
 
 cmd_restart() {

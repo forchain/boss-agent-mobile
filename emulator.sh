@@ -14,16 +14,20 @@
 #   ./emulator.sh status --fix        # Same check, but repair the ADB bridge if it is down
 #   ./emulator.sh list                # List all installed local AVDs
 #   ./emulator.sh logs                # Attach to live log stream of running AVD
-#   ./emulator.sh stop                # Stop the running dedicated AVD and its ADB bridge
-#   ./emulator.sh restart             # Reuse online AVD if running, else restart and attach to logs
-#   ./emulator.sh restart --daemon    # Reuse online AVD if running, else restart in background
-#   ./emulator.sh restart --force     # Force stop and cold restart even if already online
+#   ./emulator.sh stop                # Stop the AVD's services (bridge); keep the AVD process
+#   ./emulator.sh restart             # Reuse online AVD (restarting its ADB bridge), else restart and attach
+#   ./emulator.sh restart --daemon    # Same decision, in background
 #   ./emulator.sh reconnect           # Restore LAN ADB access without restarting the AVD
 #
 # Lifecycle:
 #   The AVD is machine-wide infrastructure, not a child of this script. It is started in a
 #   session and process group of its own, so it keeps running after this script exits, after
 #   Ctrl+C detaches the log stream, and after a group- or session-wide cleanup.
+#
+#   No command here stops the AVD process. `stop` and `restart` release the services this
+#   runner owns — the Remote ADB Bridge and its LAN transport — and nothing else, so
+#   stopping one runner never costs the next one a 30-60s cold boot. A shutdown signal
+#   aimed at a Virtual Device Session is the user's to give, by hand.
 #
 #   Repair, not restart: a dead Remote ADB Bridge is the common failure that *looks* healthy
 #   from the console while every remote client is locked out. `reconnect` fixes that without
@@ -144,16 +148,49 @@ clamp_int() {
 ADB_QUERY_TIMEOUT_SEC="$(clamp_int "${ADB_QUERY_TIMEOUT_SEC:-2}" 2 1 2)"
 
 # Run one external command under a hard wall-clock limit, printing its stdout (empty when
-# the command had to be killed). macOS ships no coreutils `timeout`, so the bound is
-# enforced by a watchdog that SIGTERMs - then SIGKILLs - the child. Pass a simple external
-# command only: a pipeline would leave its earlier stages running past the bound.
+# the command had to be killed).
+#
+# When Python is available, the command is executed directly in memory without writing any
+# temporary files to disk. This completely prevents temporary file leaks, avoids macOS
+# privileged desktop-services trash prompts in system temp directories, and cleanly escalates
+# from SIGTERM to SIGKILL on stubborn processes.
+# A pure-shell fallback is retained for environments without Python.
 bounded_run() {
     local TIMEOUT_SEC="$1"
     shift
+    if [[ -n "${PYTHON_BIN}" ]]; then
+        "${PYTHON_BIN}" -c '
+import contextlib, os, signal, subprocess, sys
+
+timeout = float(sys.argv[1])
+cmd = sys.argv[2:]
+proc = subprocess.Popen(
+    cmd,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.DEVNULL,
+    start_new_session=True,
+)
+try:
+    stdout, _ = proc.communicate(timeout=timeout)
+    sys.stdout.buffer.write(stdout)
+    sys.exit(proc.returncode)
+except subprocess.TimeoutExpired:
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(proc.pid, signal.SIGTERM)
+    try:
+        proc.wait(timeout=0.5)
+    except subprocess.TimeoutExpired:
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(proc.pid, signal.SIGKILL)
+    sys.exit(124)
+' "${TIMEOUT_SEC}" "$@"
+        return $?
+    fi
+
     local OUT_FILE
     OUT_FILE="$(mktemp "${RUNNER_TMP_DIR}/boss_agent_bounded.XXXXXX")"
-    trap 'rm -f "${OUT_FILE}" 2>/dev/null || true; exit 143' INT TERM
-    trap 'rm -f "${OUT_FILE}" 2>/dev/null || true' EXIT
+    trap '/bin/rm -f "${OUT_FILE}" 2>/dev/null || true; exit 143' INT TERM
+    trap '/bin/rm -f "${OUT_FILE}" 2>/dev/null || true' EXIT
 
     "$@" >"${OUT_FILE}" 2>/dev/null &
     local CMD_PID=$!
@@ -186,7 +223,7 @@ bounded_run() {
     fi
 
     cat "${OUT_FILE}" 2>/dev/null || true
-    rm -f "${OUT_FILE}" 2>/dev/null || true
+    /bin/rm -f "${OUT_FILE}" 2>/dev/null || true
     trap - EXIT INT TERM
     return "${EXIT_CODE}"
 }
@@ -297,11 +334,12 @@ get_running_device_serial() {
     #
     # Candidates are ordered, not merely filtered: the Remote ADB Bridge forwards to the same
     # adbd, so its `<lan-ip>:<port>` transport reports the same AVD name as the local emulator
-    # and both match. The native `emulator-<port>` transport is probed first because it is the
-    # only one carrying the emulator console — `emu kill` is meaningless on a TCP transport,
-    # so resolving the bridge endpoint turns `stop` into a no-op and leaves the AVD running.
-    # `adb devices` order is not a contract, so the priority is made explicit here rather
-    # than left to whichever transport the server happened to list first.
+    # and both match. The native `emulator-<port>` transport is probed first because it exists
+    # on its own — the LAN one only appears while the bridge is up, so preferring it would let
+    # a bridge outage make a perfectly healthy AVD look absent, and `stop` would then report
+    # nothing running over a device that is still there. `adb devices` order is not a
+    # contract, so the priority is made explicit here rather than left to whichever transport
+    # the server happened to list first.
     DEV_LIST="$(printf '%s\n' "${RAW_DEVICES}" \
         | awk '($1 ~ /^emulator-[0-9]+$/ || $1 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:[0-9]+$/) && $2 == "device" {
             print ($1 ~ /^emulator-[0-9]+$/ ? 0 : 1) "\t" $1 }' \
@@ -323,25 +361,89 @@ get_running_device_serial() {
     echo ""
 }
 
+# The PID an attached log stream should watch, or the literal `active` when there is
+# nothing it can honestly watch.
+#
+# `emulator.pid` is written *only* by the launch path, so an AVD that was started earlier —
+# or reused by a later `start`, which never reaches that path — arrives here holding no
+# handle at all. `active` is not a PID, and the watcher's contract for an unwatchable handle
+# is to degrade to a bare `tail -f`, which silently disables the very stop notice the
+# operator attached the stream to see. The AVD's own live process is a handle that does
+# exist, so it is adopted here.
+#
+# Only an *unambiguous* one is. `emulator_process_pids` matches both the `emulator` front-end
+# and the QEMU backend, and the two need not exit together: watching a PID that outlives the
+# AVD would announce a stop that had not happened, and watching one that leaves first would
+# announce it while the device is still up. Two live matches are therefore no information,
+# and the caller keeps the old `active` degradation rather than guess.
+watched_avd_pid() {
+    local PID
+    PID="$(cat "${PID_FILE}" 2>/dev/null || true)"
+    if [[ "${PID}" =~ ^[0-9]+$ ]] && runner_process_alive "${PID}"; then
+        echo "${PID}"
+        return 0
+    fi
+
+    local CANDIDATE LIVE=0 SOLE=""
+    for CANDIDATE in $(emulator_process_pids); do
+        [[ "${CANDIDATE}" =~ ^[0-9]+$ ]] || continue
+        LIVE=$((LIVE + 1))
+        SOLE="${CANDIDATE}"
+    done
+    if [[ ${LIVE} -eq 1 ]]; then
+        # Repair the handle while it is in hand. This file is what `status` and every later
+        # attach read, and leaving it missing is how the same silence comes back.
+        echo "${SOLE}" > "${PID_FILE}"
+        echo "${SOLE}"
+        return 0
+    fi
+
+    echo "active"
+}
+
 attach_logs() {
     local SERIAL="$1"
     local ALREADY_RUNNING="${2:-0}"
-    local PID
-    PID="$(cat "${PID_FILE}" 2>/dev/null || echo "active")"
+    local AVD_PID
+    AVD_PID="$(watched_avd_pid)"
+    local BRIDGE_PID
+    BRIDGE_PID="$(get_running_bridge_pid)"
 
     if [[ "${ALREADY_RUNNING}" == "1" ]]; then
-        echo "ℹ️ Dedicated AVD '${TARGET_AVD}' is already running (${SERIAL}, PID: ${PID})"
+        echo "ℹ️ Dedicated AVD '${TARGET_AVD}' is already running (${SERIAL}, PID: ${AVD_PID})"
     fi
     echo "👀 Attaching to live log stream (${LOG_FILE})... (Press Ctrl+C to detach)"
     echo "----------------------------------------------------------------------"
 
-    trap 'echo -e "\n👋 Detached from emulator logs (AVD is still running in background)."; exit 0' INT TERM
+    trap 'runner_watch_detach; echo -e "\n👋 Detached from emulator logs (AVD is still running in background)."; exit 0' INT TERM
 
-    if [[ ! -f "${LOG_FILE}" ]]; then
-        touch "${LOG_FILE}"
-    fi
-
-    tail -n 30 -f "${LOG_FILE}"
+    # The same liveness watch the four process-backed runners use (ticket #425), reached
+    # with a handle rather than a runner-owned foreground child.
+    #
+    # Two handles, and which one is the *service* is the whole point. A shutdown signal from
+    # another terminal goes to the Remote ADB Bridge — no command here stops the AVD — so a
+    # stream watching only the AVD is watching the one process that never goes away, and
+    # the operator's terminal can never unblock from a `stop` it was attached to see. The
+    # bridge is therefore the primary handle, with its own pidfile so a `restart` from
+    # another terminal is announced as the stop-and-restart it is.
+    #
+    # The AVD is kept as the second handle, and for a reason that outlives this script
+    # knowing about stop commands: the AVD is the writer of the log being displayed. If it
+    # dies on its own — a crash, or a user closing it by hand, which is the only way it can
+    # be closed now — the stream is following a file nobody is writing, and ending is the
+    # honest thing to do. It is a plain stop rather than a restart: the bridge's pidfile
+    # says nothing about whether the AVD came back, so claiming a restart from it would be
+    # the same invented evidence the primary-handle check refuses to invent.
+    #
+    # An unwatchable handle is no information at all, never a death (see
+    # `runner_pid_watchable`), so a stream with no bridge to watch degrades to still
+    # following the AVD and one with no AVD to watch still follows the bridge. Neither
+    # degrades to a bare `tail -f` unless there is genuinely nothing to watch.
+    runner_watch_log_stream \
+        "${BRIDGE_PID:-active}" \
+        "${LOG_FILE}" \
+        "Remote ADB Bridge" 30 "${BRIDGE_PID_FILE}" \
+        "${AVD_PID}" "Dedicated AVD ${TARGET_AVD}"
 }
 
 get_primary_lan_ip() {
@@ -526,18 +628,37 @@ start_remote_bridge() {
         return 0
     fi
 
-    # Reclaim port from old orphaned bridge or socat if present
+    # Reclaim the port from an *orphaned bridge of this runner* — and from nothing else.
+    #
+    # This used to match on `ps -o comm=` being `python` or `socat` and SIGTERM/SIGKILL
+    # whatever held 6555. That is a machine-wide hazard on a developer box: the bridge's
+    # `comm` is just `python3`, so "it is python" identifies nothing, and a plain
+    # `./emulator.sh` — which is supposed to only *attach* — could kill an unrelated
+    # process and take another runner's service down with it. It is the same mistake as
+    # trusting a recycled PID, one level up: recognising a process by its interpreter
+    # rather than by what it is for.
+    #
+    # So the only process this will reclaim is one whose full command line proves it is
+    # this runner's own `remote_adb_bridge` — the genuine orphan this cleanup exists for.
+    # Anything else on the port is reported and left running, because a port conflict is
+    # something the user can resolve with information, and a killed stranger is not
+    # something they can undo.
     if command -v lsof >/dev/null 2>&1; then
         local CONFLICT_PID
         CONFLICT_PID="$(lsof -nP -iTCP:"${PORT}" -sTCP:LISTEN -t 2>/dev/null | head -n 1 || true)"
         if [[ -n "${CONFLICT_PID}" ]]; then
-            local CMD_NAME
-            CMD_NAME="$(ps -p "${CONFLICT_PID}" -o comm= 2>/dev/null || true)"
-            if [[ "${CMD_NAME}" == *"python"* || "${CMD_NAME}" == *"socat"* ]]; then
-                echo "⚠️ Port ${PORT} already bound by PID ${CONFLICT_PID} (${CMD_NAME}). Reclaiming..."
+            local CONFLICT_ARGS
+            CONFLICT_ARGS="$(ps -p "${CONFLICT_PID}" -o args= 2>/dev/null || true)"
+            if [[ "${CONFLICT_ARGS}" == *"remote_adb_bridge"* ]]; then
+                echo "⚠️ Port ${PORT} held by an orphaned Remote ADB Bridge (PID: ${CONFLICT_PID}). Reclaiming..."
                 kill -TERM "${CONFLICT_PID}" 2>/dev/null || true
                 sleep 0.5
                 kill -KILL "${CONFLICT_PID}" 2>/dev/null || true
+            else
+                # Not ours, so not ours to kill. Naming it is the useful part: an operator
+                # can act on "port 6555 is held by PID N" and not on a mysterious exit.
+                echo "⚠️ Port ${PORT} is held by PID ${CONFLICT_PID}, which is not a Remote ADB Bridge."
+                echo "   Leaving it alone — stop it yourself if it is stale, then re-run."
             fi
         fi
     fi
@@ -776,82 +897,45 @@ emulator_process_pids() {
     printf '%s\n' "${PIDS}"
 }
 
-emulator_processes_gone() {
-    [[ -z "$(emulator_process_pids "${1:-${TARGET_AVD}}")" ]]
-}
-
-# Terminate the dedicated AVD's host processes and wait for them to actually be gone.
+# Bring down the services this runner owns, and leave the AVD process alone.
 #
-# `emu kill` is a request, not a guarantee: a wedged emulator never acknowledges it, and a
-# successful one still leaves the QEMU backend to wind down. So the process sweep is not a
-# fallback that only runs on failure — it is the step that makes "stopped" mean the AVD is no
-# longer running, which is the precondition for the bridge teardown that follows.
-reap_emulator_processes() {
-    local AVD="${1:-${TARGET_AVD}}"
-    local PIDS
-    PIDS="$(emulator_process_pids "${AVD}")"
-    if [[ -z "${PIDS}" ]]; then
-        rm -f "${PID_FILE}"
-        return 0
-    fi
-
-    local PID
-    for PID in ${PIDS}; do
-        kill -TERM "${PID}" 2>/dev/null || true
-    done
-
-    # Let the guest shut down on its own first; only escalate for a process that outlives it.
-    if ! runner_wait_until 3 emulator_processes_gone "${AVD}"; then
-        for PID in $(emulator_process_pids "${AVD}"); do
-            echo "⚠️ Emulator PID ${PID} ignored SIGTERM; sending SIGKILL."
-            kill -KILL "${PID}" 2>/dev/null || true
-        done
-        runner_wait_until 2 emulator_processes_gone "${AVD}" || true
-    fi
-
-    local REMAINING
-    REMAINING="$(emulator_process_pids "${AVD}")"
-    rm -f "${PID_FILE}"
-    if [[ -n "${REMAINING}" ]]; then
-        # Non-zero, so `stop` cannot report success over a surviving AVD. The only way to
-        # reach this branch is a process that outlived SIGKILL, which no ordinary userland
-        # process can do — so this is the "the kernel has wedged it" line, and it is not
-        # covered by an automated test because a SIGKILL-proof fixture cannot be built.
-        echo "⚠️ Emulator processes for ${AVD} survived the kill: ${REMAINING}."
-        return 1
-    fi
-    echo "ℹ️ Reaped emulator process(es) for ${AVD} (PIDs:${PIDS})."
-    return 0
-}
-
+# Two things answer to this runner, and only one of them is the AVD. The Remote ADB Bridge is
+# a daemon this script started and can restart in a second; the AVD is machine-wide
+# infrastructure whose next boot costs 30-60s and which no single runner owns. So `stop` is
+# exactly "stop the bridge" — the shutdown signal this runner can honour — and keeping the
+# device is what makes the next `start` instant instead of a cold boot.
+#
+# There is no flag that stops the AVD, on purpose. A shutdown signal aimed at a Virtual
+# Device Session is expensive, irreversible from a script's point of view, and never
+# something a routine `stop` or a neighbouring runner should decide on the user's behalf —
+# so the user gives it, by hand, when they mean it. One code path and no opt-out is a
+# lifecycle that cannot drift into charging every teardown a cold boot.
 cmd_stop() {
-    echo "🛑 Stopping Dedicated AVD '${TARGET_AVD}'..."
+    echo "🛑 Stopping services for Dedicated AVD '${TARGET_AVD}' (keeping the AVD process)..."
+
     local SERIAL
     SERIAL="$(get_running_device_serial)"
+    local BRIDGE_PID
+    BRIDGE_PID="$(get_running_bridge_pid)"
 
-    if [[ -n "${SERIAL}" ]] && adb_query -s "${SERIAL}" emu kill >/dev/null; then
-        echo "✅ Sent emu kill to ${SERIAL} (${TARGET_AVD})."
-    elif [[ -n "${SERIAL}" ]]; then
-        # A kill the wedged device never acknowledged leaves the emulator running, so fall
-        # back to the same process cleanup the "no device found" path uses.
-        echo "⚠️ ${SERIAL} did not acknowledge the kill within ${ADB_QUERY_TIMEOUT_SEC}s."
+    if [[ -n "${BRIDGE_PID}" ]]; then
+        runner_log_stop_request "${LOG_FILE}" "Emulator" "${BRIDGE_PID}" \
+            "Remote ADB Bridge for '${TARGET_AVD}' (AVD kept running)"
     fi
-
-    # The AVD must be gone before the bridge is: the bridge publishes one of the transports
-    # this stop negotiates over, so tearing it down first severs the very path the kill needs
-    # and leaves a "stopped" AVD still running.
-    local REAP_STATUS=0
-    reap_emulator_processes || REAP_STATUS=$?
 
     stop_remote_bridge
 
-    # "Stopped emulator processes" is claimed only once the sweep has actually reported the
-    # AVD gone. Printing it up front, before the sweep, let a run whose processes survived
-    # SIGKILL report a clean stop and then contradict itself a line later.
-    if [[ ${REAP_STATUS} -eq 0 ]]; then
-        echo "ℹ️ Stopped emulator processes for ${TARGET_AVD}."
+    if [[ -n "${BRIDGE_PID}" ]]; then
+        runner_log_stop_complete "${LOG_FILE}" "Emulator" \
+            "Remote ADB Bridge stopped; Virtual Device Session '${TARGET_AVD}' left running"
     fi
-    return "${REAP_STATUS}"
+
+    if [[ -n "${SERIAL}" ]]; then
+        echo "✅ Dedicated AVD '${TARGET_AVD}' is still running (${SERIAL}) — its process was not stopped."
+    else
+        echo "ℹ️ No AVD process is currently running for '${TARGET_AVD}'."
+    fi
+    echo "   To close the AVD process itself, quit the emulator by hand."
 }
 
 cmd_start() {
@@ -879,16 +963,52 @@ cmd_start() {
     # when we are actually about to start one.
     local SERIAL
     SERIAL="$(get_running_device_serial)"
-    if [[ -n "${SERIAL}" ]]; then
-        local BOOT_STATUS
-        BOOT_STATUS="$(adb_getprop "${SERIAL}" sys.boot_completed)"
+    local RUNNING_PIDS
+    RUNNING_PIDS="$(emulator_process_pids)"
+    if [[ -n "${SERIAL}" || -n "${RUNNING_PIDS}" ]]; then
+        local BOOT_STATUS=""
+        if [[ -n "${SERIAL}" ]]; then
+            BOOT_STATUS="$(adb_getprop "${SERIAL}" sys.boot_completed)"
+        fi
         if [[ "${BOOT_STATUS}" == "1" ]]; then
             ensure_lan_adb_connected
             if [[ ${DAEMON} -eq 1 ]]; then
-                echo "ℹ️ Dedicated AVD '${TARGET_AVD}' is already running in background (${SERIAL}, PID: $(cat "${PID_FILE}" 2>/dev/null || echo "active"))."
+                echo "ℹ️ Dedicated AVD '${TARGET_AVD}' is already running in background (${SERIAL:-${RUNNING_PIDS}}, PID: $(cat "${PID_FILE}" 2>/dev/null || echo "active"))."
                 exit 0
             fi
             attach_logs "${SERIAL}" 1
+            exit 0
+        fi
+
+        echo "⏳ Dedicated AVD '${TARGET_AVD}' is already running, waiting for boot completion..."
+        local BOOTED=0
+        for _ in {1..90}; do
+            SERIAL="$(get_running_device_serial)"
+            if [[ -n "${SERIAL}" ]]; then
+                BOOT_STATUS="$(adb_getprop "${SERIAL}" sys.boot_completed)"
+                if [[ "${BOOT_STATUS}" == "1" ]]; then
+                    BOOTED=1
+                    break
+                fi
+            fi
+            sleep 1
+        done
+
+        if [[ ${BOOTED} -eq 1 ]]; then
+            local EMU_PID
+            EMU_PID="$(watched_avd_pid)"
+            echo "✅ Dedicated AVD '${TARGET_AVD}' is fully booted and ready (${SERIAL}, PID: ${EMU_PID})!"
+            echo "   Log File : ${LOG_FILE}"
+            ensure_lan_adb_connected
+            if [[ ${DAEMON} -eq 1 ]]; then
+                exit 0
+            fi
+            echo ""
+            attach_logs "${SERIAL}" 0
+            exit 0
+        else
+            echo "⚠️ Timeout waiting for '${TARGET_AVD}' to boot. Check logs: ${LOG_FILE}" >&2
+            exit 1
         fi
     fi
 
@@ -939,6 +1059,7 @@ cmd_start() {
             fi
             echo ""
             attach_logs "${SERIAL}" 0
+            exit 0
         else
             echo "⚠️ Timeout waiting for '${TARGET_AVD}' to boot. Check logs: ${LOG_FILE}" >&2
             exit 1
@@ -946,26 +1067,20 @@ cmd_start() {
     fi
 }
 
-# `restart` restarts the dedicated AVD when it is absent, wedged, or explicitly forced (--force).
-# When the AVD is already online and fully booted, it skips the expensive 30-60s cold stop/start
-# cycle and reuses the running instance — re-validating the ADB and remote bridge connections
-# (matching the lifecycle contract in GLOSSARY.md). The flags are forwarded so `--daemon` (and
-# `--foreground`) still mean what they mean to `start`.
+# `restart` recycles the dedicated AVD's services without ever stopping the AVD process.
+#
+# When the AVD is already online and fully booted, there is nothing to stop: the AVD is kept
+# and only its Remote ADB Bridge is torn down and rebuilt, because a bridge carried over
+# un-restarted is serving a transport whose target process and remote peers have moved on.
+# When the AVD is absent, the same bridge teardown runs and `cmd_start` boots a fresh one.
+#
+# "Restart" is not a no-op on the reuse path, and the two services are what make that true:
+# the Virtual Device Session is spared, the Remote ADB Bridge is sent its shutdown signal.
+# There is no flag that escalates this into stopping the AVD — a cold boot is the user's call
+# (see `cmd_stop`), so this command never has to choose between a cheap restart and a
+# decision that is not its to make.
 cmd_restart() {
-    local FORCE=0
-    local ARGS=()
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --force)
-                FORCE=1
-                shift
-                ;;
-            *)
-                ARGS+=("$1")
-                shift
-                ;;
-        esac
-    done
+    local ARGS=("$@")
 
     local SERIAL
     SERIAL="$(get_running_device_serial)"
@@ -974,15 +1089,56 @@ cmd_restart() {
         BOOT_STATUS="$(adb_getprop "${SERIAL}" sys.boot_completed)"
     fi
 
-    if [[ ${FORCE} -eq 0 && -n "${SERIAL}" && "${BOOT_STATUS}" == "1" ]]; then
+    if [[ -n "${SERIAL}" && "${BOOT_STATUS}" == "1" ]]; then
         echo "♻️  Dedicated AVD '${TARGET_AVD}' is already online — reusing existing instance (${SERIAL})."
+        echo "   The AVD is kept (no cold boot); restarting its Remote ADB Bridge instead."
+        # The AVD is not the only service this runner owns. Leaving the bridge untouched would
+        # make this a no-op dressed as a restart: it keeps serving a transport whose target
+        # process, LAN endpoint and remote peers have all moved on. So the bridge — the other
+        # service — is sent its shutdown signal here, and the `cmd_start` below brings a fresh
+        # one up over the AVD that was deliberately never touched.
+        stop_remote_bridge
         cmd_start ${ARGS[@]+"${ARGS[@]}"}
         return 0
     fi
 
     echo "🔄 Restarting Dedicated AVD '${TARGET_AVD}'..."
+    runner_log_restart_request "${LOG_FILE}" "Emulator" "Virtual Device Session '${TARGET_AVD}'"
+
+    # Services always come down; the AVD process is not touched. That is the same split
+    # `stop` makes, and `restart` is `stop` plus a start.
+    local RUNNING_PIDS
+    RUNNING_PIDS="$(emulator_process_pids)"
     cmd_stop
-    cmd_start ${ARGS[@]+"${ARGS[@]}"}
+    # An AVD that is running but never reported `sys.boot_completed=1` cannot be
+    # "restarted" without stopping it, because `cmd_start` only reuses a *ready* device and
+    # would otherwise boot a second emulator alongside the first — two processes contending
+    # for one device. Since no command here stops the AVD, the user has to: this refuses and
+    # says so, rather than booting a rival emulator or quietly doing what the contract forbids.
+    if [[ -n "${RUNNING_PIDS}" ]]; then
+        echo "⚠️  AVD process for '${TARGET_AVD}' is still running (PIDs: ${RUNNING_PIDS}) but never finished booting."
+        echo "   Not starting a second emulator alongside it. Quit the emulator by hand, then run this again."
+        return 1
+    fi
+
+    # In a subshell: `cmd_start` exits from inside its own boot path, and an `exit` there
+    # would otherwise take this confirmation down with it.
+    #
+    # The status is captured rather than propagated, so a start that failed cannot be
+    # recorded below as a Virtual Device Session that came back up. Not written as
+    # `( cmd_start ) || return 1`: a subshell used as an operand of `||` has errexit
+    # suspended *inside* it, which would let a failed boot path run on past its own guard.
+    # Suspension is therefore lifted only for the outer shell, and restored for the subshell
+    # where `cmd_start` depends on it to abort.
+    set +e
+    ( set -e; cmd_start ${ARGS[@]+"${ARGS[@]}"} )
+    local START_STATUS=$?
+    set -e
+    if [[ ${START_STATUS} -ne 0 ]]; then
+        return 1
+    fi
+    runner_log_restart_complete "${LOG_FILE}" "Emulator" \
+        "Virtual Device Session '${TARGET_AVD}' back online"
 }
 
 ACTION="${1:-start}"
@@ -992,7 +1148,8 @@ case "${ACTION}" in
         cmd_start "$@"
         ;;
     stop)
-        cmd_stop
+        shift || true
+        cmd_stop "$@"
         ;;
     restart)
         shift || true
