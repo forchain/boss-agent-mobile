@@ -398,6 +398,10 @@ async def test_the_pocketbase_store_saves_the_collections_field_spellings() -> N
     # The strategy derives its action from its task type at construction.
     assert str(stored["target_action"]) == "auto_apply"
     assert stored["max_jobs"] == 30, "the schema's declared default"
+    # Every FilterConfig field has to reach the record, not just the ones an older
+    # revision happened to list. This dict is the adapter's whole vocabulary, and a
+    # field missing from it is silently dropped on every write that passes through
+    # here — see the channel regression just below.
     assert set(stored["filter"]) == {
         "education",
         "salary",
@@ -406,7 +410,114 @@ async def test_the_pocketbase_store_saves_the_collections_field_spellings() -> N
         "company_scales",
         "industries",
         "enable_filter",
+        "channel_preference",
     }
+
+
+@pytest.mark.asyncio
+async def test_the_pocketbase_store_writes_the_strategy_channel(pb_session: FakePocketBaseSession):
+    """A strategy's 仅直招 must survive the adapter's own write.
+
+    The Automation Scheduler re-saves a whole record after every cron dispatch, purely
+    to stamp ``last_run_at``. That write goes through this same body, so a channel the
+    operator had set stopped being stored the first time a scheduled run happened —
+    which is what "I added 仅直招 and it cleared itself" was.
+    """
+    store = PocketBaseSavedSearchStore(
+        base_url="http://pb.test", session=pb_session, headers=_headers
+    )
+    direct_only = SavedSearch(
+        id="s_channel",
+        name="次选行业",
+        search=SearchConfig(keyword="Agent"),
+        filter=FilterConfig(education="不限", channel_preference="direct_only"),
+        cron_expression="0 12 * * *",
+        is_enabled=True,
+    )
+
+    await store.save_saved_search(direct_only)
+
+    stored = pb_session.collections["saved_searches"]["s_channel"]
+    assert stored["filter"]["channel_preference"] == "direct_only"
+
+    # And the read-back agrees, so the round trip is closed rather than half-fixed.
+    fetched = await store.get_saved_search("s_channel")
+    assert fetched is not None
+    assert fetched.filter.channel_preference == "direct_only"
+
+
+@pytest.mark.parametrize("preference", ["", "all", "direct_only", "headhunter_only"])
+@pytest.mark.asyncio
+async def test_the_pocketbase_store_writes_every_channel_state(
+    pb_session: FakePocketBaseSession, preference: str
+):
+    """``''`` (inherit) is a real value, not an absent key: it has to be written too.
+
+    An omitted key also reads back as inherit, so the difference looks invisible here —
+    but it is the difference between "inherit whatever the global setting says" and
+    "this record never stated a channel", and only the written form survives an
+    unrelated later edit.
+    """
+    store = PocketBaseSavedSearchStore(
+        base_url="http://pb.test", session=pb_session, headers=_headers
+    )
+    search = SavedSearch(
+        id=f"s_{preference or 'inherit'}",
+        name="渠道策略",
+        search=SearchConfig(keyword="Agent"),
+        filter=FilterConfig(channel_preference=preference),
+    )
+
+    await store.save_saved_search(search)
+
+    stored = pb_session.collections["saved_searches"][f"s_{preference or 'inherit'}"]
+    assert "channel_preference" in stored["filter"]
+    assert stored["filter"]["channel_preference"] == preference
+
+
+@pytest.mark.asyncio
+async def test_a_saved_strategy_survives_a_whole_record_rewrite(
+    pb_session: FakePocketBaseSession,
+):
+    """The scheduler's last_run_at write must not drop anything the operator set.
+
+    This is the shape of the real failure: a full-record rewrite that changes one field
+    and silently resets another. Asserting on the final state after the rewrite — not
+    on the write's payload — is what makes it a regression test for the symptom.
+    """
+    store = PocketBaseSavedSearchStore(
+        base_url="http://pb.test", session=pb_session, headers=_headers
+    )
+    search = SavedSearch(
+        id="s_rewrite",
+        name="大公司",
+        search=SearchConfig(keyword="Agent"),
+        filter=FilterConfig(
+            education="不限",
+            salary="50K以上",
+            industries=["互联网", "计算机软件"],
+            channel_preference="direct_only",
+        ),
+        cron_expression="0 9 * * *",
+        is_enabled=True,
+    )
+    await store.save_saved_search(search)
+
+    # What AutomationScheduler.run_once does after dispatching: stamp the timestamp,
+    # then write the record back.
+    reloaded = await store.get_saved_search("s_rewrite")
+    assert reloaded is not None
+    reloaded.last_run_at = "2026-10-08T12:00:04"
+    await store.save_saved_search(reloaded)
+
+    final = await store.get_saved_search("s_rewrite")
+    assert final is not None
+    assert final.last_run_at == "2026-10-08T12:00:04"
+    assert final.filter.channel_preference == "direct_only", (
+        "仅直招 was erased by the scheduled run's own bookkeeping write"
+    )
+    assert final.filter.salary == "50K以上"
+    assert final.filter.industries == ["互联网", "计算机软件"]
 
 
 def test_the_sqlite_fallback_is_exposed_by_the_store_not_the_broker() -> None:
