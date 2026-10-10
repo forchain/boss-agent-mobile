@@ -323,7 +323,20 @@ def resolve_saved_search_store(prefer_database: bool = True) -> SavedSearchStore
 
 
 def _wire_body(saved_search: SavedSearch) -> dict[str, Any]:
-    """The record body for a saved search, in the collection's own field spellings."""
+    """The record body for a saved search, in the collection's own field spellings.
+
+    ``filter`` is a whole-column replacement, not a merge: PocketBase stores one JSON
+    value, so a key left out here is a key erased from the record. That makes this
+    dict the single point where a ``FilterConfig`` field can silently disappear, and
+    the Automation Scheduler amplifies it — it rewrites every dispatched strategy in
+    full, purely to stamp ``last_run_at``, so any field missing here was reset by the
+    next scheduled run rather than by anything the operator did.
+
+    Hence the explicit list rather than a shorter body: ``channel_preference`` was
+    exactly that field (issue #368), and it was dropped from here when the per-strategy
+    channel shipped. ``''`` is written as ``''``, never omitted, because inherit is a
+    decision the record has to carry to stay one.
+    """
     return {
         "id": saved_search.id,
         "name": saved_search.name,
@@ -339,6 +352,7 @@ def _wire_body(saved_search: SavedSearch) -> dict[str, Any]:
             "company_scales": saved_search.filter.company_scales,
             "industries": saved_search.filter.industries,
             "enable_filter": saved_search.enable_filter,
+            "channel_preference": saved_search.filter.channel_preference,
         },
         "cron_expression": saved_search.cron_expression,
         "is_enabled": saved_search.is_enabled,
