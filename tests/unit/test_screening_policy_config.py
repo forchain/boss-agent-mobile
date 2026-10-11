@@ -92,45 +92,44 @@ def test_channel_preference_roundtrip_and_normalization():
 def test_app_filter_all_passes_both_channels():
     """Preference 'all' never produces App-Enforced Filter violations."""
     policy = ScreeningPolicy(channel_preference="all")
-    passed_headhunter, violation_hh = policy.evaluate_app_enforced_filters(is_headhunter=True)
-    passed_direct, violation_direct = policy.evaluate_app_enforced_filters(is_headhunter=False)
-    assert passed_headhunter is True
-    assert violation_hh == ""
-    assert passed_direct is True
-    assert violation_direct == ""
+    by_severity = policy.evaluate_app_enforced_filters_by_severity
+    assert by_severity(is_headhunter=True).passed is True
+    assert by_severity(is_headhunter=True).violation == ""
+    assert by_severity(is_headhunter=False).passed is True
+    assert by_severity(is_headhunter=False).violation == ""
 
 
 def test_app_filter_direct_only_flags_headhunter():
     """Headhunter posting violates the 'direct_only' channel preference."""
     policy = ScreeningPolicy(channel_preference="direct_only")
-    passed, violation = policy.evaluate_app_enforced_filters(is_headhunter=True)
-    assert passed is False
-    assert "猎头" in violation
-    assert "direct_only" in violation
+    headhunter = policy.evaluate_app_enforced_filters_by_severity(is_headhunter=True)
+    assert headhunter.passed is False
+    assert "猎头" in headhunter.soft_violation
+    assert "direct_only" in headhunter.soft_violation
 
-    passed_direct, violation_direct = policy.evaluate_app_enforced_filters(is_headhunter=False)
-    assert passed_direct is True
-    assert violation_direct == ""
+    direct = policy.evaluate_app_enforced_filters_by_severity(is_headhunter=False)
+    assert direct.passed is True
+    assert direct.soft_violation == ""
 
 
 def test_app_filter_headhunter_only_flags_direct_posting():
     """Direct posting violates the 'headhunter_only' channel preference."""
     policy = ScreeningPolicy(channel_preference="headhunter_only")
-    passed, violation = policy.evaluate_app_enforced_filters(is_headhunter=False)
-    assert passed is False
-    assert "headhunter_only" in violation
+    direct = policy.evaluate_app_enforced_filters_by_severity(is_headhunter=False)
+    assert direct.passed is False
+    assert "headhunter_only" in direct.soft_violation
 
-    passed_hh, violation_hh = policy.evaluate_app_enforced_filters(is_headhunter=True)
-    assert passed_hh is True
-    assert violation_hh == ""
+    headhunter = policy.evaluate_app_enforced_filters_by_severity(is_headhunter=True)
+    assert headhunter.passed is True
+    assert headhunter.soft_violation == ""
 
 
 def test_app_filter_bypassed_when_screening_disabled():
     """enable_screening=False disables App-Enforced Filter evaluation."""
     policy = ScreeningPolicy(channel_preference="direct_only", enable_screening=False)
-    passed, violation = policy.evaluate_app_enforced_filters(is_headhunter=True)
-    assert passed is True
-    assert violation == ""
+    verdict = policy.evaluate_app_enforced_filters_by_severity(is_headhunter=True)
+    assert verdict.passed is True
+    assert verdict.violation == ""
 
 
 def test_relaxation_matches_original_token_in_title():

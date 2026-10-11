@@ -1207,9 +1207,14 @@ class JobFeedPipeline:
         standing as a collected job, the stored record carries the reason and the audit
         trail, and the outcome is emitted once.
 
-        Both callers now arrive having already settled the severity question (#438), so no
-        Whitelist Relaxation survives at this stage and ``relaxed_by_whitelist`` is
-        unconditionally False here. This only records and reports the verdict.
+        Both callers now arrive having already settled the severity question (#438), so
+        the job's final standing is a rejection. ``relaxed_by_whitelist`` therefore
+        records the OUTCOME — was this job admitted through a relaxation? — and is
+        False here even when an earlier stage had relaxed it: the card-stage channel
+        relaxation it may have earned did not survive the hard commute verdict. The
+        field and ``screening_audit`` do not contradict each other; the audit is the
+        history (it still reads 【白名单放宽】 for the rescued channel violation) and the
+        field is where that history ended up. This only records and reports the verdict.
         """
         enriched["relaxed_by_whitelist"] = False
         enriched["screening_audit"] = "；".join(
@@ -1303,8 +1308,6 @@ class JobFeedPipeline:
         # split #437 drew for the non-native filters), so — unlike the channel preference
         # — it never consults Whitelist Relaxation: an operator who will not commute the
         # distance does not get the job back because the title said something they like.
-        # Routing is the caller's job, and this caller routes the violation straight to
-        # the shared reject helper, which is why no exemption survives below.
         commute_dist = getattr(posting, "commute_distance_km", None)
         commute_pass, commute_violation = config.screening_policy.evaluate_commute_distance(
             commute_dist
@@ -1320,16 +1323,16 @@ class JobFeedPipeline:
             )
 
         if not commute_pass:
-            # The reason carries the hard-constraint marker so the stored record, the
-            # emitted outcome and the real-time log all name it once, in the same words.
-            hard_reason = f"{commute_violation}（硬性约束不可豁免）"
+            # commute_violation already carries 硬性约束不可豁免 (composed by the policy),
+            # so the stored record, the emitted outcome and the real-time log all name it
+            # once, in the same words the card stage used.
             await self._reject_detail_posting(
                 run,
                 card,
                 enriched,
                 posting,
-                reason=hard_reason,
-                audit_note=f"App端强制过滤违例: {hard_reason}",
+                reason=commute_violation,
+                audit_note=f"App端强制过滤违例: {commute_violation}",
                 log_prefix="🛑 [App端强制过滤]",
             )
             return
