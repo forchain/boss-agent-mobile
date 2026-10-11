@@ -1205,8 +1205,11 @@ class JobFeedPipeline:
         blacklist (issue #333) and the commute ceiling (spec #209) — so they cannot drift
         in what they leave behind: the optimistic card record is withdrawn rather than left
         standing as a collected job, the stored record carries the reason and the audit
-        trail, and the outcome is emitted once. Each caller has already decided whether
-        Whitelist Relaxation applies; this only records and reports the verdict.
+        trail, and the outcome is emitted once.
+
+        Both callers now arrive having already settled the severity question (#438), so no
+        Whitelist Relaxation survives at this stage and ``relaxed_by_whitelist`` is
+        unconditionally False here. This only records and reports the verdict.
         """
         enriched["relaxed_by_whitelist"] = False
         enriched["screening_audit"] = "；".join(
@@ -1296,9 +1299,17 @@ class JobFeedPipeline:
         # Commute distance App-Enforced Filter (spec #209). The
         # distance widget only exists at the bottom of the detail page,
         # so this verdict can only be rendered here.
+        # An over-ceiling distance is a hard constraint (#438, completing the hard/soft
+        # split #437 drew for the non-native filters), so — unlike the channel preference
+        # — it never consults Whitelist Relaxation: an operator who will not commute the
+        # distance does not get the job back because the title said something they like.
+        # Routing is the caller's job, and this caller routes the violation straight to
+        # the shared reject helper, which is why no exemption survives below.
         commute_dist = getattr(posting, "commute_distance_km", None)
+        commute_pass, commute_violation = config.screening_policy.evaluate_commute_distance(
+            commute_dist
+        )
         if commute_dist is not None:
-            commute_pass, _ = config.screening_policy.evaluate_commute_distance(commute_dist)
             await self._log(
                 f"📍 [App端强制过滤] '{posting_title}' 距家庭住址 {commute_dist:.1f}km"
                 + (
@@ -1308,39 +1319,20 @@ class JobFeedPipeline:
                 )
             )
 
-        commute_pass, commute_violation = config.screening_policy.evaluate_commute_distance(
-            commute_dist
-        )
         if not commute_pass:
-            commute_relaxed, commute_token = config.screening_policy.evaluate_whitelist_relaxation(
-                title=posting_title,
-                company_name=posting_company,
-                tags=getattr(card, "tags", None) or [],
-                digest=getattr(card, "digest", "") or getattr(card, "snippet", "") or "",
+            # The reason carries the hard-constraint marker so the stored record, the
+            # emitted outcome and the real-time log all name it once, in the same words.
+            hard_reason = f"{commute_violation}（硬性约束不可豁免）"
+            await self._reject_detail_posting(
+                run,
+                card,
+                enriched,
+                posting,
+                reason=hard_reason,
+                audit_note=f"App端强制过滤违例: {hard_reason}",
+                log_prefix="🛑 [App端强制过滤]",
             )
-            audit_parts = [
-                enriched.get("screening_audit", ""),
-                f"App端强制过滤违例: {commute_violation}",
-            ]
-            if not commute_relaxed:
-                await self._reject_detail_posting(
-                    run,
-                    card,
-                    enriched,
-                    posting,
-                    reason=commute_violation,
-                    audit_note="；".join(p for p in audit_parts if p),
-                    log_prefix="🛑 [App端强制过滤]",
-                )
-                return
-
-            enriched["relaxed_by_whitelist"] = True
-            audit_parts.append(f"【白名单放宽】命中关键词 '{commute_token}'，予以豁免")
-            enriched["screening_audit"] = "；".join(p for p in audit_parts if p)
-            await self._log(
-                f"🎗️ [白名单放宽] '{posting_title}' 命中 '{commute_token}' "
-                f"豁免通勤距离限制，继续采集"
-            )
+            return
 
         # Resolution happens before the screener, not after: a human copy means there is
         # nothing to draft, and "nothing to draft" means no token is spent drafting it.

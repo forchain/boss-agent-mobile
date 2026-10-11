@@ -198,11 +198,11 @@ The structured configuration encapsulating candidate negative constraints, title
 _Avoid_: Filter keywords, blacklist config, keyword rules
 
 **App-Enforced Filter**:
-A screening condition the Boss platform does not offer natively in its search interface — recruitment channel (direct-hire vs headhunter), commute distance ceilings, and future peers — and that our app therefore evaluates in its own logic against jobs already retrieved from the platform. Because the platform cannot pre-filter these, jobs violating them are skipped by our own judgement rather than by platform relevance, and every such skip is subject to Whitelist Relaxation.
+A screening condition the Boss platform does not offer natively in its search interface — recruitment channel (direct-hire vs headhunter), commute distance ceilings, and future peers — and that our app therefore evaluates in its own logic against jobs already retrieved from the platform. Because the platform cannot pre-filter these, jobs violating them are skipped by our own judgement rather than by platform relevance. Each filter is hard or soft: a hard one (the commute ceiling, the 商圈黑名单) rejects unconditionally and Whitelist Relaxation never applies to it, while a soft one (channel preference) is a default the whitelist may widen. A hard violation is recorded and logged as such (硬性约束不可豁免), at the Card Preliminary Screening stage and again on the Job Location Line / distance widget once the detail page has been read.
 _Avoid_: platform filter, native search condition, search keyword
 
 **Whitelist Relaxation (白名单放宽)**:
-The exemption rule by which a job an App-Enforced Filter would skip is admitted into the normal pipeline after all when its card facets (title, tags, company, digest) hit a whitelist token, because strong personal interest or expertise is deemed to outweigh the violated condition. It is the sole surviving role of the whitelist: an interest signal that widens app-side constraints, never an inclusion gate that rejects non-matching jobs.
+The exemption rule by which a job a *soft* App-Enforced Filter would skip is admitted into the normal pipeline after all when its card facets (title, tags, company, digest) hit a whitelist token, because strong personal interest or expertise is deemed to outweigh the violated condition. It never overrides a hard constraint — a matching token leaves an over-ceiling commute distance rejected — so a hit is not by itself an exemption. It is the sole surviving role of the whitelist: an interest signal that widens app-side constraints, never an inclusion gate that rejects non-matching jobs.
 _Avoid_: whitelist gate, inclusion filter, positive match
 
 **Configuration Realm (`config/*.yaml`)**:

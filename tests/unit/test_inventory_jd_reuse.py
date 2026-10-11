@@ -449,12 +449,13 @@ def test_usability_is_the_existing_rule_applied_to_the_stored_text():
 
 
 @pytest.mark.asyncio
-async def test_the_fast_path_still_relaxes_the_ceiling_for_a_passion_token():
-    """A whitelisted title still buys the distant posting a visit *and* a greeting.
+async def test_the_fast_path_still_judges_a_stored_commute_distance():
+    """A stored distance still reaches the verdict, and a hard one now decides it.
 
-    The relaxation runs on the posting assembled from the stored JD, so the fast path has
-    to reach it with the same fields a live read would have produced — otherwise #301 would
-    quietly turn an exemption into a rejection.
+    The commute check runs on the posting assembled from the stored JD, so the fast path
+    has to carry the stored distance into it — otherwise #301 would quietly turn a
+    rejection into an admission. Since #438 the verdict is hard and unrelaxable: a
+    passion token cannot buy the distant posting a visit *and* a greeting.
     """
     store = InMemoryJobRecordStore()
     card = _card("大模型平台工程师", "智元创新")
@@ -480,13 +481,17 @@ async def test_the_fast_path_still_relaxes_the_ceiling_for_a_passion_token():
     )
     result = await pipeline.stream_jobs(_apply_config(max_jobs=1, screening_policy=policy))
 
+    # The stored distance is enough to decide, so the page is still never read.
     detail.extract_job_posting.assert_not_called()
     detail.extract_commute_distance.assert_not_called()
-    assert any("白名单放宽" in line for line in logs), logs
-    assert result.applied_count == 1
+    assert not any("白名单放宽" in line for line in logs), logs
+    assert any("🛑 [App端强制过滤]" in line and "硬性约束不可豁免" in line for line in logs), logs
+    assert result.applied_count == 0
+    chat.click_send.assert_not_called()
     stored = await store.get_job_record_by_fingerprint(card.card.fingerprint)
-    assert stored["relaxed_by_whitelist"] is True
-    assert stored["status"] == JobRecordStatus.APPLIED.value
+    assert stored["relaxed_by_whitelist"] is False
+    assert stored["status"] == JobRecordStatus.IGNORED.value
+    assert "硬性约束不可豁免" in (stored.get("screening_audit") or "")
 
 
 @pytest.mark.asyncio
