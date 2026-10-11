@@ -463,15 +463,32 @@ class _CardRun:
 
 
 def _element_y(elem: Any) -> float | None:
-    """Vertical position of a UI element, or None when the driver does not report one."""
+    """Vertical position of a UI element, or None when the driver does not report one.
+
+    Both callers read a coordinate the pipeline will use to decide something worth
+    getting wrong: the per-card boundary check drops a card sitting below the feed's
+    "no more results" banner, and the banner read decides whether pagination is over. A
+    missing coordinate is therefore a fact worth handling, and the one that matters most
+    is an element the driver has already evicted — processing a card opens its detail
+    page and navigates back, which rebuilds the feed and invalidates the handles held for
+    the cards not yet reached, so the boundary check is the read most likely to meet a
+    stale handle. An unreachable element has no position, so it answers None like any
+    other unreadable one and its caller falls through to its existing "position unknown"
+    path; letting the driver's error escape would spend a whole run to learn that one
+    coordinate was unavailable.
+
+    Duck-typed and exception-broad on purpose: the pipeline never imports the driver's
+    exception types (``_open_detail`` guards its own element read the same way), and a
+    handle can also fail on a driver-level error other than staleness.
+    """
     if elem is None:
         return None
-    location = getattr(elem, "location", None)
-    if not isinstance(location, dict):
-        return None
     try:
+        location = getattr(elem, "location", None)
+        if not isinstance(location, dict):
+            return None
         return float(location.get("y", 0))
-    except (TypeError, ValueError):
+    except Exception:
         return None
 
 

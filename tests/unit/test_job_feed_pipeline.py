@@ -24,6 +24,7 @@ from _feed_harness import (
     _pipeline,
     _posting,
 )
+from selenium.common.exceptions import StaleElementReferenceException
 
 from boss_agent.enums import (
     ChatButtonState,
@@ -35,6 +36,7 @@ from boss_agent.feed_pipeline import (
     FeedStreamConfig,
     JobAction,
     JobFeedPipeline,
+    _element_y,
     is_task_cancelled,
 )
 from boss_agent.job_entities import (
@@ -47,6 +49,96 @@ from boss_agent.screening import CandidateScreener, JobVerdictStage
 from boss_agent.screening_policy import (
     ScreeningPolicy,
 )
+
+
+class _StaleElement:
+    """A WebElement handle the driver has already evicted from its element cache.
+
+    Appium raises ``StaleElementReferenceException`` on the *next* property access, not
+    at the moment the element leaves the DOM, so a stand-in has to raise lazily from the
+    accessor — exactly as the real one does.
+    """
+
+    @property
+    def location(self):
+        raise StaleElementReferenceException(
+            "Message: Cached elements 'By.id: com.hpbr.bosszhipin:id/view_job_card' "
+            "do not exist in DOM anymore"
+        )
+
+
+@pytest.mark.asyncio
+async def test_stale_card_handle_does_not_abort_the_scan():
+    """A card element the driver has already evicted costs the boundary check, not the run.
+
+    Processing a card opens its detail page and navigates back, which rebuilds the feed
+    and invalidates the handles the pipeline captured for the cards it has not reached
+    yet. The boundary check reads the element's ``location`` for exactly that reason —
+    so on a real device it is the read most likely to meet a stale handle, and it sits
+    beside the per-card guard rather than inside it. One evicted handle there used to
+    end the entire AUTO_APPLY task, discarding every card already collected.
+
+    The card itself is still processed rather than skipped: an unreadable position means
+    "not known to be below the banner", which is how the check already treats an element
+    it cannot place, and ``_open_detail`` tolerates the same stale handle on the tap.
+    """
+    store = InMemoryJobRecordStore()
+    stale = _card("过期元素岗位", "甲公司", y=300)
+    stale.element = _StaleElement()
+    feed = ScriptedFeed(
+        [
+            [
+                stale,
+                _card("真实搜索结果一", "乙公司", y=600),
+                _card("真实搜索结果二", "丙公司", y=900),
+            ]
+        ]
+    )
+    detail = _detail_page()
+    pipeline = _pipeline(store, feed=feed, detail=detail)
+
+    result = await pipeline.stream_jobs(FeedStreamConfig(keyword="Agent", max_jobs=10))
+
+    # The run completed rather than raising, and every card was still processed.
+    assert result.scanned == 3
+    assert detail.extract_job_posting.call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_stale_feed_boundary_handle_does_not_abort_the_scan():
+    """The feed-bottom banner is read the same way, so it must degrade the same way.
+
+    ``get_feed_bottom_boundary`` hands back an element the driver may equally have
+    evicted. Failing to read its position must not cost the run either — losing the
+    boundary costs a little pagination precision, while raising costs every card.
+    """
+    store = InMemoryJobRecordStore()
+    feed = ScriptedFeed([[_card("真实搜索结果", "甲公司", y=600)]])
+    detail = _detail_page()
+    pipeline = _pipeline(store, feed=feed, detail=detail)
+
+    pipeline.list_page.get_feed_bottom_boundary = lambda: _StaleElement()
+
+    result = await pipeline.stream_jobs(FeedStreamConfig(keyword="Agent", max_jobs=10))
+
+    assert result.scanned == 1
+    assert detail.extract_job_posting.call_count == 1
+
+
+def test_element_y_reports_none_for_an_unreachable_element():
+    """``_element_y`` answers "where is it", and an element that is gone has no answer.
+
+    Returning None lets both callers — the per-card boundary check and the banner read —
+    fall through to their existing "no position known" path, which is the whole point of
+    the helper's contract. Letting the driver error escape converts a missing coordinate
+    into a dead run.
+    """
+    assert _element_y(_StaleElement()) is None
+    assert _element_y(None) is None
+    assert _element_y(MagicMock()) is None
+    healthy = MagicMock()
+    healthy.location = {"x": 0, "y": 640.0}
+    assert _element_y(healthy) == pytest.approx(640.0)
 
 
 @pytest.mark.asyncio
