@@ -6,7 +6,7 @@
  * jsdom performs no layout, so the box's height is stubbed here. That is enough to pin
  * the behaviour under test, which is the *decision* to scroll — not the geometry.
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll, vi } from 'vitest';
 import { render, cleanup, fireEvent } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import TaskLogModal from '$lib/components/TaskLogModal.svelte';
@@ -124,5 +124,68 @@ describe('TaskLogModal log viewport (issue #356)', () => {
 		await tick();
 
 		expect(el.scrollTop).toBe(BOX_HEIGHT);
+	});
+});
+
+/**
+ * The broker stamps every line in UTC and PocketBase stores `created` the same way, so
+ * the modal used to show an operator in UTC+8 a log that had not happened yet. Both are
+ * read in the viewer's timezone now; the wire format stays UTC.
+ */
+describe('TaskLogModal local time rendering', () => {
+	const ORIGINAL_TZ = process.env.TZ;
+
+	beforeAll(() => {
+		// Pin the viewer so the expected strings are worked examples, not a recomputation.
+		process.env.TZ = 'Asia/Shanghai';
+	});
+
+	afterAll(() => {
+		// Assigning a captured `undefined` would write the *string* "undefined", which Node
+		// cannot parse — leaving every later suite silently reading UTC.
+		if (ORIGINAL_TZ === undefined) delete process.env.TZ;
+		else process.env.TZ = ORIGINAL_TZ;
+	});
+
+	function stamped(id: string): AutomationTask {
+		return {
+			id,
+			task_type: 'SCRAPE_JOBS',
+			status: 'success',
+			payload: {},
+			created: '2026-10-11T01:00:10.649Z',
+			logs: ['[2026-10-11T01:18:53.882846+00:00] ✅ [AUTO_SEND] 已发送']
+		};
+	}
+
+	it('shows the creation time in local time', () => {
+		// 01:00:10 UTC is 09:00 the same morning in UTC+8.
+		const { container } = open({ task: stamped('t1') });
+		expect(container.textContent).toContain('2026-10-11 09:00');
+	});
+
+	it('does not show the raw UTC stamp as the creation time', () => {
+		const { container } = open({ task: stamped('t1') });
+		expect(container.textContent).not.toContain('2026-10-11T01:00:10.649Z');
+	});
+
+	it('shows each log line in local time', () => {
+		// 01:18:53 UTC is 09:18:53 in UTC+8.
+		const { container } = open({ task: stamped('t1') });
+		expect(container.textContent).toContain('[2026-10-11 09:18:53] ✅ [AUTO_SEND] 已发送');
+	});
+
+	it('copies the same local time it displays', async () => {
+		const writeText = vi.fn(async () => {});
+		Object.assign(navigator, { clipboard: { writeText } });
+
+		const { getByRole } = open({ task: stamped('t1') });
+		await fireEvent.click(getByRole('button', { name: /复制完整日志/ }));
+
+		// A copied line must read the same as the screen, or the log an operator pastes
+		// into a report disagrees with the one they were looking at.
+		expect(writeText).toHaveBeenCalledWith(
+			expect.stringContaining('[2026-10-11 09:18:53] ✅ [AUTO_SEND] 已发送')
+		);
 	});
 });

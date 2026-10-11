@@ -8,7 +8,7 @@
  * reacts to a broker event, so they are tested here against the real page rather than only
  * against the decision helpers in `$lib/taskConsole`.
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll, vi } from 'vitest';
 import { render, screen, waitFor, cleanup, fireEvent, within } from '@testing-library/svelte';
 import { tick } from 'svelte';
 
@@ -27,7 +27,12 @@ const mocks = vi.hoisted(() => ({
 	handler: null as null | ((event: { action: string; record: any }) => void)
 }));
 
-vi.mock('$lib/pocketbase', () => ({
+vi.mock('$lib/pocketbase', async (importOriginal) => ({
+	// `formatLogLine` stays real. The console's local-time reading is the behaviour under
+	// test here, so stubbing it to an identity would make the assertion vacuous. The
+	// remaining formatters are stubbed as before, since only the network stores are the
+	// subject of these tests.
+	...(await importOriginal<typeof import('$lib/pocketbase')>()),
 	listAutomationTasks: mocks.listAutomationTasks,
 	getAutomationTask: mocks.getAutomationTask,
 	listSavedSearches: mocks.listSavedSearches,
@@ -441,5 +446,56 @@ describe('console follows the work, not the newest event (issue #357)', () => {
 		const panel = container.querySelector('#task-console');
 		await waitFor(() => expect(panel?.textContent).toContain('SUCCESS: SCRAPE_JOBS'));
 		expect(panel?.querySelector('[data-testid="task-console-log"]')?.textContent).toContain('done');
+	});
+});
+
+/**
+ * The console box shows the same broker log lines the modal does, and the same UTC stamps.
+ * A run logged at 01:18 UTC was shown to a UTC+8 operator as work that had not happened yet.
+ */
+describe('console log local time reading', () => {
+	const ORIGINAL_TZ = process.env.TZ;
+
+	beforeAll(() => {
+		// Pinned so the expected strings are worked examples rather than a recomputation.
+		process.env.TZ = 'Asia/Shanghai';
+	});
+
+	afterAll(() => {
+		// Assigning a captured `undefined` would write the *string* "undefined", which Node
+		// cannot parse — leaving every later suite silently reading UTC.
+		if (ORIGINAL_TZ === undefined) delete process.env.TZ;
+		else process.env.TZ = ORIGINAL_TZ;
+	});
+
+	it('shows a broker log line in the viewer timezone', async () => {
+		// 01:18:53 UTC is 09:18:53 in UTC+8.
+		const running = task('run_1', 'running', OLD, ['[2026-10-11T01:18:53.882846+00:00] ✅ [AUTO_SEND] 已发送']);
+		mocks.listAutomationTasks.mockResolvedValue(page([running]));
+
+		const { container } = renderPage();
+		await waitForSubscription();
+
+		await waitFor(() =>
+			expect(container.querySelector('[data-testid="task-console-log"]')?.textContent).toContain(
+				'[2026-10-11 09:18:53] ✅ [AUTO_SEND] 已发送'
+			)
+		);
+	});
+
+	it('leaves a line the dashboard wrote itself alone', async () => {
+		// The console seeds an unstamped notice when a run is adopted; rewriting it would
+		// attach a time the dashboard never recorded.
+		const running = task('run_1', 'running', OLD, ['[System] 任务 run_1 当前状态: running，等待新的日志推送...']);
+		mocks.listAutomationTasks.mockResolvedValue(page([running]));
+
+		const { container } = renderPage();
+		await waitForSubscription();
+
+		await waitFor(() =>
+			expect(container.querySelector('[data-testid="task-console-log"]')?.textContent).toContain(
+				'[System] 任务 run_1 当前状态: running，等待新的日志推送...'
+			)
+		);
 	});
 });
