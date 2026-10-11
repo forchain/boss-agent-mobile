@@ -372,7 +372,8 @@ class CandidateScreener:
 
         # 硬性过滤（通勤距离超限）一票否决：距离是客观物理限制，不存在"兴趣足够强
         # 就值得通勤"的豁免，因此这里绝不进入白名单放宽路由（issue #437）。拒绝
-        # 理由仍取合并串，以便同卡片上并存的软性违例不被审计丢弃。
+        # 理由仍取合并串，以便同卡片上并存的软性违例不被审计丢弃；"硬性约束不可豁免"
+        # 的标记已由 policy 拼进 hard_violation，卡片层与详情页层因此说同一句话。
         if app_verdict.hard_violation:
             return CardScreeningVerdict.rejected_by_app_rule(app_verdict.violation)
 

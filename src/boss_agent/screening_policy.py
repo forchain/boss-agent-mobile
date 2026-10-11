@@ -20,6 +20,11 @@ from boss_agent.identifier_helpers import (
     is_masked_company_name,
 )
 
+#: 硬性违例在审计串、记录字段与实时日志中的统一措辞（GLOSSARY「App-Enforced Filter」）。
+#: 由判定硬性条件的一侧拼好，调用方原样转述即可——卡片初筛层与详情页阶段因此说同一
+#: 句话，操作者不必猜一处说"超限"、另一处说"不可豁免"。
+HARD_CONSTRAINT_MARKER = "（硬性约束不可豁免）"
+
 
 @dataclass(frozen=True)
 class AppEnforcedFilterVerdict:
@@ -185,6 +190,10 @@ class ScreeningPolicy:
         after the card-level channel verdict was already rendered and audited — so the
         detail-stage check must not re-report a channel violation already adjudicated.
 
+        返回的违例串已带上 ``HARD_CONSTRAINT_MARKER``：这条理由会被原样写进审计串、
+        记录字段、实时日志与任务结果，因此"硬性、不可豁免"这个判断必须在这一处就说
+        清楚，而不能指望每个调用方记得补——漏补一处，操作者读到的就只剩"超限"。
+
         Fails open (passes) whenever the distance is unknown or the ceiling is disabled
         (None or <= 0): an absent widget must never reject a job.
         """
@@ -197,7 +206,8 @@ class ScreeningPolicy:
 
         return (
             False,
-            f"【App端强制过滤】距离家庭住址 {commute_distance_km:.1f}km 超过通勤上限 {limit:.1f}km",
+            f"【App端强制过滤】距离家庭住址 {commute_distance_km:.1f}km 超过通勤上限 "
+            f"{limit:.1f}km{HARD_CONSTRAINT_MARKER}",
         )
 
     def evaluate_app_enforced_filters_by_severity(
@@ -234,30 +244,6 @@ class ScreeningPolicy:
             hard_violation="" if hard_passed else hard_violation,
             soft_violation=soft_violation,
         )
-
-    def evaluate_app_enforced_filters(
-        self,
-        is_headhunter: bool = False,
-        commute_distance_km: float | None = None,
-    ) -> tuple[bool, str]:
-        """Evaluate App-Enforced Filters the Boss platform cannot express natively.
-
-        The flattened (passed: bool, violation: str) view of
-        ``evaluate_app_enforced_filters_by_severity``, kept for callers that only
-        need the audit line and no exemption routing — ``violation`` is an empty
-        string when the card satisfies all App-Enforced Filters, otherwise every
-        violated dimension joined by '；'. Reporting each violated dimension —
-        rather than the first one checked — keeps this caller's audit trail
-        equivalent to SCRAPE_JOBS', which adjudicates the two dimensions at
-        different stages and can therefore record both.
-
-        注意：本方法不做豁免路由，硬性/软性的分层判定在调用方进行。
-        """
-        verdict = self.evaluate_app_enforced_filters_by_severity(
-            is_headhunter=is_headhunter,
-            commute_distance_km=commute_distance_km,
-        )
-        return verdict.passed, verdict.violation
 
     def evaluate_whitelist_relaxation(
         self,

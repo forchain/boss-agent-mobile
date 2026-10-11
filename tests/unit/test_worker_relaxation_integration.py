@@ -961,8 +961,9 @@ async def test_scrape_jobs_channel_relaxation_does_not_rescue_a_distant_job():
     records = await broker.job_store.list_job_records()
     rec = next(r for r in records if r.get("title") == "云原生平台工程师")
     assert rec["status"] == "ignored"
-    # The record field reflects the final, hard verdict even though one soft
-    # relaxation was recorded earlier in the audit trail.
+    # relaxed_by_whitelist 记录的是最终去向（这份岗位是否因白名单放宽而获准采集），
+    # 审计串记录的是历史（渠道那一维确实被放宽过一次）。两者不是矛盾的两个读数：
+    # 放宽没有让岗位活下来，所以字段是 False，而审计保留那次放宽的事实。
     assert rec["relaxed_by_whitelist"] is False
     audit = rec.get("screening_audit") or ""
     # The soft channel violation keeps its exemption; the hard distance one does not,
