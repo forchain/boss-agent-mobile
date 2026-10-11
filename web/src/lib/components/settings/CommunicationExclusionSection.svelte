@@ -1,4 +1,5 @@
 <script lang="ts">
+	import CommunicationExclusionModal from './CommunicationExclusionModal.svelte';
 	import {
 		settingsStore,
 		communicationSummaryStore,
@@ -8,6 +9,35 @@
 		loadCommunicationSummary,
 		clearExpiredExclusions
 	} from '$lib/stores/settings';
+
+	/** How many company chips the first level may show before deferring to the modal. */
+	const CHIP_LIMIT = 6;
+
+	let isModalOpen = $state(false);
+
+	function recencyOf(value: string | null): number | null {
+		if (!value) return null;
+		const ts = Date.parse(value);
+		return Number.isNaN(ts) ? null : ts;
+	}
+
+	/**
+	 * `companies` arrives sorted alphabetically by name, so the "most recent" reading of the pool
+	 * has to be built here: newest `last_applied_at` first, never-communicated last, ties by name.
+	 */
+	const recentCompanies = $derived(
+		[...($communicationSummaryStore?.companies ?? [])].sort((a, b) => {
+			const left = recencyOf(a.last_applied_at);
+			const right = recencyOf(b.last_applied_at);
+			if (left === right) return a.name.localeCompare(b.name, 'zh-Hans-CN');
+			if (left === null) return 1;
+			if (right === null) return -1;
+			return right - left;
+		})
+	);
+
+	const visibleCompanies = $derived(recentCompanies.slice(0, CHIP_LIMIT));
+	const hiddenCompanyCount = $derived(Math.max(0, recentCompanies.length - visibleCompanies.length));
 </script>
 
 <div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 sm:p-6 shadow-xl space-y-5">
@@ -63,9 +93,10 @@
 	</div>
 
 	{#if $communicationSummaryStore?.companies?.length}
-		<div class="flex flex-wrap gap-2">
-			{#each $communicationSummaryStore.companies as company}
+		<div class="flex flex-wrap items-center gap-2">
+			{#each visibleCompanies as company}
 				<span
+					data-testid="communication-exclusion-chip"
 					class="text-[11px] px-2.5 py-1 rounded-lg border font-mono {company.expired
 						? 'border-cyan-800/80 bg-cyan-950/40 text-cyan-300'
 						: 'border-amber-800/70 bg-amber-950/30 text-amber-200'}"
@@ -74,6 +105,17 @@
 					{company.name} · {company.applied_count}岗{company.expired ? ' · 已超期' : ''}
 				</span>
 			{/each}
+			{#if hiddenCompanyCount > 0}
+				<span class="text-[11px] text-slate-500 font-mono">还有 {hiddenCompanyCount} 家</span>
+			{/if}
+			<button
+				type="button"
+				onclick={() => (isModalOpen = true)}
+				class="text-[11px] px-2.5 py-1 rounded-full bg-cyan-950/40 text-cyan-300 border border-cyan-800/80 hover:border-cyan-600 hover:bg-cyan-950/70 transition font-mono shrink-0"
+			>
+				<span>🏢 查看全部避嫌企业</span>
+				<span class="text-slate-500 ml-1">{recentCompanies.length} 家</span>
+			</button>
 		</div>
 	{:else}
 		<p class="text-[11px] text-slate-500">当前没有处于避嫌状态的直招企业</p>
@@ -112,3 +154,5 @@
 		</div>
 	{/if}
 </div>
+
+<CommunicationExclusionModal isOpen={isModalOpen} onClose={() => (isModalOpen = false)} />
