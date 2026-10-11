@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { logAutoScroll } from '$lib/logFollow.svelte';
+	import { formatDateTime, formatLogLine } from '$lib/pocketbase';
 	import type { AutomationTask } from '$lib/types';
 
 	let {
@@ -18,10 +19,19 @@
 
 	let copySuccess = $state(false);
 
+	/**
+	 * Log lines and the creation time are stored in UTC. They are read here instead, so
+	 * the modal shows the viewer's own clock — a UTC container writing the stamp has no way
+	 * to know whose timezone that is.
+	 */
+	let displayLines = $derived(task?.logs?.map(formatLogLine) ?? []);
+
 	async function copyLogsToClipboard() {
 		if (!task?.logs) return;
 		try {
-			await navigator.clipboard.writeText(task.logs.join('\n'));
+			// Copy what is on screen. A pasted log that disagreed with the screen would
+			// send the reader hunting for a clock skew that no longer exists.
+			await navigator.clipboard.writeText(displayLines.join('\n'));
 			copySuccess = true;
 			setTimeout(() => {
 				copySuccess = false;
@@ -76,7 +86,7 @@
 			<div class="px-4 sm:px-6 py-2.5 bg-slate-950/70 border-b border-slate-800 text-[11px] flex flex-wrap items-center justify-between gap-2.5 text-slate-400">
 				<div>
 					<span>创建时间: </span>
-					<span class="text-slate-200 font-mono">{task.created || '未知'}</span>
+					<span class="text-slate-200 font-mono">{task.created ? formatDateTime(task.created) : '未知'}</span>
 				</div>
 				{#if task.worker_id}
 					<div>
@@ -105,7 +115,7 @@
 				class="p-4 sm:p-6 overflow-y-auto flex-1 bg-slate-950 font-mono text-xs text-slate-300 space-y-1 select-text leading-relaxed"
 			>
 				{#if task.logs && task.logs.length > 0}
-					{#each task.logs as line}
+					{#each displayLines as line}
 						<div class="break-all whitespace-pre-wrap">{line}</div>
 					{/each}
 				{:else}

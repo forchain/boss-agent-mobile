@@ -12,6 +12,7 @@
 		updateSavedSearch,
 		formatCronHuman,
 		formatDateTime,
+		formatLogLine,
 		formatTimeOnly
 	} from '$lib/pocketbase';
 	import { buildSearchLaunch, DEFAULT_MAX_JOBS } from '$lib/taskLaunch';
@@ -37,6 +38,13 @@
 	let logLines = $state<string[]>([
 		'[System] 任务控制台就绪，正在监听自动化状态流...'
 	]);
+
+	/**
+	 * The console reads in the operator's timezone. Broker lines are stamped in UTC and
+	 * the box's own notices carry no stamp at all, so both survive `formatLogLine` intact
+	 * or untouched respectively.
+	 */
+	let displayLogLines = $derived(logLines.map(formatLogLine));
 
 	//: A one-line console note per task, held until tracking adopts that task. Setting
 	//: `activeTaskId` directly on a create event is what used to let a queued task take the
@@ -612,7 +620,7 @@
 					data-testid="task-console-log"
 					class="bg-slate-950 border border-slate-800 rounded-xl p-4 h-64 overflow-y-auto font-mono text-xs text-slate-300 space-y-1 custom-scrollbar leading-relaxed"
 				>
-					{#each logLines as line}
+					{#each displayLogLines as line}
 						<div class="text-slate-300 break-all">{line}</div>
 					{/each}
 				</div>
