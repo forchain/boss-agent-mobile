@@ -345,9 +345,10 @@ class CandidateScreener:
         """Screen a card against keywords, App-Enforced Filters and Whitelist Relaxation.
 
         Runs in a single step because the three rules are one decision: a card that
-        violates an App-Enforced Filter is only rejected if Whitelist Relaxation does
-        not rescue it, and splitting them across callers is what let the two worker
-        handlers drift apart.
+        violates a soft App-Enforced Filter is only rejected if Whitelist Relaxation
+        does not rescue it, and splitting them across callers is what let the two worker
+        handlers drift apart. The hard/soft split is the one exception that must not be
+        collapsed — see the hard-filter branch below.
         """
         resolved = _resolve_policy(policy)
         facets = CardFacets.from_card(card)
@@ -362,12 +363,19 @@ class CandidateScreener:
         if not passed:
             return CardScreeningVerdict.rejected_by_keywords(reason)
 
-        app_pass, violation = resolved.evaluate_app_enforced_filters(
+        app_verdict = resolved.evaluate_app_enforced_filters_by_severity(
             is_headhunter=facets.is_headhunter,
             commute_distance_km=facets.commute_distance_km,
         )
-        if app_pass:
+        if app_verdict.passed:
             return CardScreeningVerdict.approved()
+
+        # 硬性过滤（通勤距离超限）一票否决：距离是客观物理限制，不存在"兴趣足够强
+        # 就值得通勤"的豁免，因此这里绝不进入白名单放宽路由（issue #437）。拒绝
+        # 理由仍取合并串，以便同卡片上并存的软性违例不被审计丢弃；"硬性约束不可豁免"
+        # 的标记已由 policy 拼进 hard_violation，卡片层与详情页层因此说同一句话。
+        if app_verdict.hard_violation:
+            return CardScreeningVerdict.rejected_by_app_rule(app_verdict.violation)
 
         relaxed, matched_token = resolved.evaluate_whitelist_relaxation(
             title=facets.title,
@@ -379,9 +387,9 @@ class CandidateScreener:
             return CardScreeningVerdict.approved(
                 relaxed_by_whitelist=True,
                 matched_token=matched_token,
-                app_rule_violation=violation,
+                app_rule_violation=app_verdict.soft_violation,
             )
-        return CardScreeningVerdict.rejected_by_app_rule(violation)
+        return CardScreeningVerdict.rejected_by_app_rule(app_verdict.soft_violation)
 
     # ------------------------------------------------------------------
     # Stage 2: full-JD evaluation and greeting drafting

@@ -551,6 +551,153 @@ def test_app_filter_violation_rescued_by_whitelist_relaxation():
     mock_llm.chat_completion_json.assert_called()
 
 
+# ----------------------------------------------------------------------------
+# 硬性 / 软性非原生过滤的豁免路由（Issue #437）
+# ----------------------------------------------------------------------------
+
+
+def test_over_commute_limit_is_rejected_even_on_whitelist_hit():
+    """超出通勤距离 + 命中白名单关键词 -> 必须淘汰，白名单豁免不予授予。
+
+    通勤距离是客观物理限制，不是兴趣偏好：命中"大模型"不会让五十公里变近。
+    """
+    policy = ScreeningPolicy(
+        max_commute_distance_km=20.0,
+        title_whitelist=["大模型"],
+        jd_blacklist=["外包"],
+    )
+    card = JobCardBrief(
+        title="大模型 Agent 平台架构师",
+        company_name="某科技公司",
+        recruiter_name="张三",
+        commute_distance_km=52.0,
+    )
+
+    mock_llm = MagicMock()
+    screener = CandidateScreener(llm_client=mock_llm)
+    verdict = screener.evaluate_card(card, policy)
+
+    assert verdict.passed is False
+    assert verdict.stage is CardVerdictStage.FILTERED_BY_APP_RULE
+    assert verdict.app_rule_pass is False
+    assert "超过通勤上限 20.0km" in verdict.app_rule_violation
+    # 硬性违例不走白名单放宽：既不标记放宽，也不记录命中的关键词。
+    assert verdict.relaxed_by_whitelist is False
+    assert verdict.matched_token == ""
+    assert verdict.relaxation_reason == ""
+    assert "白名单放宽" not in verdict.screening_audit
+    # 被淘汰的卡片不得进入 JD 阶段，LLM 一次也不能被调用。
+    mock_llm.chat_completion_json.assert_not_called()
+
+
+def test_over_commute_limit_is_rejected_without_whitelist_hit():
+    """超出通勤距离 + 未命中白名单 -> 淘汰。"""
+    policy = ScreeningPolicy(
+        max_commute_distance_km=20.0,
+        title_whitelist=["大模型"],
+        jd_blacklist=["外包"],
+    )
+    card = JobCardBrief(
+        title="Java 后端开发工程师",
+        company_name="某银行",
+        recruiter_name="李四",
+        commute_distance_km=52.0,
+    )
+
+    mock_llm = MagicMock()
+    screener = CandidateScreener(llm_client=mock_llm)
+    verdict = screener.evaluate_card(card, policy)
+
+    assert verdict.passed is False
+    assert verdict.stage is CardVerdictStage.FILTERED_BY_APP_RULE
+    assert "超过通勤上限 20.0km" in verdict.app_rule_violation
+    assert verdict.relaxed_by_whitelist is False
+    mock_llm.chat_completion_json.assert_not_called()
+
+
+def test_within_commute_limit_channel_violation_is_still_relaxed_by_whitelist():
+    """通勤距离在上限内 + 猎头违反 direct_only + 命中白名单 -> 仍由白名单放宽放行。
+
+    渠道偏好只是成功率偏好，软性违例的豁免行为必须与 #437 之前完全一致。
+    """
+    policy = ScreeningPolicy(
+        channel_preference="direct_only",
+        max_commute_distance_km=40.0,
+        title_whitelist=["大模型"],
+        jd_blacklist=["外包"],
+    )
+    card = JobCardBrief(
+        title="大模型应用架构师",
+        company_name="某人力资源服务公司",
+        recruiter_name="林女士 · 资深猎头顾问",
+        commute_distance_km=18.0,
+    )
+    assert card.is_headhunter is True
+
+    mock_llm = MagicMock()
+    screener = CandidateScreener(llm_client=mock_llm)
+    verdict = screener.evaluate_card(card, policy)
+
+    assert verdict.passed is True
+    assert verdict.stage is CardVerdictStage.RELAXED
+    assert verdict.app_rule_pass is False
+    assert "direct_only" in verdict.app_rule_violation
+    assert verdict.relaxed_by_whitelist is True
+    assert verdict.matched_token == "大模型"
+    assert "大模型" in verdict.relaxation_reason
+    # 距离合规，审计串里不应出现任何通勤违例。
+    assert "通勤上限" not in verdict.app_rule_violation
+
+
+def test_within_commute_limit_channel_violation_without_whitelist_hit_is_rejected():
+    """通勤距离在上限内 + 猎头违反 direct_only + 未命中白名单 -> 淘汰。"""
+    policy = ScreeningPolicy(
+        channel_preference="direct_only",
+        max_commute_distance_km=40.0,
+        title_whitelist=["大模型"],
+        jd_blacklist=["外包"],
+    )
+    card = JobCardBrief(
+        title="Java 后端开发工程师",
+        company_name="某人力资源服务公司",
+        recruiter_name="林女士 · 资深猎头顾问",
+        commute_distance_km=18.0,
+    )
+
+    mock_llm = MagicMock()
+    screener = CandidateScreener(llm_client=mock_llm)
+    verdict = screener.evaluate_card(card, policy)
+
+    assert verdict.passed is False
+    assert verdict.stage is CardVerdictStage.FILTERED_BY_APP_RULE
+    assert "direct_only" in verdict.app_rule_violation
+    assert verdict.relaxed_by_whitelist is False
+    mock_llm.chat_completion_json.assert_not_called()
+
+
+def test_hard_violation_rejection_keeps_the_soft_violation_in_the_audit():
+    """两个维度同时违例时，硬性条件决定走向，但拒绝理由仍须载明全部违例。"""
+    policy = ScreeningPolicy(
+        channel_preference="direct_only",
+        max_commute_distance_km=40.0,
+        title_whitelist=["大模型"],
+    )
+    card = JobCardBrief(
+        title="大模型应用架构师",
+        company_name="某人力资源服务公司",
+        recruiter_name="林女士 · 资深猎头顾问",
+        commute_distance_km=52.0,
+    )
+
+    screener = CandidateScreener(llm_client=MagicMock())
+    verdict = screener.evaluate_card(card, policy)
+
+    assert verdict.passed is False
+    assert "超过通勤上限 40.0km" in verdict.app_rule_violation
+    assert "direct_only" in verdict.app_rule_violation
+    assert verdict.relaxed_by_whitelist is False
+
+
 def test_app_filter_clean_job_bypasses_relaxation():
     """Non-violated jobs bypass whitelist relaxation entirely, even with a whitelist set."""
     policy = ScreeningPolicy(

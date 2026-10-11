@@ -20,6 +20,40 @@ from boss_agent.identifier_helpers import (
     is_masked_company_name,
 )
 
+#: 硬性违例在审计串、记录字段与实时日志中的统一措辞（GLOSSARY「App-Enforced Filter」）。
+#: 由判定硬性条件的一侧拼好，调用方原样转述即可——卡片初筛层与详情页阶段因此说同一
+#: 句话，操作者不必猜一处说"超限"、另一处说"不可豁免"。
+HARD_CONSTRAINT_MARKER = "（硬性约束不可豁免）"
+
+
+@dataclass(frozen=True)
+class AppEnforcedFilterVerdict:
+    """A card's App-Enforced Filter standing, split by how far it may be waived.
+
+    非原生过滤并非同质：通勤距离超限是不可妥协的客观物理限制（硬性），
+    渠道偏好违背只是成功率/推荐偏好（软性）。混为一谈的后果是
+    五十公里外的岗位仅因命中白名单关键词就被放行投递，因此两层必须分开判定。
+    """
+
+    #: 硬性违例（硬性过滤条件）：一票否决，绝不接受白名单放宽。
+    hard_violation: str = ""
+    #: 软性违例（软性过滤条件）：仍可由白名单放宽豁免。
+    soft_violation: str = ""
+
+    @property
+    def passed(self) -> bool:
+        """True when no App-Enforced Filter was violated at either severity."""
+        return not self.hard_violation and not self.soft_violation
+
+    @property
+    def violation(self) -> str:
+        """Every violated condition joined by '；', for the audit trail.
+
+        硬性违例并不抹掉同一张卡片上并存的软性违例：决定走向的是硬性条件，
+        而操作者读到的拒绝理由应当是这张卡片真正触犯的全部条件。
+        """
+        return "；".join(part for part in (self.hard_violation, self.soft_violation) if part)
+
 
 @dataclass
 class ScreeningPolicy:
@@ -27,8 +61,8 @@ class ScreeningPolicy:
 
     Blacklists enforce deterministic one-strike rejection over compact card facets.
     The whitelist is NOT an inclusion gate and never rejects a job: it exists solely
-    as relaxation tokens for App-Enforced Filters (see ``evaluate_app_enforced_filters``
-    and ``evaluate_whitelist_relaxation``).
+    as relaxation tokens for the *soft* App-Enforced Filters (see
+    ``evaluate_app_enforced_filters_by_severity`` and ``evaluate_whitelist_relaxation``).
     """
 
     title_whitelist: list[str] = field(default_factory=list)
@@ -148,9 +182,17 @@ class ScreeningPolicy:
     def evaluate_commute_distance(self, commute_distance_km: float | None) -> tuple[bool, str]:
         """Evaluate the commute distance App-Enforced Filter on its own.
 
+        This is the HARD App-Enforced Filter (issue #437): exceeding the ceiling is a
+        physical fact about the posting, so a violation rejects the job outright and
+        is never routed through Whitelist Relaxation.
+
         Split out because the distance is only knowable from the detail page bottom,
         after the card-level channel verdict was already rendered and audited — so the
         detail-stage check must not re-report a channel violation already adjudicated.
+
+        返回的违例串已带上 ``HARD_CONSTRAINT_MARKER``：这条理由会被原样写进审计串、
+        记录字段、实时日志与任务结果，因此"硬性、不可豁免"这个判断必须在这一处就说
+        清楚，而不能指望每个调用方记得补——漏补一处，操作者读到的就只剩"超限"。
 
         Fails open (passes) whenever the distance is unknown or the ceiling is disabled
         (None or <= 0): an absent widget must never reject a job.
@@ -164,47 +206,44 @@ class ScreeningPolicy:
 
         return (
             False,
-            f"【App端强制过滤】距离家庭住址 {commute_distance_km:.1f}km 超过通勤上限 {limit:.1f}km",
+            f"【App端强制过滤】距离家庭住址 {commute_distance_km:.1f}km 超过通勤上限 "
+            f"{limit:.1f}km{HARD_CONSTRAINT_MARKER}",
         )
 
-    def evaluate_app_enforced_filters(
+    def evaluate_app_enforced_filters_by_severity(
         self,
         is_headhunter: bool = False,
         commute_distance_km: float | None = None,
-    ) -> tuple[bool, str]:
-        """Evaluate App-Enforced Filters the Boss platform cannot express natively.
+    ) -> AppEnforcedFilterVerdict:
+        """Adjudicate the App-Enforced Filters, keeping hard and soft violations apart.
 
-        Currently the recruitment channel preference (direct-hire vs headhunter) and
-        the commute distance ceiling. Returns (passed: bool, violation: str);
-        ``violation`` is an empty string when the card satisfies all App-Enforced
-        Filters, otherwise every violated condition joined by '；', which the
-        Whitelist Relaxation router may still exempt. Reporting each violated
-        dimension — rather than the first one checked — keeps this caller's audit
-        trail equivalent to SCRAPE_JOBS', which adjudicates the two dimensions at
-        different stages and can therefore record both.
+        非原生过滤按可豁免性分层（issue #437）：
+        - 硬性 —— 通勤距离超限。距离是客观物理事实，兴趣再强也不改变通勤成本，
+          因此违例即淘汰，任何情况下都不接受白名单放宽。
+        - 软性 —— 渠道偏好违背（``direct_only`` 遇猎头 / ``headhunter_only`` 遇直聘）。
+          这只是成功率与推荐偏好，违例后仍允许由白名单放宽豁免。
+
+        两层分开返回，调用方才能决定"是否还值得走豁免路由"；此前两者被揉进一条
+        '；' 字符串，使得任何一层的违例都能被白名单救回。
         """
         if not self.enable_screening:
-            return True, ""
+            return AppEnforcedFilterVerdict()
 
-        violations: list[str] = []
-
-        passed, commute_violation = self.evaluate_commute_distance(commute_distance_km)
-        if not passed:
-            violations.append(commute_violation)
-
+        hard_passed, hard_violation = self.evaluate_commute_distance(commute_distance_km)
+        soft_violation = ""
         if self.channel_preference == ChannelPreference.DIRECT_ONLY and is_headhunter:
-            violations.append(
+            soft_violation = (
                 "【App端强制过滤】猎头代招岗位违反直聘渠道偏好 (channel_preference='direct_only')"
             )
         elif self.channel_preference == ChannelPreference.HEADHUNTER_ONLY and not is_headhunter:
-            violations.append(
+            soft_violation = (
                 "【App端强制过滤】直招岗位违反猎头渠道偏好 (channel_preference='headhunter_only')"
             )
 
-        if not violations:
-            return True, ""
-
-        return False, "；".join(violations)
+        return AppEnforcedFilterVerdict(
+            hard_violation="" if hard_passed else hard_violation,
+            soft_violation=soft_violation,
+        )
 
     def evaluate_whitelist_relaxation(
         self,
@@ -213,7 +252,7 @@ class ScreeningPolicy:
         tags: list[str] | None = None,
         digest: str = "",
     ) -> tuple[bool, str]:
-        """Evaluate Whitelist Relaxation for a card that violated an App-Enforced Filter.
+        """Evaluate Whitelist Relaxation for a card that violated a soft App-Enforced Filter.
 
         Inspects the compact card facets (title, tags, company, digest) against the
         whitelist tokens, which encode subject matter the candidate cares deeply about
@@ -221,6 +260,10 @@ class ScreeningPolicy:
         whitelist simply means nothing can be relaxed. This method grants exemptions
         only — it never rejects, and non-matching jobs pass normal evaluation when no
         App-Enforced Filter was violated.
+
+        它只是卡片面关键词匹配器，不判断违例的严重性：是否真的豁免由调用方的路由
+        决定。硬性违例（通勤距离超限）不得调用本方法——调用方须先看
+        ``evaluate_app_enforced_filters_by_severity`` 的 ``hard_violation``。
         """
         active_whitelist = [w.strip() for w in self.title_whitelist if w and w.strip()]
         if not active_whitelist:

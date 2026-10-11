@@ -381,13 +381,16 @@ async def test_auto_apply_distant_job_is_ignored_before_chat_entry():
 
 
 @pytest.mark.asyncio
-async def test_auto_apply_distant_job_rescued_by_whitelist_still_drafts():
-    """Whitelist Relaxation admits a distant job whose title hits a passion token."""
+async def test_auto_apply_distant_job_is_never_rescued_by_whitelist():
+    """Issue #437: a distant job is rejected even when its title hits a passion token.
+
+    通勤距离是硬性过滤条件，白名单放宽不得豁免它。卡片初筛层在这里直接判定
+    filtered_by_app_rule，因此投递额度（聊天入口与 LLM token）一分都不会花出去。
+    """
     broker = InMemoryTaskBroker()
-    context = WorkerContext(
-        config=WorkerConfig(worker_id="w-distance-relax"), driver=_mock_driver()
-    )
-    handler = AutoApplyHandler(llm_client=_drafting_llm())
+    context = WorkerContext(config=WorkerConfig(worker_id="w-distance-hard"), driver=_mock_driver())
+    llm = _drafting_llm()
+    handler = AutoApplyHandler(llm_client=llm)
 
     task = await broker.create_task(
         task_type=TaskType.AUTO_APPLY,
@@ -402,7 +405,7 @@ async def test_auto_apply_distant_job_rescued_by_whitelist_still_drafts():
         patch("boss_agent.feed_pipeline.JobListPage"),
         patch("boss_agent.feed_pipeline.SearchPage") as search_cls,
         patch("boss_agent.feed_pipeline.JobDetailPage") as detail_cls,
-        patch("boss_agent.feed_pipeline.ChatPage"),
+        patch("boss_agent.feed_pipeline.ChatPage") as chat_cls,
     ):
         startup_cls.return_value.is_dialog_present.return_value = False
         search_cls.return_value.is_search_page.return_value = True
@@ -414,15 +417,22 @@ async def test_auto_apply_distant_job_rescued_by_whitelist_still_drafts():
         result = await handler.handle(task, broker, context)
 
     assert result.success is True
-    assert result.output["applied"] is False  # preview-only draft
+    assert result.output["applied"] is False
 
     records = await broker.job_store.list_job_records()
     rec = next(r for r in records if r.get("title") == "大模型 Agent 平台架构师")
-    assert rec["status"] == "matched"
-    assert rec["relaxed_by_whitelist"] is True
-    assert "白名单放宽" in (rec.get("screening_audit") or "")
+    # The title hits "大模型", but a 52km commute is a hard filter: no exemption.
+    assert rec["status"] == "ignored"
+    assert rec["relaxed_by_whitelist"] is False
     assert "超过通勤上限" in (rec.get("screening_audit") or "")
+    assert "白名单放宽" not in (rec.get("screening_audit") or "")
+    assert "超过通勤上限" in (rec.get("screened_reason") or "")
     assert rec["commute_distance_km"] == pytest.approx(52.0)
+
+    # 硬性淘汰发生在进入 JD/投递之前：聊天未开，token 未花。
+    detail_cls.return_value.open_chat.assert_not_called()
+    chat_cls.return_value.type_greeting_message.assert_not_called()
+    llm.chat_completion_json.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -731,7 +741,15 @@ async def test_scrape_jobs_distant_job_is_ingested_as_ignored():
 
 
 @pytest.mark.asyncio
-async def test_scrape_jobs_distant_job_rescued_by_whitelist_is_saved():
+async def test_scrape_jobs_distant_job_is_never_rescued_by_whitelist():
+    """Issue #438: 详情页的通勤距离违例是硬性约束，白名单命中也不再豁免。
+
+    The distance widget only renders at the bottom of the detail page, so this stage is
+    the one that earns the verdict — and the stage that used to let a whitelist token
+    ("云原生") carry a 52km job into the collected records. A hard constraint never
+    consults Whitelist Relaxation, so the posting now leaves the collection flow with
+    the hard-constraint nature of the verdict spelled out in both audit and log.
+    """
     broker = InMemoryTaskBroker()
     context = WorkerContext(
         config=WorkerConfig(worker_id="w-distance-scrape-relax"), driver=_mock_driver()
@@ -764,27 +782,34 @@ async def test_scrape_jobs_distant_job_rescued_by_whitelist_is_saved():
         result = await handler.handle(task, broker, context)
 
     assert result.success is True
-    assert result.output["scraped_count"] == 1
-    assert result.output["skipped_count"] == 0
+    assert result.output["scraped_count"] == 0
+    assert result.output["skipped_count"] == 1
 
     records = await broker.job_store.list_job_records()
     rec = next(r for r in records if r.get("title") == "云原生平台工程师")
-    assert rec["relaxed_by_whitelist"] is True
+    assert rec["status"] == "ignored"
+    assert rec["relaxed_by_whitelist"] is False
     audit = rec.get("screening_audit") or ""
-    assert "云原生" in audit
     assert "超过通勤上限" in audit
+    assert "硬性约束不可豁免" in audit
+    assert "白名单放宽" not in audit
     # Regression guard: the audit is a rendered list, never a stray leading separator.
     assert not audit.startswith("；")
+    assert "硬性约束不可豁免" in (rec.get("screened_reason") or "")
     assert rec["commute_distance_km"] == pytest.approx(52.0)
+
+    finished = await broker.get_task(task.id)
+    assert any("🛑 [App端强制过滤]" in log and "硬性约束不可豁免" in log for log in finished.logs)
 
 
 @pytest.mark.asyncio
-async def test_scrape_jobs_distance_relaxation_judges_the_enriched_title():
-    """A token carried only by the detail-page title still grants relaxation.
+async def test_scrape_jobs_enriched_title_cannot_rescue_a_distant_job():
+    """A token carried only by the detail-page title buys no commute exemption.
 
     Card titles arrive truncated ("技术专家" where the detail page says
-    "大模型技术专家"), so the detail-stage check must judge the same enriched title
-    it audits — otherwise a distant job is rejected on a title the user never saw.
+    "大模型技术专家"), so the enriched title used to be the facet the detail-stage
+    relaxation judged. Under #438 that judgement is gone: whichever title is in hand,
+    an over-ceiling distance is a hard constraint and the posting is dropped.
     """
     broker = InMemoryTaskBroker()
     context = WorkerContext(
@@ -818,13 +843,17 @@ async def test_scrape_jobs_distance_relaxation_judges_the_enriched_title():
         result = await handler.handle(task, broker, context)
 
     assert result.success is True
-    assert result.output["scraped_count"] == 1
-    assert result.output["skipped_count"] == 0
+    assert result.output["scraped_count"] == 0
+    assert result.output["skipped_count"] == 1
 
     records = await broker.job_store.list_job_records()
     rec = next(r for r in records if r.get("title") == "大模型技术专家")
-    assert rec["relaxed_by_whitelist"] is True
-    assert "白名单放宽" in (rec.get("screening_audit") or "")
+    assert rec["status"] == "ignored"
+    assert rec["relaxed_by_whitelist"] is False
+    audit = rec.get("screening_audit") or ""
+    assert "超过通勤上限" in audit
+    assert "硬性约束不可豁免" in audit
+    assert "白名单放宽" not in audit
 
 
 @pytest.mark.asyncio
@@ -873,9 +902,14 @@ async def test_scrape_jobs_skips_distance_probe_when_filter_disabled():
 
 
 @pytest.mark.asyncio
-async def test_scrape_jobs_channel_relaxation_implies_distance_relaxation():
-    """Invariant the audit trail relies on: both relaxations read the same card facets,
-    so a card rescued on the channel dimension cannot be rejected on distance alone."""
+async def test_scrape_jobs_channel_relaxation_does_not_rescue_a_distant_job():
+    """Issue #438: a card rescued on the channel dimension is still dropped on distance.
+
+    Channel preference is soft and commutes with Whitelist Relaxation; the commute
+    ceiling is hard and does not. The audit trail has to keep both facts apart, so a
+    rescued headhunter card is counted once for the channel and once — separately,
+    and unrelaxed — for the distance.
+    """
     broker = InMemoryTaskBroker()
     context = WorkerContext(
         config=WorkerConfig(worker_id="w-distance-invariant"), driver=_mock_driver()
@@ -921,13 +955,20 @@ async def test_scrape_jobs_channel_relaxation_implies_distance_relaxation():
         result = await handler.handle(task, broker, context)
 
     assert result.success is True
-    assert result.output["scraped_count"] == 1
+    assert result.output["scraped_count"] == 0
+    assert result.output["skipped_count"] == 1
 
     records = await broker.job_store.list_job_records()
     rec = next(r for r in records if r.get("title") == "云原生平台工程师")
-    assert rec["status"] == "jd_saved"
+    assert rec["status"] == "ignored"
+    # relaxed_by_whitelist 记录的是最终去向（这份岗位是否因白名单放宽而获准采集），
+    # 审计串记录的是历史（渠道那一维确实被放宽过一次）。两者不是矛盾的两个读数：
+    # 放宽没有让岗位活下来，所以字段是 False，而审计保留那次放宽的事实。
+    assert rec["relaxed_by_whitelist"] is False
     audit = rec.get("screening_audit") or ""
-    # Both violations were relaxed by the same token, and neither record field
-    # contradicts the audit trail.
-    assert audit.count("白名单放宽") == 2
+    # The soft channel violation keeps its exemption; the hard distance one does not,
+    # so exactly one 白名单放宽 is recorded and none of record fields contradicts it.
+    assert audit.count("白名单放宽") == 1
+    assert "超过通勤上限" in audit
+    assert "硬性约束不可豁免" in audit
     assert not audit.startswith("；")
