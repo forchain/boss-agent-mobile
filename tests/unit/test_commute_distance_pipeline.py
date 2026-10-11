@@ -46,8 +46,9 @@ def test_evaluate_card_rejects_a_card_beyond_the_commute_ceiling():
 
     The whitelist here deliberately does not match the card's title, so the point is
     the one this file makes at the screener seam: an unmatched relaxation token leaves
-    the violation standing. The matched case (and the worker handler that persists it)
-    is the seam #212 named, in ``test_worker_relaxation_integration.py``.
+    the violation standing. A matching token is no different — the ceiling is hard
+    (#437 at this seam, #438 on the detail page), so the matched case lands on the same
+    rejection and is pinned in ``test_worker_relaxation_integration.py``.
     """
     screener = CandidateScreener(llm_client=MagicMock())
 
