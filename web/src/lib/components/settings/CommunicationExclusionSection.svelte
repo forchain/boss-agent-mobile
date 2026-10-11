@@ -100,7 +100,7 @@
 					class="text-[11px] px-2.5 py-1 rounded-lg border font-mono {company.expired
 						? 'border-cyan-800/80 bg-cyan-950/40 text-cyan-300'
 						: 'border-amber-800/70 bg-amber-950/30 text-amber-200'}"
-					title={company.expired ? '已超过冷却期，可被重新评估' : `冷却期内，最近沟通: ${company.last_applied_at || '未知'}`}
+					title={company.expired ? '已超过冷却期，可被重新评估' : `冷却中，最近沟通: ${company.last_applied_at || '未知'}`}
 				>
 					{company.name} · {company.applied_count}岗{company.expired ? ' · 已超期' : ''}
 				</span>
