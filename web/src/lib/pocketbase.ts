@@ -131,17 +131,41 @@ export function formatCronHuman(cronExpr?: string): string {
 }
 
 /**
+ * Parse a PocketBase ISO/UTC datetime string into a Date, or null when it is not one.
+ *
+ * PocketBase writes `2026-10-11 01:00:10.649Z` with a space where ISO 8601 wants a `T`;
+ * the space is normalised rather than left to the engine's leniency. A value carrying an
+ * explicit offset is honoured as written — reinterpreting it as UTC would silently move
+ * the reading by that offset.
+ */
+function parseUtc(isoString: string): Date | null {
+	const raw = isoString.trim().replace(' ', 'T');
+	const withZone = /(Z|[+-]\d{2}:?\d{2})$/.test(raw) ? raw : `${raw}Z`;
+	const d = new Date(withZone);
+	return isNaN(d.getTime()) ? null : d;
+}
+
+const pad = (n: number) => n.toString().padStart(2, '0');
+
+/** Local `YYYY-MM-DD` for a Date. */
+function localDate(d: Date): string {
+	return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/** Local `HH:mm:ss` for a Date. */
+function localTime(d: Date): string {
+	return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+/**
  * Format a PocketBase ISO/UTC datetime string into a local datetime string (YYYY-MM-DD HH:mm).
  */
 export function formatDateTime(isoString?: string | null): string {
 	if (!isoString || !isoString.trim()) return '-';
 	try {
-		const raw = isoString.trim();
-		const withZ = raw.endsWith('Z') || raw.includes('+') ? raw : `${raw.replace(' ', 'T')}Z`;
-		const d = new Date(withZ);
-		if (isNaN(d.getTime())) return isoString;
-		const pad = (n: number) => n.toString().padStart(2, '0');
-		return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+		const d = parseUtc(isoString);
+		if (!d) return isoString;
+		return `${localDate(d)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 	} catch {
 		return isoString;
 	}
@@ -153,14 +177,40 @@ export function formatDateTime(isoString?: string | null): string {
 export function formatTimeOnly(isoString?: string | null): string {
 	if (!isoString || !isoString.trim()) return '-';
 	try {
-		const raw = isoString.trim();
-		const withZ = raw.endsWith('Z') || raw.includes('+') ? raw : `${raw.replace(' ', 'T')}Z`;
-		const d = new Date(withZ);
-		if (isNaN(d.getTime())) return isoString;
-		const pad = (n: number) => n.toString().padStart(2, '0');
-		return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+		const d = parseUtc(isoString);
+		if (!d) return isoString;
+		return localTime(d);
 	} catch {
 		return isoString;
 	}
+}
+
+/**
+ * The broker's log stamp, as written by `datetime.now(UTC).isoformat()`:
+ * `[2026-10-11T01:18:53.882846+00:00]`. The whole stamp is captured and handed to the
+ * parser, so an offset that is written out is read as itself rather than as UTC.
+ *
+ * Anchored at the start of the line on purpose. A bracketed level such as `[AUTO_SEND]`
+ * or a console notice `[System]` must never be read as a clock reading.
+ */
+const LOG_STAMP = /^\[(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?)\]/;
+
+/**
+ * Render one log line with its broker stamp in the viewer's timezone.
+ *
+ * The broker writes UTC because a UTC container cannot know the phone reading it; the
+ * conversion therefore happens where the line is read. Lines the dashboard writes itself
+ * — console notices, operator actions — carry no stamp and are returned unchanged, so a
+ * line never gains a time it did not have.
+ */
+export function formatLogLine(line?: string | null): string {
+	if (!line) return '';
+	const match = line.match(LOG_STAMP);
+	if (!match) return line;
+	const d = parseUtc(match[1]);
+	if (!d) return line;
+	// Only the bracketed stamp is replaced; the message that follows it is the worker's
+	// own text and is never touched.
+	return `[${localDate(d)} ${localTime(d)}]${line.slice(match[0].length)}`;
 }
 
