@@ -172,8 +172,68 @@ def test_a_metro_station_alone_can_put_a_posting_on_the_inspection_list():
     )
 
 
-def test_commute_violation_still_relaxable_by_whitelist():
-    """Every App-Enforced Filter violation remains subject to Whitelist Relaxation."""
+def test_commute_violation_is_a_hard_filter_and_channel_violation_is_soft():
+    """Issue #437: 非原生过滤分层。通勤距离是客观物理限制（硬性），
+    渠道偏好只是成功率偏好（软性），两者必须分别判定而非揉成一条字符串。"""
+    policy = ScreeningPolicy(channel_preference="direct_only", max_commute_distance_km=40.0)
+
+    both = policy.evaluate_app_enforced_filters_by_severity(
+        is_headhunter=True, commute_distance_km=52.0
+    )
+
+    assert "超过通勤上限 40.0km" in both.hard_violation
+    assert "direct_only" in both.soft_violation
+    assert both.hard_violation != both.soft_violation
+
+
+def test_a_clean_card_violates_neither_severity():
+    policy = ScreeningPolicy(channel_preference="direct_only", max_commute_distance_km=40.0)
+
+    verdict = policy.evaluate_app_enforced_filters_by_severity(
+        is_headhunter=False, commute_distance_km=18.0
+    )
+
+    assert verdict.hard_violation == ""
+    assert verdict.soft_violation == ""
+    assert verdict.passed is True
+
+
+def test_within_commute_limit_leaves_the_hard_severity_untouched():
+    """通勤距离在上限内时，唯一的渠道违例只能落在软性一侧。"""
+    policy = ScreeningPolicy(channel_preference="direct_only", max_commute_distance_km=40.0)
+
+    verdict = policy.evaluate_app_enforced_filters_by_severity(
+        is_headhunter=True, commute_distance_km=18.0
+    )
+
+    assert verdict.hard_violation == ""
+    assert "direct_only" in verdict.soft_violation
+    assert verdict.passed is False
+
+
+def test_severity_verdict_keeps_the_full_audit_trail():
+    """硬性违例不豁免，但两个维度仍须同时出现在审计串里，否则卡片初筛层
+    拒绝时会丢失渠道维度的违例记录。"""
+    policy = ScreeningPolicy(channel_preference="direct_only", max_commute_distance_km=40.0)
+
+    verdict = policy.evaluate_app_enforced_filters_by_severity(
+        is_headhunter=True, commute_distance_km=52.0
+    )
+
+    passed, violation = policy.evaluate_app_enforced_filters(
+        is_headhunter=True, commute_distance_km=52.0
+    )
+    assert passed is False
+    assert violation == f"{verdict.hard_violation}；{verdict.soft_violation}"
+    assert "猎头" in violation
+
+
+def test_commute_violation_token_match_no_longer_implies_exemption():
+    """白名单命中本身仍能算出 token，但通勤违例是硬性的：命中不等于豁免。
+
+    ``evaluate_whitelist_relaxation`` 只是卡片面关键词匹配器，判定是否豁免的是
+    调用方的路由（见 ``CandidateScreener.evaluate_card``）。
+    """
     policy = ScreeningPolicy(max_commute_distance_km=20.0, title_whitelist=["大模型"])
 
     passed, violation = policy.evaluate_app_enforced_filters(commute_distance_km=35.0)
@@ -188,6 +248,12 @@ def test_commute_violation_still_relaxable_by_whitelist():
     )
     assert relaxed is True
     assert token == "大模型"
+
+    # 硬性违例已由 policy 显式分层，不再进入白名单放宽。
+    assert (
+        policy.evaluate_app_enforced_filters_by_severity(commute_distance_km=35.0).hard_violation
+        != ""
+    )
 
 
 def test_commute_violation_not_relaxable_without_whitelist_hit():

@@ -381,13 +381,16 @@ async def test_auto_apply_distant_job_is_ignored_before_chat_entry():
 
 
 @pytest.mark.asyncio
-async def test_auto_apply_distant_job_rescued_by_whitelist_still_drafts():
-    """Whitelist Relaxation admits a distant job whose title hits a passion token."""
+async def test_auto_apply_distant_job_is_never_rescued_by_whitelist():
+    """Issue #437: a distant job is rejected even when its title hits a passion token.
+
+    通勤距离是硬性过滤条件，白名单放宽不得豁免它。卡片初筛层在这里直接判定
+    filtered_by_app_rule，因此投递额度（聊天入口与 LLM token）一分都不会花出去。
+    """
     broker = InMemoryTaskBroker()
-    context = WorkerContext(
-        config=WorkerConfig(worker_id="w-distance-relax"), driver=_mock_driver()
-    )
-    handler = AutoApplyHandler(llm_client=_drafting_llm())
+    context = WorkerContext(config=WorkerConfig(worker_id="w-distance-hard"), driver=_mock_driver())
+    llm = _drafting_llm()
+    handler = AutoApplyHandler(llm_client=llm)
 
     task = await broker.create_task(
         task_type=TaskType.AUTO_APPLY,
@@ -402,7 +405,7 @@ async def test_auto_apply_distant_job_rescued_by_whitelist_still_drafts():
         patch("boss_agent.feed_pipeline.JobListPage"),
         patch("boss_agent.feed_pipeline.SearchPage") as search_cls,
         patch("boss_agent.feed_pipeline.JobDetailPage") as detail_cls,
-        patch("boss_agent.feed_pipeline.ChatPage"),
+        patch("boss_agent.feed_pipeline.ChatPage") as chat_cls,
     ):
         startup_cls.return_value.is_dialog_present.return_value = False
         search_cls.return_value.is_search_page.return_value = True
@@ -414,15 +417,22 @@ async def test_auto_apply_distant_job_rescued_by_whitelist_still_drafts():
         result = await handler.handle(task, broker, context)
 
     assert result.success is True
-    assert result.output["applied"] is False  # preview-only draft
+    assert result.output["applied"] is False
 
     records = await broker.job_store.list_job_records()
     rec = next(r for r in records if r.get("title") == "大模型 Agent 平台架构师")
-    assert rec["status"] == "matched"
-    assert rec["relaxed_by_whitelist"] is True
-    assert "白名单放宽" in (rec.get("screening_audit") or "")
+    # The title hits "大模型", but a 52km commute is a hard filter: no exemption.
+    assert rec["status"] == "ignored"
+    assert rec["relaxed_by_whitelist"] is False
     assert "超过通勤上限" in (rec.get("screening_audit") or "")
+    assert "白名单放宽" not in (rec.get("screening_audit") or "")
+    assert "超过通勤上限" in (rec.get("screened_reason") or "")
     assert rec["commute_distance_km"] == pytest.approx(52.0)
+
+    # 硬性淘汰发生在进入 JD/投递之前：聊天未开，token 未花。
+    detail_cls.return_value.open_chat.assert_not_called()
+    chat_cls.return_value.type_greeting_message.assert_not_called()
+    llm.chat_completion_json.assert_not_called()
 
 
 @pytest.mark.asyncio
