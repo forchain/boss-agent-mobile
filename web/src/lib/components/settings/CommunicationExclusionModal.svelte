@@ -17,7 +17,7 @@
 		onClose: () => void;
 	} = $props();
 
-	/** 全部 / 冷却期内 / 已超期 — cooling is the rollup the server computed, not a client guess. */
+	/** 全部 / 冷却中 / 已超期 — cooling is the rollup the server computed, not a client guess. */
 	type ExclusionFilter = 'all' | 'cooling' | 'expired';
 
 	let searchQuery = $state('');
@@ -101,9 +101,9 @@
 		>
 			<div class="px-4 sm:px-6 py-3 border-b border-slate-800 bg-slate-900/90 flex items-start justify-between gap-2 shrink-0">
 				<div class="min-w-0">
-					<h3 class="text-sm font-bold text-slate-100">避嫌企业管理 (Excluded Companies)</h3>
+					<h3 class="text-sm font-bold text-slate-100">沟通避嫌企业管理 (Excluded Companies)</h3>
 					<p class="text-[11px] text-slate-400 mt-0.5 font-mono">
-						共 {allCompanies.length} 家 · 冷却期内 {coolingCount} 家 · 已超期 {expiredCount} 家
+						共 {allCompanies.length} 家 · 冷却中 {coolingCount} 家 · 已超期 {expiredCount} 家
 					</p>
 				</div>
 				<button
@@ -120,6 +120,9 @@
 				<input
 					type="text"
 					bind:value={searchQuery}
+					onkeydown={(e) => {
+						if (e.key === 'Enter') e.preventDefault();
+					}}
 					placeholder="🔍 搜索企业名称"
 					aria-label="搜索企业名称"
 					class="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-100 placeholder:text-slate-500 focus:border-cyan-700 focus:outline-none"
@@ -141,7 +144,7 @@
 							? 'border-cyan-400 text-cyan-300 font-semibold'
 							: 'border-transparent text-slate-400 hover:text-slate-200'}"
 					>
-						冷却期内 <span class="font-mono">{coolingCount}</span>
+						冷却中 <span class="font-mono">{coolingCount}</span>
 					</button>
 					<button
 						type="button"
@@ -183,6 +186,7 @@
 								type="button"
 								onclick={() => handleClearCompany(company.name)}
 								disabled={clearingCompany !== null}
+								aria-label="解除避嫌：{company.name}"
 								class="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 hover:text-slate-100 px-2.5 py-1.5 rounded-lg text-[11px] transition shrink-0 font-mono disabled:opacity-50"
 							>
 								{clearingCompany === company.name ? '解除中...' : '解除避嫌'}

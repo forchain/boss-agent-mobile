@@ -170,6 +170,9 @@
 						type="text"
 						placeholder="搜索关键词"
 						bind:value={searchVal}
+					onkeydown={(e) => {
+						if (e.key === 'Enter') e.preventDefault();
+					}}
 						class="w-full bg-slate-950 border border-slate-800 rounded-lg pl-7 pr-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-cyan-500"
 					/>
 				</div>
@@ -193,7 +196,7 @@
 									type="button"
 									onclick={() => handleRemove(entry.index)}
 									class="text-slate-500 hover:text-rose-300 text-xs px-2 py-0.5 rounded hover:bg-slate-800 transition shrink-0"
-									aria-label="移除"
+									aria-label="移除：{entry.item}"
 								>
 									移除 ×
 								</button>

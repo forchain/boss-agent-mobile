@@ -77,6 +77,30 @@ describe('CommunicationExclusionSection compact overview', () => {
 		// …and the entry point that replaced the unbounded list.
 		expect(screen.getByRole('button', { name: /查看全部避嫌企业/ })).toBeTruthy();
 	});
+
+	it('shows every chip and no overflow hint at exactly CHIP_LIMIT', () => {
+		communicationSummaryStore.set({
+			...SAMPLE_SUMMARY,
+			companies: SAMPLE_SUMMARY.companies.slice(0, 6)
+		});
+		render(CommunicationExclusionSection);
+
+		expect(screen.getAllByTestId('communication-exclusion-chip')).toHaveLength(6);
+		expect(screen.queryByText(/还有\s*\d+\s*家/)).toBeNull();
+		// The modal entry point stays — it is how the pool is managed, not an overflow hint.
+		expect(screen.getByRole('button', { name: /查看全部避嫌企业/ })).toBeTruthy();
+	});
+
+	it('defers to the modal one company past CHIP_LIMIT', () => {
+		communicationSummaryStore.set({
+			...SAMPLE_SUMMARY,
+			companies: SAMPLE_SUMMARY.companies.slice(0, 7)
+		});
+		render(CommunicationExclusionSection);
+
+		expect(screen.getAllByTestId('communication-exclusion-chip')).toHaveLength(6);
+		expect(screen.getByText(/还有\s*1\s*家/)).toBeTruthy();
+	});
 });
 
 function jsonResponse(body: unknown): Response {
@@ -100,6 +124,15 @@ function stubFetch() {
 
 			if (target.startsWith('/api/jobs/communication')) {
 				if (method === 'POST') {
+					if (body?.action === 'clear_expired') {
+						const cleared = companies.filter((c) => c.expired).length;
+						companies = companies.filter((c) => !c.expired);
+						return jsonResponse({
+							success: true,
+							cleared,
+							notice: `已清理 ${cleared} 条超过 30 天冷却期的避嫌记录`
+						});
+					}
 					const name = body?.company_name;
 					if (name) companies = companies.filter((c) => c.name !== name);
 					return jsonResponse({
@@ -127,6 +160,34 @@ async function openModal() {
 	await fireEvent.click(screen.getByRole('button', { name: /查看全部避嫌企业/ }));
 }
 
+/**
+ * Production mounts this section inside `<form class="space-y-6" onsubmit={handleSubmit}>`
+ * (routes/settings/+page.svelte:75) with a `type="submit"` button. Re-create that context so a
+ * stray Enter press can be observed the way a user would observe it: a whole-settings save.
+ */
+function renderInsideSettingsForm() {
+	const form = document.createElement('form');
+	const onSubmit = vi.fn((e: SubmitEvent) => e.preventDefault());
+	form.addEventListener('submit', onSubmit);
+	const saveButton = document.createElement('button');
+	saveButton.type = 'submit';
+	form.appendChild(saveButton);
+	document.body.appendChild(form);
+
+	render(CommunicationExclusionSection, { target: form });
+
+	return { form, onSubmit };
+}
+
+/**
+ * Returns true when the Enter keypress was cancelled, i.e. when a handler called preventDefault().
+ * jsdom does not implement implicit form submission itself, so this flag is the observable half of
+ * the guard that stops the browser submitting the surrounding settings form.
+ */
+async function pressEnter(input: HTMLElement) {
+	return !(await fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' }));
+}
+
 function rowTexts(): string {
 	return screen
 		.getAllByTestId('communication-exclusion-row')
@@ -144,7 +205,7 @@ describe('CommunicationExclusionModal second level', () => {
 		expect(screen.getByRole('dialog')).toBeTruthy();
 		expect(screen.getByPlaceholderText(/搜索企业名称/)).toBeTruthy();
 		expect(screen.getByRole('button', { name: /^全部/ })).toBeTruthy();
-		expect(screen.getByRole('button', { name: /^冷却期内/ })).toBeTruthy();
+		expect(screen.getByRole('button', { name: /^冷却中/ })).toBeTruthy();
 		expect(screen.getByRole('button', { name: /^已超期/ })).toBeTruthy();
 		// The whole pool lives here — the panel only previewed a handful of it.
 		expect(screen.getAllByTestId('communication-exclusion-row').length).toBe(7);
@@ -166,7 +227,7 @@ describe('CommunicationExclusionModal second level', () => {
 		render(CommunicationExclusionSection);
 		await openModal();
 
-		await fireEvent.click(screen.getByRole('button', { name: /^冷却期内/ }));
+		await fireEvent.click(screen.getByRole('button', { name: /^冷却中/ }));
 		expect(screen.getAllByTestId('communication-exclusion-row').length).toBe(4);
 		expect(rowTexts()).toContain('字节跳动');
 		expect(rowTexts()).not.toContain('腾讯科技');
@@ -211,5 +272,63 @@ describe('CommunicationExclusionModal second level', () => {
 		await fireEvent.keyDown(window, { key: 'Escape' });
 
 		expect(screen.queryByRole('dialog')).toBeNull();
+	});
+
+	it('clears expired records from the modal footer action', async () => {
+		const calls = stubFetch();
+		render(CommunicationExclusionSection);
+		await openModal();
+
+		await fireEvent.click(screen.getByRole('button', { name: /一键清理超期避嫌记录/ }));
+
+		await waitFor(() => {
+			const post = calls.find(
+				(c) => c.method === 'POST' && c.url.includes('/api/jobs/communication')
+			);
+			expect(post).toBeDefined();
+			expect(post!.body.action).toBe('clear_expired');
+		});
+		expect(await screen.findByText(/已清理 3 条超过 30 天冷却期/)).toBeTruthy();
+		// The three expired companies leave the pool; the cooling ones stay.
+		await waitFor(() => {
+			const texts = rowTexts();
+			expect(texts).not.toContain('腾讯科技');
+			expect(texts).not.toContain('京东');
+			expect(texts).not.toContain('小米');
+			expect(texts).toContain('美团');
+		});
+	});
+
+	it('never submits the settings form when Enter is pressed in the search box', async () => {
+		const { onSubmit } = renderInsideSettingsForm();
+		await fireEvent.click(screen.getByRole('button', { name: /查看全部避嫌企业/ }));
+
+		const searchInput = screen.getByPlaceholderText(/搜索企业名称/) as HTMLInputElement;
+		await fireEvent.input(searchInput, { target: { value: '美' } });
+		const cancelled = await pressEnter(searchInput);
+
+		expect(onSubmit).not.toHaveBeenCalled();
+		expect(cancelled).toBe(true);
+		// The live filter is unaffected — Enter is a no-op here, filtering happens while typing.
+		expect(searchInput.value).toBe('美');
+		expect(screen.getAllByTestId('communication-exclusion-row')).toHaveLength(1);
+	});
+
+	it('names every 解除避嫌 button after its company for screen readers', async () => {
+		render(CommunicationExclusionSection);
+		await openModal();
+
+		const labels = screen
+			.getAllByTestId('communication-exclusion-row')
+			.flatMap((row) =>
+				within(row as HTMLElement)
+					.getAllByRole('button')
+					.map((btn) => btn.getAttribute('aria-label'))
+			);
+
+		expect(labels).toHaveLength(7);
+		expect(labels).toContain('解除避嫌：美团');
+		// Visible copy is unchanged — only the accessible name carries the company.
+		expect(screen.getAllByText('解除避嫌')).toHaveLength(7);
 	});
 });
