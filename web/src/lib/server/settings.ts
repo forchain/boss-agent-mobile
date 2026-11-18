@@ -260,6 +260,13 @@ export function saveSettingsToLocalYaml(
 	if ('api_key' in newSettings) {
 		patch.api_key = resolveSecret(newSettings.api_key, current.api_key);
 	}
+	if ('communication_cooldown_days' in newSettings) {
+		// 0 is meaningful (permanent suppression); an out-of-range or malformed value is
+		// clamped to the documented 30-day baseline at this HTTP boundary.
+		patch.communication_cooldown_days = resolveCooldownDays(
+			newSettings.communication_cooldown_days
+		);
+	}
 	if ('langsmith_api_key' in newSettings) {
 		patch.langsmith_api_key = resolveSecret(
 			newSettings.langsmith_api_key,
