@@ -18,7 +18,7 @@ from unittest.mock import patch
 import pytest
 
 from boss_agent import task_launch
-from boss_agent.enums import TargetAction
+from boss_agent.core.shared.enums import TargetAction
 from boss_agent.feed_pipeline import FeedStreamConfig
 from boss_agent.rejection import ChatAcknowledgmentSettings
 from boss_agent.search_entities import FilterConfig, SavedSearch, SearchConfig

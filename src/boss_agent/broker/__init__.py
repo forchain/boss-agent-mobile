@@ -29,14 +29,14 @@ from __future__ import annotations
 import importlib
 
 _LAZY_EXPORTS: dict[str, str] = {
-    "AutomationTask": ".models",
-    "BaseTaskBroker": ".pocketbase_adapter",
+    "AutomationTask": "boss_agent.core.task.domain.models",
+    "BaseTaskBroker": "boss_agent.core.task.interfaces.broker",
     "InMemoryTaskBroker": ".pocketbase_adapter",
     "PocketBaseBroker": ".pocketbase_adapter",
     "PocketBaseTaskBroker": ".pocketbase_adapter",
-    "TaskLeaseSweeper": ".sweeper",
-    "TaskStatus": ".models",
-    "TaskType": ".models",
+    "TaskLeaseSweeper": "boss_agent.core.task.use_cases.sweeper",
+    "TaskStatus": "boss_agent.core.task.domain.models",
+    "TaskType": "boss_agent.core.task.domain.models",
 }
 
 

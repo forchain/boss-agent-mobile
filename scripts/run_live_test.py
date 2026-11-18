@@ -43,8 +43,8 @@ from rich.table import Table
 
 from boss_agent.async_bridge import run_sync
 from boss_agent.config_realm import DEFAULTS
-from boss_agent.enums import AuthStatus
-from boss_agent.errors import BrokerError
+from boss_agent.core.shared.enums import AuthStatus
+from boss_agent.core.shared.errors import BrokerError
 from boss_agent.feed_pipeline import FeedStreamResult
 from boss_agent.feed_verification import (
     BOSS_PACKAGE,

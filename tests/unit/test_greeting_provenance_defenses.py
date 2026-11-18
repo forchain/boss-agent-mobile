@@ -24,13 +24,13 @@ from _feed_harness import (
     _posting,
 )
 
-from boss_agent.enums import JobRecordStatus
-from boss_agent.feed_pipeline import FeedStreamConfig
-from boss_agent.job_store import InMemoryJobRecordStore
-from boss_agent.keyword_constants import (
+from boss_agent.core.shared.enums import JobRecordStatus
+from boss_agent.core.shared.keyword_constants import (
     APPLIED_SOURCE_AGENT,
     GREETING_SOURCE_HUMAN,
 )
+from boss_agent.feed_pipeline import FeedStreamConfig
+from boss_agent.job_store import InMemoryJobRecordStore
 from boss_agent.screening import CandidateScreener
 from boss_agent.screening_policy import ScreeningPolicy
 

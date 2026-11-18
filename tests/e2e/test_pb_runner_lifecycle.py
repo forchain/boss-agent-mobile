@@ -21,13 +21,13 @@ from pathlib import Path
 import pytest
 
 from _service_harness import free_port
-from boss_agent.broker.models import TaskStatus, TaskType
 from boss_agent.broker.pocketbase_adapter import PocketBaseTaskBroker
 from boss_agent.broker.provisioner import (
     provision_remote_pocketbase,
     provision_sqlite_database,
 )
-from boss_agent.errors import TransportError, ValidationError
+from boss_agent.core.shared.errors import TransportError, ValidationError
+from boss_agent.core.task.domain.models import TaskStatus, TaskType
 from boss_agent.search_entities import FilterConfig, SavedSearch, SearchConfig
 from boss_agent.settings import resolve_git_common_root
 

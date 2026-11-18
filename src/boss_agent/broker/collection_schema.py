@@ -7,7 +7,7 @@ The five collections — ``automation_tasks``, ``candidate_profiles``,
 ``resume_revisions``, ``job_records`` and ``saved_searches`` — used to be declared by
 hand in six places: the provisioner's SQLite dialect, the provisioner's REST dialect,
 the Job Record Store's write payload, the broker adapter's SQL fallback, the Web
-Dashboard's TypeScript mirrors, and a dead copy inside :mod:`boss_agent.broker.models`.
+Dashboard's TypeScript mirrors, and a dead copy inside :mod:`boss_agent.core.task.domain.models`.
 The copies drifted, and three drifts corrupted live behavior:
 
 * the REST dialect omitted ``saved_searches.target_action`` / ``max_jobs`` and nine

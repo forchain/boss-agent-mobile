@@ -314,7 +314,7 @@ def resolve_communication_cooldown_days(overrides: dict[str, Any] | None = None)
     Task payload overrides win over system settings; 0 explicitly means permanent suppression
     and must never be confused with "unset".
     """
-    from boss_agent.keyword_constants import DEFAULT_COMMUNICATION_COOLDOWN_DAYS
+    from boss_agent.core.shared.keyword_constants import DEFAULT_COMMUNICATION_COOLDOWN_DAYS
 
     raw = (overrides or {}).get("communication_cooldown_days")
     if raw is None:

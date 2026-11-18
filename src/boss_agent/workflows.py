@@ -12,7 +12,7 @@ from rich.console import Console
 
 from .async_bridge import run_sync
 from .candidate_entities import CandidateProfile
-from .enums import AuthStatus
+from .core.shared.enums import AuthStatus
 from .feed_verification import (
     activate_app,
     build_verification_pipeline,

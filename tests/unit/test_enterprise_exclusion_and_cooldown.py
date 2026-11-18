@@ -15,10 +15,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 from _card_fixtures import located
 
-from boss_agent.broker.models import TaskType
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker, PocketBaseTaskBroker
-from boss_agent.enums import ChatButtonState
-from boss_agent.identifier_helpers import is_communication_expired
+from boss_agent.core.shared.enums import ChatButtonState
+from boss_agent.core.shared.identifier_helpers import is_communication_expired
+from boss_agent.core.task.domain.models import TaskType
 from boss_agent.job_entities import JobCardBrief
 from boss_agent.worker.config import WorkerConfig
 from boss_agent.worker.context import WorkerContext

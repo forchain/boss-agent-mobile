@@ -15,12 +15,12 @@ from rich.panel import Panel
 from droid_agent_core.llm import LLMDecisionClient
 
 from .candidate_entities import CandidateProfile
-from .greeting_prompt import load_greeting_prompt
-from .identifier_helpers import (
+from .core.shared.identifier_helpers import (
     extract_tags_from_text,
     format_recruiter_greeting_prefix,
     is_substantive_jd,
 )
+from .greeting_prompt import load_greeting_prompt
 from .job_entities import JobPosting
 from .llm_config import create_llm_client
 from .screening_policy import ScreeningPolicy

@@ -18,9 +18,9 @@ scripts the screen and the chat instead of patching this module's globals (#268)
 import logging
 from typing import Any
 
-from boss_agent.broker.models import AutomationTask, TaskType
-from boss_agent.broker.pocketbase_adapter import BaseTaskBroker
 from boss_agent.chat_triage import ChatTriage, StopReason, TriagePages
+from boss_agent.core.task.domain.models import AutomationTask, TaskType
+from boss_agent.core.task.interfaces.broker import BaseTaskBroker
 from boss_agent.rejection import ChatAcknowledgmentSettings, RejectionClassifier
 from boss_agent.screening_policy import ScreeningPolicy
 from boss_agent.settings import resolve_chat_acknowledgment_settings

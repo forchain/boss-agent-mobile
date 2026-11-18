@@ -1,5 +1,5 @@
 """
-boss_agent.keyword_constants
+boss_agent.core.shared.keyword_constants
 ============================
 Keyword constants, regex patterns, and badge dictionaries for the Boss Application Layer (Issue #311, Spec #303).
 """

@@ -12,8 +12,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from boss_agent.broker.models import TaskStatus, TaskType
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
+from boss_agent.core.task.domain.models import TaskStatus, TaskType
 from boss_agent.worker.config import WorkerConfig
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.daemon import SHUTDOWN_CANCEL_REASON, AutomationWorker

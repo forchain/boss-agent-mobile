@@ -8,7 +8,7 @@ usable; `LoginPage` reports whether a run is authenticated, logged out, or facin
 `check_login` handler needs both, and neither knows anything about job feeds or chats.
 """
 
-from ..enums import AuthStatus
+from ..core.shared.enums import AuthStatus
 from .base import BaseBossPage
 
 

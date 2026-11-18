@@ -34,7 +34,7 @@ import pytest
 import scripts.run_live_test as runner
 from _feed_harness import ScriptedFeed, _card, _detail_page, _posting, script_pages, stub_llm
 
-from boss_agent.enums import AuthStatus, JobRecordStatus, TargetAction
+from boss_agent.core.shared.enums import AuthStatus, JobRecordStatus, TargetAction
 from boss_agent.feed_pipeline import FeedStreamResult, JobFeedPipeline
 from boss_agent.job_entities import JobPosting
 from boss_agent.matching import JobMatchGreetingService

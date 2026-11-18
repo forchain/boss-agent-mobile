@@ -16,7 +16,7 @@ Worker and the Web Dashboard can be pointed at either and must not disagree.
 import pytest
 from _job_store_harness import FakePocketBaseSession, pocketbase_job_store
 
-from boss_agent.enums import (
+from boss_agent.core.shared.enums import (
     STATE_RANK,
     TARGET_ACTION_RANK,
     JobRecordStatus,

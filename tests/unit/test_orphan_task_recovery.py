@@ -22,9 +22,9 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from boss_agent.broker.models import TaskStatus, TaskType
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker, PocketBaseTaskBroker
-from boss_agent.broker.sweeper import TaskLeaseSweeper
+from boss_agent.core.task.domain.models import TaskStatus, TaskType
+from boss_agent.core.task.use_cases.sweeper import TaskLeaseSweeper
 from boss_agent.worker.config import WorkerConfig
 
 #: The Appium server drops a session after this long without a command. A handler can
@@ -227,7 +227,7 @@ async def test_worker_entrypoint_supervises_the_lease_sweeper():
     """
     from scripts import worker as worker_entrypoint
 
-    from boss_agent.broker.sweeper import TaskLeaseSweeper as _Sweeper
+    from boss_agent.core.task.use_cases.sweeper import TaskLeaseSweeper as _Sweeper
 
     supervised = worker_entrypoint.build_supervised_services(
         config=WorkerConfig(enable_scheduler=False),

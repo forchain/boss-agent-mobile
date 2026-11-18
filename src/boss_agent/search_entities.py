@@ -10,7 +10,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
-from boss_agent.enums import (
+from boss_agent.core.shared.enums import (
     CHECK_CHAT_ACTION,
     INHERIT_CHANNEL,
     TargetAction,

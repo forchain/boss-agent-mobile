@@ -24,7 +24,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from boss_agent.enums import ChannelPreference
+from boss_agent.core.shared.enums import ChannelPreference
 from boss_agent.feed_pipeline import FeedStreamConfig
 from boss_agent.saved_search_store import InMemorySavedSearchStore
 from boss_agent.screening_policy import ScreeningPolicy, resolve_screening_policy

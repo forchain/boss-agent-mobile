@@ -150,8 +150,8 @@ def test_screening_policy_loader_precedence_levels(tmp_path: Path, monkeypatch: 
 
 def test_import_graph_independence():
     """Verify editing screening_policy leaves enums and keyword_constants untouched."""
-    enums_path = REPO_ROOT / "src/boss_agent/enums.py"
-    keywords_path = REPO_ROOT / "src/boss_agent/keyword_constants.py"
+    enums_path = REPO_ROOT / "src/boss_agent/core/shared/enums.py"
+    keywords_path = REPO_ROOT / "src/boss_agent/core/shared/keyword_constants.py"
     policy_path = REPO_ROOT / "src/boss_agent/screening_policy.py"
 
     enums_tree = ast.parse(enums_path.read_text(encoding="utf-8"))

@@ -32,7 +32,7 @@ from droid_agent_core.locators import (
     wait_until,
 )
 
-from ..keyword_constants import PLATFORM_BADGE_MARKERS
+from ..core.shared.keyword_constants import PLATFORM_BADGE_MARKERS
 
 logger = logging.getLogger("boss_agent.pages")
 ui_logger = logging.getLogger("droid_agent_core.ui")

@@ -67,7 +67,7 @@ def test_the_retired_shim_is_referenced_nowhere(retired: str) -> None:
 @pytest.mark.parametrize("verb", RECORD_VERBS)
 def test_the_abstract_broker_offers_no_record_verb(verb: str) -> None:
     """A handle typed as the base broker has zero record verbs available."""
-    from boss_agent.broker.pocketbase_adapter import BaseTaskBroker
+    from boss_agent.core.task.interfaces.broker import BaseTaskBroker
 
     assert not hasattr(BaseTaskBroker, verb), (
         f"BaseTaskBroker.{verb} is back — record storage belongs to JobRecordStore, "

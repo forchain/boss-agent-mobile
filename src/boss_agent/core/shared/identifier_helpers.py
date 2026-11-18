@@ -1,5 +1,5 @@
 """
-boss_agent.identifier_helpers
+boss_agent.core.shared.identifier_helpers
 =============================
 Pure identifier, recruiter normalization, and classification helpers (Issue #311, Spec #303).
 """
@@ -11,8 +11,8 @@ import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from boss_agent.enums import ChatButtonState
-from boss_agent.keyword_constants import (
+from boss_agent.core.shared.enums import ChatButtonState
+from boss_agent.core.shared.keyword_constants import (
     _JD_HEADER_PREFIX_RE,
     _JD_HEADER_STANDALONE_RE,
     _RECRUITER_SEPARATOR_RE,

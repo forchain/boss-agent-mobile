@@ -30,15 +30,15 @@ from _feed_harness import (
     _posting,
 )
 
-from boss_agent.enums import (
+from boss_agent.core.shared.enums import (
     ChatButtonState,
     JobRecordStatus,
     ScreeningStage,
     TargetAction,
 )
+from boss_agent.core.shared.keyword_constants import GREETING_SOURCE_AGENT
 from boss_agent.feed_pipeline import FeedStreamConfig
 from boss_agent.job_store import InMemoryJobRecordStore
-from boss_agent.keyword_constants import GREETING_SOURCE_AGENT
 from boss_agent.screening import CandidateScreener
 from boss_agent.screening_policy import ScreeningPolicy
 
@@ -428,7 +428,7 @@ def test_usability_is_the_existing_rule_applied_to_the_stored_text():
     `jd_is_truncated` — the very check the detail page runs before it spends scrolls and taps
     on 查看更多. One rule, one owner (#301).
     """
-    from boss_agent.identifier_helpers import jd_is_truncated, jd_is_usable_on_file
+    from boss_agent.core.shared.identifier_helpers import jd_is_truncated, jd_is_usable_on_file
 
     assert jd_is_usable_on_file(GOOD_JD) is True
     assert jd_is_usable_on_file(None) is False

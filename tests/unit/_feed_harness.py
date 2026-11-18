@@ -20,7 +20,7 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 from boss_agent.candidate_entities import CandidateProfile
-from boss_agent.enums import ChatButtonState, TargetAction
+from boss_agent.core.shared.enums import ChatButtonState, TargetAction
 from boss_agent.feed_pipeline import FeedStreamConfig, JobFeedPipeline
 from boss_agent.job_entities import JobCardBrief, JobPosting
 from boss_agent.job_store import JobRecordStore

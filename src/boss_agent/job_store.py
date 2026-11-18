@@ -24,15 +24,15 @@ from typing import Any
 import requests
 
 from boss_agent.async_bridge import execute_broker_request
-from boss_agent.enums import STATE_RANK, JobRecordStatus
-from boss_agent.errors import (
+from boss_agent.core.shared.enums import STATE_RANK, JobRecordStatus
+from boss_agent.core.shared.errors import (
     BrokerError,
     ConflictError,
     RecordNotFoundError,
     TransportError,
     ValidationError,
 )
-from boss_agent.identifier_helpers import (
+from boss_agent.core.shared.identifier_helpers import (
     compute_job_fingerprint,
     is_communication_expired,
     is_direct_hire_company,

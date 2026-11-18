@@ -28,8 +28,8 @@ from boss_agent.candidate_memory_store import (
     InMemoryCandidateMemoryStore,
     PocketBaseCandidateMemoryStore,
 )
-from boss_agent.enums import TargetTaskType
-from boss_agent.errors import TransportError
+from boss_agent.core.shared.enums import TargetTaskType
+from boss_agent.core.shared.errors import TransportError
 from boss_agent.saved_search_store import (
     InMemorySavedSearchStore,
     PocketBaseSavedSearchStore,

@@ -11,9 +11,14 @@ import time
 from collections.abc import Sequence
 from typing import Any, cast
 
-from boss_agent.broker.models import AutomationTask, TaskStatus, TaskType
-from boss_agent.broker.pocketbase_adapter import BaseTaskBroker
-from boss_agent.startup_cleanup import StartupCleanupGate
+from boss_agent.core.task.domain.models import AutomationTask, TaskStatus, TaskType
+from boss_agent.core.task.interfaces.broker import BaseTaskBroker
+from boss_agent.core.task.use_cases.startup_cleanup import StartupCleanupGate
+from boss_agent.core.task.use_cases.test_reclaim import (
+    RECLAIM_SCAN_LIMIT,
+    TEST_RECLAIM_REASON,
+    is_test_sourced,
+)
 from boss_agent.worker.config import WorkerConfig
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.handlers.base import BaseTaskHandler, HandlerResult
@@ -27,12 +32,6 @@ SHUTDOWN_ACK_MARKER = "[Worker] Received shutdown signal"
 
 # Reason recorded in the State Stream Broker when a termination signal aborts an in-flight task.
 SHUTDOWN_CANCEL_REASON = "Worker shutdown signal received"
-
-#: Why a test-sourced task was cancelled. Says what happened, not who to blame.
-TEST_RECLAIM_REASON = "Test-sourced task reclaimed at worker startup"
-
-#: How many queued tasks the startup reclamation scan reads.
-RECLAIM_SCAN_LIMIT = 100
 
 # Upper bound for closing the Virtual Device Session. A wedged Appium server must not be
 # able to hold worker shutdown (and therefore the E2E pre-test gate) hostage.
@@ -437,8 +436,6 @@ class AutomationWorker:
         Only *pending* work is reclaimed — a task already running is somebody's
         in-flight operation, and its own cancellation path owns it.
         """
-        from boss_agent.task_launch import LaunchSource, coerce_source
-
         reclaimed: list[str] = []
         try:
             pending = await self.broker.list_pending_tasks(limit=RECLAIM_SCAN_LIMIT)
@@ -447,7 +444,7 @@ class AutomationWorker:
             return reclaimed
 
         for task in pending:
-            if coerce_source(getattr(task, "source", None)) is not LaunchSource.TEST:
+            if not is_test_sourced(getattr(task, "source", None)):
                 continue
             try:
                 await self.broker.append_log(task.id, TEST_RECLAIM_REASON)

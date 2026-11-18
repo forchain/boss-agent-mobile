@@ -28,7 +28,7 @@ from typing import Any
 
 from boss_agent.async_bridge import execute_broker_request
 from boss_agent.candidate_entities import CandidateProfile
-from boss_agent.errors import (
+from boss_agent.core.shared.errors import (
     TransportError,
 )
 

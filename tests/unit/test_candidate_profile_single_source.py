@@ -20,7 +20,7 @@ from boss_agent.candidate_memory_store import (
     InMemoryCandidateMemoryStore,
     migrate_legacy_candidate_profile,
 )
-from boss_agent.errors import BrokerError, TransportError
+from boss_agent.core.shared.errors import BrokerError, TransportError
 from boss_agent.graph import run_resume_lifecycle_graph
 from boss_agent.memory import (
     ResumeMemoryManager,

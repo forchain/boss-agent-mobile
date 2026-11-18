@@ -27,8 +27,8 @@ from boss_agent.card_parser import (
     parse_company_scale_industry,
     parse_recruiter_info,
 )
-from boss_agent.identifier_helpers import normalize_recruiter_name
-from boss_agent.keyword_constants import PLATFORM_BADGE_MARKERS
+from boss_agent.core.shared.identifier_helpers import normalize_recruiter_name
+from boss_agent.core.shared.keyword_constants import PLATFORM_BADGE_MARKERS
 
 REPO_ROOT = Path(__file__).parents[2]
 
@@ -278,7 +278,7 @@ def test_company_duplicates_card_title(company: str, title: str, expected: bool)
 
 def test_the_recruiter_normalizer_is_the_one_the_fingerprint_uses() -> None:
     """The parser and the Job Fingerprint cannot disagree about the recruiter."""
-    from boss_agent.identifier_helpers import compute_job_fingerprint
+    from boss_agent.core.shared.identifier_helpers import compute_job_fingerprint
 
     for raw in ("钟先生 · 猎头顾问", "李女士•HR", "王先生・招聘", "赵先生·"):
         assert parse_recruiter_info(raw)[0] == normalize_recruiter_name(raw)
@@ -289,9 +289,9 @@ def test_the_recruiter_normalizer_is_the_one_the_fingerprint_uses() -> None:
 
 
 PURE_DOMAIN_MODULES = (
-    "src/boss_agent/enums.py",
-    "src/boss_agent/keyword_constants.py",
-    "src/boss_agent/identifier_helpers.py",
+    "src/boss_agent/core/shared/enums.py",
+    "src/boss_agent/core/shared/keyword_constants.py",
+    "src/boss_agent/core/shared/identifier_helpers.py",
     "src/boss_agent/job_entities.py",
     "src/boss_agent/candidate_entities.py",
     "src/boss_agent/search_entities.py",
