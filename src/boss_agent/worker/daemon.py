@@ -19,6 +19,7 @@ from boss_agent.core.task.use_cases.test_reclaim import (
     TEST_RECLAIM_REASON,
     is_test_sourced,
 )
+from boss_agent.settings import resolve_chat_acknowledgment_settings
 from boss_agent.worker.config import WorkerConfig
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.handlers.base import BaseTaskHandler, HandlerResult
@@ -117,7 +118,9 @@ class AutomationWorker:
         self.broker = broker
         self.context = context or WorkerContext(config=config, driver=driver)
         self.startup_gate = startup_gate or StartupCleanupGate(
-            broker, enabled=config.run_cleanup_on_startup
+            broker,
+            enabled=config.run_cleanup_on_startup,
+            acknowledgment=resolve_chat_acknowledgment_settings(),
         )
         self._handlers: dict[TaskType, BaseTaskHandler] = {}
         if handlers:

@@ -37,6 +37,8 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from boss_agent.core.search.domain.models import SAVED_SEARCH_MAX_JOBS
+
 _IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
 
@@ -344,10 +346,6 @@ LEASE_FIELD = "worker_id"
 
 #: The deduplication column Job Fingerprint normalization writes.
 FINGERPRINT_FIELD = "fingerprint"
-
-#: Baseline job-count ceiling for a SavedSearch. Declared once so the domain model,
-#: the provisioner and the Web UI cannot disagree the way 20-vs-30 once did.
-SAVED_SEARCH_MAX_JOBS = 30
 
 
 def _autodate() -> tuple[Field, Field]:

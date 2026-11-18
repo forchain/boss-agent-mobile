@@ -1,6 +1,6 @@
 """
-boss_agent.search_entities
-==========================
+boss_agent.core.search.domain.models
+====================================
 Search configuration, filter presets, and SavedSearch domain entities (Issue #311, Spec #303).
 """
 
@@ -109,16 +109,14 @@ class FilterConfig:
         }
 
 
+#: The declared ``saved_searches.max_jobs`` default. The domain owns the number and the
+#: Collection Schema reads it from here, so the domain model, the provisioner and the
+#: Web UI cannot drift apart the way 20-vs-30 once did.
+SAVED_SEARCH_MAX_JOBS = 30
+
+
 def _saved_search_max_jobs_default() -> int:
-    """The declared ``saved_searches.max_jobs`` default, resolved lazily.
-
-    The search entities module is imported by the broker adapter, so importing the
-    Collection Schema at module scope here would close an import cycle. The default
-    itself lives in the schema module so the domain model, the provisioner and the
-    Web UI cannot drift apart the way 20-vs-30 once did.
-    """
-    from boss_agent.broker.collection_schema import SAVED_SEARCH_MAX_JOBS
-
+    """The declared ``saved_searches.max_jobs`` default (facade name preserved)."""
     return SAVED_SEARCH_MAX_JOBS
 
 

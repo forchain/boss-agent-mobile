@@ -14,6 +14,10 @@ from unittest.mock import MagicMock
 import pytest
 
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
+from boss_agent.core.search.domain.models import (
+    SavedSearch,
+    SearchConfig,
+)
 from boss_agent.core.shared.enums import (
     STATE_RANK,
     TARGET_ACTION_RANK,
@@ -22,10 +26,6 @@ from boss_agent.core.shared.enums import (
 )
 from boss_agent.core.task.domain.models import TaskStatus, TaskType
 from boss_agent.pages.job_feed import JobListPage
-from boss_agent.search_entities import (
-    SavedSearch,
-    SearchConfig,
-)
 from boss_agent.worker.config import WorkerConfig
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.daemon import AutomationWorker

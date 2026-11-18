@@ -19,8 +19,8 @@ from droid_agent_core.gestures import Point
 from droid_agent_core.locators import wait_until
 
 from ..card_parser import CardFacets, ParsedCard, needs_text_fallback, parse_card
+from ..core.search.domain.models import FilterConfig
 from ..job_entities import JobCardBrief
-from ..search_entities import FilterConfig
 from .base import BACK_INTERVAL_SEC, BaseBossPage, logger
 
 

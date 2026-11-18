@@ -26,9 +26,9 @@ from boss_agent.broker.provisioner import (
     provision_remote_pocketbase,
     provision_sqlite_database,
 )
+from boss_agent.core.search.domain.models import FilterConfig, SavedSearch, SearchConfig
 from boss_agent.core.shared.errors import TransportError, ValidationError
 from boss_agent.core.task.domain.models import TaskStatus, TaskType
-from boss_agent.search_entities import FilterConfig, SavedSearch, SearchConfig
 from boss_agent.settings import resolve_git_common_root
 
 pytestmark = pytest.mark.e2e

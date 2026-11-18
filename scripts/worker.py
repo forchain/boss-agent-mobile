@@ -18,6 +18,7 @@ from boss_agent.core.task.interfaces.broker import BaseTaskBroker
 from boss_agent.core.task.use_cases.startup_cleanup import StartupCleanupGate
 from boss_agent.core.task.use_cases.sweeper import TaskLeaseSweeper
 from boss_agent.settings import (
+    resolve_chat_acknowledgment_settings,
     resolve_enable_scheduler,
     resolve_pocketbase_url,
     resolve_server_url,
@@ -219,7 +220,11 @@ def main() -> None:
     # One gate shared by both services in this process, so --enable-scheduler queues
     # the startup 拒信清扫 exactly once even though the worker and the scheduler
     # initialize together (issue #230).
-    startup_gate = StartupCleanupGate(broker, enabled=config.run_cleanup_on_startup)
+    startup_gate = StartupCleanupGate(
+        broker,
+        enabled=config.run_cleanup_on_startup,
+        acknowledgment=resolve_chat_acknowledgment_settings(),
+    )
 
     worker = AutomationWorker(
         config=config,

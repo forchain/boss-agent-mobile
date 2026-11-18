@@ -9,6 +9,7 @@ from _feed_harness import GOOD_JD, ScriptedFeed, _card, _detail_page, script_pag
 
 import boss_agent
 from boss_agent import saved_search_store
+from boss_agent.core.search.domain.models import FilterConfig, SavedSearch, SearchConfig
 from boss_agent.core.shared.errors import TransportError
 from boss_agent.feed_pipeline import FeedStreamConfig
 from boss_agent.job_entities import JobPosting
@@ -17,7 +18,6 @@ from boss_agent.saved_search_store import (
     missing_saved_search_message,
     resolve_saved_search_store,
 )
-from boss_agent.search_entities import FilterConfig, SavedSearch, SearchConfig
 from boss_agent.workflows import SmokeHarness, TakeoverHandler
 
 PACKAGE_ROOT = Path(boss_agent.__file__).parent

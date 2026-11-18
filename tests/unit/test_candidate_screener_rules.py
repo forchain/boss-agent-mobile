@@ -1,5 +1,6 @@
 from unittest.mock import MagicMock
 
+from boss_agent.core.search.domain.models import SavedSearch
 from boss_agent.job_entities import JobCardBrief
 from boss_agent.screening import (
     CandidateScreener,
@@ -8,7 +9,6 @@ from boss_agent.screening import (
     JobVerdictStage,
 )
 from boss_agent.screening_policy import ScreeningPolicy
-from boss_agent.search_entities import SavedSearch
 
 
 def test_screening_policy_serialization():

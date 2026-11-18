@@ -849,8 +849,8 @@ async def test_auto_apply_handler_runs_a_contract_built_launch_as_auto_send(brok
     the real artifact — `build_search_launch` over an `auto_apply` SavedSearch, read by the
     worker's own parser — and the log line an operator actually reads.
     """
-    from boss_agent import task_launch
-    from boss_agent.search_entities import SavedSearch, SearchConfig
+    from boss_agent.core.search.domain import launch as task_launch
+    from boss_agent.core.search.domain.models import SavedSearch, SearchConfig
 
     mock_title = MagicMock(text="Agent 平台工程师")
     mock_company = MagicMock(text="智元创新")

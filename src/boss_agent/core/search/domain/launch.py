@@ -1,6 +1,6 @@
 """
-boss_agent.task_launch
-======================
+boss_agent.core.search.domain.launch
+====================================
 One owner for the ``AutomationTask`` payload contract.
 
 The payload is the wire contract between the Web Dashboard / Automation Scheduler /
@@ -54,19 +54,18 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
-from .broker.collection_schema import SAVED_SEARCH_MAX_JOBS
-from .core.shared.enums import TargetAction, TargetTaskType
-from .core.task.domain.models import TaskType
-from .search_entities import SavedSearch
-from .settings import resolve_chat_acknowledgment_settings
+from boss_agent.core.search.domain.models import SAVED_SEARCH_MAX_JOBS, SavedSearch
+from boss_agent.core.shared.enums import TargetAction, TargetTaskType
+from boss_agent.core.task.domain.models import TaskType
+from boss_agent.rejection import ChatAcknowledgmentSettings
 
 #: The baseline relevance threshold. One value, so a manual launch and a scheduled run
 #: of the same SavedSearch cannot disagree about which jobs qualify.
 MIN_SCORE = 70
 
-#: Baseline job ceiling for a search dispatch. An alias, not a restatement: the
-#: Collection Schema declares the `saved_searches.max_jobs` default, and a second
-#: literal here is how 20-vs-30 drifted apart in the first place.
+#: Baseline job ceiling for a search dispatch. An alias, not a restatement: the search
+#: domain declares the `saved_searches.max_jobs` default and the Collection Schema reads
+#: it from there, because a second literal is how 20-vs-30 drifted apart in the first place.
 DEFAULT_MAX_JOBS = SAVED_SEARCH_MAX_JOBS
 
 #: Seconds the worker previews a drafted greeting before moving on.
@@ -252,6 +251,7 @@ def build_chat_cleanup_launch(
     source: LaunchSource,
     search: SavedSearch | None = None,
     mode: LaunchMode | None = None,
+    acknowledgment: ChatAcknowledgmentSettings | None = None,
     rejection_reply_text: str | None = None,
     max_scan_depth: int | None = None,
     max_scroll_swipes: int | None = None,
@@ -262,8 +262,11 @@ def build_chat_cleanup_launch(
     rather than a search strategy. ``mode=None`` lets the configured ``chat.dry_run``
     win — the convention the searches-page trigger already used and the reason the
     other two callers should stop stating a ``dry_run`` of their own.
+
+    ``acknowledgment`` is resolved at the edge and injected: the domain never reads the
+    environment or a settings file. An unset value is the declared domain default.
     """
-    ack = resolve_chat_acknowledgment_settings()
+    ack = acknowledgment if acknowledgment is not None else ChatAcknowledgmentSettings()
 
     payload: dict[str, Any] = {
         "dry_run": ack.dry_run if mode is None else mode == LaunchMode.DRAFT,
@@ -298,6 +301,7 @@ def build_launch(
     source: LaunchSource,
     search: SavedSearch | None = None,
     mode: LaunchMode | None = None,
+    acknowledgment: ChatAcknowledgmentSettings | None = None,
     **kwargs: Any,
 ) -> TaskLaunch:
     """The one entry point: turn a launch request into a validated task.
@@ -318,7 +322,13 @@ def build_launch(
             kwargs.get("preview_only"), kwargs.get("auto_send"), "A rejection cleanup"
         )
     if kind == TaskKind.CHAT_CLEANUP:
-        return build_chat_cleanup_launch(source=source, search=search, mode=mode, **kwargs)
+        return build_chat_cleanup_launch(
+            source=source,
+            search=search,
+            mode=mode,
+            acknowledgment=acknowledgment,
+            **kwargs,
+        )
     if kind == TaskKind.LOGIN_DIAGNOSTIC:
         return build_login_diagnostic_launch(source=source)
     raise LaunchContractError(f"unknown task kind {kind!r}")

@@ -44,6 +44,7 @@ from rich.console import Console
 
 from .async_bridge import run_sync
 from .core.candidate.domain.candidate_profile import StructuredCandidateProfile
+from .core.search.domain.models import FilterConfig, SearchConfig
 from .core.shared.enums import TargetAction
 from .feed_pipeline import FeedStreamConfig, FeedStreamResult, JobFeedPipeline
 from .job_entities import JobPosting
@@ -51,7 +52,6 @@ from .matching import JobMatchGreetingService, MatchGreetingResult
 from .memory import ResumeMemoryManager
 from .screening import CandidateScreener
 from .screening_policy import ScreeningPolicy
-from .search_entities import FilterConfig, SearchConfig
 
 console = Console()
 

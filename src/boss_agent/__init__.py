@@ -47,6 +47,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - import-time work for static type checkers only
     from .core.candidate.domain.candidate_profile import CandidateProfile
+    from .core.search.domain.models import FilterConfig, SavedSearch, SearchConfig
     from .core.shared.enums import AuthStatus, ChannelPreference
     from .core.shared.identifier_helpers import (
         format_recruiter_greeting_prefix,
@@ -69,7 +70,6 @@ if TYPE_CHECKING:  # pragma: no cover - import-time work for static type checker
         resolve_writable_screening_config_path,
     )
     from .screening_policy import ScreeningPolicy
-    from .search_entities import FilterConfig, SavedSearch, SearchConfig
 
 _LAZY_EXPORTS: dict[str, str] = {
     "AuthStatus": ".core.shared.enums",
@@ -82,7 +82,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ChatPage": ".pages",
     "FeedStreamConfig": ".feed_pipeline",
     "FeedStreamResult": ".feed_pipeline",
-    "FilterConfig": ".search_entities",
+    "FilterConfig": ".core.search.domain.models",
     "FilterDialogPage": ".pages",
     "IndustryFilterDialogPage": ".pages",
     "InMemoryJobRecordStore": ".job_store",
@@ -104,10 +104,10 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ResumeLifecycleState": ".graph",
     "ResumeMemoryManager": ".memory",
     "ResumeTextExtractor": ".memory",
-    "SavedSearch": ".search_entities",
-    "SavedSearchStore": ".saved_search_store",
+    "SavedSearch": ".core.search.domain.models",
+    "SavedSearchStore": ".core.search.interfaces.store",
     "ScreeningPolicy": ".screening_policy",
-    "SearchConfig": ".search_entities",
+    "SearchConfig": ".core.search.domain.models",
     "SearchPage": ".pages",
     "SmokeHarness": ".workflows",
     "StartupDialogPage": ".pages",

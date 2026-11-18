@@ -10,19 +10,16 @@ import asyncio
 import logging
 import os
 import zoneinfo
-from datetime import UTC, datetime, timedelta, tzinfo
+from datetime import UTC, datetime, tzinfo
 
+from boss_agent.core.search.domain.launch import LaunchSource
+from boss_agent.core.search.use_cases.dispatch import build_dispatch, should_dispatch
 from boss_agent.core.task.domain.models import AutomationTask
 from boss_agent.core.task.interfaces.broker import BaseTaskBroker
 from boss_agent.core.task.use_cases.startup_cleanup import StartupCleanupGate
-from boss_agent.search_entities import SavedSearch
-from boss_agent.settings import resolve_run_cleanup_on_startup
-from boss_agent.task_launch import (
-    LaunchSource,
-    TaskKind,
-    TaskLaunch,
-    build_chat_cleanup_launch,
-    build_launch,
+from boss_agent.settings import (
+    resolve_chat_acknowledgment_settings,
+    resolve_run_cleanup_on_startup,
 )
 
 logger = logging.getLogger("boss_agent.scheduler")
@@ -44,115 +41,6 @@ def get_scheduler_timezone() -> tzinfo:
     return local_tz if local_tz is not None else UTC
 
 
-def parse_cron_field(field_str: str, min_val: int, max_val: int) -> set[int]:
-    """Parse a single cron field expression into a set of matching integers."""
-    result: set[int] = set()
-    for part in field_str.split(","):
-        part = part.strip()
-        if not part:
-            continue
-        step = 1
-        if "/" in part:
-            subparts = part.split("/", 1)
-            range_part = subparts[0]
-            try:
-                step = int(subparts[1])
-            except ValueError:
-                step = 1
-        else:
-            range_part = part
-
-        if range_part == "*":
-            start, end = min_val, max_val
-        elif "-" in range_part:
-            start_str, end_str = range_part.split("-", 1)
-            try:
-                start, end = int(start_str), int(end_str)
-            except ValueError:
-                continue
-        else:
-            try:
-                start = end = int(range_part)
-            except ValueError:
-                continue
-
-        if step <= 0:
-            step = 1
-
-        for val in range(start, end + 1, step):
-            if min_val <= val <= max_val:
-                result.add(val)
-    return result
-
-
-def is_cron_match(cron_expr: str, dt: datetime) -> bool:
-    """Check if the given datetime matches a standard 5-field cron expression.
-
-    Format: minute hour day_of_month month day_of_week
-    """
-    fields = cron_expr.strip().split()
-    if len(fields) != 5:
-        return False
-
-    min_f, hour_f, dom_f, mon_f, dow_f = fields
-
-    # Minute (0-59)
-    if dt.minute not in parse_cron_field(min_f, 0, 59):
-        return False
-
-    # Hour (0-23)
-    if dt.hour not in parse_cron_field(hour_f, 0, 23):
-        return False
-
-    # Month (1-12)
-    if dt.month not in parse_cron_field(mon_f, 1, 12):
-        return False
-
-    # Day of week & Day of month handling
-    python_weekday = dt.weekday()  # 0=Mon, 6=Sun
-    cron_weekday = 0 if python_weekday == 6 else (python_weekday + 1)
-    valid_dows = parse_cron_field(dow_f, 0, 7)
-    if 7 in valid_dows:
-        valid_dows.add(0)
-
-    valid_doms = parse_cron_field(dom_f, 1, 31)
-
-    dom_restricted = dom_f != "*"
-    dow_restricted = dow_f != "*"
-
-    if dom_restricted and dow_restricted:
-        # If both DOM and DOW are specified, match if EITHER matches
-        return dt.day in valid_doms or cron_weekday in valid_dows
-    elif dom_restricted:
-        return dt.day in valid_doms
-    elif dow_restricted:
-        return cron_weekday in valid_dows
-
-    return True
-
-
-def get_next_cron_run(
-    cron_expr: str,
-    after: datetime | None = None,
-    max_days: int = 30,
-    tz: tzinfo | None = None,
-) -> datetime | None:
-    """Compute the next matching datetime for a cron expression."""
-    if after is None:
-        after = datetime.now(tz or get_scheduler_timezone())
-
-    # Start search at the beginning of the next minute
-    cur = after.replace(second=0, microsecond=0) + timedelta(minutes=1)
-    end = cur + timedelta(days=max_days)
-
-    while cur <= end:
-        if is_cron_match(cron_expr, cur):
-            return cur
-        cur += timedelta(minutes=1)
-
-    return None
-
-
 class AutomationScheduler:
     """Cron scheduling manager for SavedSearch automated task dispatching."""
 
@@ -166,7 +54,9 @@ class AutomationScheduler:
         self.broker = broker
         self.poll_interval_sec = poll_interval_sec
         self.startup_gate = startup_gate or StartupCleanupGate(
-            broker, enabled=resolve_run_cleanup_on_startup()
+            broker,
+            enabled=resolve_run_cleanup_on_startup(),
+            acknowledgment=resolve_chat_acknowledgment_settings(),
         )
         self.tz = tz or get_scheduler_timezone()
         self._running = False
@@ -187,14 +77,10 @@ class AutomationScheduler:
         dispatched_tasks: list[AutomationTask] = []
 
         for search in saved_searches:
-            if not search.is_enabled:
-                continue
-            if not search.cron_expression or not search.cron_expression.strip():
-                continue
-
-            # Evaluate cron match against current minute
+            # Evaluate cron match against current minute; the same-minute guard lives in
+            # the use case so it is testable without this loop.
             try:
-                if not is_cron_match(search.cron_expression, now):
+                if not should_dispatch(search, now):
                     continue
             except Exception as e:
                 logger.warning(
@@ -205,29 +91,15 @@ class AutomationScheduler:
                 )
                 continue
 
-            # Prevent multiple triggers within the same minute
-            if search.last_run_at:
-                try:
-                    last_run_dt = datetime.fromisoformat(search.last_run_at.replace("Z", "+00:00"))
-                    if last_run_dt.tzinfo is not None and now.tzinfo is not None:
-                        same_minute = int(last_run_dt.timestamp() // 60) == int(
-                            now.timestamp() // 60
-                        )
-                    else:
-                        same_minute = (
-                            last_run_dt.year == now.year
-                            and last_run_dt.month == now.month
-                            and last_run_dt.day == now.day
-                            and last_run_dt.hour == now.hour
-                            and last_run_dt.minute == now.minute
-                        )
-                    if same_minute:
-                        continue
-                except Exception:
-                    pass
-
-            # Resolve what this strategy dispatches
-            launch = self._build_dispatch(search)
+            # Resolve what this strategy dispatches. The edge resolves the triage
+            # settings once, and only for the cleanup that reads them.
+            launch = build_dispatch(
+                search,
+                source=LaunchSource.SCHEDULER,
+                acknowledgment=(
+                    resolve_chat_acknowledgment_settings() if search.is_chat_cleanup else None
+                ),
+            )
 
             task = await self.broker.create_task(
                 task_type=launch.task_type,
@@ -268,35 +140,6 @@ class AutomationScheduler:
             )
 
         return dispatched_tasks
-
-    def _build_dispatch(self, search: SavedSearch) -> TaskLaunch:
-        """Resolve the worker task a strategy dispatches, and its payload.
-
-        Both shapes come from the shared launch builder, so a scheduled run of a
-        SavedSearch is the *same task* a manual launch of it produces. This method used
-        to be its own builder: it sent `preview_only=False, auto_send=False` where every
-        web builder sent `preview_only=True`, inverting execution depth for the same
-        SavedSearch depending on who dispatched it, and it hardcoded `min_score: 70`
-        against the modal's 75.
-        """
-        if search.is_chat_cleanup:
-            # `mode=None` lets the configured `chat.dry_run` win. The scheduler used to
-            # state a dry_run of its own, which was one of three conventions for a single
-            # tri-state intent: a scheduled drill that nobody configured.
-            launch = build_chat_cleanup_launch(source=LaunchSource.SCHEDULER, search=search)
-        else:
-            # No mode — and since issue #298 a search cannot take one. The depth is the
-            # strategy's own Target Action, which is the execution depth the operator
-            # configured. This method used to send `preview_only=False`, and the builder it
-            # was moved onto then defaulted every unstated mode to preview, so a scheduled
-            # 自动沟通 run drafted its greeting and never opened a chat. A save-only search
-            # is still preview by definition; previewing is no longer a mode anyone runs in.
-            launch = build_launch(
-                TaskKind.SEARCH,
-                source=LaunchSource.SCHEDULER,
-                search=search,
-            )
-        return launch
 
     async def run_forever(self) -> None:
         """Background continuous scheduler loop."""

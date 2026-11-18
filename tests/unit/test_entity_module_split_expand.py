@@ -98,7 +98,7 @@ def test_identifier_helpers_isolated_ast():
         "boss_agent.models",
         "boss_agent.job_entities",
         "boss_agent.core.candidate.domain.candidate_profile",
-        "boss_agent.search_entities",
+        "boss_agent.core.search.domain.models",
         "boss_agent.screening_policy",
         "boss_agent.entities",
     }
@@ -138,9 +138,9 @@ def test_retired_monolith_fails_loudly():
 
 def test_entities_behavior_preserving():
     """Verify domain entities retain identical construction, post_init, and serialization behavior."""
+    from boss_agent.core.search.domain.models import SavedSearch
     from boss_agent.job_entities import JobCardBrief
     from boss_agent.screening_policy import ScreeningPolicy
-    from boss_agent.search_entities import SavedSearch
 
     # JobCardBrief post_init
     card = JobCardBrief(

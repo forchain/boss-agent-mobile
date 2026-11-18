@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from boss_agent.task_launch import LaunchSource, coerce_source
+from boss_agent.core.search.domain.launch import LaunchSource, coerce_source
 
 #: Why a test-sourced task was cancelled. Says what happened, not who to blame.
 TEST_RECLAIM_REASON = "Test-sourced task reclaimed at worker startup"

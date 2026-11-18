@@ -8,12 +8,12 @@ verifying education fit (Master's candidate matching Bachelor's JD with Master's
 from unittest.mock import MagicMock
 
 from boss_agent.core.candidate.domain.candidate_profile import CandidateProfile
+from boss_agent.core.search.domain.models import FilterConfig
 from boss_agent.job_entities import JobPosting
 from boss_agent.matching import (
     JobMatchGreetingService,
     format_search_filter,
 )
-from boss_agent.search_entities import FilterConfig
 
 
 def test_format_search_filter_with_dict():

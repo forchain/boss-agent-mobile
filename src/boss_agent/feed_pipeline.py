@@ -21,6 +21,7 @@ from enum import StrEnum
 from typing import Any
 
 from .core.candidate.domain.candidate_profile import CandidateProfile
+from .core.search.domain.models import FilterConfig
 from .core.shared.enums import (
     DEPTH_DECLARED,
     DEPTH_LEGACY_HALF_PAIR,
@@ -77,7 +78,6 @@ from .screening import (
     JobVerdictStage,
 )
 from .screening_policy import ScreeningPolicy, resolve_screening_policy
-from .search_entities import FilterConfig
 from .settings import resolve_communication_cooldown_days
 
 logger = logging.getLogger(__name__)

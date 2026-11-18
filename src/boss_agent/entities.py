@@ -10,17 +10,17 @@ from boss_agent.core.candidate.domain.candidate_profile import (
     CandidateProfile,
     StructuredCandidateProfile,
 )
+from boss_agent.core.search.domain.models import (
+    FilterConfig,
+    SavedSearch,
+    SearchConfig,
+    _saved_search_max_jobs_default,
+)
 from boss_agent.job_entities import (
     JobCardBrief,
     JobLocationLine,
     JobPosting,
     JobRecord,
-)
-from boss_agent.search_entities import (
-    FilterConfig,
-    SavedSearch,
-    SearchConfig,
-    _saved_search_max_jobs_default,
 )
 
 __all__ = [

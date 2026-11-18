@@ -7,10 +7,10 @@ Unit tests for screening pipeline, CardFacets digest preservation, and search_fi
 from unittest.mock import MagicMock
 
 from boss_agent.core.candidate.domain.candidate_profile import CandidateProfile
+from boss_agent.core.search.domain.models import FilterConfig
 from boss_agent.feed_pipeline import FeedStreamConfig
 from boss_agent.job_entities import JobCardBrief, JobPosting
 from boss_agent.screening import CandidateScreener, CardFacets
-from boss_agent.search_entities import FilterConfig
 
 
 def test_card_facets_to_job_posting_preserves_digest():

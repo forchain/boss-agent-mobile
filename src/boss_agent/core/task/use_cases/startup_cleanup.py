@@ -20,9 +20,10 @@ import logging
 from collections.abc import Sequence
 from typing import Any
 
+from boss_agent.core.search.domain.launch import LaunchSource, build_chat_cleanup_launch
 from boss_agent.core.task.domain.models import AutomationTask, TaskStatus, TaskType
 from boss_agent.core.task.interfaces.broker import BaseTaskBroker
-from boss_agent.task_launch import LaunchSource, build_chat_cleanup_launch
+from boss_agent.rejection import ChatAcknowledgmentSettings
 
 logger = logging.getLogger("boss_agent.startup_cleanup")
 
@@ -39,7 +40,9 @@ SEARCH_TASK_TYPES: frozenset[TaskType] = frozenset({TaskType.SCRAPE_JOBS, TaskTy
 QUEUE_SCAN_LIMIT: int = 50
 
 
-def _startup_cleanup_payload() -> dict[str, Any]:
+def _startup_cleanup_payload(
+    acknowledgment: ChatAcknowledgmentSettings | None = None,
+) -> dict[str, Any]:
     """Payload for the startup cleanup, built by the one launch builder.
 
     The triage settings travel with the task so a startup run honours the configured
@@ -49,7 +52,10 @@ def _startup_cleanup_payload() -> dict[str, Any]:
     it to recognise its own task in the queue, which is a *derived* use of the payload
     and no longer the contract.
     """
-    launch = build_chat_cleanup_launch(source=LaunchSource.SCHEDULER)
+    launch = build_chat_cleanup_launch(
+        source=LaunchSource.SCHEDULER,
+        acknowledgment=acknowledgment,
+    )
     return {STARTUP_CLEANUP_MARKER: True, **launch.payload}
 
 
@@ -62,10 +68,12 @@ class StartupCleanupGate:
         *,
         enabled: bool = True,
         queue_scan_limit: int = QUEUE_SCAN_LIMIT,
+        acknowledgment: ChatAcknowledgmentSettings | None = None,
     ) -> None:
         self.broker = broker
         self.enabled = enabled
         self.queue_scan_limit = queue_scan_limit
+        self.acknowledgment = acknowledgment
         self._armed = False
         self._arm_lock = asyncio.Lock()
 
@@ -102,7 +110,7 @@ class StartupCleanupGate:
                     return None
                 task = await self.broker.create_task(
                     task_type=TaskType.CHECK_CHAT,
-                    payload=_startup_cleanup_payload(),
+                    payload=_startup_cleanup_payload(self.acknowledgment),
                     source=LaunchSource.SCHEDULER.value,
                 )
 

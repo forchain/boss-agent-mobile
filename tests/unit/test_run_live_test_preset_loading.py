@@ -18,13 +18,13 @@ import sys
 import pytest
 from scripts import run_live_test as live_test
 
+from boss_agent.core.search.domain.models import FilterConfig, SavedSearch, SearchConfig
+from boss_agent.core.search.interfaces.store import SavedSearchStore
 from boss_agent.core.shared.errors import TransportError
 from boss_agent.saved_search_store import (
     InMemorySavedSearchStore,
-    SavedSearchStore,
     resolve_saved_search_store,
 )
-from boss_agent.search_entities import FilterConfig, SavedSearch, SearchConfig
 
 _ALPHA = SavedSearch(
     id="alpha_preset",

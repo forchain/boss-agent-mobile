@@ -484,7 +484,7 @@ REQUIRED_DOMAIN_MODULES = (
     "boss_agent.matching",
     "boss_agent.rejection",
     "boss_agent.screening",
-    "boss_agent.search_entities",
+    "boss_agent.core.search.domain.models",
 )
 
 
