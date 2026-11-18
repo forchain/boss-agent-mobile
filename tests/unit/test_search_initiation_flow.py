@@ -13,8 +13,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
 from boss_agent.adapters.outbound.device.pages.job_feed import JobListPage, SearchPage
-from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
 from boss_agent.core.task.domain.models import TaskType
 from boss_agent.worker.config import WorkerConfig
 from boss_agent.worker.context import WorkerContext

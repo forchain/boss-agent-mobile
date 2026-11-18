@@ -21,8 +21,8 @@ from pathlib import Path
 import pytest
 
 from _service_harness import free_port
-from boss_agent.broker.pocketbase_adapter import PocketBaseTaskBroker
-from boss_agent.broker.provisioner import (
+from boss_agent.adapters.outbound.pocketbase.pocketbase_adapter import PocketBaseTaskBroker
+from boss_agent.adapters.outbound.pocketbase.provisioner import (
     provision_remote_pocketbase,
     provision_sqlite_database,
 )

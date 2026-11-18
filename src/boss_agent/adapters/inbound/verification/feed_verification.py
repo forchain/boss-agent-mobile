@@ -42,8 +42,9 @@ from typing import Any
 
 from rich.console import Console
 
+from boss_agent.adapters.memory.job_store import InMemoryJobRecordStore
 from boss_agent.adapters.outbound.device.pages.feed_bundle import build_feed_device_world
-from boss_agent.async_bridge import run_sync
+from boss_agent.adapters.outbound.pocketbase.async_bridge import run_sync
 from boss_agent.core.candidate.domain.candidate_profile import StructuredCandidateProfile
 from boss_agent.core.job.domain.feed_stream import FeedStreamConfig, FeedStreamResult
 from boss_agent.core.job.domain.job_entities import JobPosting
@@ -53,7 +54,6 @@ from boss_agent.core.job.use_cases.matching import JobMatchGreetingService, Matc
 from boss_agent.core.job.use_cases.screening import CandidateScreener
 from boss_agent.core.search.domain.models import FilterConfig, SearchConfig
 from boss_agent.core.shared.enums import TargetAction
-from boss_agent.job_store import InMemoryJobRecordStore
 from boss_agent.memory import ResumeMemoryManager
 from boss_agent.screening_prompt import load_screening_prompt
 

@@ -13,7 +13,7 @@ import sys
 from collections.abc import Coroutine, Sequence
 from typing import Any
 
-from boss_agent.broker.pocketbase_adapter import PocketBaseTaskBroker
+from boss_agent.adapters.outbound.pocketbase.pocketbase_adapter import PocketBaseTaskBroker
 from boss_agent.core.task.interfaces.broker import BaseTaskBroker
 from boss_agent.core.task.use_cases.startup_cleanup import StartupCleanupGate
 from boss_agent.core.task.use_cases.sweeper import TaskLeaseSweeper

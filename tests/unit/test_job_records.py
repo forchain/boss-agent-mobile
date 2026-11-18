@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
+from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
 from boss_agent.core.shared.errors import TransportError, ValidationError
 from boss_agent.core.shared.identifier_helpers import compute_job_fingerprint
 
@@ -113,7 +113,7 @@ async def test_pocketbase_broker_job_records_mocked(monkeypatch):
     """Test PocketBaseTaskBroker job records methods with mocked HTTP session."""
     from unittest.mock import MagicMock
 
-    from boss_agent.broker.pocketbase_adapter import PocketBaseTaskBroker
+    from boss_agent.adapters.outbound.pocketbase.pocketbase_adapter import PocketBaseTaskBroker
 
     mock_session = MagicMock()
     broker = PocketBaseTaskBroker(base_url="http://mock-pb:8090", session=mock_session)
@@ -151,7 +151,7 @@ async def test_pocketbase_broker_job_records_no_fallback_on_empty(tmp_path, monk
     from pathlib import Path
     from unittest.mock import MagicMock
 
-    from boss_agent.broker.pocketbase_adapter import PocketBaseTaskBroker
+    from boss_agent.adapters.outbound.pocketbase.pocketbase_adapter import PocketBaseTaskBroker
 
     monkeypatch.chdir(tmp_path)
 
@@ -173,7 +173,7 @@ async def test_pocketbase_broker_job_records_no_fallback_on_404(tmp_path, monkey
     from pathlib import Path
     from unittest.mock import MagicMock
 
-    from boss_agent.broker.pocketbase_adapter import PocketBaseTaskBroker
+    from boss_agent.adapters.outbound.pocketbase.pocketbase_adapter import PocketBaseTaskBroker
 
     monkeypatch.chdir(tmp_path)
 
@@ -207,7 +207,7 @@ async def test_pocketbase_broker_upsert_persists_without_fallback_file(tmp_path,
     from pathlib import Path
     from unittest.mock import MagicMock
 
-    from boss_agent.broker.pocketbase_adapter import PocketBaseTaskBroker
+    from boss_agent.adapters.outbound.pocketbase.pocketbase_adapter import PocketBaseTaskBroker
 
     monkeypatch.chdir(tmp_path)
 
@@ -365,7 +365,7 @@ async def test_pocketbase_broker_delete_job_record():
 
     import requests
 
-    from boss_agent.broker.pocketbase_adapter import PocketBaseTaskBroker
+    from boss_agent.adapters.outbound.pocketbase.pocketbase_adapter import PocketBaseTaskBroker
 
     mock_session = MagicMock()
     broker = PocketBaseTaskBroker(base_url="https://remote-pb:4433", session=mock_session)
@@ -538,7 +538,7 @@ def _long_expanded_jd() -> str:
 def _pb_broker():
     from unittest.mock import MagicMock
 
-    from boss_agent.broker.pocketbase_adapter import PocketBaseTaskBroker
+    from boss_agent.adapters.outbound.pocketbase.pocketbase_adapter import PocketBaseTaskBroker
 
     mock_session = MagicMock()
     broker = PocketBaseTaskBroker(base_url="http://mock-pb:8090", session=mock_session)
@@ -552,7 +552,9 @@ async def test_pocketbase_upsert_truncates_jd_and_retries_when_server_rejects_le
     truncate and re-send instead of dropping the whole enriched record."""
     import logging
 
-    from boss_agent.broker.pocketbase_adapter import POCKETBASE_DEFAULT_TEXT_MAX_CHARS
+    from boss_agent.adapters.outbound.pocketbase.pocketbase_adapter import (
+        POCKETBASE_DEFAULT_TEXT_MAX_CHARS,
+    )
 
     broker, mock_session = _pb_broker()
     check_resp = MagicMock(status_code=200, json=lambda: {"items": []})
@@ -587,7 +589,9 @@ async def test_pocketbase_upsert_truncates_jd_and_retries_when_server_rejects_le
 @pytest.mark.asyncio
 async def test_pocketbase_upsert_patch_truncates_jd_and_retries_on_length_rejection():
     """The same recovery must cover the update path of an existing record."""
-    from boss_agent.broker.pocketbase_adapter import POCKETBASE_DEFAULT_TEXT_MAX_CHARS
+    from boss_agent.adapters.outbound.pocketbase.pocketbase_adapter import (
+        POCKETBASE_DEFAULT_TEXT_MAX_CHARS,
+    )
 
     broker, mock_session = _pb_broker()
     check_resp = MagicMock(

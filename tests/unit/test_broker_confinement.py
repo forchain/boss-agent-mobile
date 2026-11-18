@@ -78,15 +78,15 @@ def test_the_abstract_broker_offers_no_record_verb(verb: str) -> None:
 @pytest.mark.parametrize("verb", RECORD_VERBS)
 def test_a_concrete_broker_handle_offers_no_record_verb(verb: str) -> None:
     """And neither does an instance — the shim used to be inherited by both adapters."""
-    from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
+    from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
 
     assert not callable(getattr(InMemoryTaskBroker(), verb, None))
 
 
 def test_the_broker_still_composes_the_store_it_no_longer_impersonates() -> None:
     """Deleting the delegation must not delete the composition."""
-    from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
-    from boss_agent.job_store import JobRecordStore
+    from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
+    from boss_agent.core.job.interfaces.store import JobRecordStore
 
     broker = InMemoryTaskBroker()
     assert isinstance(broker.job_store, JobRecordStore)

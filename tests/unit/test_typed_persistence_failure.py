@@ -19,13 +19,15 @@ import pytest
 import requests
 from _job_store_harness import FakePocketBaseSession, pocketbase_job_store
 
-from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
-from boss_agent.candidate_memory_store import PocketBaseCandidateMemoryStore
+from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
+from boss_agent.adapters.outbound.pocketbase.candidate_memory_store import (
+    PocketBaseCandidateMemoryStore,
+)
+from boss_agent.adapters.outbound.pocketbase.job_store import PocketBaseJobRecordStore
 from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
 from boss_agent.core.job.use_cases.feed_pipeline import FeedStreamConfig, JobFeedPipeline
 from boss_agent.core.shared.errors import TransportError, ValidationError
 from boss_agent.core.task.domain.models import TaskType
-from boss_agent.job_store import PocketBaseJobRecordStore
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.handlers.auto_apply import AutoApplyHandler
 

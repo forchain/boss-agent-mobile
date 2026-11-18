@@ -24,6 +24,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from boss_agent.adapters.memory.job_store import InMemoryJobRecordStore
 from boss_agent.core.job.domain.feed_stream import FeedStreamConfig
 from boss_agent.core.job.domain.job_entities import JobPosting
 from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
@@ -32,7 +33,6 @@ from boss_agent.core.job.interfaces.store import JobRecordStore
 from boss_agent.core.job.use_cases.feed_pipeline import JobFeedPipeline
 from boss_agent.core.job.use_cases.matching import JobMatchGreetingService
 from boss_agent.core.shared.enums import ChatButtonState
-from boss_agent.job_store import InMemoryJobRecordStore
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 CORE_JOB_ROOT = REPO_ROOT / "src" / "boss_agent" / "core" / "job"
@@ -45,7 +45,7 @@ FORBIDDEN_CORE_ROOTS = (
     "boss_agent.greeting_prompt",
     "boss_agent.screening_prompt",
     "boss_agent.llm_config",
-    "boss_agent.job_store",
+    "boss_agent.adapters",
     "boss_agent.worker",
     "boss_agent.services",
     "selenium",

@@ -7,7 +7,7 @@ Public symbols resolve lazily (PEP 562).
 
 ``pocketbase_adapter`` imports ``boss_agent.job_store`` for the shared
 ``JobRecordStore`` seam, and ``job_store`` imports
-``boss_agent.broker.collection_schema`` for the wire schema. Those two edges form a
+``boss_agent.adapters.outbound.pocketbase.collection_schema`` for the wire schema. Those two edges form a
 cycle, and this ``__init__`` closed it by importing both ends eagerly: whichever side
 was reached first lost, and the loser's names silently vanished.
 
@@ -19,7 +19,7 @@ them) were advertised but could not actually be resolved -- a suppressed circula
 import, not a missing feature.
 
 Deferring the adapter breaks the cycle at its actual source: ``job_store`` can now
-reach ``boss_agent.broker.collection_schema`` (a leaf with no first-party imports)
+reach ``boss_agent.adapters.outbound.pocketbase.collection_schema`` (a leaf with no first-party imports)
 without dragging ``pocketbase_adapter`` back into a half-initialized state. The names
 below resolve to the identical objects they did before.
 """
@@ -31,9 +31,9 @@ import importlib
 _LAZY_EXPORTS: dict[str, str] = {
     "AutomationTask": "boss_agent.core.task.domain.models",
     "BaseTaskBroker": "boss_agent.core.task.interfaces.broker",
-    "InMemoryTaskBroker": ".pocketbase_adapter",
-    "PocketBaseBroker": ".pocketbase_adapter",
-    "PocketBaseTaskBroker": ".pocketbase_adapter",
+    "InMemoryTaskBroker": "boss_agent.adapters.memory.task_broker",
+    "PocketBaseBroker": "boss_agent.adapters.outbound.pocketbase.pocketbase_adapter",
+    "PocketBaseTaskBroker": "boss_agent.adapters.outbound.pocketbase.pocketbase_adapter",
     "TaskLeaseSweeper": "boss_agent.core.task.use_cases.sweeper",
     "TaskStatus": "boss_agent.core.task.domain.models",
     "TaskType": "boss_agent.core.task.domain.models",

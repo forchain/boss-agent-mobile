@@ -116,7 +116,7 @@ def test_the_job_ceiling_is_the_schemas_declared_default() -> None:
     what stops a second literal from drifting the way 20-vs-30 once did. Exercise the
     fallback branch, where `DEFAULT_MAX_JOBS` is what actually reaches the payload.
     """
-    from boss_agent.broker.collection_schema import SAVED_SEARCH_MAX_JOBS
+    from boss_agent.adapters.outbound.pocketbase.collection_schema import SAVED_SEARCH_MAX_JOBS
 
     assert task_launch.DEFAULT_MAX_JOBS == SAVED_SEARCH_MAX_JOBS
 

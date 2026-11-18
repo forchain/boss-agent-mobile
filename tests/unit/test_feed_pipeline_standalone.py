@@ -19,10 +19,10 @@ from dataclasses import replace
 import pytest
 from _feed_harness import ScriptedFeed, _card, _detail_page, _pipeline, _posting
 
+from boss_agent.adapters.memory.job_store import InMemoryJobRecordStore
 from boss_agent.core.job.domain.job_entities import JobPosting
 from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
 from boss_agent.core.job.use_cases.feed_pipeline import FeedStreamConfig
-from boss_agent.job_store import InMemoryJobRecordStore
 
 
 def test_pipeline_keeps_the_in_memory_store_it_is_given():

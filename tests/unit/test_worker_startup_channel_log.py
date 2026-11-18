@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
+from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
 from boss_agent.core.job.use_cases.feed_pipeline import FeedStreamResult
 from boss_agent.worker.config import WorkerConfig
 from boss_agent.worker.context import WorkerContext

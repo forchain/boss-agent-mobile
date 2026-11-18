@@ -26,6 +26,7 @@ from _feed_harness import (
 )
 from selenium.common.exceptions import StaleElementReferenceException
 
+from boss_agent.adapters.memory.job_store import InMemoryJobRecordStore
 from boss_agent.core.job.domain.job_entities import (
     JobCardBrief,
     JobPosting,
@@ -48,7 +49,6 @@ from boss_agent.core.shared.enums import (
     TargetAction,
 )
 from boss_agent.core.shared.keyword_constants import APPLIED_SOURCE_AGENT
-from boss_agent.job_store import InMemoryJobRecordStore
 
 
 class _StaleElement:
@@ -889,8 +889,8 @@ def test_for_task_wires_the_brokers_job_ledger():
     handle had no ledger, letting any broker-shaped object silently satisfy
     store-typed code — so the type story no longer said which object was passed.
     """
+    from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
     from boss_agent.adapters.outbound.device.pages.feed_bundle import build_feed_device_world
-    from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
 
     broker = InMemoryTaskBroker()
     pipeline = JobFeedPipeline.for_task(
@@ -901,7 +901,7 @@ def test_for_task_wires_the_brokers_job_ledger():
 
 @pytest.mark.asyncio
 async def test_is_task_cancelled_reads_the_task_lease():
-    from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
+    from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
     from boss_agent.core.task.domain.models import TaskStatus, TaskType
 
     broker = InMemoryTaskBroker()

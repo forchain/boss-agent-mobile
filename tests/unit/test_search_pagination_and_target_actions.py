@@ -13,8 +13,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
 from boss_agent.adapters.outbound.device.pages.job_feed import JobListPage
-from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
 from boss_agent.core.search.domain.models import (
     SavedSearch,
     SearchConfig,

@@ -15,9 +15,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
-from boss_agent.candidate_memory_store import (
-    InMemoryCandidateMemoryStore,
+from boss_agent.adapters.memory.candidate_memory_store import InMemoryCandidateMemoryStore
+from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
+from boss_agent.adapters.outbound.pocketbase.candidate_memory_store import (
     migrate_legacy_candidate_profile,
 )
 from boss_agent.core.shared.errors import BrokerError, TransportError

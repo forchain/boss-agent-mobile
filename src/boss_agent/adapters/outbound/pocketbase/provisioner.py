@@ -1,9 +1,9 @@
 """
-src/boss_agent/broker/provisioner.py
-====================================
+src/boss_agent/adapters/outbound/pocketbase/provisioner.py
+=========================================================
 PocketBase collection provisioner — local SQLite and remote REST.
 
-Both dialects are *views* of :mod:`boss_agent.broker.collection_schema`: the
+Both dialects are *views* of :mod:`boss_agent.adapters.outbound.pocketbase.collection_schema`: the
 ``CREATE TABLE`` statements and the ``_collections.fields`` JSON are rendered from
 the same declarations, so a field cannot exist in one dialect and not the other.
 Upgrades render ``ALTER TABLE`` additions and the schema's ordered backfills from
@@ -24,11 +24,14 @@ from typing import Any
 import requests
 
 # Ensure src/ is in sys.path when executed directly
-_src_root = str(Path(__file__).resolve().parent.parent.parent)
+_src_root = str(Path(__file__).resolve().parents[4])
 if _src_root not in sys.path:
     sys.path.insert(0, _src_root)
 
-from boss_agent.broker.collection_schema import (  # noqa: E402
+from boss_agent.core.shared.errors import TransportError, ValidationError  # noqa: E402
+from boss_agent.settings import resolve_pocketbase_db_path  # noqa: E402
+
+from .collection_schema import (  # noqa: E402
     COLLECTIONS,
     JOB_RECORDS_NAME,
     LONG_TEXT_MAX_CHARS,
@@ -44,12 +47,10 @@ from boss_agent.broker.collection_schema import (  # noqa: E402
     validate_identifier,
     wire_payload,
 )
-from boss_agent.core.shared.errors import TransportError, ValidationError  # noqa: E402
-from boss_agent.settings import resolve_pocketbase_db_path  # noqa: E402
 
 # requests and urllib3 are lazily imported in provision_remote_pocketbase
 
-logger = logging.getLogger("boss_agent.broker.provisioner")
+logger = logging.getLogger("boss_agent.adapters.outbound.pocketbase.provisioner")
 
 #: Retained for callers that pinned the old constant name; the value lives in the
 #: schema module because the ``job_description`` cap is a property of the column.

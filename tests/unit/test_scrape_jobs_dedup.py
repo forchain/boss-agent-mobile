@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from _card_fixtures import located
 
-from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
+from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
 from boss_agent.core.job.domain.job_entities import JobCardBrief, JobPosting
 from boss_agent.core.shared.identifier_helpers import compute_job_fingerprint
 from boss_agent.core.task.domain.models import AutomationTask, TaskType

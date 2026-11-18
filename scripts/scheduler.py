@@ -10,7 +10,7 @@ import asyncio
 import logging
 import sys
 
-from boss_agent.broker.pocketbase_adapter import PocketBaseTaskBroker
+from boss_agent.adapters.outbound.pocketbase.pocketbase_adapter import PocketBaseTaskBroker
 from boss_agent.scheduler import AutomationScheduler
 from boss_agent.settings import resolve_pocketbase_url
 

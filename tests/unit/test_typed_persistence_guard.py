@@ -27,11 +27,15 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 SEAM_FILES = [
-    REPO_ROOT / "src/boss_agent/job_store.py",
-    REPO_ROOT / "src/boss_agent/candidate_memory_store.py",
-    REPO_ROOT / "src/boss_agent/saved_search_store.py",
-    REPO_ROOT / "src/boss_agent/broker/pocketbase_adapter.py",
-    REPO_ROOT / "src/boss_agent/broker/provisioner.py",
+    REPO_ROOT / "src/boss_agent/adapters/memory/task_broker.py",
+    REPO_ROOT / "src/boss_agent/adapters/memory/job_store.py",
+    REPO_ROOT / "src/boss_agent/adapters/memory/candidate_memory_store.py",
+    REPO_ROOT / "src/boss_agent/adapters/memory/saved_search_store.py",
+    REPO_ROOT / "src/boss_agent/adapters/outbound/pocketbase/job_store.py",
+    REPO_ROOT / "src/boss_agent/adapters/outbound/pocketbase/candidate_memory_store.py",
+    REPO_ROOT / "src/boss_agent/adapters/outbound/pocketbase/saved_search_store.py",
+    REPO_ROOT / "src/boss_agent/adapters/outbound/pocketbase/pocketbase_adapter.py",
+    REPO_ROOT / "src/boss_agent/adapters/outbound/pocketbase/provisioner.py",
 ]
 
 # Put this on an `except` handler that deliberately degrades to an empty value instead of

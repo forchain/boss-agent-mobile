@@ -96,7 +96,7 @@ def make_resume_diff_analyzer_node(broker: Any | None = None):
 
             broker = PocketBaseBroker()
 
-        from .async_bridge import run_sync
+        from .adapters.outbound.pocketbase.async_bridge import run_sync
 
         existing = run_sync(
             broker.candidate_memory.get_candidate_profile(user_id=user_id), timeout=5.0
@@ -122,7 +122,7 @@ def make_resume_persister_node(broker: Any | None = None):
 
             broker = PocketBaseBroker()
 
-        from .async_bridge import run_sync
+        from .adapters.outbound.pocketbase.async_bridge import run_sync
 
         return run_sync(
             persist_resume_profile(

@@ -18,12 +18,11 @@ from _job_store_harness import (
     pocketbase_job_store as _pocketbase_store,
 )
 
-from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker, PocketBaseTaskBroker
-from boss_agent.job_store import (
-    InMemoryJobRecordStore,
-    JobRecordStore,
-    PocketBaseJobRecordStore,
-)
+from boss_agent.adapters.memory.job_store import InMemoryJobRecordStore
+from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
+from boss_agent.adapters.outbound.pocketbase.job_store import PocketBaseJobRecordStore
+from boss_agent.adapters.outbound.pocketbase.pocketbase_adapter import PocketBaseTaskBroker
+from boss_agent.core.job.interfaces.store import JobRecordStore
 
 
 def _record(

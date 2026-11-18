@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from boss_agent.broker.provisioner import (
+from boss_agent.adapters.outbound.pocketbase.provisioner import (
     provision_remote_pocketbase,
     provision_sqlite_database,
 )
@@ -223,7 +223,7 @@ def test_provision_sqlite_database_migrates_existing_table(tmp_path: Path):
 def test_provision_remote_pocketbase_mock():
     from unittest.mock import MagicMock, patch
 
-    from boss_agent.broker.provisioner import provision_remote_pocketbase
+    from boss_agent.adapters.outbound.pocketbase.provisioner import provision_remote_pocketbase
 
     mock_session = MagicMock()
     # Mock Auth
@@ -279,7 +279,10 @@ def test_provision_remote_pocketbase_mock():
 
 def test_provision_sqlite_database_adds_digest_column_if_missing(tmp_path: Path):
     """If job_records table was created in an older version without 'digest', provisioner alters table."""
-    from boss_agent.broker.collection_schema import JOB_RECORDS, pocketbase_fields
+    from boss_agent.adapters.outbound.pocketbase.collection_schema import (
+        JOB_RECORDS,
+        pocketbase_fields,
+    )
 
     # Verify field definition
     field_names = [f["name"] for f in pocketbase_fields(JOB_RECORDS)]
@@ -364,7 +367,7 @@ def test_provision_sqlite_database_job_description_exceeds_default_text_max(tmp_
 def test_provision_remote_pocketbase_job_description_exceeds_default_text_max():
     from unittest.mock import MagicMock, patch
 
-    from boss_agent.broker.provisioner import provision_remote_pocketbase
+    from boss_agent.adapters.outbound.pocketbase.provisioner import provision_remote_pocketbase
 
     mock_session = MagicMock()
     auth_resp = MagicMock(ok=True)
@@ -510,7 +513,10 @@ def test_provision_remote_pocketbase_widens_existing_job_description_cap(
     ``options.max`` is silently ignored, as verified against a live 0.39 server."""
     from unittest.mock import patch as mock_patch
 
-    from boss_agent.broker.provisioner import LONG_TEXT_FIELD_MAX_CHARS, provision_remote_pocketbase
+    from boss_agent.adapters.outbound.pocketbase.provisioner import (
+        LONG_TEXT_FIELD_MAX_CHARS,
+        provision_remote_pocketbase,
+    )
 
     collection = _legacy_job_records_collection(stored_max, nested=nested_options)
     session = _remote_provision_session(collection)
@@ -542,7 +548,10 @@ def test_provision_remote_pocketbase_leaves_wide_cap_alone():
     """An already-upgraded instance must not be rewritten on every provisioning run."""
     from unittest.mock import patch as mock_patch
 
-    from boss_agent.broker.provisioner import LONG_TEXT_FIELD_MAX_CHARS, provision_remote_pocketbase
+    from boss_agent.adapters.outbound.pocketbase.provisioner import (
+        LONG_TEXT_FIELD_MAX_CHARS,
+        provision_remote_pocketbase,
+    )
 
     session = _remote_provision_session(
         _legacy_job_records_collection(max_chars=LONG_TEXT_FIELD_MAX_CHARS)
@@ -564,7 +573,7 @@ def test_provision_remote_pocketbase_upgrade_failure_does_not_abort_provisioning
     the remaining collections and seeds still have to be provisioned."""
     from unittest.mock import patch as mock_patch
 
-    from boss_agent.broker.provisioner import provision_remote_pocketbase
+    from boss_agent.adapters.outbound.pocketbase.provisioner import provision_remote_pocketbase
 
     session = _remote_provision_session(_legacy_job_records_collection(), patch_ok=False)
 
@@ -584,7 +593,7 @@ def test_provision_remote_pocketbase_skips_upgrade_when_collection_is_new():
     nothing to migrate."""
     from unittest.mock import patch as mock_patch
 
-    from boss_agent.broker.provisioner import provision_remote_pocketbase
+    from boss_agent.adapters.outbound.pocketbase.provisioner import provision_remote_pocketbase
 
     session = _remote_provision_session(job_records_collection=None)
 

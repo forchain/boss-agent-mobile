@@ -8,7 +8,7 @@ resolution hierarchy, precedence rules, and URL normalization.
 from pathlib import Path
 from unittest.mock import patch
 
-from boss_agent.broker.pocketbase_adapter import PocketBaseTaskBroker
+from boss_agent.adapters.outbound.pocketbase.pocketbase_adapter import PocketBaseTaskBroker
 from boss_agent.core.chat.domain.rejection import ChatAcknowledgmentSettings
 from boss_agent.settings import (
     load_settings,
