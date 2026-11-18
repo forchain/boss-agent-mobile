@@ -25,9 +25,9 @@ from _chat_triage_harness import (
 )
 
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
+from boss_agent.core.chat.domain.rejection import ChatAcknowledgmentSettings
 from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
 from boss_agent.core.task.domain.models import TaskType
-from boss_agent.rejection import ChatAcknowledgmentSettings
 from boss_agent.screening_config import load_screening_policy
 from boss_agent.worker.config import WorkerConfig
 from boss_agent.worker.context import WorkerContext

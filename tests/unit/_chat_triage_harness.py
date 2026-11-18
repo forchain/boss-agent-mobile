@@ -15,19 +15,17 @@ Shared by ``test_chat_triage.py``, ``test_check_chat_telemetry.py`` and
 from pathlib import Path
 from typing import Any
 
-from boss_agent.chat_triage import (
-    ChatActorAdapter,
-    ChatTriage,
-    CommunicationListAdapter,
-    TriagePages,
-)
-from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
-from boss_agent.pages.communication import CommunicationCard
-from boss_agent.rejection import (
+from boss_agent.core.chat.domain.rejection import (
     DISINTEREST_REASON,
     ChatAcknowledgmentSettings,
     RejectionVerdict,
 )
+from boss_agent.core.chat.interfaces.device import TriagePages
+from boss_agent.core.chat.use_cases.triage import ChatTriage
+from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
+from boss_agent.pages.chat_adapters import ChatActorAdapter, CommunicationListAdapter
+from boss_agent.pages.communication import CommunicationCard
+from boss_agent.screening_config import ScreeningConfigBlacklistSink
 
 REJECTION_TEXT = "我们感谢您的投递，但您的专业技能与我们目前的职位需求并不完全吻合。"
 INVITATION_TEXT = "您好，方便约个时间聊聊吗？"
@@ -241,6 +239,7 @@ def triage_run(
     classifier: Any = None,
     policy: ScreeningPolicy | None = None,
     settings: ChatAcknowledgmentSettings | None = None,
+    blacklist_sink: Any = None,
     log: Any = None,
     is_cancelled: Any = None,
     pause: Any = no_pause,
@@ -248,11 +247,14 @@ def triage_run(
 ) -> ChatTriage:
     """One triage run over the scripted device world, through the production adapters."""
     return ChatTriage(
-        list_reader=CommunicationListAdapter(harness),
-        chat_actor=ChatActorAdapter(FakeChatPage(harness)),
+        pages=TriagePages(
+            list_reader=CommunicationListAdapter(harness),
+            chat_actor=ChatActorAdapter(FakeChatPage(harness)),
+        ),
         classifier=classifier or FakeClassifier(),
         policy=policy or ScreeningPolicy(),
         settings=settings or ChatAcknowledgmentSettings(),
+        blacklist_sink=blacklist_sink or ScreeningConfigBlacklistSink(),
         log=log,
         is_cancelled=is_cancelled,
         pause=pause,
@@ -261,9 +263,12 @@ def triage_run(
 
 
 def scripted_pages(harness: Harness, chat_page: Any | None = None) -> Any:
-    """The device world a CHECK_CHAT dispatch drives: the harness for both pages."""
+    """The device world a CHECK_CHAT dispatch drives: the harness behind the ports."""
     chat = chat_page if chat_page is not None else FakeChatPage(harness)
-    return lambda driver: TriagePages(list_page=harness, chat_page=chat)
+    return lambda driver: TriagePages(
+        list_reader=CommunicationListAdapter(harness),
+        chat_actor=ChatActorAdapter(chat),
+    )
 
 
 def recording_log() -> tuple[list[str], Any]:

@@ -10,20 +10,25 @@ resolves a run's settings and screening policy from the task payload, dispatches
 run, and maps the Triage Report into the task telemetry the Task Management
 Dashboard renders. It touches no page object, no card and no device.
 
-The device world a run drives is composed by the Chat Triage module from the
-driver, through the ``pages`` factory this handler hands in — overridable, so a test
-scripts the screen and the chat instead of patching this module's globals (#268).
+The device world a run drives is composed at this edge from the driver, through the
+``pages`` factory this handler hands in — overridable, so a test scripts the screen
+and the chat instead of patching this module's globals (#268).
 """
 
 import logging
 from typing import Any
 
-from boss_agent.chat_triage import ChatTriage, StopReason, TriagePages
+from boss_agent.core.chat.domain.rejection import ChatAcknowledgmentSettings
+from boss_agent.core.chat.domain.triage import StopReason
+from boss_agent.core.chat.interfaces.classifier import RejectionClassifierPort
+from boss_agent.core.chat.use_cases.rejection_classifier import RejectionClassifier
+from boss_agent.core.chat.use_cases.triage import ChatTriage
 from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
 from boss_agent.core.task.domain.models import AutomationTask, TaskType
 from boss_agent.core.task.interfaces.broker import BaseTaskBroker
-from boss_agent.rejection import ChatAcknowledgmentSettings, RejectionClassifier
-from boss_agent.screening_config import load_screening_policy
+from boss_agent.llm_config import create_llm_client
+from boss_agent.pages.chat_bundle import build_triage_world
+from boss_agent.screening_config import ScreeningConfigBlacklistSink, load_screening_policy
 from boss_agent.settings import resolve_chat_acknowledgment_settings
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.handlers.base import BaseTaskHandler, HandlerResult
@@ -37,18 +42,18 @@ class CheckChatHandler(BaseTaskHandler):
     def __init__(
         self,
         llm_client: Any | None = None,
-        classifier: Any | None = None,
+        classifier: RejectionClassifierPort | None = None,
         settings: ChatAcknowledgmentSettings | None = None,
         policy: ScreeningPolicy | None = None,
         pages: Any | None = None,
     ) -> None:
         self.llm_client = llm_client
-        self.classifier = classifier or RejectionClassifier(llm_client=llm_client)
+        self.classifier = classifier
         # Resolved lazily so constructing a handler never reads local config.
         self._settings = settings
         self._policy = policy
         # A factory over the driver, because the driver only exists at dispatch time.
-        self._pages = pages or TriagePages.for_driver
+        self._pages = pages or build_triage_world
 
     @property
     def task_type(self) -> TaskType:
@@ -90,14 +95,17 @@ class CheckChatHandler(BaseTaskHandler):
             f"reply='{settings.rejection_reply_text}')",
         )
 
+        classifier = self.classifier or RejectionClassifier(
+            llm_client=self.llm_client or create_llm_client()
+        )
         report = await ChatTriage.for_task(
             broker,
             task.id,
-            driver,
-            classifier=self.classifier,
+            self._pages(driver),
+            classifier=classifier,
             policy=self._resolve_policy(),
             settings=settings,
-            pages=self._pages,
+            blacklist_sink=ScreeningConfigBlacklistSink(),
         ).scan()
 
         if report.stop_reason is StopReason.LIST_UNREACHABLE:

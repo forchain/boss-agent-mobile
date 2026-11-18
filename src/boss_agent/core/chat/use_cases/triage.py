@@ -1,6 +1,6 @@
 """
-boss_agent.chat_triage
-======================
+boss_agent.core.chat.use_cases.triage
+=====================================
 Deep Chat Triage module (Spec #267, ADR 0013's chat half).
 
 One engine owns the whole 仅沟通 rejection story: the two-tier zero-unread preflight,
@@ -38,28 +38,38 @@ that was missing — the unread badge the platform already maintains.
 The device world crosses two narrow ports — a list reader and a chat actor — and
 cards cross as data with an opaque handle, never a device reference. The production
 adapters wrap the existing page objects, which keep owning 仅沟通 List Recovery, card
-extraction and descriptor parsing (ADR 0016 is not revisited).
+extraction and descriptor parsing (ADR 0016 is not revisited). The device bundle is
+built at the edge, so this module constructs no page object and imports no page layer.
 """
 
 import asyncio
 import logging
 from collections import Counter
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, replace
-from enum import StrEnum
-from typing import Any, Protocol, runtime_checkable
+from dataclasses import replace
+from typing import Any
 
+from boss_agent.core.chat.domain.rejection import (
+    DEFAULT_MAX_SCROLL_SWIPES,
+    ChatAcknowledgmentSettings,
+)
+from boss_agent.core.chat.domain.triage import (
+    OUTBOUND_STATUS_MARKERS,
+    StopReason,
+    TriageKind,
+    TriageOutcome,
+    TriageReport,
+)
+from boss_agent.core.chat.interfaces.blacklist import BlacklistSink
+from boss_agent.core.chat.interfaces.classifier import RejectionClassifierPort
+from boss_agent.core.chat.interfaces.device import (
+    ChatActor,
+    ChatListReader,
+    CommunicationCard,
+    TriagePages,
+)
 from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
 from boss_agent.core.job.use_cases.feed_pipeline import is_task_cancelled
-
-from .pages.communication import (
-    OUTBOUND_STATUS_MARKERS,
-    ChatPage,
-    CommunicationCard,
-    CommunicationListPage,
-)
-from .pages.system import StartupDialogPage
-from .rejection import DEFAULT_MAX_SCROLL_SWIPES, ChatAcknowledgmentSettings
 
 logger = logging.getLogger(__name__)
 
@@ -78,12 +88,6 @@ MAX_INSPECTED_CARDS = 50
 
 #: Characters of message text echoed into task logs.
 PREVIEW_CHARS = 40
-
-#: Timeout budget for a single list/dialog interaction.
-PAGE_TIMEOUT_SEC = 5.0
-
-#: Timeout budget for the cheap "is the list already showing" probe.
-LIST_PROBE_TIMEOUT_SEC = 1.0
 
 #: Readings an absent unread probe must survive before a run calls the account clean.
 #: A zero-unread preflight is a *skip*, so one absent reading cannot carry it: on a
@@ -108,250 +112,36 @@ LIST_RESET_FAILED_LOG = (
 )
 
 
-class StopReason(StrEnum):
-    """Why a triage run stopped.
-
-    The first seven are the scan's own exits. ``LIST_UNREACHABLE`` is the entry
-    failure that precedes them: the list could not be opened, so no card was read.
-    """
-
-    UNREAD_CLEARED = "unread_cleared"
-    EMPTY_LIST = "empty_list"
-    CANCELLED = "cancelled"
-    MAX_SCAN_DEPTH = "max_scan_depth"
-    SCAN_CEILING = "scan_ceiling"
-    SCROLL_CEILING = "scroll_ceiling"
-    LOST_LIST = "lost_list"
-    LIST_UNREACHABLE = "list_unreachable"
-
-
-class TriageKind(StrEnum):
-    """What triage did with one communication card."""
-
-    #: Outbound Message Indicator present: waiting on the recruiter, never touched.
-    SKIPPED = "skipped"
-    PRESERVED = "preserved"
-    ACKNOWLEDGED = "acknowledged"
-    DRY_RUN = "dry_run"
-    FAILED = "failed"
-
-
-@dataclass(frozen=True)
-class TriageOutcome:
-    """Result of triaging one card, tallied into the run's report."""
-
-    kind: TriageKind
-    is_rejection: bool = False
-    #: Set when the employer was newly added to the company blacklist.
-    blacklisted: bool = False
-    #: Set when a guardrail (headhunter agency / masked name) refused the employer.
-    guardrail_blocked: bool = False
-    navigated: bool = False
-    #: Set when the platform never returned to the list; the scan must stop rather
-    #: than read cards off an unknown screen.
-    lost_list: bool = False
-
-
-@dataclass(frozen=True)
-class TriageReport:
-    """What one triage run found and did, for the caller's task telemetry."""
-
-    stop_reason: StopReason
-    dry_run: bool = False
-    scanned: int = 0
-    evaluated: int = 0
-    skipped_outbound: int = 0
-    acknowledged: int = 0
-    preserved: int = 0
-    failed: int = 0
-    rejections: int = 0
-    guardrail_blocked: int = 0
-    blacklisted_companies: tuple[str, ...] = ()
-    visited_keys: frozenset[str] = frozenset()
-    scroll_swipes: int = 0
-
-    @property
-    def blacklisted_count(self) -> int:
-        """How many companies this run newly added to the blacklist."""
-        return len(self.blacklisted_companies)
-
-    def summary_line(self) -> str:
-        """The operator-facing summary of this run, rendered by the dashboard."""
-        note = f" [{', '.join(self.blacklisted_companies)}]" if self.blacklisted_companies else ""
-        return (
-            f"Finished CHECK_CHAT: scanned {self.scanned} card(s), "
-            f"scrolled {self.scroll_swipes} swipe(s), "
-            f"evaluated {self.evaluated} message(s), "
-            f"{self.skipped_outbound} skipped as outbound, "
-            f"{self.rejections} rejection(s) detected, "
-            f"{self.blacklisted_count} company(ies) blacklisted{note}, "
-            f"{self.guardrail_blocked} blocked by guardrails, "
-            f"{self.acknowledged} acknowledged, "
-            f"{self.preserved} preserved, "
-            f"{self.failed} failed "
-            f"(stop_reason={self.stop_reason.value}, dry_run={self.dry_run})"
-        )
-
-
-@runtime_checkable
-class ChatListReader(Protocol):
-    """The 仅沟通 list as triage needs it.
-
-    The port is cut at the list and not at the driver, so a run holds cards as data
-    and can reach nothing else. 仅沟通 List Recovery, card extraction and descriptor
-    parsing stay inside the page object behind this (ADR 0016).
-    """
-
-    def is_on_list(self) -> bool:
-        """Whether the list is already showing — the cheap probe triage narrates from."""
-
-    def ensure_open_list(self) -> bool:
-        """Navigate to the list from wherever the app is; True once it is showing."""
-
-    def scroll_to_top(self) -> bool:
-        """Reset the list to its newest messages by double-tapping the 消息 tab.
-
-        The run calls this on entry and narrates the return value, so False has to
-        mean "the device was not touched" rather than "something was attempted".
-        """
-
-    def visible_cards(self, max_items: int) -> list[CommunicationCard]:
-        """The opening screen's cards, newest first, capped at ``max_items``."""
-
-    def open_card(self, card: CommunicationCard) -> bool:
-        """Open the conversation behind one card."""
-
-    def mark_disinterest(self) -> bool:
-        """Submit 不感兴趣 for the open conversation; the platform drops it from the list."""
-
-    def confirm_back_on_list(self) -> bool:
-        """Confirm the platform landed back on the list after an acknowledgment."""
-
-    def has_message_tab_unread_dot(self) -> bool:
-        """Check whether the bottom navigation 消息 tab shows an unread red dot."""
-
-    def get_unread_badge_count(self) -> int | None:
-        """The unread count badge on the 仅沟通 sub-tab; None when absent."""
-
-    def scroll_list_down(self) -> bool:
-        """Perform a single humanized scroll down on the conversation list."""
-
-
-@runtime_checkable
-class ChatActor(Protocol):
-    """The open conversation as triage needs it."""
-
-    def send_reply(self, text: str) -> bool:
-        """Type and send one message into the open conversation."""
-
-    def back_to_list(self) -> bool:
-        """Leave the conversation without sending anything."""
-
-
-@dataclass(frozen=True)
-class TriagePages:
-    """The device collaborators one triage run drives, composed from its driver.
-
-    Composed rather than reached for, so a caller — or a test — can hand a run a
-    scripted screen and chat without patching module globals.
-    """
-
-    list_page: Any
-    chat_page: Any
-
-    @classmethod
-    def for_driver(cls, driver: Any) -> "TriagePages":
-        """Compose the production device world for ``driver``.
-
-        The startup dialog is dismissed here, before any page object is handed to a
-        run: a dispatch can land on it, and a dialog left up would swallow the clicks
-        the run is about to make.
-        """
-        startup_page = StartupDialogPage(driver)
-        if startup_page.is_dialog_present():
-            startup_page.dismiss_dialog()
-        return cls(list_page=CommunicationListPage(driver), chat_page=ChatPage(driver))
-
-
-class CommunicationListAdapter:
-    """The production list reader: the 仅沟通 page object, behind triage's vocabulary."""
-
-    def __init__(self, page: CommunicationListPage, timeout_sec: float = PAGE_TIMEOUT_SEC) -> None:
-        self._page = page
-        self._timeout_sec = timeout_sec
-
-    def is_on_list(self) -> bool:
-        return self._page.is_on_list(timeout_sec=LIST_PROBE_TIMEOUT_SEC)
-
-    def ensure_open_list(self) -> bool:
-        return self._page.open_list(timeout_sec=self._timeout_sec)
-
-    def scroll_to_top(self) -> bool:
-        return self._page.scroll_to_top()
-
-    def visible_cards(self, max_items: int) -> list[CommunicationCard]:
-        return self._page.extract_visible_messages(max_items=max_items)
-
-    def open_card(self, card: CommunicationCard) -> bool:
-        return self._page.open_message(card)
-
-    def mark_disinterest(self) -> bool:
-        return self._page.mark_disinterest(timeout_sec=self._timeout_sec)
-
-    def confirm_back_on_list(self) -> bool:
-        return self._page.wait_for_list_return(timeout_sec=self._timeout_sec)
-
-    def has_message_tab_unread_dot(self) -> bool:
-        return self._page.has_message_tab_unread_dot(timeout_sec=LIST_PROBE_TIMEOUT_SEC)
-
-    def get_unread_badge_count(self) -> int | None:
-        return self._page.get_unread_badge_count(timeout_sec=LIST_PROBE_TIMEOUT_SEC)
-
-    def scroll_list_down(self) -> bool:
-        return self._page.scroll_message_list()
-
-
-class ChatActorAdapter:
-    """The production chat actor: the chat page object, behind triage's vocabulary."""
-
-    def __init__(self, page: ChatPage, timeout_sec: float = PAGE_TIMEOUT_SEC) -> None:
-        self._page = page
-        self._timeout_sec = timeout_sec
-
-    def send_reply(self, text: str) -> bool:
-        return self._page.send_message(text, timeout_sec=self._timeout_sec)
-
-    def back_to_list(self) -> bool:
-        return self._page.navigate_back(timeout_sec=self._timeout_sec)
-
-
 class ChatTriage:
     """One 仅沟通 rejection-triage run.
 
     Dependencies are injected so a run can be driven against synthetic screen state:
-    two ports for the device world, a rejection classifier and the Screening Policy
-    for every judgement, a log sink and a cancellation probe for the task plumbing.
-    The module holds no broker and no driver.
+    the device world as a :class:`TriagePages` bundle of two ports, a rejection
+    classifier and the Screening Policy for every judgement, a blacklist sink for the
+    one durable write, a log sink and a cancellation probe for the task plumbing. The
+    module holds no broker, no driver and no page object.
     """
 
     def __init__(
         self,
         *,
-        list_reader: ChatListReader,
-        chat_actor: ChatActor,
-        classifier: Any,
+        pages: TriagePages,
+        classifier: RejectionClassifierPort,
         policy: ScreeningPolicy,
         settings: ChatAcknowledgmentSettings,
+        blacklist_sink: BlacklistSink,
         log: Callable[[str], Awaitable[None]] | None = None,
         is_cancelled: Callable[[], Awaitable[bool]] | None = None,
         pause: Callable[[float], Awaitable[None]] | None = None,
         max_inspected_cards: int | None = None,
     ) -> None:
-        self.list_reader = list_reader
-        self.chat_actor = chat_actor
+        self.pages = pages
+        self.list_reader: ChatListReader = pages.list_reader
+        self.chat_actor: ChatActor = pages.chat_actor
         self.classifier = classifier
         self.policy = policy
         self.settings = settings
+        self.blacklist_sink = blacklist_sink
         if max_inspected_cards is not None:
             self.max_inspected_cards = max_inspected_cards
         elif self.settings.max_scroll_swipes > DEFAULT_MAX_SCROLL_SWIPES:
@@ -371,27 +161,25 @@ class ChatTriage:
         cls,
         broker: Any,
         task_id: str,
-        driver: Any,
+        pages: TriagePages,
         *,
-        classifier: Any,
+        classifier: RejectionClassifierPort,
         policy: ScreeningPolicy,
         settings: ChatAcknowledgmentSettings,
-        pages: Any = None,
+        blacklist_sink: BlacklistSink,
     ) -> "ChatTriage":
-        """Compose a run for a worker task: its device world, log sink and cancel probe.
+        """Wire a run to a worker task: its log sink and cancel probe.
 
-        Task plumbing lives here, so the module stays free of broker knowledge, and so
-        does the composition of the device world — the same shape the Mobile Job Feed
-        Pipeline composes its runs with. ``pages`` overrides how the driver becomes the
-        two page objects, which is how a test scripts the screen.
+        The device bundle is built at the edge and handed in, the same shape the Mobile
+        Job Feed Pipeline composes its runs with, so task plumbing lives here without
+        this module knowing a driver or a page object.
         """
-        device = (pages or TriagePages.for_driver)(driver)
         return cls(
-            list_reader=CommunicationListAdapter(device.list_page),
-            chat_actor=ChatActorAdapter(device.chat_page),
+            pages=pages,
             classifier=classifier,
             policy=policy,
             settings=settings,
+            blacklist_sink=blacklist_sink,
             log=lambda line: broker.append_log(task_id, line),
             is_cancelled=lambda: is_task_cancelled(broker, task_id),
         )
@@ -712,7 +500,8 @@ class ChatTriage:
 
         Returns (newly_blacklisted, guardrail_blocked). Never let a missing employer
         or a guardrail refusal abort the acknowledgment: the rejection is still worth
-        closing politely.
+        closing politely. The durable write goes through the injected sink, so this
+        module performs no file IO.
         """
         sender = _sender(card)
         company = card.company_name
@@ -746,9 +535,7 @@ class ChatTriage:
             return False, False
 
         try:
-            from boss_agent import screening_config
-
-            written = screening_config.persist_company_blacklist(self.policy, company)
+            written = self.blacklist_sink.persist_company_blacklist(self.policy, company)
         except Exception as exc:  # noqa: BLE001 - the in-memory policy still holds
             await self._log(f"⚠️ [持久化] 企业 '{company}' 已加入内存黑名单，但写入配置失败: {exc}")
             return True, False
@@ -824,14 +611,10 @@ def _preview(text: str) -> str:
 
 
 __all__ = [
-    "ChatActor",
-    "ChatActorAdapter",
-    "ChatListReader",
     "ChatTriage",
-    "CommunicationListAdapter",
-    "StopReason",
-    "TriageKind",
-    "TriagePages",
-    "TriageOutcome",
-    "TriageReport",
+    "LIST_RESET_FAILED_LOG",
+    "LIST_RESET_LOG",
+    "MAX_INSPECTED_CARDS",
+    "PREVIEW_CHARS",
+    "VIEWPORT_SIZE",
 ]

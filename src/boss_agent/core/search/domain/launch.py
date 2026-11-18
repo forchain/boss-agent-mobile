@@ -54,10 +54,10 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
+from boss_agent.core.chat.domain.rejection import ChatAcknowledgmentSettings
 from boss_agent.core.search.domain.models import SAVED_SEARCH_MAX_JOBS, SavedSearch
 from boss_agent.core.shared.enums import TargetAction, TargetTaskType
 from boss_agent.core.task.domain.models import TaskType
-from boss_agent.rejection import ChatAcknowledgmentSettings
 
 #: The baseline relevance threshold. One value, so a manual launch and a scheduled run
 #: of the same SavedSearch cannot disagree about which jobs qualify.

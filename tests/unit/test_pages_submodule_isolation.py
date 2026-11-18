@@ -37,8 +37,9 @@ real runtime dependency and not a leftover import. Ticket #400's criterion was a
 without caring whether the name arrives through the submodule or the facade.
 
 Resolution is real, not string-matched: `from .pages.communication import ChatPage` inside
-`src/boss_agent/chat_triage.py` is `boss_agent.pages.communication`, and `from ..job_entities
-import JobCardBrief` inside `src/boss_agent/pages/__init__.py` is `boss_agent.core.job.domain.job_entities`.
+`src/boss_agent/core/chat/use_cases/triage.py` is `boss_agent.pages.communication`, and
+`from ..job_entities import JobCardBrief` inside `src/boss_agent/pages/__init__.py` is
+`boss_agent.core.job.domain.job_entities`.
 A guard that only read `node.module` would pass on every relative import in the tree and
 would be worthless -- which is why `test_the_relative_import_resolver_...` below pins the
 resolver against synthetic sources first.
@@ -458,7 +459,6 @@ def test_page_submodule_discovery_still_covers_the_submodules_the_split_named() 
 SCREEN_DRIVERS = frozenset(
     {
         "boss_agent",
-        "boss_agent.chat_triage",
         "boss_agent.feed_verification",
         "boss_agent.workflows",
     }
@@ -480,7 +480,8 @@ REQUIRED_DOMAIN_MODULES = (
     "boss_agent.core.job.domain.job_entities",
     "boss_agent.core.shared.keyword_constants",
     "boss_agent.core.job.domain.matching",
-    "boss_agent.rejection",
+    "boss_agent.core.chat.domain.rejection",
+    "boss_agent.core.chat.use_cases.triage",
     "boss_agent.core.job.domain.screening",
     "boss_agent.core.search.domain.models",
 )

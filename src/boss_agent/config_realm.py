@@ -146,7 +146,7 @@ def _chat_defaults() -> dict[str, Any]:
     than replaced, so one key's default cannot mask another's. The values are the
     rejection module's own constants rather than a second copy of them.
     """
-    from .rejection import (
+    from .core.chat.domain.rejection import (
         DEFAULT_MAX_SCAN_DEPTH,
         DEFAULT_MAX_SCROLL_SWIPES,
         DEFAULT_REJECTION_REPLY_TEXT,
@@ -726,7 +726,7 @@ def worker_settings(
     settings: dict[str, Any] | None = None,
     config_path: str | Path | None = None,
 ) -> WorkerSettings:
-    from .rejection import coerce_bool
+    from .core.chat.domain.rejection import coerce_bool
 
     merged = _section(settings, config_path)
     return WorkerSettings(

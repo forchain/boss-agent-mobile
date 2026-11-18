@@ -16,11 +16,11 @@ from pathlib import Path
 
 import pytest
 
+from boss_agent.core.chat.domain.rejection import ChatAcknowledgmentSettings
 from boss_agent.core.job.use_cases.feed_pipeline import FeedStreamConfig
 from boss_agent.core.search.domain import launch as task_launch
 from boss_agent.core.search.domain.models import FilterConfig, SavedSearch, SearchConfig
 from boss_agent.core.shared.enums import TargetAction
-from boss_agent.rejection import ChatAcknowledgmentSettings
 
 FIXTURE_PATH = Path(__file__).parents[2] / "config" / "task_launch.cases.json"
 

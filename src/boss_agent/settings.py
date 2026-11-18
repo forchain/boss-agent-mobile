@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from . import config_realm
-from .rejection import (
+from .core.chat.domain.rejection import (
     DEFAULT_MAX_SCAN_DEPTH,
     DEFAULT_MAX_SCROLL_SWIPES,
     DEFAULT_REJECTION_REPLY_TEXT,
