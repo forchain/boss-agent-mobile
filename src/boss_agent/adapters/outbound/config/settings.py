@@ -72,25 +72,12 @@ def resolve_chat_acknowledgment_settings(
     """
     merged = settings if settings is not None else load_settings(config_path=config_path)
     chat_block = merged.get("chat")
-    chat: dict[str, Any] = chat_block if isinstance(chat_block, dict) else {}
+    chat = config_realm.apply_chat_env_overrides(chat_block if isinstance(chat_block, dict) else {})
 
     reply_text = chat.get("rejection_reply_text")
     scan_depth = chat.get("max_scan_depth")
     scroll_swipes = chat.get("max_scroll_swipes")
     dry_run = chat.get("dry_run")
-
-    env_reply = os.getenv("CHAT_REJECTION_REPLY_TEXT")
-    if env_reply and env_reply.strip():
-        reply_text = env_reply.strip()
-    env_depth = os.getenv("CHAT_MAX_SCAN_DEPTH")
-    if env_depth and env_depth.strip():
-        scan_depth = env_depth.strip()
-    env_swipes = os.getenv("CHAT_MAX_SCROLL_SWIPES")
-    if env_swipes and env_swipes.strip():
-        scroll_swipes = env_swipes.strip()
-    env_dry_run = os.getenv("CHAT_DRY_RUN")
-    if env_dry_run and env_dry_run.strip():
-        dry_run = env_dry_run.strip()
 
     reply_str = str(reply_text).strip() if reply_text is not None else ""
     return ChatAcknowledgmentSettings(
@@ -108,17 +95,14 @@ def resolve_run_cleanup_on_startup(
     """Resolve whether a starting service queues a 拒信清扫 task before searching.
 
     Precedence:
-      1. `RUN_CLEANUP_ON_STARTUP` environment variable
+      1. Environment variable declared in ``config_realm.ENV_OVERRIDES["run_cleanup_on_startup"]``
       2. The `run_cleanup_on_startup` settings key
       3. Built-in default: True. Searching with a stale company blacklist is the
          failure this exists to prevent, so the safe default is to clean first.
     """
     merged = settings if settings is not None else load_settings(config_path=config_path)
-    raw: Any = merged.get("run_cleanup_on_startup")
-
-    env_value = os.getenv("RUN_CLEANUP_ON_STARTUP")
-    if env_value and env_value.strip():
-        raw = env_value.strip()
+    env_value = config_realm.resolve_env_override("run_cleanup_on_startup")
+    raw: Any = env_value if env_value is not None else merged.get("run_cleanup_on_startup")
 
     return coerce_bool(raw, default=True)
 
@@ -132,7 +116,7 @@ def resolve_enable_scheduler(
 
     Precedence:
       1. Explicit programmatic/CLI argument (`explicit`, if not None)
-      2. ENABLE_SCHEDULER environment variable
+      2. Environment variable declared in ``config_realm.ENV_OVERRIDES["enable_scheduler"]``
       3. The `enable_scheduler` settings key
       4. Built-in default: True.
     """
@@ -140,11 +124,8 @@ def resolve_enable_scheduler(
         return bool(explicit)
 
     merged = settings if settings is not None else load_settings(config_path=config_path)
-    raw: Any = merged.get("enable_scheduler")
-
-    env_value = os.getenv("ENABLE_SCHEDULER")
-    if env_value and env_value.strip():
-        raw = env_value.strip()
+    env_value = config_realm.resolve_env_override("enable_scheduler")
+    raw: Any = env_value if env_value is not None else merged.get("enable_scheduler")
 
     return coerce_bool(raw, default=True)
 
@@ -156,16 +137,11 @@ def resolve_pocketbase_url(
     """Resolve PocketBase State Stream Broker URL according to precedence hierarchy:
 
     1. Explicit programmatic/CLI argument (`explicit_url`)
-    2. `POCKETBASE_URL` environment variable
-    3. Configuration files (`pocketbase_url` or `pb_url` key)
-    4. Fallback default (`http://127.0.0.1:8090`)
+    2. Environment overrides and configuration files via Configuration Realm
+    3. Fallback default (`http://127.0.0.1:8090`)
     """
     if explicit_url and explicit_url.strip():
         return normalize_url(explicit_url)
-
-    env_url = os.getenv("POCKETBASE_URL")
-    if env_url and env_url.strip():
-        return normalize_url(env_url)
 
     settings = load_settings(config_path=config_path)
     return settings.get("pocketbase_url", DEFAULT_POCKETBASE_URL)
@@ -178,16 +154,11 @@ def resolve_server_url(
     """Resolve Appium Server URL according to precedence hierarchy:
 
     1. Explicit programmatic/CLI argument (`explicit_url`)
-    2. `APPIUM_SERVER_URL` or `APPIUM_URL` environment variable
-    3. Configuration files (`server_url` or `appium_url` key)
-    4. Fallback default (`http://127.0.0.1:4723`)
+    2. Environment overrides and configuration files via Configuration Realm
+    3. Fallback default (`http://127.0.0.1:4723`)
     """
     if explicit_url and explicit_url.strip():
         return normalize_url(explicit_url)
-
-    env_url = os.getenv("APPIUM_SERVER_URL") or os.getenv("APPIUM_URL")
-    if env_url and env_url.strip():
-        return normalize_url(env_url)
 
     settings = load_settings(config_path=config_path)
     return settings.get("server_url", DEFAULT_SERVER_URL)
@@ -242,14 +213,14 @@ def resolve_pocketbase_db_path(
             return p / "data.db"
         return p
 
-    env_db = os.getenv("PB_DB_PATH") or os.getenv("POCKETBASE_DB_PATH")
-    if env_db and env_db.strip():
-        p = Path(env_db.strip())
+    env_db = config_realm.resolve_env_override("pocketbase_db_path")
+    if env_db is not None:
+        p = Path(env_db)
         return p / "data.db" if (p.is_dir() or not p.suffix) else p
 
-    env_data_dir = os.getenv("PB_DATA_DIR") or os.getenv("POCKETBASE_DATA_DIR")
-    if env_data_dir and env_data_dir.strip():
-        return Path(env_data_dir.strip()) / "data.db"
+    env_data_dir = config_realm.resolve_env_override("pocketbase_data_dir")
+    if env_data_dir is not None:
+        return Path(env_data_dir) / "data.db"
 
     settings = load_settings(config_path=config_path)
     if settings.get("pocketbase_db_path"):
@@ -287,9 +258,9 @@ def resolve_pocketbase_data_dir(
     if explicit_dir:
         return Path(explicit_dir)
 
-    env_data_dir = os.getenv("PB_DATA_DIR") or os.getenv("POCKETBASE_DATA_DIR")
-    if env_data_dir and env_data_dir.strip():
-        return Path(env_data_dir.strip())
+    env_data_dir = config_realm.resolve_env_override("pocketbase_data_dir")
+    if env_data_dir is not None:
+        return Path(env_data_dir)
 
     settings = load_settings(config_path=config_path)
     if settings.get("pocketbase_data_dir"):

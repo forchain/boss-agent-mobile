@@ -265,11 +265,7 @@ def _env_signature() -> tuple:
         ("BOSS_SETTINGS_LOCAL_PATH", os.getenv("BOSS_SETTINGS_LOCAL_PATH")),
         ("BOSS_LEGACY_LLM_PATH", os.getenv("BOSS_LEGACY_LLM_PATH")),
         ("BOSS_CONFIG_ROOT", os.getenv("BOSS_CONFIG_ROOT")),
-        ("CHAT_REJECTION_REPLY_TEXT", os.getenv("CHAT_REJECTION_REPLY_TEXT")),
-        ("CHAT_MAX_SCAN_DEPTH", os.getenv("CHAT_MAX_SCAN_DEPTH")),
-        ("CHAT_MAX_SCROLL_SWIPES", os.getenv("CHAT_MAX_SCROLL_SWIPES")),
-        ("CHAT_DRY_RUN", os.getenv("CHAT_DRY_RUN")),
-        ("RUN_CLEANUP_ON_STARTUP", os.getenv("RUN_CLEANUP_ON_STARTUP")),
+        *((env_name, os.getenv(env_name)) for _chat_key, env_name in CHAT_ENV_OVERRIDES),
     )
     return (overrides, special_vars)
 
@@ -364,6 +360,15 @@ ENV_OVERRIDES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("model", ("LLM_MODEL",)),
     ("avd_name", ("ANDROID_AVD",)),
     ("run_cleanup_on_startup", ("RUN_CLEANUP_ON_STARTUP",)),
+    ("enable_scheduler", ("ENABLE_SCHEDULER",)),
+)
+
+#: Environment overrides for the nested ``chat:`` acknowledgment block.
+CHAT_ENV_OVERRIDES: tuple[tuple[str, str], ...] = (
+    ("rejection_reply_text", "CHAT_REJECTION_REPLY_TEXT"),
+    ("max_scan_depth", "CHAT_MAX_SCAN_DEPTH"),
+    ("max_scroll_swipes", "CHAT_MAX_SCROLL_SWIPES"),
+    ("dry_run", "CHAT_DRY_RUN"),
 )
 
 #: Legacy LLM keys rescued from :data:`LEGACY_LLM_FILE` when the chain produced no key.
@@ -428,31 +433,39 @@ def _apply_legacy_llm_file(merged: dict[str, Any]) -> None:
         merged[key] = value
 
 
-def _apply_env_overrides(merged: dict[str, Any]) -> None:
-    for key, env_names in ENV_OVERRIDES:
+def resolve_env_override(key: str) -> str | None:
+    """Return the first non-empty env override declared for ``key`` in :data:`ENV_OVERRIDES`."""
+    for override_key, env_names in ENV_OVERRIDES:
+        if override_key != key:
+            continue
         for env_name in env_names:
             value = os.getenv(env_name)
             if value and value.strip():
-                merged[key] = value.strip()
-                break
+                return value.strip()
+        return None
+    return None
+
+
+def apply_chat_env_overrides(chat: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of ``chat`` with :data:`CHAT_ENV_OVERRIDES` applied."""
+    updated = dict(chat)
+    for chat_key, env_name in CHAT_ENV_OVERRIDES:
+        value = os.getenv(env_name)
+        if value and value.strip():
+            updated[chat_key] = value.strip()
+    return updated
+
+
+def _apply_env_overrides(merged: dict[str, Any]) -> None:
+    for key, _env_names in ENV_OVERRIDES:
+        value = resolve_env_override(key)
+        if value is not None:
+            merged[key] = value
 
 
 def _apply_chat_env_overrides(merged: dict[str, Any]) -> None:
-    if not isinstance(merged.get("chat"), dict):
-        merged["chat"] = dict(CHAT_DEFAULTS)
-    chat = merged["chat"]
-    reply_text = os.getenv("CHAT_REJECTION_REPLY_TEXT")
-    if reply_text and reply_text.strip():
-        chat["rejection_reply_text"] = reply_text.strip()
-    scan_depth = os.getenv("CHAT_MAX_SCAN_DEPTH")
-    if scan_depth and scan_depth.strip():
-        chat["max_scan_depth"] = scan_depth.strip()
-    scroll_swipes = os.getenv("CHAT_MAX_SCROLL_SWIPES")
-    if scroll_swipes and scroll_swipes.strip():
-        chat["max_scroll_swipes"] = scroll_swipes.strip()
-    dry_run = os.getenv("CHAT_DRY_RUN")
-    if dry_run and dry_run.strip():
-        chat["dry_run"] = dry_run.strip()
+    base = merged["chat"] if isinstance(merged.get("chat"), dict) else CHAT_DEFAULTS
+    merged["chat"] = apply_chat_env_overrides(base)
 
 
 def _coerce_bool(val: Any) -> bool:
@@ -757,6 +770,7 @@ def format_resolved_values(keys: list[str], settings: dict[str, Any] | None = No
 
 __all__ = [
     "CHAT_DEFAULTS",
+    "CHAT_ENV_OVERRIDES",
     "CONFIG_CHAIN",
     "DEFAULTS",
     "DEFAULT_LLM_PROTOCOL",
@@ -769,6 +783,7 @@ __all__ = [
     "PLACEHOLDER_API_KEY",
     "PocketBaseSettings",
     "WorkerSettings",
+    "apply_chat_env_overrides",
     "format_resolved_values",
     "invalidate_cache",
     "is_mask_placeholder",
@@ -778,5 +793,6 @@ __all__ = [
     "normalize_url",
     "pocketbase_settings",
     "resolve_chain",
+    "resolve_env_override",
     "worker_settings",
 ]

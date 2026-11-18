@@ -99,22 +99,56 @@ def test_concrete_adapters_are_built_only_in_adapters_and_main() -> None:
     )
 
 
+def _script_bypass_violations(source: str, label: str = "<source>") -> list[str]:
+    """Return script calls that invoke composition-root-only helpers directly or by attribute."""
+    forbidden_calls = {"create_llm_client", "load_settings", "run_sync"}
+    tree = ast.parse(source)
+    offenders: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        called = (
+            func.id
+            if isinstance(func, ast.Name)
+            else func.attr
+            if isinstance(func, ast.Attribute)
+            else None
+        )
+        if called in forbidden_calls:
+            offenders.append(f"{label}:{node.lineno} ({called})")
+    return offenders
+
+
 def test_scripts_do_not_construct_the_llm_client_or_bypass_main() -> None:
     """Only the composition root resolves settings, bridges async, or maps an LLM client."""
-    forbidden_calls = {"create_llm_client", "load_settings", "run_sync"}
     offenders: list[str] = []
     for path in sorted(SCRIPTS_ROOT.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            func = node.func
-            if isinstance(func, ast.Name) and func.id in forbidden_calls:
-                offenders.append(f"{path.relative_to(REPO_ROOT)}:{node.lineno} ({func.id})")
+        offenders.extend(
+            _script_bypass_violations(
+                path.read_text(encoding="utf-8"),
+                label=str(path.relative_to(REPO_ROOT)),
+            )
+        )
 
     assert offenders == [], "scripts wire adapters directly instead of using main.py: " + ", ".join(
         offenders
     )
+
+
+def test_script_bypass_guard_catches_both_bare_and_attribute_calls() -> None:
+    """An attribute call like ``config_realm.load_settings()`` cannot sneak past the guard."""
+    assert _script_bypass_violations("load_settings()\n", "a.py") == ["a.py:1 (load_settings)"]
+    assert _script_bypass_violations("config_realm.load_settings()\n", "b.py") == [
+        "b.py:1 (load_settings)"
+    ]
+    assert _script_bypass_violations("llm_config.create_llm_client()\n", "c.py") == [
+        "c.py:1 (create_llm_client)"
+    ]
+    assert _script_bypass_violations("async_bridge.run_sync(coro)\n", "d.py") == [
+        "d.py:1 (run_sync)"
+    ]
+    assert _script_bypass_violations("load_runner_settings()\n", "ok.py") == []
 
 
 def test_handlers_verification_and_resume_memory_do_not_compose_llm_or_broker() -> None:

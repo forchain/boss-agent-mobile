@@ -32,7 +32,10 @@ _root_dir = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_root_dir))
 sys.path.insert(0, str(_root_dir / "src"))
 
-from boss_agent.adapters.outbound.config import config_realm  # noqa: E402
+from boss_agent.main import (  # noqa: E402
+    format_resolved_runner_settings,
+    load_runner_settings,
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -64,7 +67,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    settings = config_realm.load_settings(config_path=args.config_path)
+    settings = load_runner_settings(config_path=args.config_path)
 
     if args.json:
         print(json.dumps(settings))
@@ -73,7 +76,7 @@ def main(argv: list[str] | None = None) -> int:
     if not args.keys and not args.key:
         parser.error("At least one key or --json is required")
 
-    output = config_realm.format_resolved_values(args.keys, settings=settings)
+    output = format_resolved_runner_settings(args.keys, settings=settings)
 
     if args.key:
         values = dict(line.split("=", 1) for line in output.splitlines())

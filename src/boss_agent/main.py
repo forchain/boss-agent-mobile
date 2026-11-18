@@ -445,6 +445,15 @@ def load_runner_settings(config_path: str | Path | None = None) -> dict[str, Any
     return _config_settings.load_settings(config_path=config_path)
 
 
+def format_resolved_runner_settings(
+    keys: list[str], *, settings: dict[str, Any] | None = None
+) -> str:
+    """Format Configuration Realm values as ``key=value`` lines for shell runners."""
+    from boss_agent.adapters.outbound.config.config_realm import format_resolved_values
+
+    return format_resolved_values(keys, settings=settings)
+
+
 def run_async(coro: Coroutine[Any, Any, _T], *, timeout: float | None = None) -> _T:
     """Bridge an async port call for synchronous CLI callers."""
     return run_sync(coro, timeout=timeout)
@@ -545,6 +554,7 @@ __all__ = [
     "build_verification_pipeline",
     "build_worker",
     "format_missing_saved_search_message",
+    "format_resolved_runner_settings",
     "load_cached_candidate_profile",
     "load_runner_settings",
     "resolve_screening_prompt",

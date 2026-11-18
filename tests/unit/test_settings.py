@@ -700,3 +700,27 @@ def test_resolve_enable_scheduler_explicit_arg_overrides_all(monkeypatch):
 
     monkeypatch.setenv("ENABLE_SCHEDULER", "1")
     assert resolve_enable_scheduler(explicit=False, settings={"enable_scheduler": True}) is False
+
+
+def test_resolvers_delegate_env_overrides_to_config_realm_table(monkeypatch):
+    """Extending config_realm.ENV_OVERRIDES propagates directly to settings.resolve_*."""
+    from boss_agent.adapters.outbound.config import config_realm
+
+    extended = tuple(
+        (key, ("CUSTOM_PB_URL_ALIAS", *names)) if key == "pocketbase_url" else (key, names)
+        for key, names in config_realm.ENV_OVERRIDES
+    )
+    monkeypatch.setattr(config_realm, "ENV_OVERRIDES", extended)
+    monkeypatch.delenv("POCKETBASE_URL", raising=False)
+    monkeypatch.setenv("CUSTOM_PB_URL_ALIAS", "http://custom-alias:9999/")
+    config_realm.invalidate_cache()
+
+    assert (
+        resolve_pocketbase_url(config_path="/non/existent/path.yaml") == "http://custom-alias:9999"
+    )
+    assert (
+        resolve_pocketbase_url(
+            explicit_url="http://explicit:8080/", config_path="/non/existent/path.yaml"
+        )
+        == "http://explicit:8080"
+    )
