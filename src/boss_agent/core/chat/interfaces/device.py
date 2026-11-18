@@ -6,8 +6,9 @@ The 仅沟通 device world as triage needs it (ADR 0016).
 The two ports are cut at the list and the chat rather than at the driver, so a run
 holds cards as data and can reach nothing else. 仅沟通 List Recovery, card extraction
 and descriptor parsing stay inside the page objects behind these protocols; production
-adapters and their composition live in ``boss_agent.pages.chat_adapters`` and
-``boss_agent.pages.chat_bundle``.
+adapters and their composition live in
+``boss_agent.adapters.outbound.device.pages.chat_adapters`` and
+``boss_agent.adapters.outbound.device.pages.chat_bundle``.
 """
 
 from __future__ import annotations
@@ -95,7 +96,8 @@ class ChatActor(Protocol):
 class TriagePages:
     """The device collaborators one triage run drives, already adapted to the ports.
 
-    Composed at the edge (``boss_agent.pages.chat_bundle``) rather than reached for,
+    Composed at the edge (``boss_agent.adapters.outbound.device.pages.chat_bundle``)
+    rather than reached for,
     so a caller — or a test — can hand a run a scripted screen and chat without
     patching module globals and without core constructing a page object.
     """

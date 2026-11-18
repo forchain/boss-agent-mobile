@@ -1,41 +1,63 @@
 """
-boss_agent.workflows
-====================
-High-level operational workflows for Boss 直聘 automation.
+boss_agent.adapters.inbound.verification.smoke_harness
+======================================================
+One verified feed pass for the interactive runner.
+
+``SmokeHarness`` used to be the second implementation of a job feed: it owned eight page
+objects and walked them itself — activate the app, dismiss the startup dialog, search,
+apply two filter dialogs, scroll, click the top card, parse the detail page — duplicating
+recovery, filtering, screening and extraction that ``JobFeedPipeline`` already maintains
+for the worker (issue #390). Two implementations of one feed is how they drift, and the
+runner is the one nobody tests on a device.
+
+So this is an adapter and nothing else. It translates what an operator typed at the CLI
+— a ``SearchConfig``, a ``FilterConfig``, a ``ScreeningPolicy``, a candidate profile —
+into one ``FeedStreamConfig``, hands the run to ``JobFeedPipeline``, and returns the
+``JobPosting`` that run extracted. Which card was chosen, whether its JD was usable,
+what was screened and why: all of that is now answered in exactly one place.
+
+What stays here is the two things the pipeline cannot answer for itself. App activation
+belongs to whoever opened the session. And the auth challenge — the whole point of
+``TakeoverHandler`` — is a precondition of touching the feed at all: the pipeline
+assumes a usable session, so the gate that proves one stays in front of it, where a
+captcha stops a verification run before it starts rather than after it has begun
+reading somebody's job list.
+
+The composition *around* the engine — translating the options into one
+``FeedStreamConfig``, wiring the run's log to a console, loading the profile, refusing
+to report a run that read nothing — is not here either. It lives in
+:mod:`boss_agent.adapters.inbound.verification.feed_verification`, because
+``scripts/run_live_test.py`` composes the same run and #391 left the two copies of it
+free to drift (issue #391).
 """
 
-import time
 from pathlib import Path
 from typing import Any
 
-from rich.console import Console
-
-from .adapters.outbound.pocketbase.async_bridge import run_sync
-from .adapters.outbound.pocketbase.saved_search_store import (
-    missing_saved_search_message,
-    resolve_saved_search_store,
-)
-from .core.candidate.domain.candidate_profile import CandidateProfile
-from .core.job.domain.job_entities import JobPosting
-from .core.job.domain.screening_policy import ScreeningPolicy, resolve_screening_policy
-from .core.job.use_cases.matching import JobMatchGreetingService
-from .core.search.domain.models import FilterConfig, SavedSearch, SearchConfig
-from .core.search.interfaces.store import SavedSearchStore
-from .core.shared.enums import AuthStatus
-from .feed_verification import (
+from boss_agent.adapters.inbound.verification.feed_verification import (
     activate_app,
     build_verification_pipeline,
     load_candidate_profile,
     render_greeting_match_card,
     run_verification_feed,
 )
-from .greeting_prompt import load_greeting_prompt
-from .llm_config import create_llm_client
-from .memory import ResumeMemoryManager
-from .pages.system import LoginPage
-from .screening_config import load_screening_policy
-
-console = Console()
+from boss_agent.adapters.outbound.device.takeover import TakeoverHandler
+from boss_agent.adapters.outbound.pocketbase.async_bridge import run_sync
+from boss_agent.adapters.outbound.pocketbase.saved_search_store import (
+    missing_saved_search_message,
+    resolve_saved_search_store,
+)
+from boss_agent.core.candidate.domain.candidate_profile import CandidateProfile
+from boss_agent.core.job.domain.job_entities import JobPosting
+from boss_agent.core.job.domain.screening_policy import ScreeningPolicy, resolve_screening_policy
+from boss_agent.core.job.use_cases.matching import JobMatchGreetingService
+from boss_agent.core.search.domain.models import FilterConfig, SavedSearch, SearchConfig
+from boss_agent.core.search.interfaces.store import SavedSearchStore
+from boss_agent.core.shared.enums import AuthStatus
+from boss_agent.greeting_prompt import load_greeting_prompt
+from boss_agent.llm_config import create_llm_client
+from boss_agent.memory import ResumeMemoryManager
+from boss_agent.screening_config import load_screening_policy
 
 
 def _require_saved_search(store: SavedSearchStore, search_id: str) -> SavedSearch:
@@ -63,73 +85,8 @@ def _require_saved_search(store: SavedSearchStore, search_id: str) -> SavedSearc
     return loaded_search
 
 
-class TakeoverHandler:
-    """Detects security challenges (captchas, SMS, login expired) and facilitates manual takeover."""
-
-    def __init__(self, driver: Any, auto_confirm_for_test: bool = False):
-        self.driver = driver
-        self.login_page = LoginPage(driver)
-        self.auto_confirm_for_test = auto_confirm_for_test
-
-    def check_and_handle_takeover(self, timeout_sec: int = 300) -> AuthStatus:
-        """Inspect auth status and pause for user intervention if challenge detected."""
-        status = self.login_page.get_auth_status()
-        if status == AuthStatus.AUTHENTICATED:
-            return AuthStatus.AUTHENTICATED
-
-        console.print(
-            "\n[bold yellow]⚠️  [TAKEOVER REQUIRED][/bold yellow] "
-            f"Detected status: [bold red]{status.value}[/bold red]."
-        )
-        console.print("Please complete the login/captcha on the Android Emulator GUI window.")
-
-        if self.auto_confirm_for_test:
-            console.print("[dim]Running in test mode: auto-confirmed.[/dim]")
-            return AuthStatus.AUTHENTICATED
-
-        start_time = time.time()
-        while time.time() - start_time < timeout_sec:
-            time.sleep(2.0)
-            current_status = self.login_page.get_auth_status()
-            if current_status == AuthStatus.AUTHENTICATED:
-                console.print(
-                    "[bold green]✅ Auth/Challenge resolved. Resuming automation...[/bold green]"
-                )
-                return AuthStatus.AUTHENTICATED
-
-        console.print("[bold red]❌ Takeover timed out.[/bold red]")
-        return status
-
-
 class SmokeHarness:
-    """Runs one verified feed pass and hands back the posting it extracted.
-
-    This used to be the second implementation of a job feed: it owned eight page objects
-    and walked them itself — activate the app, dismiss the startup dialog, search, apply
-    two filter dialogs, scroll, click the top card, parse the detail page — duplicating
-    recovery, filtering, screening and extraction that ``JobFeedPipeline`` already maintains
-    for the worker (issue #390). Two implementations of one feed is how they drift, and the
-    runner is the one nobody tests on a device.
-
-    So this is an adapter and nothing else. It translates what an operator typed at the CLI
-    — a ``SearchConfig``, a ``FilterConfig``, a ``ScreeningPolicy``, a candidate profile —
-    into one ``FeedStreamConfig``, hands the run to ``JobFeedPipeline``, and returns the
-    ``JobPosting`` that run extracted. Which card was chosen, whether its JD was usable,
-    what was screened and why: all of that is now answered in exactly one place.
-
-    What stays here is the two things the pipeline cannot answer for itself. App activation
-    belongs to whoever opened the session. And the auth challenge — the whole point of
-    ``TakeoverHandler`` — is a precondition of touching the feed at all: the pipeline
-    assumes a usable session, so the gate that proves one stays in front of it, where a
-    captcha stops a verification run before it starts rather than after it has begun
-    reading somebody's job list.
-
-    The composition *around* the engine — translating the options into one
-    ``FeedStreamConfig``, wiring the run's log to a console, loading the profile, refusing
-    to report a run that read nothing — is not here either. It lives in
-    :mod:`boss_agent.feed_verification`, because ``scripts/run_live_test.py`` composes the
-    same run and #391 left the two copies of it free to drift (issue #391).
-    """
+    """Runs one verified feed pass and hands back the posting it extracted."""
 
     def __init__(
         self,

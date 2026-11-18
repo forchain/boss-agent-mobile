@@ -2,8 +2,8 @@
 
 from unittest.mock import MagicMock
 
+from boss_agent.adapters.outbound.device.pages.job_feed import JobListPage, SearchPage
 from boss_agent.core.search.domain.models import SearchConfig
-from boss_agent.pages.job_feed import JobListPage, SearchPage
 
 
 def test_search_config_default_and_validation():

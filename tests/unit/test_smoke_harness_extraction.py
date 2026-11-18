@@ -12,11 +12,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 from _feed_harness import GOOD_JD, ScriptedFeed, _card, _detail_page, script_pages
 
+from boss_agent.adapters.inbound.verification.smoke_harness import SmokeHarness
+from boss_agent.adapters.outbound.device.takeover import TakeoverHandler
 from boss_agent.core.job.domain.job_entities import JobPosting
 from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
 from boss_agent.core.search.domain.models import FilterConfig, SearchConfig
 from boss_agent.core.shared.enums import AuthStatus
-from boss_agent.workflows import SmokeHarness, TakeoverHandler
 
 
 def _harness(driver, takeover_handler=None, **kwargs) -> SmokeHarness:

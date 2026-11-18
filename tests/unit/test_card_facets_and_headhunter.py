@@ -9,6 +9,7 @@ import sqlite3
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from boss_agent.adapters.outbound.device.pages.job_feed import JobListPage
 from boss_agent.adapters.outbound.pocketbase.collection_schema import JOB_RECORDS, pocketbase_fields
 from boss_agent.adapters.outbound.pocketbase.provisioner import provision_sqlite_database
 from boss_agent.core.job.domain.card_parser import (
@@ -17,7 +18,6 @@ from boss_agent.core.job.domain.card_parser import (
 )
 from boss_agent.core.job.domain.job_entities import JobCardBrief, JobPosting, JobRecord
 from boss_agent.core.shared.identifier_helpers import clean_job_title
-from boss_agent.pages.job_feed import JobListPage
 
 
 def test_parse_recruiter_info_headhunter_detection():

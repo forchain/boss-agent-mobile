@@ -29,7 +29,7 @@ The boundaries enforced here, one rule each:
    import cost -- see `SCREEN_DRIVERS` for the accepted exception.
 
 The accepted cross-feature exception, stated once so it is not mistaken for an oversight:
-`src/boss_agent/feed_pipeline.py` imports `ChatPage` from `boss_agent.pages.communication`.
+`src/boss_agent/feed_pipeline.py` imports `ChatPage` from `boss_agent.adapters.outbound.device.pages.communication`.
 `JobFeedPipeline` opens the chat screen to send the greeting it just evaluated, so that is a
 real runtime dependency and not a leftover import. Ticket #400's criterion was amended to
 "no broad facade import" rather than "zero communication imports" for exactly this edge.
@@ -37,7 +37,7 @@ real runtime dependency and not a leftover import. Ticket #400's criterion was a
 without caring whether the name arrives through the submodule or the facade.
 
 Resolution is real, not string-matched: `from .pages.communication import ChatPage` inside
-`src/boss_agent/core/chat/use_cases/triage.py` is `boss_agent.pages.communication`, and
+`src/boss_agent/core/chat/use_cases/triage.py` is `boss_agent.adapters.outbound.device.pages.communication`, and
 `from ..job_entities import JobCardBrief` inside `src/boss_agent/pages/__init__.py` is
 `boss_agent.core.job.domain.job_entities`.
 A guard that only read `node.module` would pass on every relative import in the tree and
@@ -60,10 +60,10 @@ SOURCE_ROOT = REPO_ROOT / "src"
 #: whose modules are not this layer's business and are never scanned.
 BOSS_AGENT_ROOT = SOURCE_ROOT / "boss_agent"
 
-PAGES_PACKAGE = "boss_agent.pages"
+PAGES_PACKAGE = "boss_agent.adapters.outbound.device.pages"
 
 #: The page layer's own directory, read off disk by the discovery below.
-PAGES_ROOT = BOSS_AGENT_ROOT / "pages"
+PAGES_ROOT = BOSS_AGENT_ROOT / "adapters" / "outbound" / "device" / "pages"
 
 #: The submodules the split produced, kept as a *required* set rather than the source of truth.
 #: Rules 2 and 5 range over `_feature_submodules()` instead, so a sixth submodule added later is
@@ -89,7 +89,7 @@ def _dotted_names(path: Path) -> tuple[str, str]:
 
     A package `__init__` *is* its package -- `boss_agent/pages/__init__.py` is the module
     `boss_agent.pages` -- so it must drop the `__init__` segment. Naming it
-    `boss_agent.pages.__init__` instead would resolve its relative imports against a package
+    `boss_agent.adapters.outbound.device.pages.__init__` instead would resolve its relative imports against a package
     that does not exist, and the facade's edges would vanish from the cycle rule exactly when
     they matter most.
     """
@@ -200,42 +200,46 @@ class ResolverCase(NamedTuple):
 #: `from ..pages.base import X` from inside the layer, which reaches *up* and back *down*.
 RESOLVER_CASES = [
     ResolverCase(
-        "boss_agent",
+        "boss_agent.adapters.outbound.device",
         "from .pages.communication import ChatPage",
-        "boss_agent.pages.communication",
+        "boss_agent.adapters.outbound.device.pages.communication",
         "ChatPage",
     ),
-    ResolverCase("boss_agent", "from .pages import JobListPage", "boss_agent.pages", "JobListPage"),
+    ResolverCase(
+        "boss_agent.adapters.outbound.device",
+        "from .pages import JobListPage",
+        "boss_agent.adapters.outbound.device.pages",
+        "JobListPage",
+    ),
     ResolverCase(
         "boss_agent",
-        "from boss_agent.pages.system import LoginPage",
-        "boss_agent.pages.system",
+        "from boss_agent.adapters.outbound.device.pages.system import LoginPage",
+        "boss_agent.adapters.outbound.device.pages.system",
         "LoginPage",
     ),
     ResolverCase(
         "boss_agent",
-        "import boss_agent.pages.job_feed",
-        "boss_agent.pages.job_feed",
-        "boss_agent.pages.job_feed",
+        "import boss_agent.adapters.outbound.device.pages.job_feed",
+        "boss_agent.adapters.outbound.device.pages.job_feed",
+        "boss_agent.adapters.outbound.device.pages.job_feed",
     ),
-    ResolverCase("boss_agent", "from . import pages", "boss_agent.pages", "pages"),
     ResolverCase(
-        "boss_agent.pages",
+        "boss_agent.adapters.outbound.device",
+        "from . import pages",
+        "boss_agent.adapters.outbound.device.pages",
+        "pages",
+    ),
+    ResolverCase(
+        PAGES_PACKAGE,
         "from .base import BaseBossPage",
-        "boss_agent.pages.base",
+        "boss_agent.adapters.outbound.device.pages.base",
         "BaseBossPage",
     ),
     ResolverCase(
-        "boss_agent.pages",
-        "from ..job_entities import JobCardBrief",
-        "boss_agent.job_entities",
+        PAGES_PACKAGE,
+        "from .....core.job.domain.job_entities import JobCardBrief",
+        "boss_agent.core.job.domain.job_entities",
         "JobCardBrief",
-    ),
-    ResolverCase(
-        "boss_agent.pages",
-        "from ..pages.base import BaseBossPage",
-        "boss_agent.pages.base",
-        "BaseBossPage",
     ),
 ]
 
@@ -351,7 +355,7 @@ def test_the_feed_engine_keeps_its_accepted_chat_screen_dependency() -> None:
     where the feed engine's page composition belongs. This checks the dependency still
     exists there; re-reading `ChatPage` through the facade would still be a violation.
     """
-    path = BOSS_AGENT_ROOT / "pages" / "feed_bundle.py"
+    path = PAGES_ROOT / "feed_bundle.py"
     chat_imports = [record for record in _page_imports(path) if record.symbol == "ChatPage"]
 
     assert chat_imports, (
@@ -459,14 +463,14 @@ def test_page_submodule_discovery_still_covers_the_submodules_the_split_named() 
 SCREEN_DRIVERS = frozenset(
     {
         "boss_agent",
-        "boss_agent.feed_verification",
-        "boss_agent.workflows",
+        "boss_agent.adapters.inbound.verification.feed_verification",
+        "boss_agent.adapters.outbound.device.takeover",
     }
 )
 
 #: Subtrees excluded from the domain sweep: `pages` is the layer under guard, and `worker` is
 #: the automation driver whose handlers exist to press the screens `pages` models.
-NOT_DOMAIN = ("boss_agent.pages", "boss_agent.worker")
+NOT_DOMAIN = ("boss_agent.adapters.outbound.device.pages", "boss_agent.worker")
 
 #: The modules the ticket names as the minimum the domain sweep must reach. Discovery below
 #: is derived from the tree rather than pinned by hand, so a rename that quietly drops a

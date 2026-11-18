@@ -1,5 +1,5 @@
 """
-pages.communication
+boss_agent.adapters.outbound.device.pages.communication
 ====================
 The 仅沟通 communication list, the chat page, and the card model they produce
 (spec #395, ticket #398).
@@ -17,10 +17,10 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from boss_agent.core.chat.domain.rejection import DISINTEREST_REASON
+from boss_agent.core.chat.domain.triage import OUTBOUND_STATUS_MARKERS
 from droid_agent_core.gestures import Point
 
-from ..core.chat.domain.rejection import DISINTEREST_REASON
-from ..core.chat.domain.triage import OUTBOUND_STATUS_MARKERS
 from .base import BACK_INTERVAL_SEC, BaseBossPage, ui_logger
 
 #: Separator in a communication card's `[Company] | [Position]` descriptor.

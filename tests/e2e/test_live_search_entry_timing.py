@@ -17,7 +17,7 @@ import time
 
 import pytest
 
-from boss_agent.pages import JobListPage, SearchPage, StartupDialogPage
+from boss_agent.adapters.outbound.device.pages import JobListPage, SearchPage, StartupDialogPage
 from droid_agent_core.driver import AppiumSession, DriverConfig
 
 # The 148s regression this pipeline replaced; anything near it means the cascading

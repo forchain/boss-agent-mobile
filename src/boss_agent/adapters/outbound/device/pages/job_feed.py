@@ -1,5 +1,5 @@
 """
-pages.job_feed
+boss_agent.adapters.outbound.device.pages.job_feed
 ==============
 Job discovery screens: the recommendation list, search entry, and the two filter dialogs
 (spec #395, ticket #398).
@@ -15,17 +15,17 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from droid_agent_core.gestures import Point
-from droid_agent_core.locators import wait_until
-
-from ..core.job.domain.card_parser import (
+from boss_agent.core.job.domain.card_parser import (
     CardFacets,
     ParsedCard,
     needs_text_fallback,
     parse_card,
 )
-from ..core.job.domain.job_entities import JobCardBrief
-from ..core.search.domain.models import FilterConfig
+from boss_agent.core.job.domain.job_entities import JobCardBrief
+from boss_agent.core.search.domain.models import FilterConfig
+from droid_agent_core.gestures import Point
+from droid_agent_core.locators import wait_until
+
 from .base import BACK_INTERVAL_SEC, BaseBossPage, logger
 
 

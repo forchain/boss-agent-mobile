@@ -21,11 +21,12 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).parents[2]
-PAGES_ROOT = REPO_ROOT / "src" / "boss_agent" / "pages"
+PAGES_ROOT = REPO_ROOT / "src" / "boss_agent" / "adapters" / "outbound" / "device" / "pages"
+PAGES_PACKAGE = "boss_agent.adapters.outbound.device.pages"
 FEED_PIPELINE = REPO_ROOT / "src" / "boss_agent" / "core" / "job" / "use_cases" / "feed_pipeline.py"
 
 #: The page-layer submodules on disk, so an imported *name* can be read as the submodule it
-#: names rather than as a facade symbol: `from boss_agent.pages import job_feed` binds the
+#: names rather than as a facade symbol: `from boss_agent.adapters.outbound.device.pages import job_feed` binds the
 #: submodule, not the package.
 PAGE_SUBMODULES = frozenset(
     path.stem for path in PAGES_ROOT.glob("*.py") if path.stem != "__init__"
@@ -33,7 +34,7 @@ PAGE_SUBMODULES = frozenset(
 
 #: The engine imports no page model at all now: the device world is injected
 #: (``core.job.interfaces.device``) and production composition lives in
-#: ``boss_agent.pages.feed_bundle``. The empty mapping is the assertion.
+#: ``boss_agent.adapters.outbound.device.pages.feed_bundle``. The empty mapping is the assertion.
 FEED_OWNED_PAGE_MODELS: dict[str, str] = {}
 
 #: Kept as a parameter so the second rule's set arithmetic reads unchanged.
@@ -48,8 +49,8 @@ def _page_import_sources(module_path: Path) -> dict[str, str]:
 
     All three spellings that reach the layer are read, matching
     ``test_chat_triage_page_imports``: the ``from X import name`` the engine uses today, the
-    ``import boss_agent.pages.job_feed`` that is an ``ast.Import`` rather than an
-    ``ImportFrom``, and the ``from boss_agent.pages import job_feed`` whose ``node.module``
+    ``import boss_agent.adapters.outbound.device.pages.job_feed`` that is an ``ast.Import`` rather than an
+    ``ImportFrom``, and the ``from boss_agent.adapters.outbound.device.pages import job_feed`` whose ``node.module``
     is the facade and whose imported *name* is the submodule.
     """
     tree = ast.parse(module_path.read_text(encoding="utf-8"))
@@ -82,11 +83,11 @@ def _page_import_sources(module_path: Path) -> dict[str, str]:
 PAGE_IMPORT_SPELLINGS = (
     "from .pages.job_feed import JobListPage",
     "from .pages.communication import ChatPage",
-    "from boss_agent.pages.job_detail import JobDetailPage",
-    "import boss_agent.pages.job_feed",
-    "import boss_agent.pages.job_feed as feed",
-    "from .pages import job_feed",
-    "from boss_agent.pages import job_feed",
+    f"from {PAGES_PACKAGE}.job_detail import JobDetailPage",
+    f"import {PAGES_PACKAGE}.job_feed",
+    f"import {PAGES_PACKAGE}.job_feed as feed",
+    f"from {PAGES_PACKAGE} import job_feed",
+    f"from {PAGES_PACKAGE} import job_feed as feed",
 )
 
 

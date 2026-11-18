@@ -311,10 +311,17 @@ def test_pure_domain_modules_never_import_the_page_objects(module: str) -> None:
     `JobCardBrief` used to live in `pages.py`, so the Candidate Screener imported the
     device-side module just to read text off a card.
     """
+    pages_package = "boss_agent.adapters.outbound.device.pages"
     tree = ast.parse((REPO_ROOT / module).read_text(encoding="utf-8"))
     for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module in ("pages", "boss_agent.pages"):
+        if (
+            isinstance(node, ast.ImportFrom)
+            and node.module
+            and (node.module == pages_package or node.module.startswith(f"{pages_package}."))
+        ):
             pytest.fail(f"{module} imports the Appium-side page objects (line {node.lineno})")
         if isinstance(node, ast.Import):
             for alias in node.names:
-                assert alias.name != "boss_agent.pages", module
+                assert not (
+                    alias.name == pages_package or alias.name.startswith(f"{pages_package}.")
+                ), module

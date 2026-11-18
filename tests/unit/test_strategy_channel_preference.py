@@ -357,7 +357,7 @@ def test_interactive_runner_agrees_with_the_worker_on_the_same_strategy():
     stored policy straight through — so a direct-only strategy silently widened itself
     whenever a person ran it instead of scheduling it.
     """
-    from boss_agent.workflows import SmokeHarness
+    from boss_agent.adapters.inbound.verification.smoke_harness import SmokeHarness
 
     strategy = SavedSearch(
         id="s_two_paths",
@@ -404,7 +404,7 @@ async def test_stored_policy_survives_a_strategy_run():
     store read hands back the object the store holds, so an in-place override would
     replace the operator's stored screening configuration for the rest of the process.
     """
-    from boss_agent.workflows import SmokeHarness
+    from boss_agent.adapters.inbound.verification.smoke_harness import SmokeHarness
 
     strategy = SavedSearch(
         id="s_leak",

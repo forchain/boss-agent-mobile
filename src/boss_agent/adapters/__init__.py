@@ -1,1 +1,1 @@
-"""Outbound adapters: implementations that talk to external technology."""
+"""Adapters: implementations that talk to external technology (inbound, outbound, memory)."""

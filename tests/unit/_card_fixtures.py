@@ -12,8 +12,8 @@ in that slot — which is what `located()` supplies.
 from typing import Any
 from unittest.mock import MagicMock
 
+from boss_agent.adapters.outbound.device.pages.job_feed import LocatedJobCard
 from boss_agent.core.job.domain.job_entities import JobCardBrief
-from boss_agent.pages.job_feed import LocatedJobCard
 
 
 def located(card: JobCardBrief, element: Any | None = None) -> LocatedJobCard:
