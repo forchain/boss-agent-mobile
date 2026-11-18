@@ -1,6 +1,6 @@
 """
-boss_agent.feed_records
-=======================
+boss_agent.core.job.domain.feed_records
+=======================================
 Job-record payloads assembled from what a feed run has seen.
 
 Navigating the app and deciding what a job is worth are the pipeline's job; the *shape* of

@@ -12,11 +12,7 @@ a run should be traced.
 from __future__ import annotations
 
 from langsmith import traceable
-from rich.console import Console
-from rich.panel import Panel
 
-from boss_agent.core.job.domain.job_entities import JobPosting
-from boss_agent.core.job.domain.matching import MatchGreetingResult
 from boss_agent.core.job.use_cases.matching import JobMatchGreetingService
 from boss_agent.core.job.use_cases.screening import CandidateScreener
 
@@ -25,11 +21,9 @@ __all__ = [
     "TracedJobMatchGreetingService",
 ]
 
-console = Console(stderr=True)
-
 
 class TracedJobMatchGreetingService(JobMatchGreetingService):
-    """``JobMatchGreetingService`` with its telemetry spans and Rich match card."""
+    """``JobMatchGreetingService`` with its telemetry spans applied at the edge."""
 
     @traceable(name="JobMatchGreetingService.evaluate_and_draft_greeting", run_type="chain")
     def evaluate_and_draft_greeting(self, *args, **kwargs):
@@ -42,51 +36,6 @@ class TracedJobMatchGreetingService(JobMatchGreetingService):
     @traceable(name="JobMatchGreetingService.refine_greeting_prompt", run_type="chain")
     def refine_greeting_prompt(self, *args, **kwargs):
         return super().refine_greeting_prompt(*args, **kwargs)
-
-    def render_match_card(self, job: JobPosting, result: MatchGreetingResult) -> None:
-        """Render a formatted Rich card in the console showing match breakdown and greeting text."""
-        if result.match_score >= 80:
-            score_color = "bold green"
-            score_badge = "🔥 高度匹配"
-        elif result.match_score >= 60:
-            score_color = "bold yellow"
-            score_badge = "⚖️ 较为匹配"
-        else:
-            score_color = "bold red"
-            score_badge = "⚠️ 匹配度一般"
-
-        lines = [
-            f"[bold]职位:[/bold] {job.title} | [bold]公司:[/bold] {job.company_name} | [bold]薪资:[/bold] {job.salary_range}",
-            f"[bold]匹配度评分:[/bold] [{score_color}]{result.match_score}分[/{score_color}] ({score_badge})",
-        ]
-
-        if result.jd_key_requirements:
-            lines.append("")
-            lines.append("[bold cyan]🔍 JD 核心诉求提炼:[/bold cyan]")
-            for req in result.jd_key_requirements:
-                lines.append(f"  • {req}")
-
-        lines.append("")
-        lines.append("[bold cyan]🎯 针对性匹配亮点:[/bold cyan]")
-        for reason in result.match_reasons:
-            lines.append(f"  • {reason}")
-
-        lines.extend(
-            [
-                "",
-                "[bold cyan]💬 AI 定制破冰招呼语 (结合 JD 痛点，未发送):[/bold cyan]",
-                f"[italic white]{result.greeting_message}[/italic white]",
-            ]
-        )
-
-        console.print(
-            Panel(
-                "\n".join(lines),
-                title="[bold magenta]🤖 AI Job Match & Greeting Analysis[/bold magenta]",
-                border_style="cyan",
-                expand=False,
-            )
-        )
 
 
 class TracedCandidateScreener(CandidateScreener):

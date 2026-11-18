@@ -135,7 +135,7 @@ def main() -> None:
         except Exception as e:
             sys.stderr.write(f"Warning: Failed to parse history JSON ({e})\n")
 
-    llm_client = build_llm_client(args.llm_config)
+    llm_client = build_llm_client(args.llm_config, treat_masked_key_as_missing=False)
     service = build_matching_service(
         llm_client=llm_client,
         candidate_profile=candidate_profile,

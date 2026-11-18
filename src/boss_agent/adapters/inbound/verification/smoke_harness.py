@@ -209,7 +209,6 @@ class SmokeHarness:
             enable_greeting_draft=self.enable_greeting_draft,
         )
         render_greeting_match_card(
-            matching_service=self.matching_service,
             posting=result.postings[0],
             result=result,
             candidate_profile=self.candidate_profile,

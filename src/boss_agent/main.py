@@ -80,18 +80,25 @@ def _is_masked_key(value: str | None) -> bool:
     return not stripped or stripped == PLACEHOLDER_API_KEY or is_mask_placeholder(stripped)
 
 
+def _is_missing_key(value: str | None) -> bool:
+    """Whether a configured key is absent or blank, without judging a masked value."""
+    return not value or not str(value).strip()
+
+
 def build_llm_client(
     llm_config_arg: str | None = None,
     *,
     allow_config_path: bool = False,
     timeout_sec: float | None = None,
     max_tokens: int | None = None,
+    treat_masked_key_as_missing: bool = True,
 ) -> LLMDecisionClient:
     """Build the LLM decision client from an optional inline JSON config.
 
     Every evaluation/refinement script routes through here, so which wire protocol is
-    spoken is decided once by the configuration. A masked configured key falls back to
-    the realm's real key rather than being sent on the wire.
+    spoken is decided once by the configuration. By default a masked configured key falls
+    back to the realm's real key rather than being sent on the wire; scripts that always
+    passed a masked key through opt out with ``treat_masked_key_as_missing=False``.
     """
     if llm_config_arg:
         try:
@@ -103,19 +110,34 @@ def build_llm_client(
                 temperature = float(config_data.get("temperature") or 0.2)
 
                 default_cfg = load_llm_config()
-                if _is_masked_key(api_key):
+                configured_key = config_data.get("api_key")
+                key_is_unusable = (
+                    _is_masked_key(configured_key)
+                    if treat_masked_key_as_missing
+                    else _is_missing_key(configured_key)
+                )
+                if key_is_unusable:
                     api_key = default_cfg.api_key
-                if (not base_url or base_url == "https://api.openai.com/v1") and _is_masked_key(
-                    config_data.get("api_key")
-                ):
+                if (not base_url or base_url == "https://api.openai.com/v1") and key_is_unusable:
                     base_url = default_cfg.base_url
                     model = default_cfg.model
 
                 overrides: dict[str, Any] = {}
+                # Explicit caller overrides win, then the config's own budget, then the
+                # pre-refactor defaults. parse_resume (`allow_config_path`) always ran the
+                # resume lifecycle with 300s/16384 regardless of the framework defaults.
                 if timeout_sec is not None:
                     overrides["timeout_sec"] = timeout_sec
+                elif config_data.get("timeout_sec") is not None:
+                    overrides["timeout_sec"] = float(config_data["timeout_sec"])
+                elif allow_config_path:
+                    overrides["timeout_sec"] = 300.0
                 if max_tokens is not None:
                     overrides["max_tokens"] = max_tokens
+                elif config_data.get("max_tokens") is not None:
+                    overrides["max_tokens"] = int(config_data["max_tokens"])
+                elif allow_config_path:
+                    overrides["max_tokens"] = 16384
                 llm_cfg = LLMConfig(
                     provider=config_data.get("provider", default_cfg.provider),
                     base_url=base_url.rstrip("/"),

@@ -8,7 +8,7 @@ nothing but the standard library. ``tests/unit/test_candidate_entities.py`` alre
 proves that by reading the module's own AST and walking its transitive first-party
 imports. That proof has a hole: it never executes the package ``__init__``. And
 importing *any* submodule of a package executes that ``__init__`` first, so
-``import boss_agent.candidate_entities`` was enough to pull in ``memory`` ->
+``import boss_agent.core.candidate.domain.candidate_profile`` was enough to pull in ``memory`` ->
 ``langsmith`` / ``rich`` / ``droid_agent_core.llm`` and roughly 1300 modules with
 it. The entity was pure; the act of importing it was not.
 

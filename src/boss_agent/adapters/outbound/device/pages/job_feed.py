@@ -1,6 +1,6 @@
 """
 boss_agent.adapters.outbound.device.pages.job_feed
-==============
+===================================================
 Job discovery screens: the recommendation list, search entry, and the two filter dialogs
 (spec #395, ticket #398).
 
@@ -189,7 +189,7 @@ class JobListPage(BaseBossPage):
         """Priority-1 reads: whatever the configured locators can address on this card.
 
         A read is a device concern, so it stays here; interpreting what was read is
-        :mod:`boss_agent.card_parser`'s job.
+        :mod:`boss_agent.core.job.domain.card_parser`'s job.
         """
         return CardFacets(
             title=self._extract_card_field_text(card_elem, "job_list.card_title"),

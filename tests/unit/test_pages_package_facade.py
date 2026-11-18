@@ -1,14 +1,15 @@
 """
 tests/unit/test_pages_package_facade.py
 ======================================
-The backward-compatibility seam of the `boss_agent.pages` package (spec #395, ticket #398).
+The backward-compatibility seam of the `boss_agent.adapters.outbound.device.pages` package
+(spec #395, ticket #398).
 
-The monolith `pages.py` became a package of five feature submodules behind a facade, but every
-existing caller — `feed_pipeline`, `chat_triage`, `workflows`, the worker handlers, and dozens of
-unit tests — still imports from `boss_agent.pages`. So the facade's public surface is a contract in
+The monolith `pages.py` became a package of five feature submodules behind a facade. The
+production consumers have migrated to the narrow submodules, but the unit suite and remaining
+callers still import from the package facade. So the facade's public surface is a contract in
 its own right, and these tests pin the things that would break it quietly:
 
-* every symbol the legacy module exported still resolves on `boss_agent.pages`, and is the *same
+* every symbol the legacy module exported still resolves on the package, and is the *same
   object* the owning submodule holds — a facade that re-bound a name instead of re-exporting it
   would leave two classes with the same name and different `isinstance` behaviour;
 * the surface is *exactly* those 36 names — the 29 the monolith reached only by importing them
@@ -202,7 +203,8 @@ def test_the_facade_does_not_re_export_the_names_the_monolith_only_imported():
     """29 names the monolith reached by importing them are gone, deliberately.
 
     Re-adding any of them as an unused facade import would execute the module it names on every
-    `import boss_agent.pages`, which is the cost the package split removed. The assertion is
+    `import boss_agent.adapters.outbound.device.pages`, which is the cost the package split
+    removed. The assertion is
     here to make that trade-off executable: a future edit that re-adds one of these names
     without a caller fails loudly instead of slowing every 仅沟通 run down.
     """

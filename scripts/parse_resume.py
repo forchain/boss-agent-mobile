@@ -106,8 +106,6 @@ def main() -> None:
     llm_client = build_llm_client(
         args.llm_config,
         allow_config_path=True,
-        timeout_sec=300.0,
-        max_tokens=16384,
     )
     pipeline = build_resume_pipeline(
         llm_client=llm_client,

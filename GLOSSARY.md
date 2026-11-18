@@ -12,6 +12,34 @@ _Avoid_: Boss automation engine, base scripts, appium helper
 The Boss-specific application module implementing page objects, candidate profiles, matching rules, greeting templates, and application workflows on top of `droid_agent_core`.
 _Avoid_: Core app, main module
 
+**Core (`boss_agent.core`)**:
+The framework-free Domain + Application layer. It holds business rules, ports, and Use Cases, imports only the standard library, its own tree, and the framework's LLM decision abstraction, and never reaches into `adapters/`. Dependency direction points inward: adapters → core.
+_Avoid_: Domain layer package, business dump, shared helpers folder
+
+**Aggregate Triad (`domain` / `interfaces` / `use_cases`)**:
+The three subpackages every core business aggregate exposes: `domain` for entities and pure rules, `interfaces` for the ports the aggregate needs, and `use_cases` for the application services that orchestrate them. Aggregates are grouped by shared domain model (`task`, `job`, `candidate`, `search`, `chat`).
+_Avoid_: God module, service layer, repository package
+
+**Shared Kernel (`boss_agent.core.shared`)**:
+The cross-aggregate primitives — enums, keyword constants, identifier helpers, port-level exception vocabulary, and callable-seam type aliases — importable without pulling in any entity graph.
+_Avoid_: utils, common, helpers
+
+**FeedDeviceWorld**:
+The structural Protocol bundle the Mobile Job Feed Pipeline drives instead of constructing page objects: startup, list, search, detail, chat, and filter screens. Production composition is `adapters.outbound.device.pages.feed_bundle`; page objects satisfy it structurally, with no wrapper classes.
+_Avoid_: Page factory, device adapter, screen wrapper
+
+**BlacklistSink**:
+The one-method port through which Chat Triage persists a company blacklist entry. The production implementation writes through the Configuration Realm adapter; core never performs file IO for a triage run.
+_Avoid_: Blacklist writer, config saver, persistence helper
+
+**ResumeTextSource**:
+The port for extracting text from a resume file. The production adapter wraps PDF/DOCX parsing, so core resume Use Cases see text rather than a parsing library.
+_Avoid_: PDF parser, resume loader, file reader
+
+**Composition Root (`boss_agent/main.py`)**:
+The single module outside `adapters/` that knows and constructs every concrete adapter, and the builders CLI scripts call. Swapping a database, LLM host, or device layer is a change here and in adapters, never in business rules.
+_Avoid_: Main module, bootstrap, wiring file
+
 **Decomposed Entity Modules**:
 The focused, independently importable domain entity modules replacing the retired monolithic `models.py`:
 - `boss_agent.enums`: Pure enumerations and rank mappings (`JobRecordStatus`, `TargetAction`, etc.).

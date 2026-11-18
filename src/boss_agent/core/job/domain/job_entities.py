@@ -1,6 +1,6 @@
 """
-boss_agent.job_entities
-=======================
+boss_agent.core.job.domain.job_entities
+=======================================
 Job-related domain entities: JobCardBrief, JobRecord, and JobPosting (Issue #311, Spec #303).
 """
 

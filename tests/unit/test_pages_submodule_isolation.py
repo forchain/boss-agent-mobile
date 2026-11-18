@@ -28,17 +28,16 @@ The boundaries enforced here, one rule each:
    is a decision, entity, store, prompt or broker module that has no business paying Appium's
    import cost -- see `SCREEN_DRIVERS` for the accepted exception.
 
-The accepted cross-feature exception, stated once so it is not mistaken for an oversight:
-`src/boss_agent/feed_pipeline.py` imports `ChatPage` from `boss_agent.adapters.outbound.device.pages.communication`.
-`JobFeedPipeline` opens the chat screen to send the greeting it just evaluated, so that is a
-real runtime dependency and not a leftover import. Ticket #400's criterion was amended to
-"no broad facade import" rather than "zero communication imports" for exactly this edge.
-`feed_pipeline` is a screen driver, so rules 1-5 never see it -- and rule 6 permits the edge
-without caring whether the name arrives through the submodule or the facade.
+The cross-feature exception this rule once carried is gone: after #453 the feed engine
+receives a `FeedDeviceWorld` and imports no page model at all. The production bundle
+(`adapters.outbound.device.pages.feed_bundle`) is the module that composes the screens,
+and it is a screen driver for rule 6.
 
-Resolution is real, not string-matched: `from .pages.communication import ChatPage` inside
-`src/boss_agent/core/chat/use_cases/triage.py` is `boss_agent.adapters.outbound.device.pages.communication`, and
-`from ..job_entities import JobCardBrief` inside `src/boss_agent/pages/__init__.py` is
+Resolution is real, not string-matched: `from .communication import ChatPage` inside
+`src/boss_agent/adapters/outbound/device/pages/feed_bundle.py` is
+`boss_agent.adapters.outbound.device.pages.communication`, and
+`from ..job_entities import JobCardBrief` inside
+`src/boss_agent/adapters/outbound/device/pages/__init__.py` is
 `boss_agent.core.job.domain.job_entities`.
 A guard that only read `node.module` would pass on every relative import in the tree and
 would be worthless -- which is why `test_the_relative_import_resolver_...` below pins the

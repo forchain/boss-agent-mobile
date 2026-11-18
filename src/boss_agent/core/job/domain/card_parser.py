@@ -1,6 +1,6 @@
 """
-boss_agent.card_parser
-======================
+boss_agent.core.job.domain.card_parser
+=======================================
 Pure interpretation of a Boss 直聘 job card — no driver, no device, no page object.
 
 Job-card extraction used to be one ~228-line method on the page object that fused

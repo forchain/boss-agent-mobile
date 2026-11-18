@@ -165,7 +165,7 @@ def test_refine_script_carries_recruiter_into_salutation(monkeypatch, capsys):
     mock_llm.chat_completion_json.return_value = {
         "revised_greeting": "看到贵岗强调要有真实产出，我主导过 LangChain 与 LangGraph 全链路落地。"
     }
-    monkeypatch.setattr(mod, "build_llm_client", lambda _cfg: mock_llm)
+    monkeypatch.setattr(mod, "build_llm_client", lambda _cfg, **kwargs: mock_llm)
 
     job_payload = {
         "title": "AI 研发效能工程师",

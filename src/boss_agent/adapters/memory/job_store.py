@@ -13,7 +13,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from boss_agent.adapters.outbound.pocketbase.job_store import (
+from boss_agent.adapters.shared.records import (
     INVALID_COMPANY_NAMES,
     _advanced_status,
     _placeholder_fill,

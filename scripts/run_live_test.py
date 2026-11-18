@@ -334,7 +334,6 @@ def run_live_test(
         )
 
         render_greeting_match_card(
-            matching_service=matching_service,
             posting=job,
             result=result,
             candidate_profile=candidate_profile,
