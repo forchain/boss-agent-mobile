@@ -5,8 +5,9 @@ Resume lifecycle steps (extract, structure, normalize, diff, persist) as framewo
 callables with injected dependencies (ADR 0008; extracted from the LangGraph nodes by
 Spec #443).
 
-The LangGraph ``StateGraph`` wiring stays in ``boss_agent.graph``; these functions move
-the node logic so ingestion/normalization/diffing rules do not depend on the orchestrator.
+The LangGraph ``StateGraph`` wiring lives in
+``boss_agent.adapters.outbound.resume.graph``; these functions keep the node logic free
+of the orchestrator.
 """
 
 from __future__ import annotations

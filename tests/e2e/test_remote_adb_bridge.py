@@ -19,8 +19,8 @@ from pathlib import Path
 
 import pytest
 
-from boss_agent.services import remote_adb_bridge as bridge_module
-from boss_agent.services.remote_adb_bridge import (
+from boss_agent.adapters.infra import remote_adb_bridge as bridge_module
+from boss_agent.adapters.infra.remote_adb_bridge import (
     KEEPALIVE_COUNT,
     KEEPALIVE_IDLE_SEC,
     KEEPALIVE_INTERVAL_SEC,
@@ -321,7 +321,7 @@ def test_boss_agent_imports_without_langsmith(monkeypatch: pytest.MonkeyPatch):
             monkeypatch.delitem(sys.modules, mod, raising=False)
 
     import boss_agent  # noqa: F401
-    import boss_agent.services.remote_adb_bridge  # noqa: F401
+    import boss_agent.adapters.infra.remote_adb_bridge  # noqa: F401
 
 
 # --- Keepalive policy (ticket #366) ------------------------------------------------

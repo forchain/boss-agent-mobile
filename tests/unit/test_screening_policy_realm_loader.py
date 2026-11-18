@@ -21,8 +21,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-from boss_agent import config_realm
-from boss_agent.screening_config import load_screening_policy
+from boss_agent.adapters.outbound.config import config_realm
+from boss_agent.adapters.outbound.config.screening_config import load_screening_policy
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -89,7 +89,9 @@ def test_screening_policy_loader_precedence_levels(tmp_path: Path, monkeypatch: 
     # 1. Base template only
     chain = [settings_local_yaml, settings_local_json, settings_yaml, example_yaml]
     monkeypatch.setattr(config_realm, "CONFIG_CHAIN", tuple(chain))
-    monkeypatch.setattr("boss_agent.settings.DEFAULT_CONFIG_SEARCH_PATHS", chain)
+    monkeypatch.setattr(
+        "boss_agent.adapters.outbound.config.settings.DEFAULT_CONFIG_SEARCH_PATHS", chain
+    )
     config_realm.invalidate_cache()
     p1 = load_screening_policy()
     assert p1.company_blacklist == ["公司A"]

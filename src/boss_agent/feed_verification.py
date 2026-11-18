@@ -42,6 +42,9 @@ from typing import Any
 
 from rich.console import Console
 
+from .adapters.outbound.config.screening_prompt import load_screening_prompt
+from .adapters.outbound.llm.tracing import TracedCandidateScreener
+from .adapters.outbound.resume.memory import ResumeMemoryManager
 from .async_bridge import run_sync
 from .core.candidate.domain.candidate_profile import StructuredCandidateProfile
 from .core.job.domain.feed_stream import FeedStreamConfig, FeedStreamResult
@@ -49,13 +52,10 @@ from .core.job.domain.job_entities import JobPosting
 from .core.job.domain.screening_policy import ScreeningPolicy
 from .core.job.use_cases.feed_pipeline import JobFeedPipeline
 from .core.job.use_cases.matching import JobMatchGreetingService, MatchGreetingResult
-from .core.job.use_cases.screening import CandidateScreener
 from .core.search.domain.models import FilterConfig, SearchConfig
 from .core.shared.enums import TargetAction
 from .job_store import InMemoryJobRecordStore
-from .memory import ResumeMemoryManager
 from .pages.feed_bundle import build_feed_device_world
-from .screening_prompt import load_screening_prompt
 
 console = Console()
 
@@ -164,7 +164,7 @@ def build_verification_pipeline(
     return JobFeedPipeline(
         world=build_feed_device_world(driver),
         store=InMemoryJobRecordStore(),
-        screener=CandidateScreener(
+        screener=TracedCandidateScreener(
             llm_client=matching_service.llm_client,
             matching_service=matching_service,
             screening_prompt=screening_prompt,

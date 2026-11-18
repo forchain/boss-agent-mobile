@@ -7,7 +7,7 @@ Unit tests for resume extraction, structured candidate memory, and idempotent ca
 import json
 from unittest.mock import MagicMock, patch
 
-from boss_agent.memory import (
+from boss_agent.adapters.outbound.resume.memory import (
     ResumeMemoryManager,
     ResumeTextExtractor,
     StructuredCandidateProfile,
@@ -351,7 +351,7 @@ def test_sqlite_single_source_roundtrip(tmp_path, monkeypatch):
 
 
 def test_profile_normalizer_self_heals_empty_fields_and_extracts_target():
-    from boss_agent.memory import ProfileNormalizer
+    from boss_agent.adapters.outbound.resume.memory import ProfileNormalizer
 
     raw_resume = (
         "周黄金\n"
@@ -402,7 +402,7 @@ def test_profile_normalizer_self_heals_empty_fields_and_extracts_target():
 
 def test_resume_memory_manager_default_client_uses_realm(monkeypatch):
     """When no client is passed, ResumeMemoryManager uses create_llm_client with realm configuration."""
-    from boss_agent import config_realm
+    from boss_agent.adapters.outbound.config import config_realm
 
     for _key, names in config_realm.ENV_OVERRIDES:
         for name in names:
@@ -417,7 +417,7 @@ def test_resume_memory_manager_default_client_uses_realm(monkeypatch):
 
 def test_profile_normalizer_self_heals_education():
     """Verify ProfileNormalizer extracts and normalizes education from markdown and raw text."""
-    from boss_agent.memory import ProfileNormalizer
+    from boss_agent.adapters.outbound.resume.memory import ProfileNormalizer
 
     raw_text = (
         "硕⼠毕业于沙迦美国⼤学计算机⼯程专业，有⼀定的⼯程研究和论⽂转化能⼒\n"

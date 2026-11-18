@@ -3,9 +3,9 @@ from pathlib import Path
 
 import yaml
 
+from boss_agent.adapters.outbound.config.screening_config import load_screening_policy, save_policy
 from boss_agent.core.job.domain.job_entities import JobRecord
 from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
-from boss_agent.screening_config import load_screening_policy, save_policy
 
 
 def test_screening_policy_load_from_example():

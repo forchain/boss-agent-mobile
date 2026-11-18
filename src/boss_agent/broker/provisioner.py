@@ -28,6 +28,7 @@ _src_root = str(Path(__file__).resolve().parent.parent.parent)
 if _src_root not in sys.path:
     sys.path.insert(0, _src_root)
 
+from boss_agent.adapters.outbound.config.settings import resolve_pocketbase_db_path  # noqa: E402
 from boss_agent.broker.collection_schema import (  # noqa: E402
     COLLECTIONS,
     JOB_RECORDS_NAME,
@@ -45,7 +46,6 @@ from boss_agent.broker.collection_schema import (  # noqa: E402
     wire_payload,
 )
 from boss_agent.core.shared.errors import TransportError, ValidationError  # noqa: E402
-from boss_agent.settings import resolve_pocketbase_db_path  # noqa: E402
 
 # requests and urllib3 are lazily imported in provision_remote_pocketbase
 

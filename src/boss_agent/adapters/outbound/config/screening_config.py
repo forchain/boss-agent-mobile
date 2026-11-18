@@ -1,6 +1,6 @@
 """
-boss_agent.screening_config
-===========================
+boss_agent.adapters.outbound.config.screening_config
+====================================================
 Persistence for the screening blacklist and the Screening Policy.
 
 The policy class is *rules*; this module is *storage*. The two used to share a class:
@@ -35,7 +35,7 @@ SCREENING_CONFIG_HEADER = """\
 
 def load_screening_policy(config_path: str | Path | None = None) -> ScreeningPolicy:
     """Load ScreeningPolicy through the Configuration Realm chain (Issue #311, #312)."""
-    from boss_agent import config_realm
+    from boss_agent.adapters.outbound.config import config_realm
 
     if config_path:
         target = Path(config_path)
@@ -67,7 +67,7 @@ def load_screening_policy(config_path: str | Path | None = None) -> ScreeningPol
     # If no file in chain had screening keys, check legacy screening files as fallback
     if source_path is None:
         try:
-            from boss_agent.settings import resolve_git_common_root
+            from .settings import resolve_git_common_root
 
             root = resolve_git_common_root()
         except Exception:
@@ -292,7 +292,7 @@ def persist_company_blacklist(policy: ScreeningPolicy, company_name: str) -> Pat
 
 
 class ScreeningConfigBlacklistSink:
-    """Production BlacklistSink: the Configuration Realm writer above (#458 moves it)."""
+    """Production BlacklistSink: the Configuration Realm writer above."""
 
     def persist_company_blacklist(self, policy: ScreeningPolicy, company_name: str) -> Path | None:
         return persist_company_blacklist(policy, company_name)

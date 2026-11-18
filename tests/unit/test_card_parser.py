@@ -299,7 +299,7 @@ PURE_DOMAIN_MODULES = (
     "src/boss_agent/core/job/domain/screening.py",
     "src/boss_agent/core/job/domain/feed_records.py",
     "src/boss_agent/core/job/domain/matching.py",
-    "src/boss_agent/graph.py",
+    "src/boss_agent/adapters/outbound/resume/graph.py",
     "src/boss_agent/core/job/domain/card_parser.py",
 )
 

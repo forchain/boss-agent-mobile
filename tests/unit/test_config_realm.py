@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from boss_agent import config_realm
+from boss_agent.adapters.outbound.config import config_realm
 
 REPO_ROOT = Path(__file__).parents[2]
 
@@ -192,7 +192,9 @@ def test_the_legacy_file_is_part_of_the_cache_key(tmp_path: Path, monkeypatch) -
         "api_key: 'sk-from-cwd'\n", encoding="utf-8"
     )
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("boss_agent.settings.DEFAULT_CONFIG_SEARCH_PATHS", [])
+    monkeypatch.setattr(
+        "boss_agent.adapters.outbound.config.settings.DEFAULT_CONFIG_SEARCH_PATHS", []
+    )
 
     assert config_realm.load_settings()["api_key"] == "sk-from-cwd"
 

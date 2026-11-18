@@ -1,6 +1,6 @@
 """
-src/boss_agent/services/teardown.py
-===================================
+src/boss_agent/adapters/infra/teardown.py
+=========================================
 E2E Pre-Test Teardown Gate (spec #218, ticket #222).
 
 End-to-end suites need exclusive use of the Virtual Device Session and of port 5173. This

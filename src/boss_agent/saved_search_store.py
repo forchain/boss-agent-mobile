@@ -24,11 +24,11 @@ from typing import Any
 
 import requests
 
+from .adapters.outbound.config.settings import resolve_pocketbase_url
 from .async_bridge import execute_broker_request
 from .core.search.domain.models import SavedSearch
 from .core.search.interfaces.store import SavedSearchStore
 from .pocketbase_auth import pocketbase_headers
-from .settings import resolve_pocketbase_url
 
 logger = logging.getLogger("boss_agent.saved_search_store")
 

@@ -17,6 +17,11 @@ from typing import Any
 
 import pytest
 
+from boss_agent.adapters.outbound.resume.graph import (
+    resume_normalizer_node,
+    resume_text_extractor_node,
+)
+from boss_agent.adapters.outbound.resume.memory import ResumeMemoryManager
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
 from boss_agent.candidate_memory_store import (
     PROFILE_JSON_COLUMNS,
@@ -25,8 +30,6 @@ from boss_agent.candidate_memory_store import (
     migrate_legacy_candidate_profile,
 )
 from boss_agent.core.candidate.domain.candidate_profile import CandidateProfile
-from boss_agent.graph import resume_normalizer_node, resume_text_extractor_node
-from boss_agent.memory import ResumeMemoryManager
 
 #: The eleven keys `CandidateProfile.to_dict()` emits. This is the persisted column
 #: contract for `candidate_profiles`; adding, dropping or renaming one is a schema change.

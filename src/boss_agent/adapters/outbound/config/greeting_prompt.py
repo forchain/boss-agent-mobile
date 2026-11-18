@@ -1,6 +1,6 @@
 """
-boss_agent.greeting_prompt
-==========================
+boss_agent.adapters.outbound.config.greeting_prompt
+===================================================
 Loader for the single living Greeting Prompt document (ADR 0010).
 
 The Greeting Prompt is the one and only long-term greeting memory surface:

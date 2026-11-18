@@ -17,8 +17,6 @@ import logging
 import sys
 from typing import Any
 
-from langsmith import traceable
-
 from boss_agent.core.candidate.domain.candidate_profile import CandidateProfile
 from boss_agent.core.job.domain.job_entities import JobCardBrief, JobPosting
 from boss_agent.core.job.domain.screening import (
@@ -76,7 +74,6 @@ class CandidateScreener:
     # ------------------------------------------------------------------
     # Stage 1: card screening (zero-token, driver-free)
     # ------------------------------------------------------------------
-    @traceable(name="CandidateScreener.evaluate_card", run_type="chain")
     def evaluate_card(
         self,
         card: JobCardBrief | JobPosting | dict[str, Any],
@@ -134,7 +131,6 @@ class CandidateScreener:
     # ------------------------------------------------------------------
     # Stage 2: full-JD evaluation and greeting drafting
     # ------------------------------------------------------------------
-    @traceable(name="CandidateScreener.evaluate_job", run_type="chain")
     def evaluate_job(
         self,
         card: JobCardBrief | JobPosting | dict[str, Any],
@@ -230,7 +226,6 @@ class CandidateScreener:
             greeting_message=match.greeting_message,
         )
 
-    @traceable(name="CandidateScreener.screen_jd_semantics", run_type="chain")
     def _screen_jd_semantics(
         self,
         jd_text: str,
@@ -304,7 +299,6 @@ class CandidateScreener:
         except Exception as e:
             return True, f"LLM精筛调用异常，降级放行: {e}"
 
-    @traceable(name="CandidateScreener.retest_with_critique", run_type="chain")
     def retest_with_critique(
         self,
         job: JobPosting,
@@ -371,7 +365,6 @@ class CandidateScreener:
             sys.stderr.flush()
             raise RuntimeError(f"LLM 纠偏重测失败，无法裁决：{e}") from e
 
-    @traceable(name="CandidateScreener.evaluate_jd", run_type="chain")
     def evaluate_jd(
         self,
         job: JobPosting,
@@ -455,7 +448,6 @@ class CandidateScreener:
 
     _evaluate_jd = evaluate_jd
 
-    @traceable(name="CandidateScreener.refine_screening_prompt", run_type="chain")
     def refine_screening_prompt(
         self,
         job: JobPosting,

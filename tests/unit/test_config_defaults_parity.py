@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from boss_agent import config_realm
+from boss_agent.adapters.outbound.config import config_realm
 
 FIXTURE_PATH = Path(__file__).parents[2] / "config" / "defaults.fixture.json"
 
@@ -48,7 +48,7 @@ def test_the_llm_loader_reads_the_realm_baseline(monkeypatch) -> None:
     Asserted through the public loader rather than the table, because the bug was never
     a wrong constant — it was a second defaults table that nothing compared.
     """
-    from boss_agent import llm_config
+    from boss_agent.adapters.outbound.llm import llm_config
 
     for _key, names in config_realm.ENV_OVERRIDES:
         for name in names:
@@ -68,7 +68,7 @@ def test_the_llm_loader_reads_the_realm_baseline(monkeypatch) -> None:
 
 def test_create_llm_client_instantiates_with_realm_baseline(monkeypatch) -> None:
     """create_llm_client must yield a configured client reflecting realm defaults and overrides."""
-    from boss_agent import llm_config
+    from boss_agent.adapters.outbound.llm import llm_config
 
     for _key, names in config_realm.ENV_OVERRIDES:
         for name in names:

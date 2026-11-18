@@ -17,6 +17,7 @@ from typing import Any
 
 import requests
 
+from boss_agent.adapters.outbound.config.settings import resolve_pocketbase_url
 from boss_agent.async_bridge import execute_broker_request
 from boss_agent.candidate_memory_store import (
     InMemoryCandidateMemoryStore,
@@ -34,7 +35,6 @@ from boss_agent.saved_search_store import (
     InMemorySavedSearchStore,
     PocketBaseSavedSearchStore,
 )
-from boss_agent.settings import resolve_pocketbase_url
 
 logger = logging.getLogger("boss_agent.broker")
 

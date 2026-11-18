@@ -1,6 +1,6 @@
 """
-boss_agent.llm_config
-=====================
+boss_agent.adapters.outbound.llm.llm_config
+===========================================
 The Configuration Realm's LLM section, assembled for the framework's client.
 
 `droid_agent_core` is an app-agnostic framework layer: it must not read this
@@ -11,21 +11,21 @@ That inversion is what removed the last second defaults table. The framework's c
 used to start from the example *template* and ship `max_tokens=16384` /
 `timeout_sec=300.0` while every other realm shipped `262144` / `120.0`, so a
 config-less run silently used a sixteenth of the documented token ceiling. Now there is
-one table (:mod:`boss_agent.config_realm`), one chain, and one place that joins them.
+one table (:mod:`boss_agent.adapters.outbound.config.config_realm`), one chain, and one
+place that joins them.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
+from boss_agent.adapters.outbound.config import config_realm
 from droid_agent_core.llm import (
     AnthropicChatClient,
     LLMConfig,
     LLMDecisionClient,
     OpenAIChatClient,
 )
-
-from . import config_realm
 
 #: Wire protocol -> client. The keys are *protocols*, not vendors: a vendor is reached by
 #: naming its protocol, and anything absent speaks the default one. That is what lets a

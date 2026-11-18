@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 
 from _service_harness import free_port
+from boss_agent.adapters.outbound.config.settings import resolve_git_common_root
 from boss_agent.broker.pocketbase_adapter import PocketBaseTaskBroker
 from boss_agent.broker.provisioner import (
     provision_remote_pocketbase,
@@ -29,7 +30,6 @@ from boss_agent.broker.provisioner import (
 from boss_agent.core.search.domain.models import FilterConfig, SavedSearch, SearchConfig
 from boss_agent.core.shared.errors import TransportError, ValidationError
 from boss_agent.core.task.domain.models import TaskStatus, TaskType
-from boss_agent.settings import resolve_git_common_root
 
 pytestmark = pytest.mark.e2e
 

@@ -12,16 +12,16 @@ from pathlib import Path
 
 import yaml
 
-from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
-from boss_agent.core.shared.identifier_helpers import is_headhunter_agency_name
-from boss_agent.pages.communication import parse_company_from_descriptor
-from boss_agent.screening_config import (
+from boss_agent.adapters.outbound.config.screening_config import (
     append_company_blacklist_entry,
     is_writable_screening_path,
     load_screening_policy,
     persist_company_blacklist,
     resolve_writable_screening_config_path,
 )
+from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
+from boss_agent.core.shared.identifier_helpers import is_headhunter_agency_name
+from boss_agent.pages.communication import parse_company_from_descriptor
 
 # ---------------------------------------------------------------------------
 # `[Company] | [Position]` card descriptor
@@ -185,7 +185,7 @@ def test_append_is_idempotent_and_appends_to_an_existing_block_list():
 def test_append_creates_the_config_with_a_full_policy_snapshot(monkeypatch):
     """A brand-new file must not become a policy that drops every other rule."""
     monkeypatch.setattr(
-        "boss_agent.screening_config.load_screening_policy",
+        "boss_agent.adapters.outbound.config.screening_config.load_screening_policy",
         lambda **kw: ScreeningPolicy(),
     )
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -280,7 +280,8 @@ def test_persist_never_writes_the_checked_in_example_config(tmp_path, monkeypatc
     original = example.read_text(encoding="utf-8")
     fallback = config_dir / "screening.local.yaml"
     monkeypatch.setattr(
-        "boss_agent.screening_config.resolve_writable_screening_config_path", lambda *_: fallback
+        "boss_agent.adapters.outbound.config.screening_config.resolve_writable_screening_config_path",
+        lambda *_: fallback,
     )
 
     policy = load_screening_policy(config_path=example)
@@ -314,7 +315,7 @@ def test_persist_reports_nothing_written_when_the_store_is_not_writable(tmp_path
     store.write_text('{"company_blacklist": ["a"]}', encoding="utf-8")
     # Pinned so a failing guard cannot escape into the shared checkout's config.
     monkeypatch.setattr(
-        "boss_agent.screening_config.resolve_writable_screening_config_path",
+        "boss_agent.adapters.outbound.config.screening_config.resolve_writable_screening_config_path",
         lambda *_: tmp_path / "fallback.local.yaml",
     )
     policy = ScreeningPolicy(company_blacklist=["a", "传音控股"], source_path=str(store))
@@ -333,11 +334,11 @@ def test_the_suite_never_resolves_a_write_target_inside_the_checkout():
 
     Asserted through the module rather than the name imported at the top of this
     file: the appenders look the function up as a module global at call time, so
-    `boss_agent.screening_config` is the attribute the sandbox patches and the one a
+    `boss_agent.adapters.outbound.config.screening_config` is the attribute the sandbox patches and the one a
     write actually goes through.
     """
-    from boss_agent import screening_config
-    from boss_agent.settings import resolve_git_common_root
+    from boss_agent.adapters.outbound.config import screening_config
+    from boss_agent.adapters.outbound.config.settings import resolve_git_common_root
 
     resolved = screening_config.resolve_writable_screening_config_path()
 
@@ -353,7 +354,7 @@ def test_the_suite_guard_redirects_the_default_write_target():
     writer no longer reads, every test that forgets to pass a path starts editing the
     developer's real ``config/settings.local.yaml`` — and nothing goes red.
     """
-    from boss_agent import screening_config
+    from boss_agent.adapters.outbound.config import screening_config
 
     resolved = screening_config.resolve_writable_screening_config_path()
 

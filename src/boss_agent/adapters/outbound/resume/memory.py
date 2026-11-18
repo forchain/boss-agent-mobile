@@ -1,6 +1,6 @@
 """
-boss_agent.memory
-=================
+boss_agent.adapters.outbound.resume.memory
+==========================================
 Resume ingestion, text extraction, LLM structured profile generation, and local memory cache.
 """
 
@@ -11,15 +11,14 @@ from typing import Any
 from langsmith import traceable
 from rich.console import Console
 
-from droid_agent_core.llm import LLMDecisionClient
-
-from .core.candidate.domain.candidate_profile import (
+from boss_agent.adapters.outbound.llm.llm_config import create_llm_client
+from boss_agent.core.candidate.domain.candidate_profile import (
     CandidateProfile,
     StructuredCandidateProfile,
 )
-from .core.candidate.domain.profile_normalizer import ProfileNormalizer
-from .core.candidate.interfaces.resume_text_source import ResumeTextSource
-from .llm_config import create_llm_client
+from boss_agent.core.candidate.domain.profile_normalizer import ProfileNormalizer
+from boss_agent.core.candidate.interfaces.resume_text_source import ResumeTextSource
+from droid_agent_core.llm import LLMDecisionClient
 
 console = Console()
 
@@ -160,7 +159,7 @@ class ResumeMemoryManager:
         environment layer — a fourth precedence order for one realm. The realm merges,
         so a local file that sets one key no longer hides the rest of the file beneath it.
         """
-        from . import config_realm
+        from boss_agent.adapters.outbound.config import config_realm
 
         if config_path:
             return config_realm.load_chain([Path(config_path)], config_path=config_path)

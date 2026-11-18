@@ -10,10 +10,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from boss_agent.adapters.outbound.config.screening_prompt import load_screening_prompt
 from boss_agent.core.job.domain.job_entities import JobCardBrief
 from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
 from boss_agent.core.job.use_cases.screening import CandidateScreener, JobVerdictStage
-from boss_agent.screening_prompt import load_screening_prompt
 
 SEED_TEXT = "# 默认种子精筛提示词\n严禁臆造黑名单外淘汰条件。"
 LOCAL_TEXT = "# 沉淀后的最终精筛记忆\n复合技术工种正常落地偏向不予淘汰。"
@@ -36,7 +36,7 @@ def test_load_reads_explicit_path_verbatim(tmp_path):
 
 
 def test_local_document_wins_over_seed(tmp_path, monkeypatch):
-    import boss_agent.screening_prompt as sp
+    import boss_agent.adapters.outbound.config.screening_prompt as sp
 
     _make_config(tmp_path, local=LOCAL_TEXT)
     monkeypatch.setattr(sp, "resolve_git_common_root", lambda: tmp_path)
@@ -46,7 +46,7 @@ def test_local_document_wins_over_seed(tmp_path, monkeypatch):
 def test_empty_local_document_is_honored_not_replaced_by_seed(tmp_path, monkeypatch):
     """Clearing the settled memory must be expressible: an empty local file
     means an empty prompt, never a silent resurrection of the seed."""
-    import boss_agent.screening_prompt as sp
+    import boss_agent.adapters.outbound.config.screening_prompt as sp
 
     _make_config(tmp_path, local="")
     monkeypatch.setattr(sp, "resolve_git_common_root", lambda: tmp_path)
@@ -54,7 +54,7 @@ def test_empty_local_document_is_honored_not_replaced_by_seed(tmp_path, monkeypa
 
 
 def test_seed_serves_as_default_before_first_save(tmp_path, monkeypatch):
-    import boss_agent.screening_prompt as sp
+    import boss_agent.adapters.outbound.config.screening_prompt as sp
 
     _make_config(tmp_path, seed=SEED_TEXT)
     monkeypatch.setattr(sp, "resolve_git_common_root", lambda: tmp_path)
@@ -64,7 +64,7 @@ def test_seed_serves_as_default_before_first_save(tmp_path, monkeypatch):
 def test_stray_cwd_local_never_outranks_shared_root_document(tmp_path, monkeypatch):
     """A stray local document dropped in some unrelated working directory must
     not shadow the shared-root document the Settings UI reads and writes."""
-    import boss_agent.screening_prompt as sp
+    import boss_agent.adapters.outbound.config.screening_prompt as sp
 
     root = tmp_path / "root"
     _make_config(root, seed=SEED_TEXT)
@@ -76,7 +76,7 @@ def test_stray_cwd_local_never_outranks_shared_root_document(tmp_path, monkeypat
 
 
 def test_shared_root_local_wins_over_cwd_documents(tmp_path, monkeypatch):
-    import boss_agent.screening_prompt as sp
+    import boss_agent.adapters.outbound.config.screening_prompt as sp
 
     root = tmp_path / "root"
     _make_config(root, seed=SEED_TEXT, local=LOCAL_TEXT)
@@ -88,7 +88,7 @@ def test_shared_root_local_wins_over_cwd_documents(tmp_path, monkeypatch):
 
 
 def test_missing_document_fails_loudly(tmp_path, monkeypatch):
-    import boss_agent.screening_prompt as sp
+    import boss_agent.adapters.outbound.config.screening_prompt as sp
 
     monkeypatch.setattr(sp, "resolve_git_common_root", lambda: tmp_path)
     monkeypatch.chdir(tmp_path)

@@ -10,6 +10,11 @@ from typing import Any
 
 from rich.console import Console
 
+from .adapters.outbound.config.greeting_prompt import load_greeting_prompt
+from .adapters.outbound.config.screening_config import load_screening_policy
+from .adapters.outbound.llm.llm_config import create_llm_client
+from .adapters.outbound.llm.tracing import TracedJobMatchGreetingService
+from .adapters.outbound.resume.memory import ResumeMemoryManager
 from .async_bridge import run_sync
 from .core.candidate.domain.candidate_profile import CandidateProfile
 from .core.job.domain.job_entities import JobPosting
@@ -25,15 +30,11 @@ from .feed_verification import (
     render_greeting_match_card,
     run_verification_feed,
 )
-from .greeting_prompt import load_greeting_prompt
-from .llm_config import create_llm_client
-from .memory import ResumeMemoryManager
 from .pages.system import LoginPage
 from .saved_search_store import (
     missing_saved_search_message,
     resolve_saved_search_store,
 )
-from .screening_config import load_screening_policy
 
 console = Console()
 
@@ -155,7 +156,7 @@ class SmokeHarness:
         self.force_refresh_memory = force_refresh_memory
         self.enable_greeting_draft = enable_greeting_draft
         self.memory_manager = memory_manager or ResumeMemoryManager()
-        self.matching_service = matching_service or JobMatchGreetingService(
+        self.matching_service = matching_service or TracedJobMatchGreetingService(
             llm_client=create_llm_client(),
             greeting_prompt=load_greeting_prompt(),
         )

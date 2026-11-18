@@ -26,6 +26,7 @@ from _chat_triage_harness import (
     throwaway_config,
 )
 
+from boss_agent.adapters.outbound.config.screening_config import load_screening_policy
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
 from boss_agent.core.chat.domain.rejection import (
     DEFAULT_REJECTION_REPLY_TEXT,
@@ -36,7 +37,6 @@ from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
 from boss_agent.core.task.domain.models import TaskStatus, TaskType
 from boss_agent.pages.chat_adapters import ChatActorAdapter, CommunicationListAdapter
 from boss_agent.pages.communication import CommunicationListPage
-from boss_agent.screening_config import load_screening_policy
 from boss_agent.worker.config import WorkerConfig
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.handlers.check_chat import CheckChatHandler

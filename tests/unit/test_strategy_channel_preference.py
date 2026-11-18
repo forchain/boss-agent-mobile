@@ -24,13 +24,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from boss_agent.adapters.outbound.config.screening_config import load_screening_policy
 from boss_agent.core.job.domain.screening_policy import ScreeningPolicy, resolve_screening_policy
 from boss_agent.core.job.use_cases.feed_pipeline import FeedStreamConfig
 from boss_agent.core.search.domain.launch import LaunchSource, build_search_launch
 from boss_agent.core.search.domain.models import FilterConfig, SavedSearch, SearchConfig
 from boss_agent.core.shared.enums import ChannelPreference
 from boss_agent.saved_search_store import InMemorySavedSearchStore
-from boss_agent.screening_config import load_screening_policy
 
 
 def _search(**filter_overrides) -> SavedSearch:

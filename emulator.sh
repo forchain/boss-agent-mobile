@@ -454,7 +454,7 @@ get_primary_lan_ip() {
     fi
     local PY_BIN="${PYTHON_BIN:-$(runner_find_binary "${ROOT_DIR}/.venv/bin/python3" python3 python)}"
     if [[ -n "${PY_BIN}" ]]; then
-        LAN_IP="$(PYTHONPATH="${ROOT_DIR}/src:${PYTHONPATH:-}" "${PY_BIN}" -m boss_agent.services.remote_adb_bridge --print-lan-ip 2>/dev/null || true)"
+        LAN_IP="$(PYTHONPATH="${ROOT_DIR}/src:${PYTHONPATH:-}" "${PY_BIN}" -m boss_agent.adapters.infra.remote_adb_bridge --print-lan-ip 2>/dev/null || true)"
     fi
     if [[ -z "${LAN_IP}" || "${LAN_IP}" =~ ^127\. ]]; then
         LAN_IP="$(ifconfig 2>/dev/null | grep -E 'inet[[:space:]]+(192\.168|10\.|172\.(1[6-9]|2[0-9]|3[01]))\.' | awk '{print $2}' | head -n 1 || true)"
@@ -677,7 +677,7 @@ start_remote_bridge() {
     BRIDGE_PID="$(detached_spawn \
         "${BRIDGE_LOG_FILE}" \
         env "PYTHONPATH=${ROOT_DIR}/src:${PYTHONPATH:-}" "${PYTHON_BIN}" \
-        -m boss_agent.services.remote_adb_bridge \
+        -m boss_agent.adapters.infra.remote_adb_bridge \
         --host 0.0.0.0 \
         --port "${PORT}" \
         --target-host 127.0.0.1 \

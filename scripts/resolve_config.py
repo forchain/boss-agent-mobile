@@ -32,7 +32,7 @@ _root_dir = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_root_dir))
 sys.path.insert(0, str(_root_dir / "src"))
 
-from boss_agent import config_realm  # noqa: E402
+from boss_agent.adapters.outbound.config import config_realm  # noqa: E402
 
 
 def main(argv: list[str] | None = None) -> int:
