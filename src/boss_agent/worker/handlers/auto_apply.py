@@ -13,7 +13,7 @@ configures the run with ``target_action=auto_apply``.
 import logging
 from typing import Any
 
-from boss_agent.candidate_entities import CandidateProfile
+from boss_agent.core.candidate.domain.candidate_profile import CandidateProfile
 from boss_agent.core.shared.errors import BrokerError, TransportError
 from boss_agent.core.shared.identifier_helpers import is_masked_company_name
 from boss_agent.core.task.domain.models import AutomationTask, TaskType

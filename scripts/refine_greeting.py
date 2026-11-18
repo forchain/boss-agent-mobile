@@ -16,7 +16,7 @@ root_dir = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(root_dir))
 sys.path.insert(0, str(root_dir / "src"))
 
-from boss_agent.candidate_entities import CandidateProfile  # noqa: E402
+from boss_agent.core.candidate.domain.candidate_profile import CandidateProfile  # noqa: E402
 from boss_agent.job_entities import JobPosting  # noqa: E402
 from boss_agent.llm_config import create_llm_client, load_llm_config  # noqa: E402
 from boss_agent.matching import JobMatchGreetingService  # noqa: E402
@@ -128,7 +128,7 @@ def main() -> None:
     if args.profile:
         try:
             profile_dict = json.loads(args.profile)
-            from boss_agent.memory import ProfileNormalizer
+            from boss_agent.core.candidate.domain.profile_normalizer import ProfileNormalizer
 
             norm_dict = ProfileNormalizer.normalize(profile_dict)
             candidate_profile = CandidateProfile.from_dict(norm_dict)

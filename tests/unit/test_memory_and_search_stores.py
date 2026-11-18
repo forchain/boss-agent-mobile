@@ -24,10 +24,10 @@ from boss_agent.broker.pocketbase_adapter import (
 )
 from boss_agent.broker.provisioner import DEFAULT_INITIAL_SEARCHES
 from boss_agent.candidate_memory_store import (
-    CandidateMemoryStore,
     InMemoryCandidateMemoryStore,
     PocketBaseCandidateMemoryStore,
 )
+from boss_agent.core.candidate.interfaces.candidate_memory_store import CandidateMemoryStore
 from boss_agent.core.search.domain.models import FilterConfig, SavedSearch, SearchConfig
 from boss_agent.core.search.interfaces.store import SavedSearchStore
 from boss_agent.core.shared.enums import TargetTaskType

@@ -6,7 +6,7 @@ Unit tests for JobMatchGreetingService and MatchGreetingResult.
 
 from unittest.mock import MagicMock
 
-from boss_agent.candidate_entities import CandidateProfile
+from boss_agent.core.candidate.domain.candidate_profile import CandidateProfile
 from boss_agent.job_entities import JobPosting
 from boss_agent.matching import (
     JobMatchGreetingService,

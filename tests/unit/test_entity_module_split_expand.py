@@ -97,7 +97,7 @@ def test_identifier_helpers_isolated_ast():
     entity_modules = {
         "boss_agent.models",
         "boss_agent.job_entities",
-        "boss_agent.candidate_entities",
+        "boss_agent.core.candidate.domain.candidate_profile",
         "boss_agent.core.search.domain.models",
         "boss_agent.screening_policy",
         "boss_agent.entities",

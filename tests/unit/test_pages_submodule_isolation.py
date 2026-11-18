@@ -474,7 +474,7 @@ NOT_DOMAIN = ("boss_agent.pages", "boss_agent.worker")
 #: is derived from the tree rather than pinned by hand, so a rename that quietly drops a
 #: required module out of coverage fails here instead of shrinking the guard in silence.
 REQUIRED_DOMAIN_MODULES = (
-    "boss_agent.candidate_entities",
+    "boss_agent.core.candidate.domain.candidate_profile",
     "boss_agent.card_parser",
     "boss_agent.core.shared.enums",
     "boss_agent.feed_records",

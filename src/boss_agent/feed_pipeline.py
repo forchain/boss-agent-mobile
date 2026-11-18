@@ -20,7 +20,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
-from .candidate_entities import CandidateProfile
+from .core.candidate.domain.candidate_profile import CandidateProfile
 from .core.search.domain.models import FilterConfig
 from .core.shared.enums import (
     DEPTH_DECLARED,

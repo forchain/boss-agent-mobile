@@ -6,7 +6,7 @@ Boss 直聘 Android application automation domain layer.
 Public symbols resolve lazily (PEP 562).
 
 Importing *any* submodule of a package executes that package's ``__init__`` first, so
-this module used to decide the import cost of ``boss_agent.candidate_entities`` — a
+this module used to decide the import cost of the candidate profile entity — a
 leaf whose entire promise is that it is standard-library only. The eager
 ``from .memory import ...`` below dragged in ``memory``'s ``langsmith``, ``rich`` and
 ``droid_agent_core.llm``, roughly 1300 modules, and made "the profile entity is pure"
@@ -46,7 +46,7 @@ import importlib
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - import-time work for static type checkers only
-    from .candidate_entities import CandidateProfile
+    from .core.candidate.domain.candidate_profile import CandidateProfile
     from .core.search.domain.models import FilterConfig, SavedSearch, SearchConfig
     from .core.shared.enums import AuthStatus, ChannelPreference
     from .core.shared.identifier_helpers import (
@@ -74,7 +74,7 @@ if TYPE_CHECKING:  # pragma: no cover - import-time work for static type checker
 _LAZY_EXPORTS: dict[str, str] = {
     "AuthStatus": ".core.shared.enums",
     "BaseBossPage": ".pages",
-    "CandidateProfile": ".candidate_entities",
+    "CandidateProfile": ".core.candidate.domain.candidate_profile",
     "CandidateScreener": ".screening",
     "CardScreeningVerdict": ".screening",
     "CardVerdictStage": ".screening",
@@ -100,7 +100,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "MatchGreetingResult": ".matching",
     "PocketBaseJobRecordStore": ".job_store",
     "PocketBaseSavedSearchStore": ".saved_search_store",
-    "ProfileNormalizer": ".memory",
+    "ProfileNormalizer": ".core.candidate.domain.profile_normalizer",
     "ResumeLifecycleState": ".graph",
     "ResumeMemoryManager": ".memory",
     "ResumeTextExtractor": ".memory",
@@ -111,7 +111,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "SearchPage": ".pages",
     "SmokeHarness": ".workflows",
     "StartupDialogPage": ".pages",
-    "StructuredCandidateProfile": ".candidate_entities",
+    "StructuredCandidateProfile": ".core.candidate.domain.candidate_profile",
     "TakeoverHandler": ".workflows",
     "append_company_blacklist_entry": ".screening_config",
     "build_resume_lifecycle_graph": ".graph",
