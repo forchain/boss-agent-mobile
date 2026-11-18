@@ -15,7 +15,6 @@ from langsmith.run_helpers import get_current_run_tree, tracing_context
 from langsmith.run_trees import RunTree
 
 from boss_agent.job_entities import JobCardBrief, JobPosting
-from boss_agent.matching import JobMatchGreetingService
 from boss_agent.memory import ResumeMemoryManager
 from boss_agent.screening import CandidateScreener, CardVerdictStage, JobVerdictStage
 from boss_agent.screening_policy import ScreeningPolicy
@@ -269,7 +268,7 @@ def test_job_match_greeting_service_traceable():
         "greeting_message": "Hello, I have extensive Appium agent experience.",
     }
 
-    service = JobMatchGreetingService(llm_client=mock_llm)
+    service = CandidateScreener(llm_client=mock_llm)
     job = JobPosting(
         title="Mobile Automation Lead",
         company_name="StartupX",

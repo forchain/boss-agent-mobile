@@ -13,7 +13,7 @@ import pytest
 from boss_agent.candidate_entities import CandidateProfile
 from boss_agent.greeting_prompt import load_greeting_prompt
 from boss_agent.job_entities import JobPosting
-from boss_agent.matching import JobMatchGreetingService
+from boss_agent.screening import CandidateScreener
 
 SEED_TEXT = "# 默认种子提示词\n严禁模板化套话。"
 LOCAL_TEXT = "# 沉淀后的最终记忆\n第一句直击 JD 痛点，并突出海外留学与英文面试意愿。"
@@ -114,7 +114,7 @@ def test_evaluate_embeds_greeting_prompt_verbatim():
         "match_reasons": ["海外留学"],
         "greeting_message": "关注到贵司对英语协同的硬性要求。",
     }
-    service = JobMatchGreetingService(llm_client=mock_llm)
+    service = CandidateScreener(llm_client=mock_llm)
     service.evaluate_and_draft_greeting(
         job=_job(),
         profile=CandidateProfile(name="张三", core_skills=["LangGraph 工程化落地"]),
@@ -134,7 +134,7 @@ def test_evaluate_embeds_greeting_prompt_verbatim():
 def test_refine_uses_same_greeting_prompt_document():
     mock_llm = MagicMock()
     mock_llm.chat_completion_json.return_value = {"revised_greeting": "修订后的招呼语全文。"}
-    service = JobMatchGreetingService(llm_client=mock_llm)
+    service = CandidateScreener(llm_client=mock_llm)
     service.refine_with_critique(
         job=_job(),
         current_greeting="旧版招呼语",
@@ -151,7 +151,7 @@ def test_refine_greeting_prompt_rewrites_whole_document_preserving_points():
     mock_llm.chat_completion_json.return_value = {
         "prompt": LOCAL_TEXT + "\n7. 【主动给出作品集链接】。"
     }
-    service = JobMatchGreetingService(llm_client=mock_llm)
+    service = CandidateScreener(llm_client=mock_llm)
     refined = service.refine_greeting_prompt(
         job=_job(),
         original_greeting="旧版泛泛招呼语",
@@ -184,7 +184,7 @@ def test_refine_greeting_prompt_lazy_loads_current_document(tmp_path, monkeypatc
 
     mock_llm = MagicMock()
     mock_llm.chat_completion_json.return_value = {"prompt": "改进后的完整文档。"}
-    service = JobMatchGreetingService(llm_client=mock_llm)
+    service = CandidateScreener(llm_client=mock_llm)
     service.refine_greeting_prompt(
         job=_job(),
         original_greeting="a",
@@ -198,7 +198,7 @@ def test_refine_greeting_prompt_lazy_loads_current_document(tmp_path, monkeypatc
 def test_refine_greeting_prompt_raises_on_llm_failure():
     mock_llm = MagicMock()
     mock_llm.chat_completion_json.side_effect = RuntimeError("simulated rewrite failure")
-    service = JobMatchGreetingService(llm_client=mock_llm)
+    service = CandidateScreener(llm_client=mock_llm)
     with pytest.raises(RuntimeError) as exc_info:
         service.refine_greeting_prompt(
             job=_job(),
@@ -213,7 +213,7 @@ def test_refine_greeting_prompt_raises_on_llm_failure():
 def test_refine_greeting_prompt_rejects_empty_llm_output():
     mock_llm = MagicMock()
     mock_llm.chat_completion_json.return_value = {"prompt": "   "}
-    service = JobMatchGreetingService(llm_client=mock_llm)
+    service = CandidateScreener(llm_client=mock_llm)
     with pytest.raises(RuntimeError):
         service.refine_greeting_prompt(
             job=_job(),
@@ -238,7 +238,7 @@ def test_evaluate_lazy_loads_prompt_file(tmp_path, monkeypatch):
         "match_reasons": [],
         "greeting_message": "hi",
     }
-    service = JobMatchGreetingService(llm_client=mock_llm)
+    service = CandidateScreener(llm_client=mock_llm)
     service.evaluate_and_draft_greeting(job=_job())
     system_prompt = mock_llm.chat_completion_json.call_args[0][0][0]["content"]
     assert LOCAL_TEXT in system_prompt

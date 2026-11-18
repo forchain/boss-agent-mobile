@@ -72,7 +72,7 @@ def _matching_service() -> MagicMock:
 def test_smoke_harness_drafts_and_renders_the_greeting_for_the_extracted_posting():
     """The greeting is drafted by the matching service the caller injected.
 
-    The harness passes *its* ``JobMatchGreetingService`` into the screener the pipeline
+    The harness passes *its* ``CandidateScreener`` into the screener the pipeline
     runs, so the run drafts through the same object the caller holds — that is what makes
     a smoke test's greeting the same artefact a worker's would be. The draft is then
     reported back for the posting that was actually extracted, and rendered: rendering is

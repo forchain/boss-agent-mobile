@@ -14,7 +14,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from boss_agent.job_entities import JobPosting
-from boss_agent.matching import JobMatchGreetingService
+from boss_agent.screening import CandidateScreener
 
 
 def test_service_refine_with_critique():
@@ -23,7 +23,7 @@ def test_service_refine_with_critique():
         "revised_greeting": "关注到贵司对海外协同与英语的硬性要求，我具备海外留学经历，英语可作为工作语言并乐意接受全英文面试。期待与您深入沟通！"
     }
 
-    service = JobMatchGreetingService(llm_client=mock_llm)
+    service = CandidateScreener(llm_client=mock_llm)
     job = JobPosting(
         title="Senior AI Architect",
         company_name="Global Tech",
@@ -57,7 +57,7 @@ def test_service_refine_with_critique_passes_history():
         "revised_greeting": "根据对话历史修订后的招呼语。"
     }
 
-    service = JobMatchGreetingService(llm_client=mock_llm)
+    service = CandidateScreener(llm_client=mock_llm)
     job = JobPosting(
         title="Senior AI Architect",
         company_name="Global Tech",
@@ -96,7 +96,7 @@ def test_service_refine_with_critique_raises_on_llm_failure():
     mock_llm = MagicMock()
     mock_llm.chat_completion_json.side_effect = RuntimeError("simulated refine failure")
 
-    service = JobMatchGreetingService(llm_client=mock_llm)
+    service = CandidateScreener(llm_client=mock_llm)
     job = JobPosting(
         title="Senior AI Architect",
         company_name="Global Tech",
@@ -127,7 +127,7 @@ def test_service_refine_with_critique_raises_when_llm_returns_empty():
     mock_llm = MagicMock()
     mock_llm.chat_completion_json.return_value = {}  # missing revised_greeting
 
-    service = JobMatchGreetingService(llm_client=mock_llm)
+    service = CandidateScreener(llm_client=mock_llm)
     job = JobPosting(
         title="Senior AI Architect",
         company_name="Global Tech",

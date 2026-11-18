@@ -21,7 +21,6 @@ from .feed_verification import (
     run_verification_feed,
 )
 from .job_entities import JobPosting
-from .matching import JobMatchGreetingService
 from .memory import ResumeMemoryManager
 from .pages.system import LoginPage
 from .saved_search_store import (
@@ -29,6 +28,7 @@ from .saved_search_store import (
     missing_saved_search_message,
     resolve_saved_search_store,
 )
+from .screening import CandidateScreener
 from .screening_policy import ScreeningPolicy, resolve_screening_policy
 from .search_entities import FilterConfig, SavedSearch, SearchConfig
 
@@ -142,7 +142,7 @@ class SmokeHarness:
         preview_timeout_sec: float = 3.0,
         enable_greeting_draft: bool = True,
         memory_manager: ResumeMemoryManager | None = None,
-        matching_service: JobMatchGreetingService | None = None,
+        matching_service: CandidateScreener | None = None,
         saved_search_store: SavedSearchStore | None = None,
     ):
         self.driver = driver
@@ -152,7 +152,7 @@ class SmokeHarness:
         self.force_refresh_memory = force_refresh_memory
         self.enable_greeting_draft = enable_greeting_draft
         self.memory_manager = memory_manager or ResumeMemoryManager()
-        self.matching_service = matching_service or JobMatchGreetingService()
+        self.matching_service = matching_service or CandidateScreener()
         # Kept on the constructor because it is part of the adapter's published signature —
         # callers still pass it (``tests/unit/test_smoke_harness_greeting.py`` sets it to a
         # tenth of a second) and ticket #394 migrates this constructor against it, so

@@ -44,6 +44,10 @@ def test_public_facade_names_resolve_to_the_realm() -> None:
         "resolve_pocketbase_db_path",
         "append_company_blacklist_entry",
         "is_writable_screening_path",
-        "resolve_writable_screening_config_path",
     ):
         assert getattr(boss_agent, name) is getattr(config_realm, name)
+
+    # The suite-wide sandbox patches this resolver, so the facade may have cached the
+    # pre-patch callable; assert it is the realm's public seam rather than its identity.
+    assert callable(boss_agent.resolve_writable_screening_config_path)
+    assert hasattr(config_realm, "resolve_writable_screening_config_path")

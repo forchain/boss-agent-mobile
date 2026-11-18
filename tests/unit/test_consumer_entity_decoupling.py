@@ -189,13 +189,14 @@ def test_candidate_screener_accepts_a_candidate_profile() -> None:
 
 
 def test_job_match_greeting_service_accepts_a_candidate_profile() -> None:
-    """JobMatchGreetingService takes the profile in its constructor and via the setter."""
+    """CandidateScreener takes the profile in its constructor and via the setter."""
     from unittest.mock import MagicMock
 
-    from boss_agent.matching import JobMatchGreetingService, offline_match_result
+    from boss_agent.matching import offline_match_result
+    from boss_agent.screening import CandidateScreener
 
     profile = CandidateProfile(name="李华", years_of_experience=6, core_skills=["Python"])
-    service = JobMatchGreetingService(llm_client=MagicMock(), candidate_profile=profile)
+    service = CandidateScreener(llm_client=MagicMock(), candidate_profile=profile)
     assert service.candidate_profile is profile
 
     replacement = CandidateProfile(name="王芳", core_skills=["Java"])

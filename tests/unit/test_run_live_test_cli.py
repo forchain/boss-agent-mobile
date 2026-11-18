@@ -20,7 +20,7 @@ through the shared harness, and the candidate screener is handed a stub LLM clie
 fast tier never reaches an endpoint.
 
 Where the seams are: the runner resolves its own preset and device session, so it still
-constructs its own ``ResumeMemoryManager`` and ``JobMatchGreetingService`` and the tests
+constructs its own ``ResumeMemoryManager`` and ``CandidateScreener`` and the tests
 still patch those on the script module. The engine composition — ``JobFeedPipeline`` plus the
 screener that carries this run's matching service — moved to ``boss_agent.feed_verification``
 in the #391 review, so those two patches moved with it. That is the point of the move: the
@@ -37,7 +37,6 @@ from _feed_harness import ScriptedFeed, _card, _detail_page, _posting, script_pa
 from boss_agent.enums import AuthStatus, JobRecordStatus, TargetAction
 from boss_agent.feed_pipeline import FeedStreamResult, JobFeedPipeline
 from boss_agent.job_entities import JobPosting
-from boss_agent.matching import JobMatchGreetingService
 from boss_agent.memory import StructuredCandidateProfile
 from boss_agent.screening import CandidateScreener, JobVerdictStage
 
@@ -45,7 +44,7 @@ from boss_agent.screening import CandidateScreener, JobVerdictStage
 # and must still be able to reach the real classes through them.
 _REAL_PIPELINE = JobFeedPipeline
 _REAL_SCREENER = CandidateScreener
-_REAL_GREETING = JobMatchGreetingService
+_REAL_GREETING = CandidateScreener
 
 POSTING_TITLE = "资深 Python / Android 自动化专家"
 POSTING_COMPANY = "北京智联前沿科技有限公司"
@@ -128,7 +127,7 @@ def _run(
         patch.object(runner, "ResumeMemoryManager", return_value=memory),
         patch("boss_agent.feed_verification.JobFeedPipeline", side_effect=_compose_pipeline),
         patch("boss_agent.feed_verification.CandidateScreener") as screener_cls,
-        patch.object(runner, "JobMatchGreetingService") as greeting_cls,
+        patch.object(runner, "CandidateScreener") as greeting_cls,
     ):
         screener_cls.side_effect = lambda **kw: _REAL_SCREENER(llm_client=verdict, **kw)
         greeting_cls.side_effect = lambda **kw: _REAL_GREETING(llm_client=stub_llm(), **kw)

@@ -1,7 +1,7 @@
 """
 tests.unit.test_matching
 ========================
-Unit tests for JobMatchGreetingService with search filter, tags, and digest injection,
+Unit tests for CandidateScreener with search filter, tags, and digest injection,
 verifying education fit (Master's candidate matching Bachelor's JD with Master's filter/tags).
 """
 
@@ -10,9 +10,9 @@ from unittest.mock import MagicMock
 from boss_agent.candidate_entities import CandidateProfile
 from boss_agent.job_entities import JobPosting
 from boss_agent.matching import (
-    JobMatchGreetingService,
     format_search_filter,
 )
+from boss_agent.screening import CandidateScreener
 from boss_agent.search_entities import FilterConfig
 
 
@@ -111,7 +111,7 @@ def test_master_candidate_bachelor_jd_matching_with_search_filter_and_tags():
         search_filter={"education": "硕士", "salary": "5万元以上"},
     )
 
-    service = JobMatchGreetingService(llm_client=mock_llm, candidate_profile=profile)
+    service = CandidateScreener(llm_client=mock_llm, candidate_profile=profile)
     result = service.evaluate_and_draft_greeting(job=job)
 
     assert result.match_score == 95
@@ -164,7 +164,7 @@ def test_refine_with_critique_includes_search_filter_and_tags_context():
         search_filter={"education": "硕士"},
     )
 
-    service = JobMatchGreetingService(llm_client=mock_llm)
+    service = CandidateScreener(llm_client=mock_llm)
     current_greeting = "张总您好,幸会!看到贵司在招Agent工程师，我有丰富经验。"
     critique = "请自然体现我的硕士专业背景，突出学术与工程结合的优势。"
 
@@ -218,7 +218,7 @@ def test_job_match_prompt_guidance_for_master_in_jd_text():
         education=[{"school": "沙迦美国大学", "degree": "硕士", "major": "计算机工程"}],
     )
 
-    service = JobMatchGreetingService(llm_client=mock_llm, candidate_profile=profile)
+    service = CandidateScreener(llm_client=mock_llm, candidate_profile=profile)
     res = service.evaluate_and_draft_greeting(job=job)
 
     assert res.match_score == 88
@@ -260,7 +260,7 @@ def test_evaluate_match_script_preserves_tags_and_digest(monkeypatch):
         "search_filter": {"education": "硕士"},
     }
 
-    # Test via importing main and intercepting JobMatchGreetingService
+    # Test via importing main and intercepting CandidateScreener
     from unittest.mock import patch
 
     import scripts.evaluate_match as eval_script
@@ -282,7 +282,7 @@ def test_evaluate_match_script_preserves_tags_and_digest(monkeypatch):
     monkeypatch.setattr(
         sys, "argv", ["evaluate_match.py", "--job", json.dumps(job_data, ensure_ascii=False)]
     )
-    with patch.object(JobMatchGreetingService, "evaluate_and_draft_greeting", fake_evaluate):
+    with patch.object(CandidateScreener, "evaluate_and_draft_greeting", fake_evaluate):
         eval_script.main()
 
     assert captured_job is not None

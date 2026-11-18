@@ -1,7 +1,7 @@
 """
 tests.unit.test_job_matching
 ============================
-Unit tests for JobMatchGreetingService and MatchGreetingResult.
+Unit tests for CandidateScreener and MatchGreetingResult.
 """
 
 from unittest.mock import MagicMock
@@ -9,10 +9,10 @@ from unittest.mock import MagicMock
 from boss_agent.candidate_entities import CandidateProfile
 from boss_agent.job_entities import JobPosting
 from boss_agent.matching import (
-    JobMatchGreetingService,
     MatchGreetingResult,
     offline_match_result,
 )
+from boss_agent.screening import CandidateScreener
 
 
 def test_match_greeting_result_serialization():
@@ -39,7 +39,7 @@ def test_job_match_greeting_service_evaluation():
         "greeting_message": "您好！我对贵司职位非常感兴趣，具备丰富的大模型Agent项目落地经验。",
     }
 
-    service = JobMatchGreetingService(llm_client=mock_llm)
+    service = CandidateScreener(llm_client=mock_llm)
     profile = CandidateProfile(
         name="张三",
         years_of_experience=6,
@@ -64,7 +64,7 @@ def test_job_match_greeting_service_fallback_on_error():
     mock_llm = MagicMock()
     mock_llm.chat_completion_json.side_effect = RuntimeError("API error")
 
-    service = JobMatchGreetingService(llm_client=mock_llm)
+    service = CandidateScreener(llm_client=mock_llm)
     profile = CandidateProfile(name="李四")
     job = JobPosting(
         title="Python 后端",
@@ -80,7 +80,7 @@ def test_job_match_greeting_service_fallback_on_error():
 
 def test_persistent_candidate_profile_context(monkeypatch):
     monkeypatch.setattr(
-        "boss_agent.matching.load_greeting_prompt",
+        "boss_agent.screening.load_greeting_prompt",
         lambda: "【打招呼破冰铁律与原则】\n1. 【严禁模板化套话】",
     )
     mock_llm = MagicMock()
@@ -99,7 +99,7 @@ def test_persistent_candidate_profile_context(monkeypatch):
     )
 
     # Initialize service with persistent candidate profile
-    service = JobMatchGreetingService(llm_client=mock_llm, candidate_profile=profile)
+    service = CandidateScreener(llm_client=mock_llm, candidate_profile=profile)
     job = JobPosting(
         title="移动端 Agent 架构师",
         company_name="智能终端科技",
@@ -170,7 +170,7 @@ def test_full_context_unabbreviated_matching():
         raw_resume_text="【完整原始简历全文】李高级拥有十年高性能架构设计经验，主导微服务架构与大模型落地...",
     )
 
-    service = JobMatchGreetingService(llm_client=mock_llm, candidate_profile=full_profile)
+    service = CandidateScreener(llm_client=mock_llm, candidate_profile=full_profile)
     job = JobPosting(
         title="首席分布式架构师",
         company_name="智能前沿科技",
@@ -201,7 +201,7 @@ def test_job_match_greeting_service_requires_full_substantive_jd():
     import pytest
 
     mock_llm = MagicMock()
-    service = JobMatchGreetingService(llm_client=mock_llm)
+    service = CandidateScreener(llm_client=mock_llm)
 
     # 1. Completely empty JD
     job_empty = JobPosting(
@@ -268,7 +268,7 @@ def test_evaluate_job_reports_missing_jd_without_crashing():
 
 
 def test_job_match_greeting_service_default_client_uses_realm(monkeypatch):
-    """When no client is passed, JobMatchGreetingService uses create_llm_client with realm configuration."""
+    """When no client is passed, CandidateScreener uses create_llm_client with realm configuration."""
     from boss_agent import config_realm
 
     for _key, names in config_realm.ENV_OVERRIDES:
@@ -277,9 +277,9 @@ def test_job_match_greeting_service_default_client_uses_realm(monkeypatch):
     monkeypatch.setenv("LLM_MODEL", "matching-realm-model")
     config_realm.invalidate_cache()
 
-    service = JobMatchGreetingService()
-    assert service.llm_client is not None
-    assert service.llm_client.config.model == "matching-realm-model"
+    service = CandidateScreener()
+    client = service._ensure_llm_client()
+    assert client.config.model == "matching-realm-model"
 
 
 def test_parse_recruiter_title_and_format_prefix():
@@ -391,7 +391,7 @@ def test_evaluate_and_draft_greeting_enforces_dynamic_salutation():
         "greeting_message": "您好！看到贵司正在招聘AI Agent专家，我具备深入的落地经验。",
     }
 
-    service = JobMatchGreetingService(llm_client=mock_llm)
+    service = CandidateScreener(llm_client=mock_llm)
     job = JobPosting(
         title="AI Agent 专家",
         company_name="智元创新",
@@ -421,7 +421,7 @@ def test_evaluate_and_draft_greeting_fallback_includes_dynamic_salutation():
     mock_llm = MagicMock()
     mock_llm.chat_completion_json.side_effect = RuntimeError("API down")
 
-    service = JobMatchGreetingService(llm_client=mock_llm)
+    service = CandidateScreener(llm_client=mock_llm)
     job = JobPosting(
         title="Python 高级开发",
         company_name="智能未来",
@@ -441,7 +441,7 @@ def test_evaluate_and_draft_greeting_fallback_includes_dynamic_salutation():
 
 def test_offline_fallback_reads_the_jd_rather_than_reporting_a_constant():
     """A JD that names more requirements must not score the same as one that names none."""
-    service = JobMatchGreetingService(llm_client=MagicMock())
+    service = CandidateScreener(llm_client=MagicMock())
     service.llm_client.chat_completion_json.side_effect = RuntimeError("API down")
 
     rich = service.evaluate_and_draft_greeting(

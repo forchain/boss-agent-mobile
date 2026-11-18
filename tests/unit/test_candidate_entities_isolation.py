@@ -287,7 +287,7 @@ def test_a_symbol_whose_module_cannot_import_raises_attribute_error() -> None:
         sys.meta_path.insert(0, blocker)
         try:
             with pytest.raises(AttributeError):
-                boss_agent.JobMatchGreetingService  # noqa: B018 - the access is the assertion
+                boss_agent.MatchGreetingResult  # noqa: B018 - the access is the assertion
 
             # An unrelated export from an untouched module still resolves.
             assert boss_agent.CandidateProfile is not None

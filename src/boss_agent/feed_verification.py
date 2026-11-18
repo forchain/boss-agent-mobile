@@ -46,7 +46,7 @@ from .async_bridge import run_sync
 from .enums import TargetAction
 from .feed_pipeline import FeedStreamConfig, FeedStreamResult, JobFeedPipeline
 from .job_entities import JobPosting
-from .matching import JobMatchGreetingService, MatchGreetingResult
+from .matching import MatchGreetingResult
 from .memory import ResumeMemoryManager, StructuredCandidateProfile
 from .screening import CandidateScreener
 from .screening_policy import ScreeningPolicy
@@ -94,7 +94,7 @@ def load_candidate_profile(
     memory_manager: ResumeMemoryManager,
     resume_file: str | Path | None,
     force_refresh_memory: bool,
-    matching_service: JobMatchGreetingService | None = None,
+    matching_service: CandidateScreener | None = None,
 ) -> StructuredCandidateProfile | None:
     """Load the profile the run screens against, or ``None`` when there is none.
 
@@ -138,7 +138,7 @@ def load_candidate_profile(
 def build_verification_pipeline(
     driver: Any,
     *,
-    matching_service: JobMatchGreetingService,
+    matching_service: CandidateScreener,
     log: Any = console_log_sink,
 ) -> JobFeedPipeline:
     """Compose the engine for one verification run: no store, nothing persisted.
@@ -262,7 +262,7 @@ def run_verification_feed(
 
 def render_greeting_match_card(
     *,
-    matching_service: JobMatchGreetingService,
+    matching_service: CandidateScreener,
     posting: JobPosting,
     result: FeedStreamResult,
     candidate_profile: StructuredCandidateProfile | None,

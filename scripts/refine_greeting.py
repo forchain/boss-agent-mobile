@@ -19,7 +19,7 @@ sys.path.insert(0, str(root_dir / "src"))
 from boss_agent.candidate_entities import CandidateProfile  # noqa: E402
 from boss_agent.job_entities import JobPosting  # noqa: E402
 from boss_agent.llm_config import create_llm_client, load_llm_config  # noqa: E402
-from boss_agent.matching import JobMatchGreetingService  # noqa: E402
+from boss_agent.screening import CandidateScreener  # noqa: E402
 from droid_agent_core.llm import LLMConfig, LLMDecisionClient  # noqa: E402
 
 
@@ -167,7 +167,7 @@ def main() -> None:
             sys.stderr.write(f"Warning: Failed to parse history JSON ({e})\n")
 
     llm_client = build_llm_client(args.llm_config)
-    service = JobMatchGreetingService(
+    service = CandidateScreener(
         llm_client=llm_client,
         candidate_profile=candidate_profile,
     )
