@@ -33,6 +33,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DASHBOARD_SH = REPO_ROOT / "dashboard.sh"
+RUNNER_LIB = REPO_ROOT / "runner_lib.sh"
 BASH = shutil.which("bash") or "/bin/bash"
 ENV_BIN = shutil.which("env") or "/usr/bin/env"
 
@@ -92,6 +93,9 @@ def _resolve_version_env(cwd: Path, env_pairs: list[str]) -> tuple[str, str]:
             # Same strictness as the real script, so a regression that trips `set -u`
             # or `set -e` fails here exactly as it would on a developer's machine.
             "set -euo pipefail",
+            # The sniff is the library's (`runner_version_sniff`), so the bare-hash guard
+            # is the same rule the server resolver applies; source it as the runner does.
+            f'source "{RUNNER_LIB}"',
             *body,
             "resolve_version_env",
             'printf "%s\\n%s\\n" "${APP_VERSION-}" "${PUBLIC_APP_VERSION-}"',

@@ -992,6 +992,40 @@ runner_service_restart() {
 }
 
 # --------------------------------------------------------------------------- #
+# Version sniffing
+# --------------------------------------------------------------------------- #
+
+#: What an install with no version of its own renders — the Version Resolution Chain's last
+#: resort. This is the shell's declaration of the same value as
+#: `web/src/lib/server/version.ts:DEFAULT_APP_VERSION` and
+#: `scripts/sync_version.py:FALLBACK_VERSION`; tests/e2e/test_version_resolution_chain.py
+#: pins all three equal, so the shell cannot drift from the two consumers.
+RUNNER_VERSION_FALLBACK="v0.1"
+
+#: The shape of a commit hash rather than a version. `git describe --tags --always` exits 0
+#: and prints a bare abbreviated hash when no tag is reachable, so the output's *shape* is
+#: the only signal that separates "no version here" from "here is your version". Mirrors
+#: `BARE_COMMIT_HASH` in web/src/lib/server/gitDescribe.ts.
+RUNNER_BARE_COMMIT_HASH='^[0-9a-fA-F]{7,64}$'
+
+# The live checkout's version tag, or empty.
+#
+# A bare commit hash is not a version: exporting one as APP_VERSION would outrank the
+# Version Manifest with a raw hash (#422). Every failure — no git binary, not a repository,
+# a shallow clone, empty output — degrades to empty, leaving the Web build to fall through
+# to the manifest and then RUNNER_VERSION_FALLBACK.
+runner_version_sniff() {
+    local TAG
+    TAG="$(git describe --tags --always 2>/dev/null || true)"
+    TAG="$(printf '%s' "${TAG}" | tr -d '[:space:]')"
+    if [[ -z "${TAG}" ]] || [[ "${TAG}" =~ ${RUNNER_BARE_COMMIT_HASH} ]]; then
+        echo ""
+        return 0
+    fi
+    echo "${TAG}"
+}
+
+# --------------------------------------------------------------------------- #
 # Configuration reads
 # --------------------------------------------------------------------------- #
 

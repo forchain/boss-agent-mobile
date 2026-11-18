@@ -102,10 +102,10 @@ resolve_version_env() {
     # operator's value into whichever one they left unset.
     #
     # With neither set we sniff the live checkout's git tag and publish it under both
-    # names, so both halves of the resolver agree. Every `git describe` failure -- no
-    # git binary, not a repo, shallow clone, empty output -- degrades to empty through
-    # `|| true` (never tripping `set -euo pipefail`, line 26), leaving the server
-    # resolver to fall through to version.json and then the v0.1 default.
+    # names, so both halves of the resolver agree. The sniff is the library's
+    # `runner_version_sniff`, which rejects a bare commit hash (untagged or shallow
+    # checkout) and degrades every failure to empty, leaving the server resolver to fall
+    # through to version.json and then the shared fallback.
     #
     # Exported from a function rather than inlined in `cmd_start` so the E2E suite can
     # exercise this exact block (`tests/e2e/test_dashboard_version_env.py`) without
@@ -113,7 +113,7 @@ resolve_version_env() {
     # shell, so the launch sites below are unchanged.
     local sniffed
     if [[ -z "${APP_VERSION:-}" && -z "${PUBLIC_APP_VERSION:-}" ]]; then
-        sniffed="$(git describe --tags --always 2>/dev/null || true)"
+        sniffed="$(runner_version_sniff)"
         export APP_VERSION="${sniffed}"
         export PUBLIC_APP_VERSION="${sniffed}"
     elif [[ -z "${APP_VERSION:-}" ]]; then
