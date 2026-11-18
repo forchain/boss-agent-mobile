@@ -19,12 +19,12 @@ import pytest
 from boss_agent.adapters.memory.candidate_memory_store import InMemoryCandidateMemoryStore
 from boss_agent.adapters.memory.saved_search_store import InMemorySavedSearchStore
 from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
+from boss_agent.adapters.outbound.config.initial_searches import load_initial_searches
 from boss_agent.adapters.outbound.pocketbase.candidate_memory_store import (
     PocketBaseCandidateMemoryStore,
 )
 from boss_agent.adapters.outbound.pocketbase.collection_schema import SAVED_SEARCH_MAX_JOBS
 from boss_agent.adapters.outbound.pocketbase.pocketbase_adapter import PocketBaseTaskBroker
-from boss_agent.adapters.outbound.pocketbase.provisioner import DEFAULT_INITIAL_SEARCHES
 from boss_agent.adapters.outbound.pocketbase.saved_search_store import (
     PocketBaseSavedSearchStore,
     resolve_saved_search_store,
@@ -670,17 +670,13 @@ async def test_an_empty_store_still_yields_a_usable_default_search(
 
 @pytest.mark.asyncio
 async def test_the_in_memory_store_hydrates_raw_record_fixtures() -> None:
-    """``DEFAULT_INITIAL_SEARCHES`` is raw records, so the store has to hydrate them.
-
-    ``resolve_saved_search_store(prefer_database=False)`` hands over exactly that dict;
-    taking it verbatim would leave ``list_saved_searches`` handing back dicts to
-    consumers that expect the domain type.
-    """
-    store = InMemorySavedSearchStore(DEFAULT_INITIAL_SEARCHES)
+    """Configuration Realm seed presets are raw records, so the store has to hydrate them."""
+    initial_searches = load_initial_searches()
+    store = InMemorySavedSearchStore(initial_searches)
 
     listed = await store.list_saved_searches()
 
-    assert {s.id for s in listed} == set(DEFAULT_INITIAL_SEARCHES)
+    assert {s.id for s in listed} == set(initial_searches)
     assert all(isinstance(s, SavedSearch) for s in listed)
     default = await store.get_saved_search("default_agent_search")
     assert default is not None

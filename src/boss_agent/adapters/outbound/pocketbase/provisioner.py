@@ -28,8 +28,21 @@ _src_root = str(Path(__file__).resolve().parents[4])
 if _src_root not in sys.path:
     sys.path.insert(0, _src_root)
 
+from boss_agent.adapters.outbound.config.initial_searches import (  # noqa: E402
+    load_initial_searches,
+)
 from boss_agent.adapters.outbound.config.settings import resolve_pocketbase_db_path  # noqa: E402
 from boss_agent.core.shared.errors import TransportError, ValidationError  # noqa: E402
+from boss_agent.core.shared.identifier_helpers import (  # noqa: E402
+    clean_job_title,
+    is_likely_location,
+    resolve_headhunter_channel,
+    split_recruiter_name,
+)
+from boss_agent.core.shared.keyword_constants import (  # noqa: E402
+    KNOWN_CITIES,
+    RECRUITER_TITLE_KEYWORDS,
+)
 
 from .collection_schema import (  # noqa: E402
     COLLECTIONS,
@@ -79,63 +92,6 @@ JOB_DESCRIPTION_FIELD: dict[str, Any] = {
     "required": False,
     **LONG_TEXT_FIELD_OPTIONS,
     "options": dict(LONG_TEXT_FIELD_OPTIONS),
-}
-
-
-DEFAULT_INITIAL_SEARCHES: dict[str, dict[str, Any]] = {
-    "default_agent_search": {
-        "name": "AI Agent Default Startup Search",
-        "description": "Default search query targeting Agent roles across Online Education, Gaming, and AI industries",
-        "keyword": "agent",
-        "enable_search": True,
-        "enable_filter": True,
-        "filter": {
-            "education": "硕士",
-            "salary": "5万元以上",
-            "experience": "10年以上",
-            "activity": "今日活跃",
-            "company_scales": [
-                "100-499人",
-                "500-999人",
-                "1000-9999人",
-                "10000人以上",
-            ],
-            "industries": [
-                "在线教育",
-                "游戏",
-                "人工智能",
-            ],
-        },
-        "cron_expression": "",
-        "is_enabled": False,
-        "target_task_type": "AUTO_APPLY",
-    },
-    "ai_llm_engineer": {
-        "name": "AI & LLM Engineer Search",
-        "description": "Search targeting Large Language Model and AI algorithm engineering positions",
-        "keyword": "大模型算法",
-        "enable_search": True,
-        "enable_filter": True,
-        "filter": {
-            "education": "硕士",
-            "salary": "5万元以上",
-            "experience": "5-10年",
-            "activity": "今日活跃",
-            "company_scales": [
-                "500-999人",
-                "1000-9999人",
-                "10000人以上",
-            ],
-            "industries": [
-                "人工智能",
-                "游戏",
-                "在线教育",
-            ],
-        },
-        "cron_expression": "",
-        "is_enabled": False,
-        "target_task_type": "AUTO_APPLY",
-    },
 }
 
 
@@ -225,7 +181,7 @@ def _seed_saved_searches(
     if cursor.fetchone()[0]:
         return
 
-    seeds = initial_searches if initial_searches is not None else DEFAULT_INITIAL_SEARCHES
+    seeds = initial_searches if initial_searches is not None else load_initial_searches()
     columns = [
         validate_identifier(spec.name)
         for spec in SAVED_SEARCHES.fields
@@ -623,7 +579,7 @@ def provision_remote_pocketbase(
     if check_records.ok:
         total_items = check_records.json().get("totalItems", 0)
         if total_items == 0:
-            seeds = initial_searches if initial_searches is not None else DEFAULT_INITIAL_SEARCHES
+            seeds = initial_searches if initial_searches is not None else load_initial_searches()
             for s_id, s_data in seeds.items():
                 record_payload = wire_payload(SAVED_SEARCHES, s_data)
                 record_payload["id"] = s_id
@@ -700,64 +656,33 @@ def _backfill_legacy_job_records(cursor: sqlite3.Cursor) -> None:
                 reqs_json,
             ) = row
 
-            # 1. Clean title
-            clean_title = (title or "").strip()
-            while True:
-                t = re.sub(r"(?:\s*&@\s*|\s*&+\s*|\s*@+\s*)+$", "", clean_title).strip()
-                t = re.sub(r"[\s&@]+$", "", t).strip()
-                if t == clean_title:
-                    break
-                clean_title = t
+            # 1. Clean title via Shared Kernel helper
+            clean_title = clean_job_title(title or "")
 
-            # 2. Repair recruiter info and location
+            # 2. Repair recruiter info and location via Shared Kernel helpers & canonical city set
             rec = (rec_name or "").strip()
             rtitle = (rec_title or "").strip()
             rloc = (loc or "").strip()
 
             # If location currently holds recruiter title
-            if rloc and any(
-                kw in rloc
-                for kw in ("猎头", "顾问", "专员", "专家", "HR", "经理", "总监", "助理", "主管")
-            ):
+            if rloc and any(kw in rloc for kw in RECRUITER_TITLE_KEYWORDS):
                 if not rtitle:
                     rtitle = rloc
                 rloc = ""
 
-            # If recruiter name contains "·"
-            if any(sep in rec for sep in ("·", "•", "・")):
-                parts = [p.strip() for p in re.split(r"[·•・]", rec, maxsplit=1)]
-                rec = parts[0].rstrip("·•・").strip()
-                if not rtitle and len(parts) > 1 and parts[1]:
-                    rtitle = parts[1].strip()
-            else:
-                rec = rec.rstrip("·•・").strip()
+            rec, split_title = split_recruiter_name(rec)
+            if not rtitle and split_title:
+                rtitle = split_title
 
-            # If rtitle has trailing city attached
+            # If rtitle has trailing city/district attached
             if rtitle and " " in rtitle:
                 sub_toks = rtitle.rsplit(" ", 1)
-                if (
-                    sub_toks[1]
-                    in (
-                        "上海",
-                        "北京",
-                        "深圳",
-                        "广州",
-                        "杭州",
-                        "成都",
-                        "武汉",
-                        "南京",
-                        "苏州",
-                        "西安",
-                        "海外",
-                    )
-                    or sub_toks[1].endswith("市")
-                    or sub_toks[1].endswith("区")
-                ):
+                if sub_toks[1] in KNOWN_CITIES or is_likely_location(sub_toks[1]):
                     rtitle = sub_toks[0].strip()
                     if not rloc:
                         rloc = sub_toks[1].strip()
 
-            new_is_hh = "猎头" in rtitle or "猎头" in rec
+            new_is_hh = resolve_headhunter_channel(False, rec, rtitle)
 
             # 3. Backfill facets from requirements
             new_scale = scale or ""
@@ -796,24 +721,7 @@ def _backfill_legacy_job_records(cursor: sqlite3.Cursor) -> None:
                 ):
                     if not new_ind:
                         new_ind = r_str
-                elif (
-                    r_str
-                    in (
-                        "上海",
-                        "北京",
-                        "深圳",
-                        "广州",
-                        "杭州",
-                        "成都",
-                        "武汉",
-                        "南京",
-                        "苏州",
-                        "西安",
-                        "海外",
-                    )
-                    or r_str.endswith("市")
-                    or r_str.endswith("区")
-                ):
+                elif r_str in KNOWN_CITIES or is_likely_location(r_str):
                     if not new_loc:
                         new_loc = r_str
                 elif r_str != rtitle and r_str != rec and not r_str.startswith("负责"):

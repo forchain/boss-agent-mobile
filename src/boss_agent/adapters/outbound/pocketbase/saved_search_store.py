@@ -189,10 +189,10 @@ def resolve_saved_search_store(
     the asymmetry: ``InMemorySavedSearchStore()`` composes empty (the in-memory broker
     relies on it), and the seeding is an explicit choice here.
     """
-    from .provisioner import DEFAULT_INITIAL_SEARCHES
+    from boss_agent.adapters.outbound.config.initial_searches import load_initial_searches
 
     if not prefer_database:
-        return InMemorySavedSearchStore(DEFAULT_INITIAL_SEARCHES)
+        return InMemorySavedSearchStore(load_initial_searches())
 
     auth_token = os.getenv("POCKETBASE_AUTH_TOKEN")
 
