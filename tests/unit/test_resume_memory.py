@@ -244,8 +244,8 @@ def test_unabbreviated_work_and_project_experiences_serialization():
 
 
 def test_sqlite_single_source_roundtrip(tmp_path, monkeypatch):
+    from boss_agent.adapters.outbound.pocketbase.provisioner import provision_pocketbase_sqlite
     from boss_agent.broker import PocketBaseBroker
-    from boss_agent.broker.provisioner import provision_pocketbase_sqlite
 
     db_file = tmp_path / "data.db"
     monkeypatch.setenv("PB_DB_PATH", str(db_file))

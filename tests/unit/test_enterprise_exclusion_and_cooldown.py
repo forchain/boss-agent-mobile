@@ -15,7 +15,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from _card_fixtures import located
 
-from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker, PocketBaseTaskBroker
+from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
+from boss_agent.adapters.outbound.pocketbase.pocketbase_adapter import PocketBaseTaskBroker
 from boss_agent.core.job.domain.job_entities import JobCardBrief
 from boss_agent.core.shared.enums import ChatButtonState
 from boss_agent.core.shared.identifier_helpers import is_communication_expired
@@ -847,7 +848,7 @@ async def test_applied_companies_walk_stops_at_the_availability_backstop(monkeyp
     The backstop is an availability guard, not a semantic cap: it protects a run from a
     pathological collection and says so in the log rather than silently truncating.
     """
-    from boss_agent import job_store as job_store_module
+    from boss_agent.adapters.outbound.pocketbase import job_store as job_store_module
 
     monkeypatch.setattr(job_store_module, "APPLIED_POOL_PAGE_SIZE", 1)
     monkeypatch.setattr(job_store_module, "APPLIED_POOL_MAX_PAGES", 2)

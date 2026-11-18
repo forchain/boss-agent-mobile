@@ -30,6 +30,7 @@ from _feed_harness import (
     _posting,
 )
 
+from boss_agent.adapters.memory.job_store import InMemoryJobRecordStore
 from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
 from boss_agent.core.job.use_cases.feed_pipeline import FeedStreamConfig
 from boss_agent.core.job.use_cases.screening import CandidateScreener
@@ -40,7 +41,6 @@ from boss_agent.core.shared.enums import (
     TargetAction,
 )
 from boss_agent.core.shared.keyword_constants import GREETING_SOURCE_AGENT
-from boss_agent.job_store import InMemoryJobRecordStore
 
 SHORT_JD = "岗位职责：负责 Agent 平台相关工作。"  # under MIN_JD_CHARS
 TRUNCATED_JD = GOOD_JD + "\n查看更多"

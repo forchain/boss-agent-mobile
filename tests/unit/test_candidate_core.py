@@ -16,7 +16,7 @@ import ast
 import asyncio
 from pathlib import Path
 
-from boss_agent.candidate_memory_store import InMemoryCandidateMemoryStore
+from boss_agent.adapters.memory.candidate_memory_store import InMemoryCandidateMemoryStore
 from boss_agent.core.candidate.domain.candidate_profile import CandidateProfile
 from boss_agent.core.candidate.interfaces.resume_text_source import ResumeTextSource
 from boss_agent.core.candidate.use_cases.resume_lifecycle import (

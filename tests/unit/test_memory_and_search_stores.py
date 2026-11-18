@@ -16,27 +16,25 @@ from typing import Any
 
 import pytest
 
-from boss_agent.broker.collection_schema import SAVED_SEARCH_MAX_JOBS
-from boss_agent.broker.pocketbase_adapter import (
-    BaseTaskBroker,
-    InMemoryTaskBroker,
-    PocketBaseTaskBroker,
-)
-from boss_agent.broker.provisioner import DEFAULT_INITIAL_SEARCHES
-from boss_agent.candidate_memory_store import (
-    InMemoryCandidateMemoryStore,
+from boss_agent.adapters.memory.candidate_memory_store import InMemoryCandidateMemoryStore
+from boss_agent.adapters.memory.saved_search_store import InMemorySavedSearchStore
+from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
+from boss_agent.adapters.outbound.pocketbase.candidate_memory_store import (
     PocketBaseCandidateMemoryStore,
+)
+from boss_agent.adapters.outbound.pocketbase.collection_schema import SAVED_SEARCH_MAX_JOBS
+from boss_agent.adapters.outbound.pocketbase.pocketbase_adapter import PocketBaseTaskBroker
+from boss_agent.adapters.outbound.pocketbase.provisioner import DEFAULT_INITIAL_SEARCHES
+from boss_agent.adapters.outbound.pocketbase.saved_search_store import (
+    PocketBaseSavedSearchStore,
+    resolve_saved_search_store,
 )
 from boss_agent.core.candidate.interfaces.candidate_memory_store import CandidateMemoryStore
 from boss_agent.core.search.domain.models import FilterConfig, SavedSearch, SearchConfig
 from boss_agent.core.search.interfaces.store import SavedSearchStore
 from boss_agent.core.shared.enums import TargetTaskType
 from boss_agent.core.shared.errors import TransportError
-from boss_agent.saved_search_store import (
-    InMemorySavedSearchStore,
-    PocketBaseSavedSearchStore,
-    resolve_saved_search_store,
-)
+from boss_agent.core.task.interfaces.broker import BaseTaskBroker
 
 
 class FakeResponse:
@@ -543,7 +541,7 @@ def test_the_fallback_reads_a_local_database(tmp_path: Path) -> None:
     conn.commit()
     conn.close()
 
-    from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker  # noqa: F401
+    from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker  # noqa: F401
 
     store = PocketBaseCandidateMemoryStore(
         base_url="http://unreachable.invalid",
@@ -747,8 +745,12 @@ def test_the_broker_and_the_resolver_build_their_auth_header_in_one_place(
         return {"Content-Type": "application/json"}
 
     monkeypatch.setenv("POCKETBASE_AUTH_TOKEN", "tok-123")
-    monkeypatch.setattr("boss_agent.broker.pocketbase_adapter.pocketbase_headers", spy)
-    monkeypatch.setattr("boss_agent.saved_search_store.pocketbase_headers", spy)
+    monkeypatch.setattr(
+        "boss_agent.adapters.outbound.pocketbase.pocketbase_adapter.pocketbase_headers", spy
+    )
+    monkeypatch.setattr(
+        "boss_agent.adapters.outbound.pocketbase.saved_search_store.pocketbase_headers", spy
+    )
 
     broker = PocketBaseTaskBroker(session=hermetic_pocketbase)
     broker._headers()

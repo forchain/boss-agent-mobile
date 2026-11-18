@@ -661,7 +661,8 @@ FORBIDDEN_IN_CLOSURE = {
     "boss_agent.memory",
     "boss_agent.llm_config",
     "boss_agent.graph",
-    "boss_agent.candidate_memory_store",
+    "boss_agent.adapters.memory.candidate_memory_store",
+    "boss_agent.adapters.outbound.pocketbase.candidate_memory_store",
 }
 
 PACKAGE_ROOT = REPO_ROOT / "src" / "boss_agent"

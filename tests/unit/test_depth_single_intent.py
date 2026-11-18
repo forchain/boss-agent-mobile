@@ -26,6 +26,7 @@ import pytest
 from _card_fixtures import located  # noqa: F401
 from _feed_harness import GOOD_JD, ScriptedFeed, _card, _detail_page, _pipeline, _posting
 
+from boss_agent.adapters.memory.job_store import InMemoryJobRecordStore
 from boss_agent.core.job.domain.feed_stream import FeedStreamConfig
 from boss_agent.core.job.use_cases.screening import CandidateScreener
 from boss_agent.core.search.domain.launch import (
@@ -40,7 +41,6 @@ from boss_agent.core.shared.enums import (
     DEPTH_LEGACY_PAIR,
     DEPTH_UNSTATED,
 )
-from boss_agent.job_store import InMemoryJobRecordStore
 
 #: Every key a payload has ever used to answer the depth question, across every builder
 #: this repo has shipped. A new payload must answer it exactly once.

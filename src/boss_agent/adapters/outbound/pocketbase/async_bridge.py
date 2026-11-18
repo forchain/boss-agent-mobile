@@ -1,6 +1,6 @@
 """
-boss_agent.async_bridge
-=======================
+boss_agent.adapters.outbound.pocketbase.async_bridge
+===================================================
 Reusable helper for synchronous-to-asynchronous bridging and broker request execution
 (Spec #303 / #307, ADR 0013).
 """
@@ -14,7 +14,7 @@ from typing import Any, TypeVar
 
 import requests
 
-from .core.shared.errors import (
+from boss_agent.core.shared.errors import (
     BrokerError,
     ConflictError,
     RecordNotFoundError,

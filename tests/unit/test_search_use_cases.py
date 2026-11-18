@@ -138,7 +138,7 @@ async def test_the_scheduler_passes_its_resolved_settings_into_the_dispatch():
     """The edge resolves once per tick and the use case never reaches for them."""
     from unittest.mock import patch
 
-    from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
+    from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
     from boss_agent.scheduler import AutomationScheduler
 
     broker = InMemoryTaskBroker()

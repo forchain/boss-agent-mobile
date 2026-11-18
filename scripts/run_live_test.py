@@ -41,7 +41,11 @@ from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
 
-from boss_agent.async_bridge import run_sync
+from boss_agent.adapters.outbound.pocketbase.async_bridge import run_sync
+from boss_agent.adapters.outbound.pocketbase.saved_search_store import (
+    missing_saved_search_message,
+    resolve_saved_search_store,
+)
 from boss_agent.config_realm import DEFAULTS
 from boss_agent.core.job.domain.feed_stream import FeedStreamResult
 from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
@@ -62,10 +66,6 @@ from boss_agent.feed_verification import (
 from boss_agent.greeting_prompt import load_greeting_prompt
 from boss_agent.llm_config import create_llm_client
 from boss_agent.memory import ResumeMemoryManager
-from boss_agent.saved_search_store import (
-    missing_saved_search_message,
-    resolve_saved_search_store,
-)
 from boss_agent.settings import load_settings
 from boss_agent.workflows import TakeoverHandler
 from droid_agent_core.driver import AppiumSession, DriverConfig

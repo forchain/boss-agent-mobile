@@ -9,8 +9,8 @@ import sqlite3
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from boss_agent.broker.collection_schema import JOB_RECORDS, pocketbase_fields
-from boss_agent.broker.provisioner import provision_sqlite_database
+from boss_agent.adapters.outbound.pocketbase.collection_schema import JOB_RECORDS, pocketbase_fields
+from boss_agent.adapters.outbound.pocketbase.provisioner import provision_sqlite_database
 from boss_agent.core.job.domain.card_parser import (
     parse_company_scale_industry,
     parse_recruiter_info,
@@ -554,7 +554,7 @@ def test_backfill_purges_unknown_company_records(tmp_path: Path):
     assert len(remaining_before_migration) == 4
 
     # Dedicated migration purges invalid records
-    from boss_agent.broker.provisioner import run_legacy_record_migration
+    from boss_agent.adapters.outbound.pocketbase.provisioner import run_legacy_record_migration
 
     assert run_legacy_record_migration(db_file) is True
 

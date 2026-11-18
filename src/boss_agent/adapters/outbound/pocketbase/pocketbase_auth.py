@@ -1,13 +1,13 @@
 """
-boss_agent.pocketbase_auth
-==========================
+boss_agent.adapters.outbound.pocketbase.pocketbase_auth
+======================================================
 The one place the PocketBase bearer header is built.
 
 The broker adapter and the SavedSearch store talk to the same PocketBase instance with
 the same credential, and the auth scheme is the one thing an upgrade changes underneath
 both of them. It lives in a leaf module with no project imports because
-``broker.pocketbase_adapter`` already imports ``saved_search_store``: the helper cannot
-sit in either without one of them importing the other for the sake of two lines.
+``pocketbase_adapter`` already imports ``saved_search_store``: the helper cannot sit in
+either without one of them importing the other for the sake of two lines.
 """
 
 from __future__ import annotations

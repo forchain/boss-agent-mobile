@@ -26,7 +26,7 @@ from _chat_triage_harness import (
     throwaway_config,
 )
 
-from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
+from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
 from boss_agent.core.chat.domain.rejection import (
     DEFAULT_REJECTION_REPLY_TEXT,
     ChatAcknowledgmentSettings,

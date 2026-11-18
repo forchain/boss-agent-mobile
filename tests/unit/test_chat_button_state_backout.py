@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from _card_fixtures import located
 
-from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
+from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
 from boss_agent.core.job.domain.job_entities import JobCardBrief
 from boss_agent.core.shared.enums import ChatButtonState
 from boss_agent.core.shared.identifier_helpers import classify_chat_button

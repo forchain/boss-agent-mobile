@@ -82,7 +82,7 @@ def any_job_store(request) -> Any:
     """
     from _job_store_harness import pocketbase_job_store
 
-    from boss_agent.job_store import InMemoryJobRecordStore
+    from boss_agent.adapters.memory.job_store import InMemoryJobRecordStore
 
     if request.param == "in_memory":
         return InMemoryJobRecordStore()

@@ -20,7 +20,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import MagicMock
 
-from boss_agent.job_store import PocketBaseJobRecordStore
+from boss_agent.adapters.outbound.pocketbase.job_store import PocketBaseJobRecordStore
 
 TODAY = datetime.now(UTC)
 YESTERDAY = TODAY - timedelta(days=1)

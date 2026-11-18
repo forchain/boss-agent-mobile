@@ -1,7 +1,7 @@
 """
-boss_agent.candidate_memory_store
-=================================
-Candidate Profile and Resume Revision persistence, behind its own repository seam.
+boss_agent.adapters.outbound.pocketbase.candidate_memory_store
+==============================================================
+PocketBase Candidate Profile and Resume Revision persistence, behind its own repository seam.
 
 ADR 0013 confined ``BaseTaskBroker`` to task lifecycle, leases and realtime logs, but
 the confinement stopped halfway: four Candidate Profile / Resume Revision verbs stayed
@@ -25,14 +25,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from boss_agent.async_bridge import execute_broker_request
 from boss_agent.core.candidate.domain.candidate_profile import CandidateProfile
 from boss_agent.core.candidate.interfaces.candidate_memory_store import CandidateMemoryStore
 from boss_agent.core.shared.errors import (
     TransportError,
 )
 
-logger = logging.getLogger("boss_agent.candidate_memory_store")
+from .async_bridge import execute_broker_request
+
+logger = logging.getLogger("boss_agent.adapters.outbound.pocketbase.candidate_memory_store")
 
 #: Cap for the legacy ``raw_summary`` mirror. PocketBase's default text field holds 5000
 #: characters, so the mirror is trimmed to fit; ``profile_document`` is the field that keeps
@@ -48,57 +49,6 @@ PROFILE_JSON_COLUMNS: tuple[str, ...] = (
     "projects",
     "target_positions",
 )
-
-
-class InMemoryCandidateMemoryStore(CandidateMemoryStore):
-    """Volatile candidate memory for tests and local development."""
-
-    def __init__(
-        self,
-        load_local_profile: bool = False,
-        initial_profiles: dict[str, dict[str, Any]] | None = None,
-    ) -> None:
-        self._profiles: dict[str, dict[str, Any]] = dict(initial_profiles or {})
-        self._revisions: dict[str, list[dict[str, Any]]] = {}
-
-    async def get_candidate_profile(self, user_id: str = "default") -> dict[str, Any] | None:
-        profile = self._profiles.get(user_id)
-        return dict(profile) if profile else None
-
-    async def save_candidate_profile(
-        self, profile_data: dict[str, Any], user_id: str = "default"
-    ) -> dict[str, Any]:
-        # Merge, like the PocketBase adapter: a save that omits a field must not wipe it.
-        # The two adapters are meant to be substitutable, and a shared contract suite is
-        # what caught that this one replaced wholesale where the other patched.
-        merged = dict(self._profiles.get(user_id) or {})
-        for key, value in profile_data.items():
-            if (
-                value is not None
-                and value != ""
-                and value != []
-                and value != {}
-                or key not in merged
-            ):
-                merged[key] = value
-        self._profiles[user_id] = merged
-        return dict(merged)
-
-    async def list_resume_revisions(self, user_id: str = "default") -> list[dict[str, Any]]:
-        revisions = self._revisions.get(user_id, [])
-        return [
-            dict(r) for r in sorted(revisions, key=lambda x: x.get("created", ""), reverse=True)
-        ]
-
-    async def create_resume_revision(
-        self, revision_data: dict[str, Any], user_id: str = "default"
-    ) -> dict[str, Any]:
-        revision = dict(revision_data)
-        revision.setdefault("id", str(uuid.uuid4())[:15])
-        revision.setdefault("user_id", user_id)
-        revision.setdefault("created", datetime.now(UTC).isoformat())
-        self._revisions.setdefault(user_id, []).append(revision)
-        return revision
 
 
 class PocketBaseCandidateMemoryStore(CandidateMemoryStore):
@@ -549,7 +499,7 @@ async def async_migrate_legacy_candidate_profile(
     profile_dict = profile.to_dict()
 
     if broker is None:
-        from boss_agent.broker.pocketbase_adapter import PocketBaseTaskBroker
+        from .pocketbase_adapter import PocketBaseTaskBroker
 
         broker = PocketBaseTaskBroker()
 
@@ -562,7 +512,7 @@ def migrate_legacy_candidate_profile(
     user_id: str = "default",
 ) -> dict[str, Any] | None:
     """Synchronous entry point for async_migrate_legacy_candidate_profile."""
-    from boss_agent.async_bridge import run_sync
+    from .async_bridge import run_sync
 
     return run_sync(
         async_migrate_legacy_candidate_profile(

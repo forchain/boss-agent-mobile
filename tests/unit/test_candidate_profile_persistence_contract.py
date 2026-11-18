@@ -17,10 +17,10 @@ from typing import Any
 
 import pytest
 
-from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
-from boss_agent.candidate_memory_store import (
+from boss_agent.adapters.memory.candidate_memory_store import InMemoryCandidateMemoryStore
+from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
+from boss_agent.adapters.outbound.pocketbase.candidate_memory_store import (
     PROFILE_JSON_COLUMNS,
-    InMemoryCandidateMemoryStore,
     PocketBaseCandidateMemoryStore,
     migrate_legacy_candidate_profile,
 )

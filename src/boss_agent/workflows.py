@@ -10,7 +10,11 @@ from typing import Any
 
 from rich.console import Console
 
-from .async_bridge import run_sync
+from .adapters.outbound.pocketbase.async_bridge import run_sync
+from .adapters.outbound.pocketbase.saved_search_store import (
+    missing_saved_search_message,
+    resolve_saved_search_store,
+)
 from .core.candidate.domain.candidate_profile import CandidateProfile
 from .core.job.domain.job_entities import JobPosting
 from .core.job.domain.screening_policy import ScreeningPolicy, resolve_screening_policy
@@ -29,10 +33,6 @@ from .greeting_prompt import load_greeting_prompt
 from .llm_config import create_llm_client
 from .memory import ResumeMemoryManager
 from .pages.system import LoginPage
-from .saved_search_store import (
-    missing_saved_search_message,
-    resolve_saved_search_store,
-)
 from .screening_config import load_screening_policy
 
 console = Console()

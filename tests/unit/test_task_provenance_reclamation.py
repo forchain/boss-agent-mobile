@@ -12,7 +12,7 @@ worker for the device.
 
 import pytest
 
-from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
+from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
 from boss_agent.core.search.domain.launch import LaunchSource, TaskKind, build_launch
 from boss_agent.core.search.domain.models import FilterConfig, SavedSearch, SearchConfig
 from boss_agent.core.task.domain.models import TaskStatus

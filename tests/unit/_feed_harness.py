@@ -20,12 +20,12 @@ from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock
 
+from boss_agent.adapters.memory.job_store import InMemoryJobRecordStore, JobRecordStore
 from boss_agent.core.candidate.domain.candidate_profile import CandidateProfile
 from boss_agent.core.job.domain.job_entities import JobCardBrief, JobPosting
 from boss_agent.core.job.use_cases.feed_pipeline import FeedStreamConfig, JobFeedPipeline
 from boss_agent.core.job.use_cases.screening import CandidateScreener
 from boss_agent.core.shared.enums import ChatButtonState, TargetAction
-from boss_agent.job_store import InMemoryJobRecordStore, JobRecordStore
 from boss_agent.pages.feed_bundle import build_feed_device_world
 from boss_agent.pages.job_feed import LocatedJobCard
 

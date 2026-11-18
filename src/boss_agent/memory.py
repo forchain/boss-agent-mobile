@@ -184,7 +184,7 @@ class ResumeMemoryManager:
                 )
 
         # 1. Primary and single source of truth: load from database broker
-        from boss_agent.async_bridge import run_sync
+        from boss_agent.adapters.outbound.pocketbase.async_bridge import run_sync
         from boss_agent.broker import PocketBaseBroker
 
         broker = PocketBaseBroker()
@@ -299,7 +299,7 @@ class ResumeMemoryManager:
 
         # 1. Primary: Save to PocketBase database (HTTP or SQLite fallback)
         if sync_to_db:
-            from boss_agent.async_bridge import run_sync
+            from boss_agent.adapters.outbound.pocketbase.async_bridge import run_sync
             from boss_agent.broker import PocketBaseBroker
 
             broker = PocketBaseBroker()

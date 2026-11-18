@@ -1,6 +1,6 @@
 """
-src/boss_agent/broker/collection_schema.py
-==========================================
+src/boss_agent/adapters/outbound/pocketbase/collection_schema.py
+===============================================================
 The one owner of the State Stream Broker's PocketBase collection schemas.
 
 The five collections — ``automation_tasks``, ``candidate_profiles``,

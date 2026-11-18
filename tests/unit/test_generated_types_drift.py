@@ -21,7 +21,7 @@ from scripts.generate_dashboard_types import (
     generate_typescript_content,
 )
 
-from boss_agent.broker.collection_schema import AUTOMATION_TASKS
+from boss_agent.adapters.outbound.pocketbase.collection_schema import AUTOMATION_TASKS
 
 
 def test_generated_dashboard_types_in_sync():

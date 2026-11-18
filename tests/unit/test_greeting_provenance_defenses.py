@@ -24,6 +24,7 @@ from _feed_harness import (
     _posting,
 )
 
+from boss_agent.adapters.memory.job_store import InMemoryJobRecordStore
 from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
 from boss_agent.core.job.use_cases.feed_pipeline import FeedStreamConfig
 from boss_agent.core.job.use_cases.screening import CandidateScreener
@@ -32,7 +33,6 @@ from boss_agent.core.shared.keyword_constants import (
     APPLIED_SOURCE_AGENT,
     GREETING_SOURCE_HUMAN,
 )
-from boss_agent.job_store import InMemoryJobRecordStore
 
 HUMAN_COPY = "李工您好，看到贵司在招 Agent 平台方向，我做过端侧推理编排，想具体聊聊。"
 #: A copy the payload tries to broadcast to every card in a sweep. Named once so both

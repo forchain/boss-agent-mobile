@@ -42,7 +42,8 @@ from typing import Any
 
 from rich.console import Console
 
-from .async_bridge import run_sync
+from .adapters.memory.job_store import InMemoryJobRecordStore
+from .adapters.outbound.pocketbase.async_bridge import run_sync
 from .core.candidate.domain.candidate_profile import StructuredCandidateProfile
 from .core.job.domain.feed_stream import FeedStreamConfig, FeedStreamResult
 from .core.job.domain.job_entities import JobPosting
@@ -52,7 +53,6 @@ from .core.job.use_cases.matching import JobMatchGreetingService, MatchGreetingR
 from .core.job.use_cases.screening import CandidateScreener
 from .core.search.domain.models import FilterConfig, SearchConfig
 from .core.shared.enums import TargetAction
-from .job_store import InMemoryJobRecordStore
 from .memory import ResumeMemoryManager
 from .pages.feed_bundle import build_feed_device_world
 from .screening_prompt import load_screening_prompt

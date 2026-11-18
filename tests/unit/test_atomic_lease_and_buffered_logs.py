@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from boss_agent.broker.pocketbase_adapter import PocketBaseTaskBroker
+from boss_agent.adapters.outbound.pocketbase.pocketbase_adapter import PocketBaseTaskBroker
 from boss_agent.core.task.domain.models import TaskStatus, TaskType
 
 

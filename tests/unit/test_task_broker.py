@@ -9,11 +9,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from boss_agent.broker.collection_schema import (
+from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
+from boss_agent.adapters.outbound.pocketbase.collection_schema import (
     AUTOMATION_TASKS,
     pocketbase_collection_payload,
 )
-from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker, PocketBaseTaskBroker
+from boss_agent.adapters.outbound.pocketbase.pocketbase_adapter import PocketBaseTaskBroker
 from boss_agent.core.task.domain.models import AutomationTask, TaskStatus, TaskType
 
 
