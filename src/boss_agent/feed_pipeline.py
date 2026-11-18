@@ -35,6 +35,7 @@ from .enums import (
     depth_already_reached,
 )
 from .errors import BrokerError, TransportError
+from .feed_ledger import FeedVerdictLedger
 from .feed_page_port import AppiumFeedPagePort, FeedPagePort
 from .feed_records import (
     card_facets_record,
@@ -548,6 +549,7 @@ class JobFeedPipeline:
         # default would swap the caller's own store out from under it.
         self.store: JobRecordStore = store if store is not None else InMemoryJobRecordStore()
         self.screener = screener or CandidateScreener()
+        self.ledger = FeedVerdictLedger(self.store, lambda line: self._log(line))
         self._log_sink = log
         self._cancel_probe = is_cancelled
 
@@ -646,8 +648,8 @@ class JobFeedPipeline:
 
         await self._apply_filters(config)
         try:
-            self._excluded_companies = await self.store.get_applied_direct_companies(
-                cooldown_days=config.cooldown_days
+            self._excluded_companies = await self.ledger.excluded_direct_companies(
+                config.cooldown_days
             )
         except (BrokerError, TransportError) as e:
             await self._log(
@@ -846,7 +848,7 @@ class JobFeedPipeline:
             )
             return
 
-        existing_record = await self.store.get_job_record_by_fingerprint(card.fingerprint)
+        existing_record = await self.ledger.find_by_fingerprint(card.fingerprint)
         if existing_record and not await self._passes_state_machine(run, existing_record, company):
             return
 
@@ -867,7 +869,7 @@ class JobFeedPipeline:
             verdict=run.verdict,
             existing_record=existing_record,
         )
-        persisted = await self.store.upsert_job_record(dict(run.card_record))
+        persisted = await self.ledger.upsert(dict(run.card_record))
         if persisted is None:
             # Incomplete/placeholder card: nothing was written, so there is no record to
             # inspect, index, or count. Appending the empty result would inflate the run's
@@ -912,11 +914,11 @@ class JobFeedPipeline:
                     f"⏭️ [已沟通岗位] '{card.title}' @ '{card.company_name}' "
                     f"冷却期内已沟通，跳过详情页"
                 )
-                await self.store.upsert_job_record(card_record_identity)
+                await self.ledger.upsert(card_record_identity)
                 return False
             # Transition back to jd_saved so fresh evaluation can persist a new state
             # while the previously extracted JD is preserved.
-            await self.store.clear_job_communication(existing_record["id"])
+            await self.ledger.clear_communication(existing_record["id"])
             await self._log(
                 f"♻️ [冷却放宽] '{card.title}' @ '{card.company_name}' 距上次沟通已超过 "
                 f"{config.cooldown_days} 天，已释放回待评估流"
@@ -930,7 +932,7 @@ class JobFeedPipeline:
                 f"⏭️ [State Machine] '{card.title}' already at '{existing_status}' "
                 f"(target '{config.target_action.value}' reached). Skipping detail opening."
             )
-            await self.store.upsert_job_record(card_record_identity)
+            await self.ledger.upsert(card_record_identity)
             return False
         return True
 
@@ -947,7 +949,7 @@ class JobFeedPipeline:
             await self._log(
                 f"⏭️ [初筛淘汰] '{card.title}' @ '{card.company_name}': {verdict.reason}"
             )
-        await self.store.upsert_job_record(
+        await self.ledger.upsert(
             {
                 **card_facets_record(
                     card,
@@ -1128,7 +1130,7 @@ class JobFeedPipeline:
             await self._log(
                 f"🛑 [岗位失效] '{card.title}' @ '{card.company_name}' 已停止招聘/下线，跳过"
             )
-        saved = await self.store.upsert_job_record(terminal)
+        saved = await self.ledger.upsert(terminal)
         await self._emit(
             run,
             JobOutcome(
@@ -1246,7 +1248,7 @@ class JobFeedPipeline:
             run.result.postings.pop(run.postings_index)
             run.postings_index = None
 
-        saved = await self.store.upsert_job_record(enriched)
+        saved = await self.ledger.upsert(enriched)
         title = effective_title(posting, card)
         company = effective_company(posting, card)
         await self._log(f"{log_prefix} '{title}' @ '{company}': {reason}，已标记为淘汰并停止采集")
@@ -1523,10 +1525,8 @@ class JobFeedPipeline:
             enriched["applied_at"] = datetime.now(UTC).isoformat()
             enriched["applied_source"] = APPLIED_SOURCE_AGENT
         await self._finalize_verdict(run, enriched, status, evaluation)
-        if dispatched:
-            company_name = (enriched.get("company_name") or "").strip()
-            if is_direct_hire_company(company_name, enriched.get("is_headhunter")):
-                self._excluded_companies.add(company_name)
+        if dispatched and self.ledger.applies_enterprise_exclusion(enriched):
+            self._excluded_companies.add((enriched.get("company_name") or "").strip())
 
     async def _quota_exhausted(self, run: _CardRun) -> bool:
         """Whether the daily greeting quota leaves no room for another dispatch.
@@ -1535,11 +1535,11 @@ class JobFeedPipeline:
         need it for a log line reuse this read rather than issuing their own.
         """
         try:
-            run.applied_today = await self.store.count_today_applied_jobs()
+            run.applied_today = await self.ledger.applied_today()
         except TransportError as e:
             await self._log(f"⚠️ [持久化降级] 今日投递额度查询遇到持久化异常（{e}），无法确认配额")
             raise
-        if run.applied_today >= run.config.daily_greeting_limit:
+        if self.ledger.quota_exhausted(run.applied_today, run.config.daily_greeting_limit):
             run.result.quota_exhausted = True
             return True
         return False
@@ -1568,60 +1568,15 @@ class JobFeedPipeline:
         status: JobRecordStatus,
         evaluation: JobEvaluationResult,
     ) -> dict[str, Any]:
-        """Persist one terminal verdict and report it to the observer."""
-        # An explicit greeting on the payload is the text this run decided to send. Only
-        # the agent's own draft comes from the evaluation, so a reused human copy is stored
-        # as what was actually sent rather than as an empty field (#300).
-        greeting_message = payload.get("greeting_message") or evaluation.greeting_message
-        greeting_source = payload.get("greeting_source") or (
-            GREETING_SOURCE_AGENT if evaluation.greeting_message else ""
-        )
-        # A run that reused a human copy asked no model to score the posting, so
-        # ``evaluation.match_score`` is the dataclass default — 0. And 0 is not "unknown",
-        # it is "the worst score possible": writing it deletes the very number the operator
-        # used to approve that copy in the panel. The stored score survives unless this run
-        # actually produced a new one.
-        # A run that reused a human copy asked no model to score the posting, so
-        # ``evaluation.match_score`` is the dataclass default - 0. And 0 is not "unknown",
-        # it is "the worst score possible": writing it deletes the number the operator used
-        # to approve that copy in the panel. So the key is left out when this run computed
-        # no score and the stored value stands; a never-scored record stays unscored rather
-        # than claiming a zero it was never given.
-        match_score = evaluation.match_score or payload.get("match_score")
-        screened_reason = payload.get("screened_reason") or (
-            evaluation.reason if status is JobRecordStatus.IGNORED else ""
-        )
-        # The only rejection that reaches here is the deep screener's — the card, expiry
-        # and detail-App-filter paths persist their own stage. Without this the feed
-        # labelled every full-JD rejection 初筛淘汰, since the card never saw the evidence.
-        screening_stage = payload.get("screening_stage") or (
-            ScreeningStage.DEEP_SCREENER.value
-            if status is JobRecordStatus.IGNORED
-            and getattr(evaluation, "stage", None) is JobVerdictStage.FILTERED_BY_DEEP_SCREENER
-            else ""
-        )
-        payload = {
-            **payload,
-            "status": status.value,
-            "greeting_message": greeting_message,
-            "greeting_source": greeting_source,
-            "screened_reason": screened_reason,
-            "screening_stage": screening_stage,
-            "jd_key_requirements": evaluation.jd_key_requirements
-            or payload.get("jd_key_requirements", []),
-        }
-        if match_score is not None:
-            payload["match_score"] = match_score
-        try:
-            saved = await self.store.upsert_job_record(dict(payload)) or {}
-        except TransportError as e:
-            await self._log(f"⚠️ [持久化降级] 岗位记录写入遇到持久化异常（{e}）")
-            saved = dict(payload)
-        if match_score is None:
-            # Nothing was scored this run, so the run reports what the record says rather
-            # than a 0 that would read as judged-and-rejected.
-            match_score = saved.get("match_score")
-        match_score = match_score or 0
+        """Persist one terminal verdict and report it to the observer.
+
+        The ledger owns the write and the provenance/score rules; this method keeps the
+        run-level telemetry and observer notification, which are orchestration.
+        """
+        persisted = await self.ledger.persist_verdict(payload, status, evaluation)
+        saved = persisted.record
+        greeting_message = persisted.greeting_message
+        match_score = persisted.match_score
         run.result.processed += 1
         if run.result.outcome == "no_candidates":
             # The primary outcome is the first job that earned a verdict: the run's
@@ -1776,7 +1731,7 @@ class JobFeedPipeline:
                 await self._log(f"🛑 [App端强制过滤] '{title}': {run.verdict.reason}")
             else:
                 await self._log(f"⏭️ [初筛淘汰] '{title}': {run.verdict.reason}")
-            await self.store.upsert_job_record(
+            await self.ledger.upsert(
                 {
                     **run.card_record,
                     "status": JobRecordStatus.IGNORED.value,
