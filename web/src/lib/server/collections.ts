@@ -7,7 +7,15 @@
  * browser's stores are thin and a shape change touches one module.
  */
 
-import type { AutomationTask, CandidateProfile, ResumeRevision, SavedSearch } from '$lib/types';
+import type {
+	AutomationTask,
+	CandidateProfile,
+	ChannelPreference,
+	ResumeRevision,
+	SavedSearch,
+	SavedSearchFilter
+} from '$lib/types';
+import { DEFAULT_MAX_JOBS } from '$lib/taskLaunch';
 import {
 	COLLECTIONS,
 	BrokerError,
@@ -79,11 +87,72 @@ export async function deleteTask(id: string): Promise<boolean> {
 // saved_searches
 // --------------------------------------------------------------------------- #
 
+export const SAVED_SEARCH_FILTER_KEYS = [
+	'education',
+	'salary',
+	'experience',
+	'activity',
+	'company_scales',
+	'industries',
+	'enable_filter',
+	'channel_preference'
+] as const;
+
+const VALID_CHANNEL_PREFERENCES = new Set<string>(['', 'all', 'direct_only', 'headhunter_only']);
+
+function normalizeChannelPreference(raw: unknown): ChannelPreference {
+	const value = typeof raw === 'string' ? raw.trim() : '';
+	return VALID_CHANNEL_PREFERENCES.has(value) ? (value as ChannelPreference) : '';
+}
+
+function normalizeSearchFilter(
+	rawFilter: Record<string, unknown>,
+	enableFilter: boolean
+): SavedSearchFilter & { enable_filter: boolean } {
+	return {
+		education: (rawFilter.education as string | undefined) ?? undefined,
+		salary: (rawFilter.salary as string | undefined) ?? undefined,
+		experience: (rawFilter.experience as string | undefined) ?? undefined,
+		activity: (rawFilter.activity as string | undefined) ?? undefined,
+		company_scales: Array.isArray(rawFilter.company_scales)
+			? [...(rawFilter.company_scales as string[])]
+			: [],
+		industries: Array.isArray(rawFilter.industries)
+			? [...(rawFilter.industries as string[])]
+			: [],
+		enable_filter: enableFilter,
+		channel_preference: normalizeChannelPreference(rawFilter.channel_preference)
+	};
+}
+
+function normalizeSearchTargets(
+	rawTargetAction: unknown,
+	rawTargetTaskType: unknown
+): { target_action: SavedSearch['target_action']; target_task_type: string } {
+	const action = typeof rawTargetAction === 'string' ? rawTargetAction.trim() : '';
+	const taskType = typeof rawTargetTaskType === 'string' ? rawTargetTaskType.trim() : '';
+
+	if (taskType === 'CHECK_CHAT' || action === 'check_chat') {
+		return {
+			target_action: 'check_chat' as SavedSearch['target_action'],
+			target_task_type: 'CHECK_CHAT'
+		};
+	}
+	if (!action || action === 'digest_only') {
+		const isApply = taskType === 'AUTO_APPLY';
+		return {
+			target_action: isApply ? 'auto_apply' : 'save_jd',
+			target_task_type: isApply ? 'AUTO_APPLY' : 'SCRAPE_JOBS'
+		};
+	}
+	if (action === 'auto_apply') {
+		return { target_action: 'auto_apply', target_task_type: 'AUTO_APPLY' };
+	}
+	return { target_action: 'save_jd', target_task_type: 'SCRAPE_JOBS' };
+}
+
 export function normalizeSearch(record: any): SavedSearch {
-	const targetAction =
-		record.target_action ||
-		(record.target_task_type === 'AUTO_APPLY' ? 'auto_apply' : 'save_jd');
-	const filter = record.filter || {};
+	const filter = (record.filter || {}) as Record<string, unknown>;
 	const enableFilter =
 		filter.enable_filter !== undefined
 			? filter.enable_filter !== false
@@ -92,6 +161,7 @@ export function normalizeSearch(record: any): SavedSearch {
 		record.search?.enable_search !== undefined
 			? record.search.enable_search !== false
 			: record.enable_search !== false;
+	const targets = normalizeSearchTargets(record.target_action, record.target_task_type);
 	return {
 		id: String(record.id),
 		name: record.name || String(record.id),
@@ -99,17 +169,13 @@ export function normalizeSearch(record: any): SavedSearch {
 		keyword: record.keyword || '',
 		enable_search: enableSearch,
 		enable_filter: enableFilter,
-		filter: {
-			...filter,
-			enable_filter: enableFilter
-		},
-		target_action: targetAction,
-		max_jobs: record.max_jobs ?? 30,
+		filter: normalizeSearchFilter(filter, enableFilter),
+		target_action: targets.target_action,
+		max_jobs: record.max_jobs ?? DEFAULT_MAX_JOBS,
 		cron_expression: record.cron_expression || '',
 		is_enabled: !!record.is_enabled,
 		last_run_at: record.last_run_at ?? null,
-		target_task_type:
-			record.target_task_type || (targetAction === 'auto_apply' ? 'AUTO_APPLY' : 'SCRAPE_JOBS'),
+		target_task_type: targets.target_task_type,
 		created: record.created,
 		updated: record.updated
 	};
@@ -130,9 +196,6 @@ export function searchBody(
 	search: Partial<SavedSearch> & { name: string },
 	existingId?: string
 ): Record<string, unknown> {
-	const targetAction =
-		search.target_action ??
-		(search.target_task_type === 'AUTO_APPLY' ? 'auto_apply' : 'save_jd');
 	const filter = (search.filter || {}) as Record<string, unknown>;
 	const enableFilter =
 		filter.enable_filter !== undefined
@@ -142,6 +205,7 @@ export function searchBody(
 		(search as any).search?.enable_search !== undefined
 			? (search as any).search.enable_search !== false
 			: search.enable_search !== false;
+	const targets = normalizeSearchTargets(search.target_action, search.target_task_type);
 	return {
 		...(existingId ? {} : { id: search.id || undefined }),
 		name: search.name,
@@ -149,17 +213,13 @@ export function searchBody(
 		keyword: search.keyword || '',
 		enable_search: enableSearch,
 		enable_filter: enableFilter,
-		filter: {
-			...filter,
-			enable_filter: enableFilter
-		},
-		target_action: targetAction,
-		max_jobs: search.max_jobs ?? 30,
+		filter: normalizeSearchFilter(filter, enableFilter),
+		target_action: targets.target_action,
+		max_jobs: search.max_jobs ?? DEFAULT_MAX_JOBS,
 		cron_expression: search.cron_expression || '',
 		is_enabled: !!search.is_enabled,
 		last_run_at: search.last_run_at ?? null,
-		target_task_type:
-			search.target_task_type || (targetAction === 'auto_apply' ? 'AUTO_APPLY' : 'SCRAPE_JOBS')
+		target_task_type: targets.target_task_type
 	};
 }
 

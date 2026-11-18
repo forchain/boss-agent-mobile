@@ -1,0 +1,147 @@
+{
+  "_comment": "Canonical SavedSearch record-to-domain normalization cases shared by pytest (tests/unit/test_saved_search_cases.py) and vitest (web/src/tests/savedSearchCases.test.ts). Both serializers must preserve the declared filter key set, normalize legacy digest_only rows identically, and share the default max_jobs.",
+  "filter_keys": [
+    "education",
+    "salary",
+    "experience",
+    "activity",
+    "company_scales",
+    "industries",
+    "enable_filter",
+    "channel_preference"
+  ],
+  "default_max_jobs": 30,
+  "cases": [
+    {
+      "case": "modern-auto-apply",
+      "record": {
+        "id": "s_modern",
+        "name": "Agent 高薪",
+        "description": "主力搜索",
+        "keyword": "Agent",
+        "enable_search": true,
+        "enable_filter": true,
+        "filter": {
+          "education": "硕士",
+          "salary": "50K以上",
+          "experience": "5-10年",
+          "activity": "今日活跃",
+          "company_scales": ["100-499人"],
+          "industries": ["人工智能"],
+          "enable_filter": true,
+          "channel_preference": "direct_only"
+        },
+        "target_task_type": "AUTO_APPLY",
+        "target_action": "auto_apply",
+        "max_jobs": 25,
+        "cron_expression": "0 9 * * *",
+        "is_enabled": true
+      },
+      "expected": {
+        "id": "s_modern",
+        "name": "Agent 高薪",
+        "keyword": "Agent",
+        "enable_search": true,
+        "enable_filter": true,
+        "target_action": "auto_apply",
+        "target_task_type": "AUTO_APPLY",
+        "max_jobs": 25,
+        "channel_preference": "direct_only"
+      }
+    },
+    {
+      "case": "legacy-digest-only-scrape",
+      "record": {
+        "id": "s_legacy_scrape",
+        "name": "旧版抓取",
+        "keyword": "Python",
+        "target_task_type": "SCRAPE_JOBS",
+        "target_action": "digest_only",
+        "filter": {
+          "education": "本科",
+          "unknown_legacy_extra": "should_not_leak"
+        }
+      },
+      "expected": {
+        "id": "s_legacy_scrape",
+        "name": "旧版抓取",
+        "keyword": "Python",
+        "enable_search": true,
+        "enable_filter": true,
+        "target_action": "save_jd",
+        "target_task_type": "SCRAPE_JOBS",
+        "max_jobs": 30,
+        "channel_preference": ""
+      }
+    },
+    {
+      "case": "legacy-digest-only-auto-apply",
+      "record": {
+        "id": "s_legacy_apply",
+        "name": "旧版自动",
+        "keyword": "LLM",
+        "target_task_type": "AUTO_APPLY",
+        "target_action": "digest_only"
+      },
+      "expected": {
+        "id": "s_legacy_apply",
+        "name": "旧版自动",
+        "keyword": "LLM",
+        "enable_search": true,
+        "enable_filter": true,
+        "target_action": "auto_apply",
+        "target_task_type": "AUTO_APPLY",
+        "max_jobs": 30,
+        "channel_preference": ""
+      }
+    },
+    {
+      "case": "legacy-top-level-toggles-and-bogus-channel",
+      "record": {
+        "id": "s_top_toggles",
+        "name": "关闭筛选",
+        "keyword": "Go",
+        "enable_search": false,
+        "enable_filter": false,
+        "filter": {
+          "channel_preference": "unrecognized_channel"
+        },
+        "target_action": "save_jd"
+      },
+      "expected": {
+        "id": "s_top_toggles",
+        "name": "关闭筛选",
+        "keyword": "Go",
+        "enable_search": false,
+        "enable_filter": false,
+        "target_action": "save_jd",
+        "target_task_type": "SCRAPE_JOBS",
+        "max_jobs": 30,
+        "channel_preference": ""
+      }
+    },
+    {
+      "case": "chat-cleanup-strategy",
+      "record": {
+        "id": "s_chat",
+        "name": "收件箱清理",
+        "keyword": "",
+        "enable_search": false,
+        "enable_filter": false,
+        "target_task_type": "CHECK_CHAT",
+        "target_action": "check_chat"
+      },
+      "expected": {
+        "id": "s_chat",
+        "name": "收件箱清理",
+        "keyword": "",
+        "enable_search": false,
+        "enable_filter": false,
+        "target_action": "check_chat",
+        "target_task_type": "CHECK_CHAT",
+        "max_jobs": 30,
+        "channel_preference": ""
+      }
+    }
+  ]
+}

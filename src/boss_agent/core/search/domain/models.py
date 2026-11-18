@@ -108,6 +108,35 @@ class FilterConfig:
             "enable_filter": self.enable_filter,
         }
 
+    def to_wire_dict(self) -> dict[str, Any]:
+        """Serialize the full declared filter key set for SavedSearch persistence."""
+        return {
+            "education": self.education,
+            "salary": self.salary,
+            "experience": self.experience,
+            "activity": self.activity,
+            "company_scales": list(self.company_scales) if self.company_scales else [],
+            "industries": list(self.industries) if self.industries else [],
+            "enable_filter": self.enable_filter,
+            # '' is a real value, not a missing key: it is how a strategy says
+            # "inherit the global channel" and it must survive a round-trip unchanged.
+            "channel_preference": self.channel_preference,
+        }
+
+
+#: Declared filter keys persisted inside ``saved_searches.filter``, shared across
+#: Python serialization and the SvelteKit BFF (pinned by ``config/saved_search.cases.json``).
+SAVED_SEARCH_FILTER_KEYS: tuple[str, ...] = (
+    "education",
+    "salary",
+    "experience",
+    "activity",
+    "company_scales",
+    "industries",
+    "enable_filter",
+    "channel_preference",
+)
+
 
 #: The declared ``saved_searches.max_jobs`` default. The domain owns the number and the
 #: Collection Schema reads it from here, so the domain model, the provisioner and the
@@ -232,20 +261,7 @@ class SavedSearch:
                 "keyword": self.search.keyword,
                 "enable_search": self.search.enable_search,
             },
-            "filter": {
-                "education": self.filter.education,
-                "salary": self.filter.salary,
-                "experience": self.filter.experience,
-                "activity": self.filter.activity,
-                "company_scales": self.filter.company_scales,
-                "industries": self.filter.industries,
-                "enable_filter": self.filter.enable_filter,
-                # '' is a real value, not a missing key: it is how a strategy says
-                # "inherit the global channel" and it must survive a round-trip
-                # unchanged, or editing an unrelated field would quietly pin the
-                # strategy to whatever the global setting happened to be that day.
-                "channel_preference": self.filter.channel_preference,
-            },
+            "filter": self.filter.to_wire_dict(),
             "screening_policy": (
                 self.screening_policy.to_dict() if self.screening_policy is not None else None
             ),

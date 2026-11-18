@@ -2,7 +2,6 @@
 	import { onMount, onDestroy } from 'svelte';
 	import {
 		isChatCleanupStrategy,
-		resolveTargetAction,
 		type ChannelPreference,
 		type SavedSearch
 	} from '$lib/types';
@@ -15,7 +14,7 @@
 		createAutomationTask
 	} from '$lib/pocketbase';
 	import { dashboardRealtime } from '$lib/dashboardRealtime';
-	import { buildSearchLaunch } from '$lib/taskLaunch';
+	import { buildSearchLaunch, DEFAULT_MAX_JOBS } from '$lib/taskLaunch';
 	import { alertAction } from '$lib/stores/confirm';
 
 	let { data }: { data: any } = $props();
@@ -74,7 +73,7 @@
 		enable_filter: true,
 		target_task_type: 'AUTO_APPLY',
 		target_action: 'save_jd',
-		max_jobs: 30,
+		max_jobs: DEFAULT_MAX_JOBS,
 		cron_expression: '0 9 * * *',
 		is_enabled: false,
 		filter: {
@@ -285,7 +284,7 @@
 			enable_filter: true,
 			target_task_type: 'AUTO_APPLY',
 			target_action: 'save_jd',
-			max_jobs: 30,
+			max_jobs: DEFAULT_MAX_JOBS,
 			cron_expression: '0 9 * * *',
 			is_enabled: false,
 			filter: {
@@ -312,15 +311,9 @@
 			keyword: search.keyword || '',
 			enable_search: search.enable_search !== false,
 			enable_filter: search.enable_filter !== false,
-			target_task_type: isChatCleanupStrategy(search)
-				? 'CHECK_CHAT'
-				: search.target_task_type === 'SCRAPE_JOBS'
-					? 'SCRAPE_JOBS'
-					: 'AUTO_APPLY',
-			target_action: isChatCleanupStrategy(search)
-				? 'check_chat'
-				: search.target_action || (search.target_task_type === 'SCRAPE_JOBS' ? 'save_jd' : 'auto_apply'),
-			max_jobs: search.max_jobs ?? 30,
+			target_task_type: (search.target_task_type as 'AUTO_APPLY' | 'SCRAPE_JOBS' | 'CHECK_CHAT') || 'SCRAPE_JOBS',
+			target_action: (search.target_action as 'save_jd' | 'auto_apply' | 'check_chat') || 'save_jd',
+			max_jobs: search.max_jobs ?? DEFAULT_MAX_JOBS,
 			cron_expression: search.cron_expression || '',
 			is_enabled: !!search.is_enabled,
 			filter: {
@@ -402,7 +395,7 @@
 				enable_filter: isChatCleanup ? false : modalForm.enable_filter,
 				target_task_type: derivedTaskType,
 				target_action: modalForm.target_action,
-				max_jobs: Number(modalForm.max_jobs) > 0 ? Number(modalForm.max_jobs) : 30,
+				max_jobs: Number(modalForm.max_jobs) > 0 ? Number(modalForm.max_jobs) : DEFAULT_MAX_JOBS,
 				cron_expression: modalForm.cron_expression.trim(),
 				is_enabled: modalForm.is_enabled,
 				filter: {
@@ -602,7 +595,7 @@
 	{:else}
 		<div class="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
 			{#each searches as search (search.id)}
-				{@const currentAction = resolveTargetAction(search)}
+				{@const currentAction = search.target_action || 'save_jd'}
 				{@const isChatCleanup = isChatCleanupStrategy(search)}
 				<div class="bg-slate-900/80 border border-slate-800 hover:border-slate-700 rounded-2xl p-4 sm:p-6 shadow-xl space-y-4 flex flex-col justify-between transition-all">
 					<div class="space-y-3">
@@ -634,7 +627,7 @@
 									</span>
 								{/if}
 								<span class="text-[10px] px-2.5 py-1 rounded-full font-mono font-medium bg-slate-800 text-slate-300 border border-slate-700">
-									上限 {search.max_jobs ?? 30} 岗
+									上限 {search.max_jobs ?? DEFAULT_MAX_JOBS} 岗
 								</span>
 							</div>
 						</div>
