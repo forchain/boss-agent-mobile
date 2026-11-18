@@ -156,33 +156,6 @@ def test_openai_chat_client_chat_completion_json():
         assert data["score"] == 95
 
 
-def test_openai_chat_client_evaluate_text_match():
-    """Verify evaluate_text_match executes and returns matching evaluation dict."""
-    cfg = LLMConfig(
-        model="test-model",
-        base_url="https://api.test.com/v1",
-        api_key="mock-key",
-    )
-    client = OpenAIChatClient(cfg)
-
-    mock_resp = MagicMock()
-    mock_resp.status_code = 200
-    mock_resp.json.return_value = {
-        "choices": [
-            {
-                "message": {
-                    "content": '{"match_score": 88, "match_reasons": ["Strong experience"], "greeting_message": "Hello"}'
-                }
-            }
-        ],
-    }
-
-    with patch("requests.post", return_value=mock_resp):
-        res = client.evaluate_text_match("Resume text", "JD description")
-        assert res["match_score"] == 88
-        assert res["greeting_message"] == "Hello"
-
-
 def test_candidate_screener_traced_execution():
     """CandidateScreener.evaluate_card / evaluate_job are themselves @traceable spans.
 

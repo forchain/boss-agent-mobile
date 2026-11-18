@@ -486,10 +486,6 @@ class LLMDecisionClient(ABC):
     ) -> dict[str, Any]:
         """Send chat messages and return parsed JSON response."""
 
-    @abstractmethod
-    def evaluate_text_match(self, candidate_resume: str, job_description: str) -> dict[str, Any]:
-        """Evaluate match score between resume and job description."""
-
 
 class OpenAIChatClient(_JSONRepairMixin, LLMDecisionClient):
     """Concrete OpenAI-compatible REST chat completion client.
@@ -621,36 +617,6 @@ class OpenAIChatClient(_JSONRepairMixin, LLMDecisionClient):
         )
         json_str = self._extract_json_block(raw_text)
         return self._robust_parse_json(json_str)
-
-    @traceable(name="OpenAIChatClient.evaluate_text_match", run_type="chain")
-    def evaluate_text_match(self, candidate_resume: str, job_description: str) -> dict[str, Any]:
-        return self.chat_completion_json(
-            _match_evaluation_messages(candidate_resume, job_description)
-        )
-
-
-def _match_evaluation_messages(candidate_resume: str, job_description: str) -> list[dict[str, str]]:
-    """The resume/job-description match prompt, in the shape every protocol accepts.
-
-    Built here rather than in either client so the two cannot drift on what a "match
-    score" is asked to mean; only the transport that carries it differs.
-    """
-    prompt = (
-        "请评估以下求职者简历与招聘岗位(JD)的匹配度：\n\n"
-        f"[求职者简历]\n{candidate_resume}\n\n"
-        f"[招聘岗位要求]\n{job_description}\n\n"
-        "请以 JSON 格式输出以下字段：\n"
-        "- match_score: 匹配度打分 (0 到 100 整数)\n"
-        "- match_reasons: 匹配核心亮点列表 (list of string)\n"
-        "- greeting_message: 适合发给招聘者的礼貌且突显匹配亮点的简短打招呼文案\n"
-    )
-    return [
-        {
-            "role": "system",
-            "content": "You are a professional HR and recruitment assistant. Output valid JSON only.",
-        },
-        {"role": "user", "content": prompt},
-    ]
 
 
 #: The Messages API version this client speaks. Sent verbatim as `anthropic-version`;
@@ -834,9 +800,3 @@ class AnthropicChatClient(_JSONRepairMixin, LLMDecisionClient):
         )
         json_str = self._extract_json_block(raw_text)
         return self._robust_parse_json(json_str)
-
-    @traceable(name="AnthropicChatClient.evaluate_text_match", run_type="chain")
-    def evaluate_text_match(self, candidate_resume: str, job_description: str) -> dict[str, Any]:
-        return self.chat_completion_json(
-            _match_evaluation_messages(candidate_resume, job_description)
-        )

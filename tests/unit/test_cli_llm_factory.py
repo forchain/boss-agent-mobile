@@ -93,8 +93,8 @@ def test_script_client_is_a_decision_client(name: str, module) -> None:
     """Whatever the protocol, the script holds the abstraction it needs to call."""
     client = module.build_llm_client(_config_json("anthropic"))
     assert isinstance(client, LLMDecisionClient)
-    # The seam every caller actually depends on.
-    assert callable(client.evaluate_text_match)
+    # The seam callers depend on for structured JSON decisions.
+    assert callable(client.chat_completion_json)
 
 
 @pytest.mark.parametrize("name, module", SCRIPTS, ids=[n for n, _ in SCRIPTS])

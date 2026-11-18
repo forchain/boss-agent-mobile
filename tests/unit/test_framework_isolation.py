@@ -8,7 +8,16 @@ def test_droid_agent_core_has_zero_boss_keywords_or_imports():
     core_dir = Path(__file__).resolve().parent.parent.parent / "src" / "droid_agent_core"
     assert core_dir.exists(), f"Framework core directory not found: {core_dir}"
 
-    forbidden_keywords = ["bosszhipin", "hpbr", "job_listing", "job_detail", "boss_agent"]
+    forbidden_keywords = [
+        "bosszhipin",
+        "hpbr",
+        "job_listing",
+        "job_detail",
+        "boss_agent",
+        "evaluate_text_match",
+        "求职者简历",
+        "招聘岗位",
+    ]
 
     for py_file in core_dir.rglob("*.py"):
         content = py_file.read_text(encoding="utf-8").lower()

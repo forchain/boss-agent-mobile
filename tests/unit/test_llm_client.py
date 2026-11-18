@@ -510,24 +510,6 @@ def test_anthropic_client_json_mode_reuses_the_shared_repair_chain():
     assert parsed["match_reasons"] == ["Python"]
 
 
-def test_anthropic_client_evaluate_text_match():
-    client = AnthropicChatClient(_anthropic_config())
-
-    response = _anthropic_response(
-        '{"match_score": 82, "match_reasons": ["Go"], "greeting_message": "你好"}'
-    )
-    with patch("requests.post", return_value=response) as mock_post:
-        parsed = client.evaluate_text_match("Go 后端 5 年", "Go 工程师")
-
-    assert parsed["match_score"] == 82
-    assert parsed["greeting_message"] == "你好"
-
-    _, kwargs = mock_post.call_args
-    payload = kwargs["json"]
-    assert "Go 后端 5 年" in payload["messages"][-1]["content"]
-    assert "Go 工程师" in payload["messages"][-1]["content"]
-
-
 @pytest.mark.parametrize("status", [401, 403])
 def test_anthropic_client_maps_auth_failures(status):
     client = AnthropicChatClient(_anthropic_config())
