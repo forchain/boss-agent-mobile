@@ -39,8 +39,25 @@ _RESUME_PROFILE_PROMPT = (
     "    }\n"
     "  ],\n"
     '  "profile_document": "详尽完整的 Markdown 格式候选人全景画像文档",\n'
-    '  "work_experiences": [],\n'
-    '  "projects": []\n'
+    '  "work_experiences": [\n'
+    "    {\n"
+    '      "company": "公司名称或组织(若无明确公司可填独立开发/开源/业务线/项目名)",\n'
+    '      "role": "职位/角色",\n'
+    '      "start_date": "起止时间或年份",\n'
+    '      "end_date": "结束时间或至今",\n'
+    '      "responsibilities": "工作职责与攻坚内容",\n'
+    '      "achievements": "量化成果与指标突破"\n'
+    "    }\n"
+    "  ],\n"
+    '  "projects": [\n'
+    "    {\n"
+    '      "name": "项目名称",\n'
+    '      "role": "角色",\n'
+    '      "tech_stack": ["技术1", "技术2"],\n'
+    '      "description": "项目背景与架构",\n'
+    '      "achievements": "指标与产出成果"\n'
+    "    }\n"
+    "  ]\n"
     "}\n\n"
     "【profile_document 的 Markdown 章节规范（必须极其详尽，100%保留所有项目、架构、技术栈、量化成果与开源链接，严禁做删减概括）】：\n"
     "# 候选人全景画像 (Candidate Profile)\n\n"
@@ -84,8 +101,17 @@ def extract_resume_text(
     }
 
 
-def generate_profile_document(llm_client: Any, raw_resume_text: str) -> dict[str, Any]:
-    """Generate the structured profile document, degrading to the raw text on LLM failure."""
+def generate_profile_document(
+    llm_client: Any,
+    raw_resume_text: str,
+    *,
+    raise_on_error: bool = False,
+) -> dict[str, Any]:
+    """Generate the structured profile document via the injected LLM client.
+
+    Provider-specific wire adjustments (such as MiniMax thinking toggles and output token
+    ceilings) belong in the LLM client adapter, never in this Use Case.
+    """
     if not raw_resume_text.strip():
         return {
             "status": "error",
@@ -95,19 +121,11 @@ def generate_profile_document(llm_client: Any, raw_resume_text: str) -> dict[str
     prompt = _RESUME_PROFILE_PROMPT.replace("{raw_text}", raw_resume_text)
     messages = [*_RESUME_PROFILE_MESSAGES, {"role": "user", "content": prompt}]
 
-    extra_payload = None
-    cfg = getattr(llm_client, "config", None)
-    if cfg and (
-        "minimax" in getattr(cfg, "base_url", "").lower()
-        or "minimax" in getattr(cfg, "model", "").lower()
-    ):
-        extra_payload = {"thinking": {"type": "disabled"}}
-
     try:
-        res = llm_client.chat_completion_json(
-            messages, max_tokens=16384, extra_payload=extra_payload
-        )
+        res = llm_client.chat_completion_json(messages)
     except Exception:
+        if raise_on_error:
+            raise
         res = {"raw_summary": raw_resume_text[:500]}
 
     return {
@@ -115,6 +133,61 @@ def generate_profile_document(llm_client: Any, raw_resume_text: str) -> dict[str
         "profile_document": res.get("profile_document") or res.get("raw_summary") or "",
         "status": "document_generated",
     }
+
+
+def structure_resume_profile(
+    llm_client: Any,
+    raw_resume_text: str,
+    *,
+    raise_on_llm_error: bool = False,
+) -> CandidateProfile:
+    """Structure and normalize raw resume text into a ``CandidateProfile``."""
+    doc_res = generate_profile_document(
+        llm_client,
+        raw_resume_text,
+        raise_on_error=raise_on_llm_error,
+    )
+    if doc_res.get("status") == "error":
+        raise ValueError(doc_res.get("error_message") or "Empty resume text content.")
+    extracted = dict(doc_res.get("extracted_metadata") or {})
+    extracted["raw_resume_text"] = raw_resume_text
+    norm_res = normalize_extracted_profile(
+        extracted,
+        raw_resume_text=raw_resume_text,
+        profile_document=doc_res.get("profile_document", ""),
+    )
+    return CandidateProfile.from_dict(norm_res["normalized_profile"])
+
+
+async def refresh_candidate_profile(
+    llm_client: Any,
+    raw_resume_text: str,
+    *,
+    store: CandidateMemoryStore | None = None,
+    user_id: str = "default",
+    file_name: str = "resume.txt",
+) -> CandidateProfile:
+    """Structure a resume and persist both the Candidate Profile and an append-only revision."""
+    profile = structure_resume_profile(
+        llm_client,
+        raw_resume_text,
+        raise_on_llm_error=True,
+    )
+    if store is not None:
+        existing = await store.get_candidate_profile(user_id=user_id)
+        profile_dict = profile.to_dict()
+        diff = analyze_profile_diff(existing, profile_dict, merge_mode="overwrite")
+        await persist_resume_profile(
+            store,
+            user_id=user_id,
+            normalized_profile=profile_dict,
+            existing_profile=existing,
+            merge_mode="overwrite",
+            file_name=file_name,
+            raw_resume_text=raw_resume_text,
+            diff_summary=diff["diff_summary"],
+        )
+    return profile
 
 
 def normalize_extracted_profile(

@@ -18,6 +18,10 @@ from boss_agent.core.candidate.domain.candidate_profile import (
 from boss_agent.core.candidate.domain.profile_normalizer import ProfileNormalizer
 from boss_agent.core.candidate.interfaces.candidate_memory_store import CandidateMemoryStore
 from boss_agent.core.candidate.interfaces.resume_text_source import ResumeTextSource
+from boss_agent.core.candidate.use_cases.resume_lifecycle import (
+    refresh_candidate_profile,
+    structure_resume_profile,
+)
 from droid_agent_core.llm import LLMDecisionClient
 
 console = Console()
@@ -205,7 +209,7 @@ class ResumeMemoryManager:
 
     @traceable(name="ResumeMemoryManager.generate_and_save_memory", run_type="chain")
     def generate_and_save_memory(self, resume_path: str | Path) -> CandidateProfile:
-        """Extract text from resume file, call LLM to parse into unabbreviated schema, and save to database."""
+        """Extract text from resume file, run the unified structuring Use Case, and persist."""
         console.print(f"📄 [bold cyan]Parsing resume file:[/bold cyan] {resume_path}...")
         raw_text = self.extractor.extract_text(resume_path)
         if not raw_text.strip():
@@ -214,83 +218,33 @@ class ResumeMemoryManager:
         console.print(
             "🧠 [bold cyan]Structuring candidate profile via LLM (unabbreviated)...[/bold cyan]"
         )
-        prompt = (
-            "请全面、深度、无损地解析以下求职者原始简历文本，并以标准严格的 JSON 格式输出：\n\n"
-            f"[简历文本内容]\n{raw_text}\n\n"
-            "输出的 JSON 结构规范如下：\n"
-            "{\n"
-            '  "name": "姓名",\n'
-            '  "years_of_experience": 经验年限(整数),\n'
-            '  "target_positions": ["期望职位1", "期望职位2"],\n'
-            '  "core_skills": ["分类1: 技能列表", "分类2: 技能列表"],\n'
-            '  "education": [\n'
-            "    {\n"
-            '      "school": "学校名称",\n'
-            '      "degree": "学历(如: 硕士 / 本科 / 博士)",\n'
-            '      "major": "专业名称",\n'
-            '      "start_date": "入学年份",\n'
-            '      "end_date": "毕业年份"\n'
-            "    }\n"
-            "  ],\n"
-            '  "profile_document": "详尽完整的 Markdown 格式候选人全景画像文档",\n'
-            '  "work_experiences": [\n'
-            "    {\n"
-            '      "company": "公司名称或组织(若无明确公司可填独立开发/开源/业务线/项目名)",\n'
-            '      "role": "职位/角色",\n'
-            '      "start_date": "起止时间或年份",\n'
-            '      "end_date": "结束时间或至今",\n'
-            '      "responsibilities": "工作职责与攻坚内容",\n'
-            '      "achievements": "量化成果与指标突破"\n'
-            "    }\n"
-            "  ],\n"
-            '  "projects": [\n'
-            "    {\n"
-            '      "name": "项目名称",\n'
-            '      "role": "角色",\n'
-            '      "tech_stack": ["技术1", "技术2"],\n'
-            '      "description": "项目背景与架构",\n'
-            '      "achievements": "指标与产出成果"\n'
-            "    }\n"
-            "  ]\n"
-            "}\n\n"
-            "【profile_document 的 Markdown 章节规范（必须极其详尽，100%保留所有项目、架构、技术栈、量化成果与开源链接，严禁做删减概括）】：\n"
-            "# 候选人全景画像 (Candidate Profile)\n\n"
-            "## 1. 核心职业定位与背景概览\n"
-            "(包含姓名、经验年限、学历背景、求职意向与核心定位优势)\n\n"
-            "## 2. 核心技术栈与专业能力矩阵\n"
-            "(按维度清晰列出 AI Agent/大模型编排、编程语言、后端架构、前端全栈、Web3/量化、云原生与工程化等)\n\n"
-            "## 3. 核心主导项目与技术攻坚 (Key Projects & Architecture)\n"
-            "(逐个详述各项目/经历的业务背景、系统架构设计、负责模块、攻坚难点、量化表现与开源代码仓库链接)\n\n"
-            "## 4. 可量化成果与标志性突破 (Measurable Achievements)\n"
-            "(量化指标突破、业务跃升、日活表现、性能突破、行业或社区影响力)\n\n"
-            "## 5. 资格认证、语言能力与附加信息\n\n"
-            "注意：必须输出标准严格合法的 JSON。所有经历与项目必须在 profile_document 中全量无损展开；字符串内严禁未转义的双引号（若需引用请用中文书名号《》或单引号）。"
+        file_name = Path(resume_path).name or "resume.txt"
+        sync_to_db = not self.explicit_memory_file
+        if sync_to_db:
+            if self.candidate_memory is None:
+                raise ValueError("candidate_memory store must be injected into ResumeMemoryManager")
+            from boss_agent.adapters.outbound.pocketbase.async_bridge import run_sync
+
+            profile = run_sync(
+                refresh_candidate_profile(
+                    self.llm_client,
+                    raw_text,
+                    store=self.candidate_memory,
+                    file_name=file_name,
+                ),
+                timeout=10.0,
+            )
+            console.print(
+                "✅ [bold green]Structured candidate profile saved to PocketBase database.[/bold green]"
+            )
+            return profile
+
+        profile = structure_resume_profile(
+            self.llm_client,
+            raw_text,
+            raise_on_llm_error=True,
         )
-        messages = [
-            {
-                "role": "system",
-                "content": "You are a professional HR assistant specializing in parsing candidate resumes into structured JSON with 100% fidelity. Always output valid, complete JSON.",
-            },
-            {"role": "user", "content": prompt},
-        ]
-
-        extra_payload = None
-        if (
-            "minimax" in getattr(self.llm_client.config, "base_url", "").lower()
-            or "minimax" in getattr(self.llm_client.config, "model", "").lower()
-        ):
-            extra_payload = {"thinking": {"type": "disabled"}}
-
-        result_dict = self.llm_client.chat_completion_json(
-            messages,
-            max_tokens=16384,
-            extra_payload=extra_payload,
-        )
-        result_dict["raw_resume_text"] = raw_text
-        normalized = ProfileNormalizer.normalize(result_dict, raw_text=raw_text)
-        profile = CandidateProfile.from_dict(normalized)
-
-        self.save_memory_profile(profile)
+        self.save_memory_profile(profile, sync_to_db=False)
         return profile
 
     def save_memory_profile(
