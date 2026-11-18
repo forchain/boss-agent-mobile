@@ -23,7 +23,10 @@ from pathlib import Path
 
 import pytest
 
-from boss_agent.candidate_entities import CandidateProfile, StructuredCandidateProfile
+from boss_agent.core.candidate.domain.candidate_profile import (
+    CandidateProfile,
+    StructuredCandidateProfile,
+)
 from boss_agent.job_entities import JobCardBrief, JobPosting
 from boss_agent.screening import CandidateScreener
 from boss_agent.screening_policy import ScreeningPolicy
@@ -75,7 +78,7 @@ def test_consumer_does_not_import_memory(relative_path: str) -> None:
     offenders = {name for name in imported if name.split(".")[-1] == "memory"}
 
     assert not offenders, (
-        f"{relative_path} must import CandidateProfile from candidate_entities/entities, "
+        f"{relative_path} must import CandidateProfile from the core candidate domain/entities, "
         f"not memory — found: {sorted(offenders)}"
     )
 
@@ -85,11 +88,11 @@ def test_consumer_imports_profile_type_from_entity_module(relative_path: str) ->
     """The type has to come from the entity module, or deleting memory would break it."""
     imported = _imported_modules(REPO_ROOT / relative_path)
     from_entity = {
-        name for name in imported if name.rsplit(".", 1)[-1] in {"candidate_entities", "entities"}
+        name for name in imported if name.rsplit(".", 1)[-1] in {"candidate_profile", "entities"}
     }
 
     assert from_entity, (
-        f"{relative_path} must import CandidateProfile from candidate_entities or entities, "
+        f"{relative_path} must import CandidateProfile from the core candidate domain or entities, "
         f"found imports: {sorted(imported)}"
     )
 

@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from boss_agent.candidate_entities import CandidateProfile
+from boss_agent.core.candidate.domain.candidate_profile import CandidateProfile
 from boss_agent.greeting_prompt import load_greeting_prompt
 from boss_agent.job_entities import JobPosting
 from boss_agent.matching import JobMatchGreetingService

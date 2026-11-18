@@ -1,7 +1,7 @@
 """
-boss_agent.candidate_entities
-==============================
-Candidate profile domain entity (Issue #311, Spec #303).
+boss_agent.core.candidate.domain.candidate_profile
+==================================================
+Candidate profile domain entity (Issue #311, Spec #303; re-homed by Spec #443).
 
 This module is a leaf: standard library only, no LLM framework, no LangSmith
 decorator, no filesystem cache, no network. Every helper it needs lives beside

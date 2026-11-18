@@ -293,7 +293,7 @@ PURE_DOMAIN_MODULES = (
     "src/boss_agent/core/shared/keyword_constants.py",
     "src/boss_agent/core/shared/identifier_helpers.py",
     "src/boss_agent/job_entities.py",
-    "src/boss_agent/candidate_entities.py",
+    "src/boss_agent/core/candidate/domain/candidate_profile.py",
     "src/boss_agent/search_entities.py",
     "src/boss_agent/screening_policy.py",
     "src/boss_agent/screening.py",

@@ -8,7 +8,7 @@ the confinement stopped halfway: four Candidate Profile / Resume Revision verbs 
 on the broker alongside the ten task verbs, so resume-memory work had to acquire a
 task-lifecycle handle to touch a profile.
 
-The shape is deliberately the ``JobRecordStore``'s — an abstract protocol, an
+The shape is deliberately the ``JobRecordStore``'s — a port in the core layer, an
 in-memory adapter for the Fast Unit tier, and a PocketBase adapter that carries the
 offline SQLite fallback *inside the seam it protects* rather than loose in the broker.
 """
@@ -20,14 +20,14 @@ import json
 import logging
 import os
 import uuid
-from abc import ABC, abstractmethod
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from boss_agent.async_bridge import execute_broker_request
-from boss_agent.candidate_entities import CandidateProfile
+from boss_agent.core.candidate.domain.candidate_profile import CandidateProfile
+from boss_agent.core.candidate.interfaces.candidate_memory_store import CandidateMemoryStore
 from boss_agent.core.shared.errors import (
     TransportError,
 )
@@ -48,34 +48,6 @@ PROFILE_JSON_COLUMNS: tuple[str, ...] = (
     "projects",
     "target_positions",
 )
-
-
-class CandidateMemoryStore(ABC):
-    """Repository interface for candidate memory: the profile and its resume revisions.
-
-    Deliberately broker-free: the LangGraph workflow and the resume-upload endpoint
-    receive one of these and never see a task lease.
-    """
-
-    @abstractmethod
-    async def get_candidate_profile(self, user_id: str = "default") -> dict[str, Any] | None:
-        """Fetch the candidate's structured memory profile."""
-
-    @abstractmethod
-    async def save_candidate_profile(
-        self, profile_data: dict[str, Any], user_id: str = "default"
-    ) -> dict[str, Any]:
-        """Save or update the candidate's structured memory profile."""
-
-    @abstractmethod
-    async def list_resume_revisions(self, user_id: str = "default") -> list[dict[str, Any]]:
-        """List resume revisions in reverse chronological order."""
-
-    @abstractmethod
-    async def create_resume_revision(
-        self, revision_data: dict[str, Any], user_id: str = "default"
-    ) -> dict[str, Any]:
-        """Record a new resume upload revision."""
 
 
 class InMemoryCandidateMemoryStore(CandidateMemoryStore):

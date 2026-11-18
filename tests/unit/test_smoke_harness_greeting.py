@@ -21,7 +21,7 @@ import pytest
 from _feed_harness import ScriptedFeed, _card, _detail_page, _posting, script_pages
 from rich.console import Console
 
-from boss_agent.candidate_entities import CandidateProfile
+from boss_agent.core.candidate.domain.candidate_profile import CandidateProfile
 from boss_agent.core.shared.enums import ChatButtonState
 from boss_agent.matching import MatchGreetingResult
 from boss_agent.pages import ChatPage

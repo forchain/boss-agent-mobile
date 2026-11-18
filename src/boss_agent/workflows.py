@@ -11,7 +11,7 @@ from typing import Any
 from rich.console import Console
 
 from .async_bridge import run_sync
-from .candidate_entities import CandidateProfile
+from .core.candidate.domain.candidate_profile import CandidateProfile
 from .core.shared.enums import AuthStatus
 from .feed_verification import (
     activate_app,

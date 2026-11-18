@@ -17,11 +17,11 @@ root_dir = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(root_dir))
 sys.path.insert(0, str(root_dir / "src"))
 
-from boss_agent.candidate_entities import CandidateProfile  # noqa: E402
+from boss_agent.core.candidate.domain.candidate_profile import CandidateProfile  # noqa: E402
+from boss_agent.core.candidate.domain.profile_normalizer import ProfileNormalizer  # noqa: E402
 from boss_agent.graph import run_resume_lifecycle_graph  # noqa: E402
 from boss_agent.llm_config import create_llm_client, load_llm_config  # noqa: E402
 from boss_agent.memory import (  # noqa: E402
-    ProfileNormalizer,
     ResumeMemoryManager,
     ResumeTextExtractor,
 )
