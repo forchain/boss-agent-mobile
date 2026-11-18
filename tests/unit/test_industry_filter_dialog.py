@@ -18,8 +18,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from _feed_harness import ScriptedFeed, _card, _detail_page, _pipeline, _posting
 
+from boss_agent.core.job.use_cases.feed_pipeline import FeedStreamConfig
 from boss_agent.core.search.domain.models import FilterConfig
-from boss_agent.feed_pipeline import FeedStreamConfig
 from boss_agent.pages.job_feed import IndustryFilterDialogPage
 
 WITH_INDUSTRIES = FilterConfig(
@@ -155,13 +155,12 @@ async def test_a_run_applies_the_operator_industry_list_to_the_industry_dialog()
     order the app expects. The list that arrives has to be the operator's own: an industry
     silently dropped here is a whole category of postings the run never shows them.
     """
-    pipeline = _pipeline(
-        None,
-        feed=ScriptedFeed([[_card("资深大模型算法专家", "智元创新")]]),
-        detail=_detail_page(posting=_posting()),
-    )
-
-    with patch("boss_agent.feed_pipeline.IndustryFilterDialogPage") as industry_cls:
+    with patch("boss_agent.pages.feed_bundle.IndustryFilterDialogPage") as industry_cls:
+        pipeline = _pipeline(
+            None,
+            feed=ScriptedFeed([[_card("资深大模型算法专家", "智元创新")]]),
+            detail=_detail_page(posting=_posting()),
+        )
         result = await pipeline.stream_jobs(
             FeedStreamConfig(keyword="Agent", max_jobs=1, filter_config=WITH_INDUSTRIES)
         )

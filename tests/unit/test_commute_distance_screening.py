@@ -12,7 +12,8 @@ from pathlib import Path
 
 import yaml
 
-from boss_agent.screening_policy import HARD_CONSTRAINT_MARKER, ScreeningPolicy
+from boss_agent.core.job.domain.screening_policy import HARD_CONSTRAINT_MARKER, ScreeningPolicy
+from boss_agent.screening_config import load_screening_policy, save_policy
 
 
 def test_commute_limit_defaults_to_40km():
@@ -310,14 +311,15 @@ def test_commute_limit_coerces_blank_and_string_values():
 def test_commute_limit_save_and_load_roundtrip(tmp_path: Path | None = None):
     with tempfile.TemporaryDirectory() as tmpdir:
         target = Path(tmpdir) / "settings.local.yaml"
-        ScreeningPolicy(max_commute_distance_km=28.0, title_whitelist=["Agent"]).save_default(
-            config_path=target
+        save_policy(
+            ScreeningPolicy(max_commute_distance_km=28.0, title_whitelist=["Agent"]),
+            config_path=target,
         )
 
         raw = yaml.safe_load(target.read_text(encoding="utf-8"))
         assert raw["max_commute_distance_km"] == 28.0
 
-        loaded = ScreeningPolicy.load_default(config_path=target)
+        loaded = load_screening_policy(config_path=target)
         assert loaded.max_commute_distance_km == 28.0
         assert loaded.title_whitelist == ["Agent"]
 
@@ -326,5 +328,5 @@ def test_commute_limit_loads_from_example_config():
     example_path = Path("config/settings.example.yaml")
     assert example_path.exists(), "config/settings.example.yaml must exist"
 
-    policy = ScreeningPolicy.load_default(config_path=example_path)
+    policy = load_screening_policy(config_path=example_path)
     assert policy.max_commute_distance_km == 40.0

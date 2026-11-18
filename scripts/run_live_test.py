@@ -43,11 +43,14 @@ from rich.table import Table
 
 from boss_agent.async_bridge import run_sync
 from boss_agent.config_realm import DEFAULTS
+from boss_agent.core.job.domain.feed_stream import FeedStreamResult
+from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
+from boss_agent.core.job.use_cases.matching import JobMatchGreetingService
+from boss_agent.core.job.use_cases.screening import JobVerdictStage
 from boss_agent.core.search.domain.models import FilterConfig, SavedSearch, SearchConfig
 from boss_agent.core.search.interfaces.store import SavedSearchStore
 from boss_agent.core.shared.enums import AuthStatus
 from boss_agent.core.shared.errors import BrokerError
-from boss_agent.feed_pipeline import FeedStreamResult
 from boss_agent.feed_verification import (
     BOSS_PACKAGE,
     activate_app,
@@ -56,14 +59,13 @@ from boss_agent.feed_verification import (
     render_greeting_match_card,
     run_verification_feed,
 )
-from boss_agent.matching import JobMatchGreetingService
+from boss_agent.greeting_prompt import load_greeting_prompt
+from boss_agent.llm_config import create_llm_client
 from boss_agent.memory import ResumeMemoryManager
 from boss_agent.saved_search_store import (
     missing_saved_search_message,
     resolve_saved_search_store,
 )
-from boss_agent.screening import JobVerdictStage
-from boss_agent.screening_policy import ScreeningPolicy
 from boss_agent.settings import load_settings
 from boss_agent.workflows import TakeoverHandler
 from droid_agent_core.driver import AppiumSession, DriverConfig
@@ -311,7 +313,10 @@ def run_live_test(
         # (issue #389). The screener carries *this* run's matching service, so the greeting
         # is drafted by the object the operator configured rather than by a second one the
         # pipeline built for itself.
-        matching_service = JobMatchGreetingService()
+        matching_service = JobMatchGreetingService(
+            llm_client=create_llm_client(),
+            greeting_prompt=load_greeting_prompt(),
+        )
         # Loading the profile is the expensive half of drafting a greeting: with
         # ``--force-refresh-memory`` it regenerates the profile from the resume through the
         # LLM. So it happens only on the greeting path — ``--no-greeting`` skips it rather

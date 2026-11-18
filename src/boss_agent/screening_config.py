@@ -22,8 +22,8 @@ from pathlib import Path
 from typing import Any
 
 # Runtime, not a `TYPE_CHECKING` guard: the appenders fall back to
-# `ScreeningPolicy.load_default()` when a caller supplies no policy.
-from boss_agent.screening_policy import ScreeningPolicy
+# `load_screening_policy()` when a caller supplies no policy.
+from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
 
 SCREENING_CONFIG_HEADER = """\
 # ==============================================================================
@@ -97,8 +97,8 @@ def load_screening_policy(config_path: str | Path | None = None) -> ScreeningPol
 def is_writable_screening_path(path: str | Path) -> bool:
     """Whether `path` may be written to.
 
-    `*.example.*` files are checked-in read-only inputs — `load_default` will
-    happily resolve one on a fresh checkout, and line surgery there would edit a
+    `*.example.*` files are checked-in read-only inputs — `load_screening_policy`
+    will happily resolve one on a fresh checkout, and line surgery there would edit a
     tracked file. JSON stores are excluded for the same reason the appenders are
     YAML line surgery rather than a re-serialize.
     """
@@ -110,7 +110,7 @@ def resolve_writable_screening_config_path(root: str | Path | None = None) -> Pa
     """Resolve the writable screening configuration store.
 
     Always the unified local settings file, because it is the only candidate that
-    actually takes effect. ``ScreeningPolicy.load_default`` resolves the *first*
+    actually takes effect. ``load_screening_policy`` resolves the *first*
     file carrying screening keys, and ``config/screening.local.yaml`` is the last
     entry on that list — behind the shipped ``config/settings.example.yaml`` — so
     writing the blacklist there would be silently shadowed and change nothing.
@@ -161,7 +161,7 @@ def append_company_blacklist_entry(
 
     if not target.is_file():
         target.parent.mkdir(parents=True, exist_ok=True)
-        snapshot = (policy or ScreeningPolicy.load_default()).to_dict()
+        snapshot = (policy or load_screening_policy()).to_dict()
         if cleaned not in snapshot["company_blacklist"]:
             snapshot["company_blacklist"] = [*snapshot["company_blacklist"], cleaned]
         import yaml

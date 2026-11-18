@@ -12,9 +12,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from boss_agent.job_entities import JobCardBrief
-from boss_agent.screening import CandidateScreener, CardFacets, CardVerdictStage
-from boss_agent.screening_policy import ScreeningPolicy
+from boss_agent.core.job.domain.job_entities import JobCardBrief
+from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
+from boss_agent.core.job.use_cases.screening import CandidateScreener, CardFacets, CardVerdictStage
 
 DISTANT = 52.0
 NEARBY = 18.5

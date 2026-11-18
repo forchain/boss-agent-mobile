@@ -11,10 +11,16 @@ its result.
 import logging
 from typing import Any
 
+from boss_agent.core.job.domain.feed_stream import FeedStreamConfig
+from boss_agent.core.job.use_cases.feed_pipeline import JobFeedPipeline
+from boss_agent.core.job.use_cases.screening import CandidateScreener
 from boss_agent.core.task.domain.models import AutomationTask, TaskType
 from boss_agent.core.task.interfaces.broker import BaseTaskBroker
-from boss_agent.feed_pipeline import FeedStreamConfig, JobFeedPipeline
-from boss_agent.screening import CandidateScreener
+from boss_agent.greeting_prompt import load_greeting_prompt
+from boss_agent.llm_config import create_llm_client
+from boss_agent.pages.feed_bundle import build_feed_device_world
+from boss_agent.screening_prompt import load_screening_prompt
+from boss_agent.settings import load_feed_config_defaults
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.handlers.base import BaseTaskHandler, HandlerResult
 
@@ -46,7 +52,9 @@ class ScrapeJobsHandler(BaseTaskHandler):
         # Resolved by the parser, not stamped on afterwards: a SCRAPE_JOBS task never
         # sends a greeting, and the depth question has exactly one answering site (#302).
         # A payload that states its own Target Action still wins.
-        config = FeedStreamConfig.from_payload(payload, task_type=TaskType.SCRAPE_JOBS)
+        config = FeedStreamConfig.from_payload(
+            payload, task_type=TaskType.SCRAPE_JOBS, **load_feed_config_defaults()
+        )
         config.source_task_id = task.id
 
         search_name = payload.get("search_name") or payload.get("saved_search_name") or ""
@@ -61,8 +69,12 @@ class ScrapeJobsHandler(BaseTaskHandler):
         pipeline = JobFeedPipeline.for_task(
             broker=broker,
             task_id=task.id,
-            driver=driver,
-            screener=CandidateScreener(llm_client=self.llm_client),
+            world=build_feed_device_world(driver),
+            screener=CandidateScreener(
+                llm_client=self.llm_client or create_llm_client(),
+                greeting_prompt=load_greeting_prompt(),
+                screening_prompt=load_screening_prompt(),
+            ),
         )
         result = await pipeline.stream_jobs(config)
 

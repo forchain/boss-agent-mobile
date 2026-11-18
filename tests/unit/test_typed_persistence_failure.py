@@ -21,11 +21,11 @@ from _job_store_harness import FakePocketBaseSession, pocketbase_job_store
 
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
 from boss_agent.candidate_memory_store import PocketBaseCandidateMemoryStore
+from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
+from boss_agent.core.job.use_cases.feed_pipeline import FeedStreamConfig, JobFeedPipeline
 from boss_agent.core.shared.errors import TransportError, ValidationError
 from boss_agent.core.task.domain.models import TaskType
-from boss_agent.feed_pipeline import FeedStreamConfig, JobFeedPipeline
 from boss_agent.job_store import PocketBaseJobRecordStore
-from boss_agent.screening_policy import ScreeningPolicy
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.handlers.auto_apply import AutoApplyHandler
 
@@ -249,7 +249,7 @@ async def test_auto_apply_handler_logs_degradation_on_exclusion_pool_transport_e
     machine running it happens to keep in an untracked ``settings.local.yaml``.
     """
     monkeypatch.setattr(
-        "boss_agent.feed_pipeline.resolve_screening_policy",
+        "boss_agent.core.job.domain.feed_stream.resolve_screening_policy",
         lambda base_policy, **_: ScreeningPolicy(),
     )
     broker = InMemoryTaskBroker()
@@ -295,14 +295,16 @@ async def test_feed_pipeline_logs_degradation_on_quota_transport_error():
         side_effect=TransportError("PocketBase 500 error")
     )
 
+    from boss_agent.pages.feed_bundle import build_feed_device_world
+
     pipeline = JobFeedPipeline.for_task(
         broker=broker,
         task_id=task.id,
-        driver=MagicMock(),
+        world=build_feed_device_world(MagicMock()),
         screener=MagicMock(),
     )
 
-    from boss_agent.feed_pipeline import FeedStreamResult, _CardRun
+    from boss_agent.core.job.use_cases.feed_pipeline import FeedStreamResult, _CardRun
 
     run = _CardRun(
         config=FeedStreamConfig(),

@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from boss_agent.card_parser import (
+from boss_agent.core.job.domain.card_parser import (
     CLASSIFIER_RULES,
     CardFacets,
     classify_text_nodes,
@@ -212,7 +212,7 @@ def test_one_text_node_is_claimed_by_exactly_one_rule() -> None:
     the first rule to claim it must stop the walk for that node, or the same line
     ends up counted as two different facets.
     """
-    from boss_agent.card_parser import _Draft
+    from boss_agent.core.job.domain.card_parser import _Draft
 
     draft = _Draft(title="算法工程师", company="深至科技")
     classify_text_nodes(["3-5年"], draft)
@@ -292,14 +292,15 @@ PURE_DOMAIN_MODULES = (
     "src/boss_agent/core/shared/enums.py",
     "src/boss_agent/core/shared/keyword_constants.py",
     "src/boss_agent/core/shared/identifier_helpers.py",
-    "src/boss_agent/job_entities.py",
+    "src/boss_agent/core/job/domain/job_entities.py",
     "src/boss_agent/core/candidate/domain/candidate_profile.py",
     "src/boss_agent/core/search/domain/models.py",
-    "src/boss_agent/screening_policy.py",
-    "src/boss_agent/screening.py",
-    "src/boss_agent/feed_records.py",
+    "src/boss_agent/core/job/domain/screening_policy.py",
+    "src/boss_agent/core/job/domain/screening.py",
+    "src/boss_agent/core/job/domain/feed_records.py",
+    "src/boss_agent/core/job/domain/matching.py",
     "src/boss_agent/graph.py",
-    "src/boss_agent/card_parser.py",
+    "src/boss_agent/core/job/domain/card_parser.py",
 )
 
 

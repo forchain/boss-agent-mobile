@@ -41,13 +41,14 @@ from boss_agent.chat_triage import (
     CommunicationListAdapter,
     StopReason,
 )
+from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
 from boss_agent.rejection import (
     DEFAULT_REJECTION_REPLY_TEXT,
     DISINTEREST_REASON,
     ChatAcknowledgmentSettings,
     RejectionVerdict,
 )
-from boss_agent.screening_policy import ScreeningPolicy
+from boss_agent.screening_config import load_screening_policy
 
 
 @pytest.fixture
@@ -58,7 +59,7 @@ def config_path(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def policy(config_path: Path) -> ScreeningPolicy:
-    return ScreeningPolicy.load_default(config_path=config_path)
+    return load_screening_policy(config_path=config_path)
 
 
 # ---------------------------------------------------------------------------

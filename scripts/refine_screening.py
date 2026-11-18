@@ -16,10 +16,10 @@ root_dir = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(root_dir))
 sys.path.insert(0, str(root_dir / "src"))
 
-from boss_agent.job_entities import JobPosting  # noqa: E402
+from boss_agent.core.job.domain.job_entities import JobPosting  # noqa: E402
+from boss_agent.core.job.domain.screening_policy import ScreeningPolicy  # noqa: E402
+from boss_agent.core.job.use_cases.screening import CandidateScreener  # noqa: E402
 from boss_agent.llm_config import create_llm_client, load_llm_config  # noqa: E402
-from boss_agent.screening import CandidateScreener  # noqa: E402
-from boss_agent.screening_policy import ScreeningPolicy  # noqa: E402
 from droid_agent_core.llm import LLMConfig, LLMDecisionClient  # noqa: E402
 
 
@@ -133,10 +133,19 @@ def main() -> None:
             sys.stderr.write(f"Warning: Failed to load default screening policy ({e})\n")
             policy = ScreeningPolicy()
 
+    screening_prompt = args.screening_prompt
+    if screening_prompt is None:
+        try:
+            from boss_agent.screening_prompt import load_screening_prompt
+
+            screening_prompt = load_screening_prompt()
+        except FileNotFoundError:
+            screening_prompt = None
+
     llm_client = build_llm_client(args.llm_config)
     screener = CandidateScreener(
         llm_client=llm_client,
-        screening_prompt=args.screening_prompt,
+        screening_prompt=screening_prompt,
     )
 
     if args.action == "retest":

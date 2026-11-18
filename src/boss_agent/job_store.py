@@ -16,7 +16,6 @@ historical contacts) and quota counts only greetings the agent actually dispatch
 
 import logging
 import uuid
-from abc import ABC, abstractmethod
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -24,6 +23,7 @@ from typing import Any
 import requests
 
 from boss_agent.async_bridge import execute_broker_request
+from boss_agent.core.job.interfaces.store import JobRecordStore
 from boss_agent.core.shared.enums import STATE_RANK, JobRecordStatus
 from boss_agent.core.shared.errors import (
     BrokerError,
@@ -39,12 +39,10 @@ from boss_agent.core.shared.identifier_helpers import (
     is_invalid_company_name,
     sanitize_tags,
 )
+from boss_agent.core.shared.keyword_constants import INVALID_JOB_TITLES
 
 logger = logging.getLogger("boss_agent.job_store")
 
-INVALID_JOB_TITLES: frozenset[str] = frozenset(
-    {"", "未注明职位", "未注明岗位", "未知职位", "未知岗位"}
-)
 INVALID_COMPANY_NAMES: frozenset[str] = frozenset({"", "未注明公司", "未知公司"})
 
 #: Page size when walking applied direct-hire records from PocketBase.
@@ -187,77 +185,6 @@ def _record_fields(record_data: dict[str, Any], fingerprint: str, now: str) -> d
     fields["created"] = now
     fields["updated"] = now
     return fields
-
-
-class JobRecordStore(ABC):
-    """Repository interface for Job Records, exclusion pools and quota accounting."""
-
-    @abstractmethod
-    async def upsert_job_record(self, record_data: dict[str, Any]) -> dict[str, Any] | None:
-        """Insert a new job record or merge new information into the existing one.
-
-        Returns the stored record, or ``None`` when the input is incomplete or placeholder
-        junk that is deliberately skipped ("宁可不录入"). A *rejected write* is never absorbed
-        into an empty value: the persistence seam raises its typed broker error
-        (``ValidationError`` for a 400, ``TransportError`` for a transport fault) so an
-        under-counted quota or exclusion pool surfaces instead of looking like a saved record
-        (Spec #303, story #8).
-        """
-
-    @abstractmethod
-    async def get_job_record_by_fingerprint(self, fingerprint: str) -> dict[str, Any] | None:
-        """Get a job record by its canonical deduplication fingerprint."""
-
-    @abstractmethod
-    async def has_job_fingerprint(self, fingerprint: str) -> bool:
-        """Whether a job record with the given fingerprint already exists."""
-
-    @abstractmethod
-    async def get_job_record(self, record_id: str) -> dict[str, Any] | None:
-        """Get a job record by ID."""
-
-    @abstractmethod
-    async def list_job_records(
-        self, status: str | None = None, limit: int = 50
-    ) -> list[dict[str, Any]]:
-        """List job records, optionally filtered by status."""
-
-    @abstractmethod
-    async def update_job_record_status(
-        self,
-        record_id: str,
-        status: str,
-        match_data: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        """Update the status and optional match results of a job record.
-
-        Raises KeyError when the record does not exist and RuntimeError when the write
-        could not be performed, so a caller can never mistake a failed write for a saved one.
-        """
-
-    @abstractmethod
-    async def delete_job_record(self, record_id: str) -> bool:
-        """Delete a job record by ID. Returns False when absent or on failure."""
-
-    @abstractmethod
-    async def get_applied_direct_companies(self, cooldown_days: int = 0) -> set[str]:
-        """Distinct direct-hire companies with active communication inside the cool-down window.
-
-        Headhunter channels and masked/confidential company names are never included, since
-        they do not represent a shared in-house HR candidate pool.
-        """
-
-    @abstractmethod
-    async def clear_job_communication(self, record_id: str) -> dict[str, Any]:
-        """Transition a communicated job back to `jd_saved`, clearing its dispatch timestamp.
-
-        The extracted JD is preserved so the job can be re-evaluated and re-applied without
-        re-scraping the mobile detail page (cool-down expiry or manual clearance).
-        """
-
-    @abstractmethod
-    async def count_today_applied_jobs(self) -> int:
-        """Count how many greetings were dispatched today, in UTC."""
 
 
 class InMemoryJobRecordStore(JobRecordStore):

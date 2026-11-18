@@ -1,6 +1,6 @@
 """
-boss_agent.feed_pipeline
-========================
+boss_agent.core.job.use_cases.feed_pipeline
+===========================================
 Deep Mobile Job Feed Pipeline (ADR 0013, Spec #231).
 
 One engine drives every mobile job-discovery run: two-anchor search entry, bounded
@@ -9,48 +9,19 @@ guard, call-to-action button inspection with instant historical backout, inline 
 expansion, card screening, full-JD evaluation and daily-quota degradation.
 
 Worker handlers configure it and read its result; they never touch a coordinate, a
-page object or a scroll. The only behavioural difference between saving a JD and
-running batch outreach is ``FeedStreamConfig.target_action``.
+page object or a scroll. The device surface is injected as a
+:class:`~boss_agent.core.job.interfaces.device.FeedDeviceWorld`, so this module never
+imports Appium or constructs a page object. The only behavioural difference between
+saving a JD and running batch outreach is ``FeedStreamConfig.target_action``.
 """
 
 import logging
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from enum import StrEnum
 from typing import Any
 
-from .core.candidate.domain.candidate_profile import CandidateProfile
-from .core.search.domain.models import FilterConfig
-from .core.shared.enums import (
-    DEPTH_DECLARED,
-    DEPTH_LEGACY_HALF_PAIR,
-    DEPTH_LEGACY_PAIR,
-    DEPTH_UNSTATED,
-    ChatButtonState,
-    JobRecordStatus,
-    ScreeningStage,
-    TargetAction,
-    depth_already_reached,
-)
-from .core.shared.errors import BrokerError, TransportError
-from .core.shared.identifier_helpers import (
-    greeting_is_human,
-    is_communication_expired,
-    is_direct_hire_company,
-    jd_is_usable_on_file,
-)
-from .core.shared.keyword_constants import (
-    APPLIED_SOURCE_AGENT,
-    APPLIED_SOURCE_PLATFORM_HISTORICAL,
-    EXPIRED_POSTING_REASON,
-    GREETING_SOURCE_AGENT,
-    GREETING_SOURCE_HUMAN,
-    HEADHUNTER_COMMUTE_PROBE_SKIP_REASON,
-    NOT_INSPECTED_DISTRICT_SKIP_REASON,
-)
-from .core.task.domain.models import TaskType
-from .feed_records import (
+from boss_agent.core.job.domain.feed_records import (
     card_facets_record,
     card_record,
     effective_company,
@@ -58,29 +29,61 @@ from .feed_records import (
     enriched_record,
     posting_from_record,
 )
-from .job_entities import JobCardBrief, JobPosting
-from .job_store import INVALID_JOB_TITLES, InMemoryJobRecordStore, JobRecordStore
-from .pages.communication import ChatPage
-from .pages.job_detail import JobDetailPage
-from .pages.job_feed import (
-    FilterDialogPage,
-    IndustryFilterDialogPage,
-    JobListPage,
-    LocatedJobCard,
-    SearchPage,
+from boss_agent.core.job.domain.feed_stream import (
+    FeedStreamConfig,
+    FeedStreamResult,
+    JobAction,
+    JobOutcome,
 )
-from .pages.system import StartupDialogPage
-from .screening import (
-    CandidateScreener,
+from boss_agent.core.job.domain.job_entities import JobCardBrief
+from boss_agent.core.job.domain.screening import (
     CardScreeningVerdict,
     CardVerdictStage,
     JobEvaluationResult,
     JobVerdictStage,
 )
-from .screening_policy import ScreeningPolicy, resolve_screening_policy
-from .settings import resolve_communication_cooldown_days
+from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
+from boss_agent.core.job.interfaces.device import FeedDeviceWorld
+from boss_agent.core.job.interfaces.store import JobRecordStore
+from boss_agent.core.job.use_cases.screening import CandidateScreener
+from boss_agent.core.shared.enums import (
+    ChatButtonState,
+    JobRecordStatus,
+    ScreeningStage,
+    TargetAction,
+    depth_already_reached,
+)
+from boss_agent.core.shared.errors import BrokerError, TransportError
+from boss_agent.core.shared.identifier_helpers import (
+    greeting_is_human,
+    is_communication_expired,
+    is_direct_hire_company,
+    jd_is_usable_on_file,
+)
+from boss_agent.core.shared.keyword_constants import (
+    APPLIED_SOURCE_AGENT,
+    APPLIED_SOURCE_PLATFORM_HISTORICAL,
+    EXPIRED_POSTING_REASON,
+    GREETING_SOURCE_AGENT,
+    GREETING_SOURCE_HUMAN,
+    HEADHUNTER_COMMUTE_PROBE_SKIP_REASON,
+    INVALID_JOB_TITLES,
+    NOT_INSPECTED_DISTRICT_SKIP_REASON,
+)
 
 logger = logging.getLogger(__name__)
+
+__all__ = [
+    "BOUNDARY_LOG",
+    "JobAction",
+    "JobFeedPipeline",
+    "JobOutcome",
+    "FeedStreamConfig",
+    "FeedStreamResult",
+    "card_rejection_stage",
+    "is_task_cancelled",
+    "station_probe_upgrade",
+]
 
 
 def card_rejection_stage(verdict: CardScreeningVerdict) -> ScreeningStage:
@@ -100,334 +103,11 @@ OPEN_SEARCH_TIMEOUT_SEC = 5.0
 SEARCH_SUBMIT_TIMEOUT_SEC = 10.0
 CARDS_PER_VIEWPORT = 10
 CONSECUTIVE_EMPTY_SCROLL_LIMIT = 3
-DEFAULT_MAX_JOBS = 3
 
 BOUNDARY_LOG = (
     "🛑 [Feed Boundary] Detected '暂无其他符合职位 / 为你推荐' end-of-feed marker. "
     "Terminating search pagination."
 )
-
-
-class JobAction(StrEnum):
-    """What the pipeline did with a card once it reached a verdict."""
-
-    SAVED = "saved"
-    APPLIED = "applied"
-    # Drafted, persisted, deliberately not sent this round — the record stays
-    # re-sendable. Issue #298 renamed this from `offline_draft`: "offline draft" read
-    # like a terminal product tier, when the intent is "not delivered yet".
-    PENDING_SEND = "pending_send"
-    SKIPPED = "skipped"
-
-
-@dataclass(frozen=True)
-class JobOutcome:
-    """Per-card report handed to the caller's ``on_job`` observer."""
-
-    fingerprint: str
-    title: str
-    company_name: str
-    status: str
-    action: JobAction
-    reason: str = ""
-    score: int = 0
-    greeting_message: str = ""
-    record: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass
-class FeedStreamResult:
-    """Aggregate outcome of one feed streaming run."""
-
-    outcome: str = "no_candidates"
-    reason: str = ""
-    scanned: int = 0
-    processed: int = 0
-    skipped: int = 0
-    jobs: list[dict[str, Any]] = field(default_factory=list)
-    #: The postings this run actually extracted, typed instead of as store records.
-    #: ``jobs`` speaks the store's vocabulary — its keys are private to the persistence
-    #: layer and cannot change while the worker handlers read them — so a caller outside
-    #: the worker had no way to read an extraction without hardcoding those keys
-    #: (issue #389). These are what the platform screens with, and they exist only once a
-    #: detail page actually yielded one: a card whose detail read failed still sits in
-    #: ``jobs`` as itself, and a card the run withdraws at the detail stage leaves neither.
-    postings: list[JobPosting] = field(default_factory=list)
-    applied: bool = False
-    applied_count: int = 0
-    score: int = 0
-    greeting_message: str = ""
-    jd_key_requirements: list[str] = field(default_factory=list)
-    job: dict[str, Any] | None = None
-    cancelled: bool = False
-    search_failed: bool = False
-    boundary_reached: bool = False
-    quota_exhausted: bool = False
-    error_message: str | None = None
-
-
-@dataclass
-class FeedStreamConfig:
-    """Declarative description of one feed run, parsed from a task payload."""
-
-    target_action: TargetAction = TargetAction.SAVE_JD
-    keyword: str | None = None
-    max_jobs: int = DEFAULT_MAX_JOBS
-    enable_search: bool = True
-    # Filtering is switched off on the filter config itself, which owns the flag.
-    filter_config: FilterConfig | None = None
-    screening_policy: ScreeningPolicy = field(default_factory=ScreeningPolicy)
-    cooldown_days: int = 0
-    daily_greeting_limit: int = 20
-    min_score: float = 70.0
-    # The one gate the dispatch path reads: does this run put a greeting on the wire?
-    # ``depth_expression`` records how the payload answered that, so a log line can say
-    # whether it was read from the single declared intent or from the legacy pair an older
-    # builder left in the queue (issue #302).
-    send_greeting: bool = False
-    depth_expression: str = DEPTH_UNSTATED
-    # True when the payload itself stated a Target Action rather than being inferred from
-    # the task type. A payload that states no depth at all keeps the default it always had:
-    # nothing goes out.
-    states_target_action: bool = False
-    # Set when the payload was read through a shape producers are no longer allowed to
-    # write. The run says so in its own log instead of failing the queued task.
-    depth_warning: str = ""
-    # A payload written before issue #428 can still name one posting through
-    # ``direct_job_id``, and the broker is PocketBase-backed, so such a task can be
-    # sitting in a queue when this code is deployed. No producer writes the key any more
-    # and no execution path can act on it, so ``stream_jobs`` refuses the run outright
-    # rather than reading the same payload as an ordinary keyword search — which would
-    # turn "greet the one posting on screen" into a quota-consuming sweep of the board.
-    retired_direct_target: bool = False
-    candidate_profile: CandidateProfile | None = None
-    source_task_id: str | None = None
-    is_headhunter: bool | None = None
-
-    @classmethod
-    def from_payload(
-        cls, payload: dict[str, Any] | None, *, task_type: TaskType | str | None = None
-    ) -> "FeedStreamConfig":
-        """Parse the worker task payload this pipeline and both handlers share.
-
-        ``task_type`` names the handler the task was routed to. Passing it here is what
-        keeps depth answered once, in one place: the handlers used to overwrite
-        ``target_action`` *after* parsing, so the config could hold a Target Action that
-        disagreed with the ``send_greeting`` derived from the payload — the same "two
-        answers to one question" shape #302 removes from the wire, reintroduced as mutable
-        state one layer up.
-        """
-        from .settings import load_settings
-
-        data = payload or {}
-        target_action_val = data.get("target_action") or data.get("action")
-        target_action = TargetAction.SAVE_JD
-        if target_action_val:
-            try:
-                target_action = TargetAction(str(target_action_val).lower())
-            except ValueError:
-                target_action = TargetAction.SAVE_JD
-        elif task_type is not None:
-            # The task type names the action when the payload does not. Only an *absent*
-            # Target Action is inferred this way: a payload that states one keeps it, so
-            # this can never promote a save-only run into an outreach run.
-            resolved_type = task_type if isinstance(task_type, TaskType) else TaskType(task_type)
-            if resolved_type == TaskType.AUTO_APPLY:
-                target_action = TargetAction.AUTO_APPLY
-
-        raw_filter = data.get("filter")
-        filter_config = (
-            FilterConfig(
-                education=raw_filter.get("education"),
-                salary=raw_filter.get("salary"),
-                experience=raw_filter.get("experience"),
-                activity=raw_filter.get("activity"),
-                company_scales=raw_filter.get("company_scales", []),
-                industries=raw_filter.get("industries", []),
-                channel_preference=raw_filter.get("channel_preference", ""),
-                enable_filter=bool(data.get("enable_filter", True)),
-            )
-            if isinstance(raw_filter, dict)
-            else None
-        )
-
-        # ---- the one depth question, answered once -------------------------------
-        # A new payload states depth only as ``target_action``. Anything that still carries
-        # the legacy keys is read the way the worker that received it read it, because a
-        # task sitting in somebody's queue must not change meaning — or fail outright —
-        # because the code underneath it was upgraded. What is refused is the *producer*
-        # side (task_launch._refuse_hand_authored_depth): writing the pair, or half of it, is
-        # no longer something a caller can do at all.
-        legacy_preview = data.get("preview_only")
-        legacy_auto_send = data.get("auto_send")
-        legacy_half_warning = ""
-        states_target_action = bool(data.get("target_action") or data.get("action"))
-        if (legacy_preview is None) != (legacy_auto_send is None):
-            # A documented historical shape: PR #297's own table shows the dashboard's
-            # "run scheduled now" hand-building `preview_only: true` with no `auto_send`.
-            # Read with the defaults that worker applied — `preview_only` defaulted True,
-            # `auto_send` False, so a half-written pair was always a draft — and say so,
-            # loudly, instead of letting it pass as an ordinary run.
-            stated = "preview_only" if legacy_preview is not None else "auto_send"
-            missing = "auto_send" if legacy_preview is not None else "preview_only"
-            legacy_preview = True
-            legacy_auto_send = False
-            send_greeting = False
-            depth_expression = DEPTH_LEGACY_HALF_PAIR
-            legacy_half_warning = (
-                f"task payload states `{stated}` without `{missing}` — read as a draft with "
-                f"the defaults an older worker applied. Depth is one expression now: state "
-                f"`target_action` (issue #302)."
-            )
-        elif legacy_preview is None and legacy_auto_send is None:
-            # Single-expression shape (or a payload that states no depth at all, in which
-            # case the Target Action default of save_jd keeps it a non-sending run — the
-            # behaviour such a payload always had).
-            send_greeting = target_action == TargetAction.AUTO_APPLY and states_target_action
-            depth_expression = DEPTH_DECLARED if states_target_action else DEPTH_UNSTATED
-        else:
-            send_greeting = bool(legacy_auto_send) and not bool(legacy_preview)
-            depth_expression = DEPTH_LEGACY_PAIR
-
-        # ---- a retired execution path, read through a key nobody writes any more ----
-        # `direct_job_id` named the one posting a targeted application greeted on screen.
-        # Issue #428 retired that path, so the key is now unreadable by anything: the
-        # config keeps no field to hold it and no code path can act on it. A producer
-        # stopped writing it at the same time, but the queue outlives the deployment —
-        # ``BaseTaskBroker`` is PocketBase-backed, so a task written by the pre-#428
-        # builder can still be delivered to this worker. Such a payload also carries
-        # `keyword` (the target's title) and `target_action=auto_apply`, so with nothing
-        # gating it the run would fall into the keyword sweep below: "greet the one
-        # posting on screen" silently becoming "sweep the board and greet up to the
-        # ceiling", which spends real quota on a task the operator never read that way.
-        # That is the meaning-change this module's own doctrine forbids, so the shape is
-        # named in ``depth_warning`` and the run fails closed before any search starts.
-        legacy_direct_job_id = data.get("direct_job_id")
-        retired_direct_target = bool(legacy_direct_job_id)
-        retired_target_warning = ""
-        if retired_direct_target:
-            retired_target_warning = (
-                f"task payload states `direct_job_id={legacy_direct_job_id}` — the "
-                f"single-screen targeted-application path is retired (issues #426-#428). "
-                f"The run is refused rather than read as a keyword search for "
-                f"`{data.get('keyword')}`, which would greet postings this task never "
-                f"named. Re-launch it from a Saved Search to sweep by keyword."
-            )
-
-        raw_policy = data.get("screening_policy")
-        daily_limit = int(
-            data.get("daily_greeting_limit") or load_settings().get("daily_greeting_limit", 20)
-        )
-
-        default_policy = ScreeningPolicy.load_default()
-        if not raw_policy or not isinstance(raw_policy, dict):
-            base_policy = default_policy
-        elif raw_policy.get("enable_screening") is False:
-            base_policy = ScreeningPolicy.from_dict(raw_policy)
-        else:
-            parsed_policy = ScreeningPolicy.from_dict(raw_policy)
-            title_bl = (
-                parsed_policy.title_blacklist
-                if raw_policy.get("title_blacklist")
-                else default_policy.title_blacklist
-            )
-            company_bl = (
-                parsed_policy.company_blacklist
-                if raw_policy.get("company_blacklist")
-                else default_policy.company_blacklist
-            )
-            title_wl = (
-                parsed_policy.title_whitelist
-                if raw_policy.get("title_whitelist")
-                else default_policy.title_whitelist
-            )
-            jd_bl = (
-                parsed_policy.jd_blacklist
-                if raw_policy.get("jd_blacklist")
-                else default_policy.jd_blacklist
-            )
-            dist_bl = (
-                parsed_policy.business_district_blacklist
-                if raw_policy.get("business_district_blacklist")
-                else default_policy.business_district_blacklist
-            )
-            dist_inspect = (
-                parsed_policy.business_district_inspect_list
-                if raw_policy.get("business_district_inspect_list")
-                else default_policy.business_district_inspect_list
-            )
-            commute_km = (
-                parsed_policy.max_commute_distance_km
-                if "max_commute_distance_km" in raw_policy
-                else default_policy.max_commute_distance_km
-            )
-            channel_pref = (
-                parsed_policy.channel_preference
-                if "channel_preference" in raw_policy
-                else default_policy.channel_preference
-            )
-            base_policy = replace(
-                default_policy,
-                title_blacklist=title_bl,
-                company_blacklist=company_bl,
-                title_whitelist=title_wl,
-                jd_blacklist=jd_bl,
-                business_district_blacklist=dist_bl,
-                business_district_inspect_list=dist_inspect,
-                enable_screening=parsed_policy.enable_screening,
-                channel_preference=channel_pref,
-                max_commute_distance_km=commute_km,
-            )
-        # A strategy may pin its own recruitment channel; saying nothing means inherit the
-        # policy resolved above (issue #368). The rule itself belongs to
-        # ``models.resolve_screening_policy``, which the interactive SmokeHarness also
-        # goes through — two callers, one answer.
-        screening_policy = resolve_screening_policy(
-            base_policy,
-            channel_preference=_strategy_channel_preference(data.get("filter")),
-        )
-
-        return cls(
-            target_action=target_action,
-            keyword=data.get("keyword"),
-            max_jobs=int(data.get("max_jobs", DEFAULT_MAX_JOBS)),
-            enable_search=bool(data.get("enable_search", True)),
-            filter_config=filter_config,
-            screening_policy=screening_policy,
-            cooldown_days=resolve_communication_cooldown_days(data),
-            daily_greeting_limit=daily_limit,
-            min_score=float(data.get("min_score", 70)),
-            source_task_id=data.get("source_task_id"),
-            send_greeting=send_greeting,
-            states_target_action=states_target_action,
-            depth_expression=depth_expression,
-            # A payload can be wrong about both depth *and* the retired target, so the two
-            # warnings are joined rather than one silently overwriting the other.
-            depth_warning=" ".join(w for w in (legacy_half_warning, retired_target_warning) if w),
-            retired_direct_target=retired_direct_target,
-            is_headhunter=data.get("is_headhunter"),
-        )
-
-
-def _strategy_channel_preference(raw_filter: Any) -> str:
-    """The recruitment channel a task's strategy pinned, or '' for "inherit global".
-
-    Read the same two shapes ``SavedSearch.from_dict`` reads for the same PocketBase
-    column, so a task queued before the value was normalized cannot resolve a different
-    channel than the preset it was launched from. The value is normalized by the caller
-    (``resolve_screening_policy``) rather than here — this only says where in the payload
-    the answer lives, and the two halves of the question are not allowed to disagree.
-    """
-    if isinstance(raw_filter, str):
-        try:
-            import json
-
-            raw_filter = json.loads(raw_filter)
-        except Exception:
-            return ""
-    if not isinstance(raw_filter, dict):
-        return ""
-    return raw_filter.get("channel_preference", "") or ""
 
 
 @dataclass
@@ -440,7 +120,7 @@ class _CardRun:
     card: JobCardBrief | None = None
     # The element the brief was read from. Only the boundary check and the detail tap
     # touch it; every other stage works from `card`.
-    located: LocatedJobCard | None = None
+    located: Any | None = None
     card_record: dict[str, Any] = field(default_factory=dict)
     verdict: CardScreeningVerdict | None = None
     # Position of this card's record in ``result.jobs``, replaced in place by the
@@ -516,7 +196,7 @@ def station_probe_upgrade(
 
 async def is_task_cancelled(broker: Any, task_id: str) -> bool:
     """Whether the user cancelled the task this run belongs to."""
-    from .core.task.domain.models import TaskStatus
+    from boss_agent.core.task.domain.models import TaskStatus
 
     task = await broker.get_task(task_id)
     return task is not None and task.status == TaskStatus.CANCELLED
@@ -526,43 +206,36 @@ class JobFeedPipeline:
     """Streams screened job postings out of a mobile search feed.
 
     Dependencies are injected so a run can be driven against synthetic page state:
-    a Job Record Store for every persistence decision, a Candidate Screener for every
-    screening decision, a log sink and a cancellation probe.
-
-    Only the driver is required. A caller with no broker and no PocketBase server behind
-    it composes the engine with nothing but a driver and gets the volatile ledger
-    (issue #389), so the pipeline is reachable standalone — the worker path through
-    :meth:`for_task` remains the composition that talks to a real server.
+    a :class:`FeedDeviceWorld` for every screen interaction, a Job Record Store for every
+    persistence decision, a Candidate Screener for every screening decision, a log sink
+    and a cancellation probe. The concrete page objects are composed by the caller
+    (``boss_agent.pages.feed_bundle`` in production), which is what keeps Appium out of
+    this module's import graph.
     """
 
     def __init__(
         self,
-        driver: Any,
-        store: JobRecordStore | None = None,
+        world: FeedDeviceWorld,
+        store: JobRecordStore,
         screener: CandidateScreener | None = None,
         log: Callable[[str], Awaitable[None]] | None = None,
         is_cancelled: Callable[[], Awaitable[bool]] | None = None,
     ) -> None:
-        self.driver = driver
-        # A store is required for the run to mean anything, and until issue #389 the only
-        # one on offer was the broker's ledger — which made a PocketBase server a
-        # precondition for merely composing the engine. A caller that has no broker gets
-        # the volatile ledger instead: the pipeline keeps its full persistence semantics
-        # for the length of the run and the process, which is exactly what a standalone
-        # run wants, rather than a caller having to invent a no-op store to satisfy it.
-        # Keyed on ``is None`` rather than truthiness: an empty ledger is falsy, and
-        # emptiness is a real ledger's normal state at the start of a run, so a truthiness
-        # default would swap the caller's own store out from under it.
-        self.store: JobRecordStore = store if store is not None else InMemoryJobRecordStore()
+        self.world = world
+        self.store = store
         self.screener = screener or CandidateScreener()
         self._log_sink = log
         self._cancel_probe = is_cancelled
 
-        self.startup_page = StartupDialogPage(driver) if driver else None
-        self.list_page = JobListPage(driver) if driver else None
-        self.search_page = SearchPage(driver) if driver else None
-        self.detail_page = JobDetailPage(driver) if driver else None
-        self.chat_page = ChatPage(driver) if driver else None
+        # The five attributes the engine has always exposed; the filter dialogs are part
+        # of the same injected bundle but stay private to the run.
+        self.startup_page = world.startup_page
+        self.list_page = world.list_page
+        self.search_page = world.search_page
+        self.detail_page = world.detail_page
+        self.chat_page = world.chat_page
+        self._filter_page = world.filter_page
+        self._industry_filter_page = world.industry_filter_page
 
         # Companies contacted during this run: a newly discovered communication must
         # suppress the company's other postings immediately, not on the next pass.
@@ -576,7 +249,7 @@ class JobFeedPipeline:
         cls,
         broker: Any,
         task_id: str,
-        driver: Any,
+        world: FeedDeviceWorld,
         screener: CandidateScreener | None = None,
     ) -> "JobFeedPipeline":
         """Wire a pipeline to a worker task: its job ledger, log sink and cancel probe.
@@ -587,7 +260,7 @@ class JobFeedPipeline:
         let any broker-shaped object silently satisfy store-typed code.
         """
         return cls(
-            driver=driver,
+            world=world,
             store=broker.job_store,
             screener=screener,
             log=lambda line: broker.append_log(task_id, line),
@@ -604,9 +277,6 @@ class JobFeedPipeline:
     ) -> FeedStreamResult:
         """Run one feed pass and return what happened to every job it saw."""
         result = FeedStreamResult()
-        if not self.driver:
-            result.error_message = "Driver session is unavailable"
-            return result
 
         if self.startup_page and self.startup_page.is_dialog_present():
             self.startup_page.dismiss_dialog()
@@ -701,13 +371,13 @@ class JobFeedPipeline:
         if filter_cfg and filter_cfg.has_industry_filters:
             await self._log(f"Applying industry filter: {filter_cfg.industries}")
             try:
-                IndustryFilterDialogPage(self.driver).apply_industry_filters(
+                self._industry_filter_page.apply_industry_filters(
                     filter_cfg.industries, timeout_sec=5.0
                 )
             except Exception as ex:
                 await self._log(f"Notice applying industry filter: {ex}")
 
-        filter_page = FilterDialogPage(self.driver)
+        filter_page = self._filter_page
         if filter_cfg and filter_cfg.has_filters:
             await self._log(
                 f"Applying general filters: education={filter_cfg.education}, "
@@ -1076,7 +746,7 @@ class JobFeedPipeline:
             return None, ""
         return distance_km, str(distance_text or "")
 
-    async def _open_detail(self, located: LocatedJobCard | None) -> bool:
+    async def _open_detail(self, located: Any | None) -> bool:
         """Tap the card (or fall back to the first list item) to reach its detail page.
 
         The one place besides the boundary check that needs the device handle rather

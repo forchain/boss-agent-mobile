@@ -38,7 +38,7 @@ without caring whether the name arrives through the submodule or the facade.
 
 Resolution is real, not string-matched: `from .pages.communication import ChatPage` inside
 `src/boss_agent/chat_triage.py` is `boss_agent.pages.communication`, and `from ..job_entities
-import JobCardBrief` inside `src/boss_agent/pages/__init__.py` is `boss_agent.job_entities`.
+import JobCardBrief` inside `src/boss_agent/pages/__init__.py` is `boss_agent.core.job.domain.job_entities`.
 A guard that only read `node.module` would pass on every relative import in the tree and
 would be worthless -- which is why `test_the_relative_import_resolver_...` below pins the
 resolver against synthetic sources first.
@@ -345,18 +345,16 @@ def test_job_feed_never_imports_the_communication_screens() -> None:
 def test_the_feed_engine_keeps_its_accepted_chat_screen_dependency() -> None:
     """The one deliberate cross-feature edge, stated so nobody deletes it as a mistake.
 
-    `JobFeedPipeline` opens `ChatPage` to send the greeting draft it just evaluated. That is
-    a real runtime dependency, so it is permitted -- but it is permitted *here*, in the
-    orchestrator, not by relaxing the rules above. This test deliberately checks for the
-    dependency and not for the module it is spelled on: re-reading `ChatPage` through the
-    facade is still a violation of ticket #400, and a live greeting dispatch must keep
-    working.
+    `JobFeedPipeline` opens `ChatPage` to send the greeting draft it just evaluated. With
+    the device world injected, that construction lives in `pages.feed_bundle`, which is
+    where the feed engine's page composition belongs. This checks the dependency still
+    exists there; re-reading `ChatPage` through the facade would still be a violation.
     """
-    path = BOSS_AGENT_ROOT / "feed_pipeline.py"
+    path = BOSS_AGENT_ROOT / "pages" / "feed_bundle.py"
     chat_imports = [record for record in _page_imports(path) if record.symbol == "ChatPage"]
 
     assert chat_imports, (
-        "feed_pipeline no longer imports ChatPage. The greeting dispatch opened the chat "
+        "feed_bundle no longer imports ChatPage. The greeting dispatch opened the chat "
         "screen to send the draft it evaluated; if that moved, re-decide it deliberately."
     )
 
@@ -461,7 +459,7 @@ SCREEN_DRIVERS = frozenset(
     {
         "boss_agent",
         "boss_agent.chat_triage",
-        "boss_agent.feed_pipeline",
+        "boss_agent.feed_verification",
         "boss_agent.workflows",
     }
 )
@@ -475,15 +473,15 @@ NOT_DOMAIN = ("boss_agent.pages", "boss_agent.worker")
 #: required module out of coverage fails here instead of shrinking the guard in silence.
 REQUIRED_DOMAIN_MODULES = (
     "boss_agent.core.candidate.domain.candidate_profile",
-    "boss_agent.card_parser",
+    "boss_agent.core.job.domain.card_parser",
     "boss_agent.core.shared.enums",
-    "boss_agent.feed_records",
+    "boss_agent.core.job.domain.feed_records",
     "boss_agent.core.shared.identifier_helpers",
-    "boss_agent.job_entities",
+    "boss_agent.core.job.domain.job_entities",
     "boss_agent.core.shared.keyword_constants",
-    "boss_agent.matching",
+    "boss_agent.core.job.domain.matching",
     "boss_agent.rejection",
-    "boss_agent.screening",
+    "boss_agent.core.job.domain.screening",
     "boss_agent.core.search.domain.models",
 )
 

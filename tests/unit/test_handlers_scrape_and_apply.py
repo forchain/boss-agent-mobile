@@ -10,8 +10,8 @@ import pytest
 from _card_fixtures import located
 
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
+from boss_agent.core.job.domain.job_entities import JobCardBrief
 from boss_agent.core.task.domain.models import TaskStatus, TaskType
-from boss_agent.job_entities import JobCardBrief
 from boss_agent.worker.config import WorkerConfig
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.daemon import AutomationWorker
@@ -84,8 +84,8 @@ async def test_scrape_enrichment_falls_back_to_jd_digest_when_card_has_no_snippe
 ):
     """A popup card without a snippet must not persist an empty digest; the enrichment
     should fall back to the digest derived from the full job description."""
+    from boss_agent.core.job.domain.job_entities import JobPosting
     from boss_agent.core.shared.enums import ChatButtonState
-    from boss_agent.job_entities import JobPosting
 
     card = JobCardBrief(
         title="Senior AI Agent Engineer（英语口语）",
@@ -123,10 +123,10 @@ async def test_scrape_enrichment_falls_back_to_jd_digest_when_card_has_no_snippe
     )
 
     with (
-        patch("boss_agent.feed_pipeline.StartupDialogPage") as mock_startup_cls,
-        patch("boss_agent.feed_pipeline.JobListPage") as mock_list_cls,
-        patch("boss_agent.feed_pipeline.SearchPage") as mock_search_cls,
-        patch("boss_agent.feed_pipeline.JobDetailPage") as mock_detail_cls,
+        patch("boss_agent.pages.feed_bundle.StartupDialogPage") as mock_startup_cls,
+        patch("boss_agent.pages.feed_bundle.JobListPage") as mock_list_cls,
+        patch("boss_agent.pages.feed_bundle.SearchPage") as mock_search_cls,
+        patch("boss_agent.pages.feed_bundle.JobDetailPage") as mock_detail_cls,
     ):
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_list = mock_list_cls.return_value
@@ -505,10 +505,10 @@ async def test_scrape_jobs_handler_eliminates_blacklisted_cards_and_persists_rea
     )
 
     with (
-        patch("boss_agent.feed_pipeline.StartupDialogPage") as mock_startup_cls,
-        patch("boss_agent.feed_pipeline.JobListPage") as mock_list_cls,
-        patch("boss_agent.feed_pipeline.SearchPage") as mock_search_cls,
-        patch("boss_agent.feed_pipeline.JobDetailPage") as mock_detail_cls,
+        patch("boss_agent.pages.feed_bundle.StartupDialogPage") as mock_startup_cls,
+        patch("boss_agent.pages.feed_bundle.JobListPage") as mock_list_cls,
+        patch("boss_agent.pages.feed_bundle.SearchPage") as mock_search_cls,
+        patch("boss_agent.pages.feed_bundle.JobDetailPage") as mock_detail_cls,
     ):
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_list = mock_list_cls.return_value
@@ -595,10 +595,10 @@ async def test_auto_apply_skips_an_already_ignored_posting_without_spending_quot
     )
 
     with (
-        patch("boss_agent.feed_pipeline.StartupDialogPage") as mock_startup_cls,
-        patch("boss_agent.feed_pipeline.JobListPage") as mock_list_cls,
-        patch("boss_agent.feed_pipeline.SearchPage") as mock_search_cls,
-        patch("boss_agent.feed_pipeline.JobDetailPage") as mock_detail_cls,
+        patch("boss_agent.pages.feed_bundle.StartupDialogPage") as mock_startup_cls,
+        patch("boss_agent.pages.feed_bundle.JobListPage") as mock_list_cls,
+        patch("boss_agent.pages.feed_bundle.SearchPage") as mock_search_cls,
+        patch("boss_agent.pages.feed_bundle.JobDetailPage") as mock_detail_cls,
     ):
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_list = mock_list_cls.return_value
@@ -771,7 +771,7 @@ async def test_scrape_jobs_handler_clears_filters_when_enable_filter_false(broke
         },
     )
 
-    with patch("boss_agent.feed_pipeline.FilterDialogPage") as mock_filter_cls:
+    with patch("boss_agent.pages.feed_bundle.FilterDialogPage") as mock_filter_cls:
         mock_filter_inst = MagicMock()
         mock_filter_cls.return_value = mock_filter_inst
 
@@ -826,7 +826,7 @@ async def test_auto_apply_handler_clears_filters_when_no_filter(broker, mock_dri
         },
     )
 
-    with patch("boss_agent.feed_pipeline.FilterDialogPage") as mock_filter_cls:
+    with patch("boss_agent.pages.feed_bundle.FilterDialogPage") as mock_filter_cls:
         mock_filter_inst = MagicMock()
         mock_filter_cls.return_value = mock_filter_inst
 

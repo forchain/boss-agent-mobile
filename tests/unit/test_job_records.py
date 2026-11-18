@@ -251,7 +251,7 @@ async def test_pocketbase_broker_upsert_persists_without_fallback_file(tmp_path,
 @pytest.mark.asyncio
 async def test_job_records_digest_and_job_description_decoupling():
     """Verify that digest and job_description are decoupled across models and broker."""
-    from boss_agent.job_entities import JobCardBrief, JobPosting, JobRecord
+    from boss_agent.core.job.domain.job_entities import JobCardBrief, JobPosting, JobRecord
 
     # 1. JobCardBrief supports digest with backward-compatible snippet alias
     card = JobCardBrief(
@@ -398,11 +398,11 @@ async def test_pocketbase_broker_delete_job_record():
 
 def test_extract_digest_and_tags_from_jd():
     """extract_digest_from_jd extracts concise summary and extract_tags_from_text matches tech tags."""
+    from boss_agent.core.job.domain.job_entities import JobRecord
     from boss_agent.core.shared.identifier_helpers import (
         extract_digest_from_jd,
         extract_tags_from_text,
     )
-    from boss_agent.job_entities import JobRecord
 
     raw_jd = """岗位职责
 负责公司 后端与前端系统的设计、开发与迭代

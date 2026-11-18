@@ -19,7 +19,7 @@ from unittest.mock import MagicMock
 import pytest
 from _feed_harness import ScriptedFeed, _card, _detail_page, _pipeline, _posting
 
-from boss_agent.feed_pipeline import FeedStreamConfig
+from boss_agent.core.job.use_cases.feed_pipeline import FeedStreamConfig
 from boss_agent.pages.job_feed import JobListPage
 
 

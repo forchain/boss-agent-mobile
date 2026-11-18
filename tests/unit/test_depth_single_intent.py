@@ -26,6 +26,8 @@ import pytest
 from _card_fixtures import located  # noqa: F401
 from _feed_harness import GOOD_JD, ScriptedFeed, _card, _detail_page, _pipeline, _posting
 
+from boss_agent.core.job.domain.feed_stream import FeedStreamConfig
+from boss_agent.core.job.use_cases.screening import CandidateScreener
 from boss_agent.core.search.domain.launch import (
     LaunchContractError,
     LaunchSource,
@@ -33,14 +35,12 @@ from boss_agent.core.search.domain.launch import (
     build_launch,
 )
 from boss_agent.core.search.domain.models import FilterConfig, SavedSearch, SearchConfig
-from boss_agent.feed_pipeline import (
+from boss_agent.core.shared.enums import (
     DEPTH_DECLARED,
     DEPTH_LEGACY_PAIR,
     DEPTH_UNSTATED,
-    FeedStreamConfig,
 )
 from boss_agent.job_store import InMemoryJobRecordStore
-from boss_agent.screening import CandidateScreener
 
 #: Every key a payload has ever used to answer the depth question, across every builder
 #: this repo has shipped. A new payload must answer it exactly once.

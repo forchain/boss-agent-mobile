@@ -278,7 +278,7 @@ def test_a_symbol_whose_module_cannot_import_raises_attribute_error() -> None:
 
     class _BlockMatching(MetaPathFinder):
         def find_spec(self, fullname, path=None, target=None) -> None:
-            if fullname == "boss_agent.matching":
+            if fullname == "boss_agent.core.job.use_cases.matching":
                 raise ModuleNotFoundError(f"No module named {fullname!r}", name=fullname)
             return None
 

@@ -11,12 +11,12 @@ from unittest.mock import MagicMock
 
 from boss_agent.broker.collection_schema import JOB_RECORDS, pocketbase_fields
 from boss_agent.broker.provisioner import provision_sqlite_database
-from boss_agent.card_parser import (
+from boss_agent.core.job.domain.card_parser import (
     parse_company_scale_industry,
     parse_recruiter_info,
 )
+from boss_agent.core.job.domain.job_entities import JobCardBrief, JobPosting, JobRecord
 from boss_agent.core.shared.identifier_helpers import clean_job_title
-from boss_agent.job_entities import JobCardBrief, JobPosting, JobRecord
 from boss_agent.pages.job_feed import JobListPage
 
 

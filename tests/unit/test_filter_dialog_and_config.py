@@ -22,8 +22,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from _feed_harness import ScriptedFeed, _card, _detail_page, _pipeline, _posting
 
+from boss_agent.core.job.use_cases.feed_pipeline import FeedStreamConfig
 from boss_agent.core.search.domain.models import FilterConfig
-from boss_agent.feed_pipeline import FeedStreamConfig
 from boss_agent.pages.job_feed import FilterDialogPage
 
 CONFIGURED = FilterConfig(
@@ -262,9 +262,8 @@ async def test_a_configured_filter_reaches_the_dialog_as_the_operator_wrote_it()
     the pipeline rebuilt or defaulted it, an operator's preset would silently stop
     describing the search they asked for.
     """
-    pipeline = _feed_pipeline()
-
-    with patch("boss_agent.feed_pipeline.FilterDialogPage") as filter_cls:
+    with patch("boss_agent.pages.feed_bundle.FilterDialogPage") as filter_cls:
+        pipeline = _feed_pipeline()
         result = await pipeline.stream_jobs(
             FeedStreamConfig(keyword="Agent", max_jobs=1, filter_config=CONFIGURED)
         )
@@ -290,9 +289,8 @@ async def test_a_run_with_nothing_to_apply_clears_the_conditions_a_previous_run_
     flag arrives through a task payload's ``enable_filter``; this is the runner's version,
     where the filter config arrives directly from the operator's preset.
     """
-    pipeline = _feed_pipeline()
-
-    with patch("boss_agent.feed_pipeline.FilterDialogPage") as filter_cls:
+    with patch("boss_agent.pages.feed_bundle.FilterDialogPage") as filter_cls:
+        pipeline = _feed_pipeline()
         await pipeline.stream_jobs(
             FeedStreamConfig(keyword="Agent", max_jobs=1, filter_config=NOTHING_TO_APPLY)
         )

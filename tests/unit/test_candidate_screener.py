@@ -12,15 +12,15 @@ from unittest.mock import MagicMock
 import pytest
 
 from boss_agent.core.candidate.domain.candidate_profile import CandidateProfile
-from boss_agent.job_entities import JobCardBrief, JobPosting
-from boss_agent.matching import MatchGreetingResult
-from boss_agent.screening import (
+from boss_agent.core.job.domain.job_entities import JobCardBrief, JobPosting
+from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
+from boss_agent.core.job.use_cases.matching import MatchGreetingResult
+from boss_agent.core.job.use_cases.screening import (
     CandidateScreener,
     CardFacets,
     CardVerdictStage,
     JobVerdictStage,
 )
-from boss_agent.screening_policy import ScreeningPolicy
 
 GOOD_JD = (
     "岗位职责：主导企业级大模型应用与Agent工作流平台建设，负责推理链编排、"

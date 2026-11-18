@@ -24,12 +24,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from boss_agent.core.job.domain.screening_policy import ScreeningPolicy, resolve_screening_policy
+from boss_agent.core.job.use_cases.feed_pipeline import FeedStreamConfig
 from boss_agent.core.search.domain.launch import LaunchSource, build_search_launch
 from boss_agent.core.search.domain.models import FilterConfig, SavedSearch, SearchConfig
 from boss_agent.core.shared.enums import ChannelPreference
-from boss_agent.feed_pipeline import FeedStreamConfig
 from boss_agent.saved_search_store import InMemorySavedSearchStore
-from boss_agent.screening_policy import ScreeningPolicy, resolve_screening_policy
+from boss_agent.screening_config import load_screening_policy
 
 
 def _search(**filter_overrides) -> SavedSearch:
@@ -229,11 +230,11 @@ def test_from_payload_without_a_stated_channel_keeps_the_loaded_policy(filter_sh
 @pytest.mark.parametrize("payload", [None, {}, {"filter": {}}])
 def test_from_payload_with_no_policy_resolves_the_configured_global_one(payload):
     """No policy and no channel: the run is governed by the operator's global setting."""
-    config = FeedStreamConfig.from_payload(payload)
+    global_policy = load_screening_policy()
 
-    assert config.screening_policy.channel_preference == (
-        ScreeningPolicy.load_default().channel_preference
-    )
+    config = FeedStreamConfig.from_payload(payload, default_policy=global_policy)
+
+    assert config.screening_policy.channel_preference == global_policy.channel_preference
 
 
 def test_from_payload_carries_the_channel_onto_the_filter_config_too():
@@ -276,7 +277,7 @@ def test_resolved_channel_actually_governs_card_screening():
     the verdict cannot pass this suite. The headhunter card is read from its recruiter's
     title, so it resolves to a headhunter channel even though the company is a direct hire.
     """
-    from boss_agent.screening import CandidateScreener, CardVerdictStage
+    from boss_agent.core.job.use_cases.screening import CandidateScreener, CardVerdictStage
 
     card = {
         "title": "AI Agent 平台工程师",
@@ -305,7 +306,7 @@ def test_resolved_channel_keeps_whitelist_relaxation_available():
     The relaxation is what keeps a niche headhunter posting from being dropped purely for
     arriving through an agency, so a strategy-level override must not disable it.
     """
-    from boss_agent.screening import CandidateScreener, CardVerdictStage
+    from boss_agent.core.job.use_cases.screening import CandidateScreener, CardVerdictStage
 
     payload = _launch_payload("direct_only")
     payload["screening_policy"]["title_whitelist"] = ["大模型"]

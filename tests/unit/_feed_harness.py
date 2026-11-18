@@ -15,17 +15,19 @@ stub client into ``CandidateScreener`` — the screener fails open without one, 
 symptom of forgetting is latency and a token bill — which is what ``stub_llm()`` is for.
 """
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from boss_agent.core.candidate.domain.candidate_profile import CandidateProfile
+from boss_agent.core.job.domain.job_entities import JobCardBrief, JobPosting
+from boss_agent.core.job.use_cases.feed_pipeline import FeedStreamConfig, JobFeedPipeline
+from boss_agent.core.job.use_cases.screening import CandidateScreener
 from boss_agent.core.shared.enums import ChatButtonState, TargetAction
-from boss_agent.feed_pipeline import FeedStreamConfig, JobFeedPipeline
-from boss_agent.job_entities import JobCardBrief, JobPosting
-from boss_agent.job_store import JobRecordStore
+from boss_agent.job_store import InMemoryJobRecordStore, JobRecordStore
+from boss_agent.pages.feed_bundle import build_feed_device_world
 from boss_agent.pages.job_feed import LocatedJobCard
-from boss_agent.screening import CandidateScreener
 
 TODAY = datetime.now(UTC).isoformat()
 
@@ -170,31 +172,28 @@ def _pipeline(
     is_cancelled: Any = None,
     chat: MagicMock | None = None,
 ) -> JobFeedPipeline:
-    """Build a pipeline whose page objects are scripted stand-ins."""
+    """Build a pipeline whose device world is composed from scripted stand-ins."""
     driver = MagicMock()
     driver.get_window_size.return_value = {"width": 1080, "height": 2400}
 
-    with (
-        patch("boss_agent.feed_pipeline.StartupDialogPage"),
-        patch("boss_agent.feed_pipeline.JobListPage", return_value=feed or ScriptedFeed([])),
-        patch("boss_agent.feed_pipeline.SearchPage") as search_cls,
-        patch("boss_agent.feed_pipeline.JobDetailPage", return_value=detail or MagicMock()),
-        patch("boss_agent.feed_pipeline.ChatPage", return_value=chat or MagicMock()),
-    ):
-        search_cls.return_value.is_search_page.return_value = True
-        search_cls.return_value.search.return_value = True
-        pipeline = JobFeedPipeline(
-            driver=driver,
-            store=store,
-            screener=screener,
-            log=log,
-            is_cancelled=is_cancelled,
-        )
-    # Rebind the scripted page objects: the patches above only applied during construction.
-    script_pages(pipeline, feed=feed, detail=detail, chat=chat)
-    pipeline.search_page.is_search_page.return_value = True
-    pipeline.search_page.search.return_value = True
-    return pipeline
+    search = MagicMock()
+    search.is_search_page.return_value = True
+    search.search.return_value = True
+
+    world = replace(
+        build_feed_device_world(driver),
+        list_page=feed or ScriptedFeed([]),
+        search_page=search,
+        detail_page=detail or MagicMock(),
+        chat_page=chat or MagicMock(),
+    )
+    return JobFeedPipeline(
+        world=world,
+        store=store if store is not None else InMemoryJobRecordStore(),
+        screener=screener,
+        log=log,
+        is_cancelled=is_cancelled,
+    )
 
 
 def _detail_page(

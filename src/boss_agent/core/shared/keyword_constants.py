@@ -196,6 +196,10 @@ INVALID_COMPANY_NAMES: frozenset[str] = frozenset(
     {"", "未知公司", "未注明公司", "null", "undefined"}
 )
 
+INVALID_JOB_TITLES: frozenset[str] = frozenset(
+    {"", "未注明职位", "未注明岗位", "未知职位", "未知岗位"}
+)
+
 _CN_JD_HEADER_WORDS = "岗位职责|工作职责|职位描述|任职要求|任职资格|加分项|基本要求|必须要求|关于我们|公司介绍|加分条件|薪酬福利"
 _EN_JD_HEADER_WORDS = (
     r"role summary|role overview|job summary|job description|responsibilit(?:y|ies)|"

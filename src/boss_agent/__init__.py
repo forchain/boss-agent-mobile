@@ -47,6 +47,23 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - import-time work for static type checkers only
     from .core.candidate.domain.candidate_profile import CandidateProfile
+    from .core.job.domain.feed_stream import FeedStreamConfig, FeedStreamResult
+    from .core.job.domain.job_entities import JobPosting
+    from .core.job.domain.screening_policy import ScreeningPolicy
+    from .core.job.interfaces.store import JobRecordStore
+    from .core.job.use_cases.feed_pipeline import JobFeedPipeline, JobOutcome
+    from .core.job.use_cases.matching import (
+        JobMatchGreetingService,
+        MatchGreetingResult,
+        ensure_greeting_prefix,
+    )
+    from .core.job.use_cases.screening import (
+        CandidateScreener,
+        CardScreeningVerdict,
+        CardVerdictStage,
+        JobEvaluationResult,
+        JobVerdictStage,
+    )
     from .core.search.domain.models import FilterConfig, SavedSearch, SearchConfig
     from .core.shared.enums import AuthStatus, ChannelPreference
     from .core.shared.identifier_helpers import (
@@ -56,48 +73,39 @@ if TYPE_CHECKING:  # pragma: no cover - import-time work for static type checker
         parse_recruiter_title,
     )
     from .greeting_prompt import load_greeting_prompt
-    from .job_entities import JobPosting
-    from .screening import (
-        CandidateScreener,
-        CardScreeningVerdict,
-        CardVerdictStage,
-        JobEvaluationResult,
-        JobVerdictStage,
-    )
     from .screening_config import (
         append_company_blacklist_entry,
         is_writable_screening_path,
         resolve_writable_screening_config_path,
     )
-    from .screening_policy import ScreeningPolicy
 
 _LAZY_EXPORTS: dict[str, str] = {
     "AuthStatus": ".core.shared.enums",
     "BaseBossPage": ".pages",
     "CandidateProfile": ".core.candidate.domain.candidate_profile",
-    "CandidateScreener": ".screening",
-    "CardScreeningVerdict": ".screening",
-    "CardVerdictStage": ".screening",
+    "CandidateScreener": ".core.job.use_cases.screening",
+    "CardScreeningVerdict": ".core.job.use_cases.screening",
+    "CardVerdictStage": ".core.job.use_cases.screening",
     "ChannelPreference": ".core.shared.enums",
     "ChatPage": ".pages",
-    "FeedStreamConfig": ".feed_pipeline",
-    "FeedStreamResult": ".feed_pipeline",
+    "FeedStreamConfig": ".core.job.domain.feed_stream",
+    "FeedStreamResult": ".core.job.domain.feed_stream",
     "FilterConfig": ".core.search.domain.models",
     "FilterDialogPage": ".pages",
     "IndustryFilterDialogPage": ".pages",
     "InMemoryJobRecordStore": ".job_store",
     "InMemorySavedSearchStore": ".saved_search_store",
     "JobDetailPage": ".pages",
-    "JobEvaluationResult": ".screening",
-    "JobFeedPipeline": ".feed_pipeline",
+    "JobEvaluationResult": ".core.job.use_cases.screening",
+    "JobFeedPipeline": ".core.job.use_cases.feed_pipeline",
     "JobListPage": ".pages",
-    "JobMatchGreetingService": ".matching",
-    "JobOutcome": ".feed_pipeline",
-    "JobPosting": ".job_entities",
-    "JobRecordStore": ".job_store",
-    "JobVerdictStage": ".screening",
+    "JobMatchGreetingService": ".core.job.use_cases.matching",
+    "JobOutcome": ".core.job.use_cases.feed_pipeline",
+    "JobPosting": ".core.job.domain.job_entities",
+    "JobRecordStore": ".core.job.interfaces.store",
+    "JobVerdictStage": ".core.job.use_cases.screening",
     "LoginPage": ".pages",
-    "MatchGreetingResult": ".matching",
+    "MatchGreetingResult": ".core.job.use_cases.matching",
     "PocketBaseJobRecordStore": ".job_store",
     "PocketBaseSavedSearchStore": ".saved_search_store",
     "ProfileNormalizer": ".core.candidate.domain.profile_normalizer",
@@ -106,7 +114,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ResumeTextExtractor": ".memory",
     "SavedSearch": ".core.search.domain.models",
     "SavedSearchStore": ".core.search.interfaces.store",
-    "ScreeningPolicy": ".screening_policy",
+    "ScreeningPolicy": ".core.job.domain.screening_policy",
     "SearchConfig": ".core.search.domain.models",
     "SearchPage": ".pages",
     "SmokeHarness": ".workflows",
@@ -115,7 +123,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "TakeoverHandler": ".workflows",
     "append_company_blacklist_entry": ".screening_config",
     "build_resume_lifecycle_graph": ".graph",
-    "ensure_greeting_prefix": ".matching",
+    "ensure_greeting_prefix": ".core.job.use_cases.matching",
     "format_recruiter_greeting_prefix": ".core.shared.identifier_helpers",
     "is_headhunter_agency_name": ".core.shared.identifier_helpers",
     "is_masked_company_name": ".core.shared.identifier_helpers",

@@ -12,14 +12,16 @@ from pathlib import Path
 
 import yaml
 
+from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
 from boss_agent.core.shared.identifier_helpers import is_headhunter_agency_name
 from boss_agent.pages.communication import parse_company_from_descriptor
 from boss_agent.screening_config import (
     append_company_blacklist_entry,
     is_writable_screening_path,
+    load_screening_policy,
+    persist_company_blacklist,
     resolve_writable_screening_config_path,
 )
-from boss_agent.screening_policy import ScreeningPolicy
 
 # ---------------------------------------------------------------------------
 # `[Company] | [Position]` card descriptor
@@ -183,8 +185,8 @@ def test_append_is_idempotent_and_appends_to_an_existing_block_list():
 def test_append_creates_the_config_with_a_full_policy_snapshot(monkeypatch):
     """A brand-new file must not become a policy that drops every other rule."""
     monkeypatch.setattr(
-        "boss_agent.screening_policy.ScreeningPolicy.load_default",
-        classmethod(lambda cls, **kw: ScreeningPolicy()),
+        "boss_agent.screening_config.load_screening_policy",
+        lambda **kw: ScreeningPolicy(),
     )
     with tempfile.TemporaryDirectory() as tmpdir:
         path = Path(tmpdir) / "screening.local.yaml"
@@ -243,12 +245,12 @@ def test_persist_company_blacklist_writes_to_the_active_config_file():
     with tempfile.TemporaryDirectory() as tmpdir:
         path = Path(tmpdir) / "settings.local.yaml"
         path.write_text(EXISTING_CONFIG, encoding="utf-8")
-        policy = ScreeningPolicy.load_default(config_path=path)
+        policy = load_screening_policy(config_path=path)
 
         added, _ = policy.add_company_to_blacklist("传音控股")
         assert added is True
 
-        written = policy.persist_company_blacklist("传音控股")
+        written = persist_company_blacklist(policy, "传音控股")
 
         assert written == path
         assert yaml.safe_load(path.read_text(encoding="utf-8"))["company_blacklist"] == ["传音控股"]
@@ -259,7 +261,7 @@ def test_load_default_remembers_the_file_it_resolved():
         path = Path(tmpdir) / "settings.local.yaml"
         path.write_text(EXISTING_CONFIG, encoding="utf-8")
 
-        policy = ScreeningPolicy.load_default(config_path=path)
+        policy = load_screening_policy(config_path=path)
 
         assert Path(policy.source_path or "") == path
 
@@ -281,8 +283,8 @@ def test_persist_never_writes_the_checked_in_example_config(tmp_path, monkeypatc
         "boss_agent.screening_config.resolve_writable_screening_config_path", lambda *_: fallback
     )
 
-    policy = ScreeningPolicy.load_default(config_path=example)
-    written = policy.persist_company_blacklist("传音控股")
+    policy = load_screening_policy(config_path=example)
+    written = persist_company_blacklist(policy, "传音控股")
 
     assert written == fallback
     assert example.read_text(encoding="utf-8") == original
@@ -317,7 +319,7 @@ def test_persist_reports_nothing_written_when_the_store_is_not_writable(tmp_path
     )
     policy = ScreeningPolicy(company_blacklist=["a", "传音控股"], source_path=str(store))
 
-    assert policy.persist_company_blacklist("传音控股") is None
+    assert persist_company_blacklist(policy, "传音控股") is None
     assert not (tmp_path / "fallback.local.yaml").exists()
 
 
