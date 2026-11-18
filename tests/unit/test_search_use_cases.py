@@ -151,7 +151,7 @@ async def test_the_scheduler_passes_its_resolved_settings_into_the_dispatch():
         )
     )
 
-    scheduler = AutomationScheduler(broker=broker)
+    scheduler = AutomationScheduler(broker=broker, saved_searches=broker.saved_searches)
     with patch(
         "boss_agent.adapters.inbound.worker.scheduler.resolve_chat_acknowledgment_settings",
         return_value=ChatAcknowledgmentSettings(dry_run=True, max_scan_depth=7),

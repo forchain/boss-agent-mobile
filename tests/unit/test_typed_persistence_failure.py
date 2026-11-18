@@ -235,6 +235,8 @@ async def test_auto_apply_handler_logs_degradation_on_profile_transport_error():
     handler = AutoApplyHandler(
         screener=CandidateScreener(llm_client=MagicMock()),
         pages=build_feed_device_world,
+        job_store=broker.job_store,
+        candidate_memory=broker.candidate_memory,
         feed_config_defaults_loader=load_feed_config_defaults,
     )
 
@@ -283,6 +285,8 @@ async def test_auto_apply_handler_logs_degradation_on_exclusion_pool_transport_e
     handler = AutoApplyHandler(
         screener=CandidateScreener(llm_client=MagicMock()),
         pages=build_feed_device_world,
+        job_store=broker.job_store,
+        candidate_memory=broker.candidate_memory,
         feed_config_defaults_loader=load_feed_config_defaults,
     )
 

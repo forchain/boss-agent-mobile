@@ -166,7 +166,10 @@ class PocketBaseSavedSearchStore(SavedSearchStore):
         return deleted
 
 
-def resolve_saved_search_store(prefer_database: bool = True) -> SavedSearchStore:
+def resolve_saved_search_store(
+    prefer_database: bool = True,
+    base_url: str | None = None,
+) -> SavedSearchStore:
     """The one place a consumer asks for a saved-search store, so it cannot drift.
 
     Domain and CLI consumers used to each assemble their own store, which is how the
@@ -197,7 +200,7 @@ def resolve_saved_search_store(prefer_database: bool = True) -> SavedSearchStore
         return pocketbase_headers(auth_token)
 
     return PocketBaseSavedSearchStore(
-        base_url=resolve_pocketbase_url(),
+        base_url=resolve_pocketbase_url(explicit_url=base_url),
         session=requests.Session(),
         headers=_headers,
     )

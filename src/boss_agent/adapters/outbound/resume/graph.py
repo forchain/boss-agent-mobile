@@ -14,6 +14,7 @@ from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
+from boss_agent.core.candidate.interfaces.candidate_memory_store import CandidateMemoryStore
 from boss_agent.core.candidate.use_cases.resume_lifecycle import (
     analyze_profile_diff,
     extract_resume_text,
@@ -83,19 +84,17 @@ def resume_normalizer_node(state: ResumeLifecycleState) -> dict[str, Any]:
     )
 
 
-def make_resume_diff_analyzer_node(broker: Any | None = None):
+def make_resume_diff_analyzer_node(candidate_memory: CandidateMemoryStore | None = None):
     """Factory creating semantic diff analyzer against existing active profile."""
 
     def resume_diff_analyzer_node(state: ResumeLifecycleState) -> dict[str, Any]:
         user_id = state.get("user_id") or "default"
-        if not broker:
-            raise ValueError("broker must be injected into resume lifecycle graph")
+        if candidate_memory is None:
+            raise ValueError("candidate_memory must be injected into resume lifecycle graph")
 
         from boss_agent.adapters.outbound.pocketbase.async_bridge import run_sync
 
-        existing = run_sync(
-            broker.candidate_memory.get_candidate_profile(user_id=user_id), timeout=5.0
-        )
+        existing = run_sync(candidate_memory.get_candidate_profile(user_id=user_id), timeout=5.0)
 
         return analyze_profile_diff(
             existing,
@@ -106,19 +105,19 @@ def make_resume_diff_analyzer_node(broker: Any | None = None):
     return resume_diff_analyzer_node
 
 
-def make_resume_persister_node(broker: Any | None = None):
+def make_resume_persister_node(candidate_memory: CandidateMemoryStore | None = None):
     """Factory creating persistence node saving to candidate_profiles and resume_revisions."""
 
     def resume_persister_node(state: ResumeLifecycleState) -> dict[str, Any]:
         user_id = state.get("user_id") or "default"
-        if not broker:
-            raise ValueError("broker must be injected into resume lifecycle graph")
+        if candidate_memory is None:
+            raise ValueError("candidate_memory must be injected into resume lifecycle graph")
 
         from boss_agent.adapters.outbound.pocketbase.async_bridge import run_sync
 
         return run_sync(
             persist_resume_profile(
-                broker.candidate_memory,
+                candidate_memory,
                 user_id=user_id,
                 normalized_profile=state.get("normalized_profile") or {},
                 existing_profile=state.get("existing_profile"),
@@ -142,7 +141,7 @@ def should_continue_after_diff(state: ResumeLifecycleState) -> str:
 
 def build_resume_lifecycle_graph(
     llm_client: Any | None = None,
-    broker: Any | None = None,
+    candidate_memory: CandidateMemoryStore | None = None,
 ) -> Any:
     """Construct and compile the stateful candidate resume lifecycle graph."""
     builder = StateGraph(ResumeLifecycleState)
@@ -154,8 +153,12 @@ def build_resume_lifecycle_graph(
         make_resume_document_generator_node(llm_client=llm_client),
     )
     builder.add_node("profile_normalizer", resume_normalizer_node)
-    builder.add_node("diff_analyzer", make_resume_diff_analyzer_node(broker=broker))
-    builder.add_node("profile_persister", make_resume_persister_node(broker=broker))
+    builder.add_node(
+        "diff_analyzer", make_resume_diff_analyzer_node(candidate_memory=candidate_memory)
+    )
+    builder.add_node(
+        "profile_persister", make_resume_persister_node(candidate_memory=candidate_memory)
+    )
 
     # 2. Add edges
     builder.add_edge(START, "text_extractor")
@@ -183,12 +186,14 @@ def run_resume_lifecycle_graph(
     merge_mode: str | None = None,
     await_review: bool = False,
     llm_client: Any | None = None,
-    broker: Any | None = None,
+    candidate_memory: CandidateMemoryStore | None = None,
     graph: Any | None = None,
 ) -> ResumeLifecycleState:
     """Run the resume lifecycle workflow graph."""
     if graph is None:
-        graph = build_resume_lifecycle_graph(llm_client=llm_client, broker=broker)
+        graph = build_resume_lifecycle_graph(
+            llm_client=llm_client, candidate_memory=candidate_memory
+        )
 
     initial_state: ResumeLifecycleState = {
         "file_path": file_path,

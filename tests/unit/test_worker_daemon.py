@@ -410,7 +410,7 @@ async def test_worker_survives_task_record_vanishing_before_finalize(broker, moc
         def task_type(self) -> TaskType:
             return TaskType.SCRAPE_JOBS
 
-        async def handle(self, task, broker, context) -> HandlerResult:
+        async def handle(self, task, _handler_broker, context) -> HandlerResult:
             await _delete_task_record(broker, task.id)
             return HandlerResult(success=False, error_message="simulated failure")
 
@@ -445,7 +445,7 @@ async def test_worker_survives_uncaught_exception_with_vanished_record(broker, m
         def task_type(self) -> TaskType:
             return TaskType.SCRAPE_JOBS
 
-        async def handle(self, task, broker, context) -> HandlerResult:
+        async def handle(self, task, _handler_broker, context) -> HandlerResult:
             await _delete_task_record(broker, task.id)
             raise RuntimeError("simulated crash")
 

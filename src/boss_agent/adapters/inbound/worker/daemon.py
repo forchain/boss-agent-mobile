@@ -8,8 +8,8 @@ import asyncio
 import contextlib
 import logging
 import time
-from collections.abc import Sequence
-from typing import Any, cast
+from collections.abc import Callable, Sequence
+from typing import Any
 
 from boss_agent.adapters.inbound.worker.config import WorkerConfig
 from boss_agent.adapters.inbound.worker.context import WorkerContext
@@ -88,18 +88,65 @@ def _format_payload_for_logging(
     return obj
 
 
-class _TaskLoggingBrokerProxy:
-    """Non-mutating proxy for BaseTaskBroker that mirrors handler progress logs to worker console."""
+class _TaskLoggingBrokerProxy(BaseTaskBroker):
+    """Non-mutating BaseTaskBroker wrapper that mirrors handler progress logs to worker console."""
 
     def __init__(self, target: BaseTaskBroker) -> None:
         self._target = target
+
+    async def create_task(
+        self,
+        task_type: TaskType | str,
+        payload: dict[str, Any] | None = None,
+        source: str = "manual",
+    ) -> AutomationTask:
+        return await self._target.create_task(task_type, payload=payload, source=source)
+
+    async def claim_task(self, task_id: str, worker_id: str) -> AutomationTask | None:
+        return await self._target.claim_task(task_id, worker_id)
+
+    async def get_task(self, task_id: str) -> AutomationTask | None:
+        return await self._target.get_task(task_id)
+
+    async def update_heartbeat(self, task_id: str, worker_id: str) -> bool:
+        return await self._target.update_heartbeat(task_id, worker_id)
+
+    async def update_task_status(
+        self,
+        task_id: str,
+        status: TaskStatus,
+        logs: list[str] | None = None,
+        error_message: str | None = None,
+        worker_id: str | None = None,
+    ) -> AutomationTask:
+        return await self._target.update_task_status(
+            task_id,
+            status,
+            logs=logs,
+            error_message=error_message,
+            worker_id=worker_id,
+        )
 
     async def append_log(self, task_id: str, log_line: str) -> bool:
         logger.info("📝 [Task %s] %s", task_id, log_line)
         return await self._target.append_log(task_id, log_line)
 
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._target, name)
+    async def flush_logs(self, task_id: str | None = None) -> None:
+        await self._target.flush_logs(task_id)
+
+    async def list_pending_tasks(self, limit: int = 10) -> list[AutomationTask]:
+        return await self._target.list_pending_tasks(limit=limit)
+
+    async def list_stale_running_tasks(
+        self, lease_timeout_sec: float = 60.0
+    ) -> list[AutomationTask]:
+        return await self._target.list_stale_running_tasks(lease_timeout_sec=lease_timeout_sec)
+
+    async def requeue_task(self, task_id: str, retry_count: int) -> AutomationTask:
+        return await self._target.requeue_task(task_id, retry_count)
+
+    def subscribe_tasks(self, callback: Callable[[str, AutomationTask], Any]) -> None:
+        self._target.subscribe_tasks(callback)
 
 
 class AutomationWorker:
@@ -213,8 +260,8 @@ class AutomationWorker:
         # and reporting the device drop as a UI failure.
         self.context.ensure_device_session()
 
-        # Non-mutating broker proxy that mirrors handler append_log calls to worker console
-        handler_broker = cast(BaseTaskBroker, _TaskLoggingBrokerProxy(self.broker))
+        # Non-mutating broker wrapper that mirrors handler append_log calls to worker console
+        handler_broker = _TaskLoggingBrokerProxy(self.broker)
 
         # Start heartbeat background renewal
         heartbeat_task = asyncio.create_task(self._heartbeat_loop(claimed_task.id))

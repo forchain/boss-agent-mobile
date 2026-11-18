@@ -16,6 +16,7 @@ from boss_agent.adapters.inbound.worker.context import WorkerContext
 from boss_agent.adapters.inbound.worker.handlers.base import BaseTaskHandler, HandlerResult
 from boss_agent.core.job.domain.feed_stream import FeedStreamConfig
 from boss_agent.core.job.interfaces.device import FeedDeviceWorld
+from boss_agent.core.job.interfaces.store import JobRecordStore
 from boss_agent.core.job.use_cases.feed_pipeline import JobFeedPipeline
 from boss_agent.core.job.use_cases.screening import CandidateScreener
 from boss_agent.core.task.domain.models import AutomationTask, TaskType
@@ -32,11 +33,13 @@ class ScrapeJobsHandler(BaseTaskHandler):
         *,
         screener: CandidateScreener,
         pages: Callable[[Any], FeedDeviceWorld],
+        job_store: JobRecordStore,
         feed_config_defaults: dict[str, Any] | None = None,
         feed_config_defaults_loader: Callable[[], dict[str, Any]] | None = None,
     ) -> None:
         self.screener = screener
         self._pages = pages
+        self._job_store = job_store
         self._feed_config_defaults = dict(feed_config_defaults or {})
         self._feed_config_defaults_loader = feed_config_defaults_loader
 
@@ -80,7 +83,7 @@ class ScrapeJobsHandler(BaseTaskHandler):
             broker=broker,
             task_id=task.id,
             world=self._pages(driver),
-            store=broker.job_store,  # type: ignore[attr-defined]
+            store=self._job_store,
             screener=self.screener,
         )
         result = await pipeline.stream_jobs(config)

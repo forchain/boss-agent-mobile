@@ -156,7 +156,7 @@ def test_storage_failure_propagates_without_degrading():
             raw_resume_text="王五，5年经验",
             file_name="wangwu.txt",
             user_id="user_err",
-            broker=faulty_broker,
+            candidate_memory=faulty_broker.candidate_memory,
             llm_client=stub_llm,
         )
 
@@ -194,7 +194,7 @@ def test_incremental_merge_flow_against_single_source():
         user_id="user_123",
         merge_mode="merge",
         llm_client=mock_llm,
-        broker=broker,
+        candidate_memory=broker.candidate_memory,
     )
 
     assert result["status"] == "completed"

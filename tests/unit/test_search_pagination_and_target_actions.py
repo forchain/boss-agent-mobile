@@ -36,18 +36,21 @@ from boss_agent.core.shared.enums import (
 from boss_agent.core.task.domain.models import TaskStatus, TaskType
 
 
-def _scrape_handler(llm_client=None) -> ScrapeJobsHandler:
+def _scrape_handler(broker, llm_client=None) -> ScrapeJobsHandler:
     return ScrapeJobsHandler(
         screener=CandidateScreener(llm_client=llm_client or MagicMock()),
         pages=build_feed_device_world,
+        job_store=broker.job_store,
         feed_config_defaults_loader=load_feed_config_defaults,
     )
 
 
-def _apply_handler(llm_client=None) -> AutoApplyHandler:
+def _apply_handler(broker, llm_client=None) -> AutoApplyHandler:
     return AutoApplyHandler(
         screener=CandidateScreener(llm_client=llm_client or MagicMock()),
         pages=build_feed_device_world,
+        job_store=broker.job_store,
+        candidate_memory=broker.candidate_memory,
         feed_config_defaults_loader=load_feed_config_defaults,
     )
 
@@ -304,7 +307,7 @@ async def test_scrape_jobs_handler_save_jd_enriches_full_jd():
         config=config,
         broker=broker,
         context=context,
-        handlers=[_scrape_handler()],
+        handlers=[_scrape_handler(broker)],
     )
 
     task = await broker.create_task(
@@ -373,7 +376,7 @@ async def test_scrape_jobs_handler_detail_missing_company_falls_back_to_card_com
         config=config,
         broker=broker,
         context=context,
-        handlers=[_scrape_handler()],
+        handlers=[_scrape_handler(broker)],
     )
 
     task = await broker.create_task(
@@ -427,7 +430,7 @@ async def test_scrape_jobs_handler_terminates_on_feed_bottom_boundary():
         config=config,
         broker=broker,
         context=context,
-        handlers=[_scrape_handler()],
+        handlers=[_scrape_handler(broker)],
     )
 
     task = await broker.create_task(
@@ -514,7 +517,7 @@ async def test_scrape_jobs_handler_filters_recommended_cards_below_boundary():
         config=config,
         broker=broker,
         context=context,
-        handlers=[_scrape_handler()],
+        handlers=[_scrape_handler(broker)],
     )
 
     task = await broker.create_task(
@@ -601,7 +604,7 @@ async def test_auto_apply_handler_quota_exhausted_degrades_to_matched():
         config=config,
         broker=broker,
         context=context,
-        handlers=[_apply_handler(llm_client=mock_llm)],
+        handlers=[_apply_handler(broker, llm_client=mock_llm)],
     )
 
     task = await broker.create_task(

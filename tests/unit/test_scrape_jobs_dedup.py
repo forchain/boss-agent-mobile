@@ -20,10 +20,11 @@ from boss_agent.core.shared.identifier_helpers import compute_job_fingerprint
 from boss_agent.core.task.domain.models import AutomationTask, TaskType
 
 
-def _scrape_handler(llm_client=None) -> ScrapeJobsHandler:
+def _scrape_handler(broker, llm_client=None) -> ScrapeJobsHandler:
     return ScrapeJobsHandler(
         screener=CandidateScreener(llm_client=llm_client or MagicMock()),
         pages=build_feed_device_world,
+        job_store=broker.job_store,
         feed_config_defaults_loader=load_feed_config_defaults,
     )
 
@@ -78,7 +79,7 @@ async def test_scrape_jobs_handler_skips_existing_and_scrapes_new():
 
     from boss_agent.adapters.inbound.worker.config import WorkerConfig
 
-    handler = _scrape_handler()
+    handler = _scrape_handler(broker)
     context = WorkerContext(config=WorkerConfig(worker_id="test-worker"), driver=mock_driver)
     task = AutomationTask(
         task_type=TaskType.SCRAPE_JOBS,
@@ -155,7 +156,7 @@ async def test_scrape_jobs_handler_direct_ingestion_even_when_detail_fails():
 
     from boss_agent.adapters.inbound.worker.config import WorkerConfig
 
-    handler = _scrape_handler()
+    handler = _scrape_handler(broker)
     context = WorkerContext(config=WorkerConfig(worker_id="test-worker"), driver=mock_driver)
     task = AutomationTask(
         task_type=TaskType.SCRAPE_JOBS,
@@ -289,7 +290,7 @@ async def test_scrape_jobs_handler_preliminary_card_screening_and_enrichment():
 
     from boss_agent.adapters.inbound.worker.config import WorkerConfig
 
-    handler = _scrape_handler()
+    handler = _scrape_handler(broker)
     context = WorkerContext(config=WorkerConfig(worker_id="test-worker"), driver=mock_driver)
     task = AutomationTask(
         task_type=TaskType.SCRAPE_JOBS,
@@ -397,7 +398,7 @@ async def test_scrape_jobs_handler_facet_persistence_and_recruitment_type_teleme
         digest="负责核心研发团队管理与前沿算法落地",
     )
 
-    handler = _scrape_handler()
+    handler = _scrape_handler(broker)
     context = WorkerContext(config=WorkerConfig(worker_id="test-worker"), driver=mock_driver)
     task = await broker.create_task(
         task_type=TaskType.SCRAPE_JOBS,
@@ -501,7 +502,7 @@ async def test_scrape_jobs_handler_logs_error_when_jd_contains_view_more():
         recruiter_name="张总监",
     )
 
-    handler = _scrape_handler()
+    handler = _scrape_handler(broker)
     context = WorkerContext(config=WorkerConfig(worker_id="test-worker"), driver=mock_driver)
     task = await broker.create_task(
         task_type=TaskType.SCRAPE_JOBS,
@@ -554,7 +555,7 @@ async def test_scrape_jobs_cancelled_task_does_not_execute_fallback():
     mock_driver = MagicMock()
     mock_driver.get_window_size.return_value = {"width": 1080, "height": 2400}
     context = WorkerContext(config=WorkerConfig(worker_id="test-worker"), driver=mock_driver)
-    handler = _scrape_handler()
+    handler = _scrape_handler(broker)
 
     task = await broker.create_task(
         task_type=TaskType.SCRAPE_JOBS,
@@ -594,7 +595,7 @@ async def test_scrape_jobs_fallback_ignores_unspecified_title():
     mock_driver = MagicMock()
     mock_driver.get_window_size.return_value = {"width": 1080, "height": 2400}
     context = WorkerContext(config=WorkerConfig(worker_id="test-worker"), driver=mock_driver)
-    handler = _scrape_handler()
+    handler = _scrape_handler(broker)
 
     task = await broker.create_task(
         task_type=TaskType.SCRAPE_JOBS,
@@ -632,7 +633,7 @@ async def test_scrape_jobs_detail_enrichment_does_not_overwrite_title_with_unspe
     mock_driver = MagicMock()
     mock_driver.get_window_size.return_value = {"width": 1080, "height": 2400}
     context = WorkerContext(config=WorkerConfig(worker_id="test-worker"), driver=mock_driver)
-    handler = _scrape_handler()
+    handler = _scrape_handler(broker)
 
     task = await broker.create_task(
         task_type=TaskType.SCRAPE_JOBS,

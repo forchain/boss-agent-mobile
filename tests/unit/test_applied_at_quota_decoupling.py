@@ -257,6 +257,8 @@ async def test_auto_apply_records_applied_at_only_after_message_dispatch(broker,
             AutoApplyHandler(
                 screener=CandidateScreener(llm_client=_mock_llm_client()),
                 pages=build_feed_device_world,
+                job_store=broker.job_store,
+                candidate_memory=broker.candidate_memory,
                 feed_config_defaults_loader=load_feed_config_defaults,
             )
         ],
@@ -306,6 +308,8 @@ async def test_auto_apply_draft_only_mode_leaves_applied_at_empty(broker, mock_d
             AutoApplyHandler(
                 screener=CandidateScreener(llm_client=_mock_llm_client()),
                 pages=build_feed_device_world,
+                job_store=broker.job_store,
+                candidate_memory=broker.candidate_memory,
                 feed_config_defaults_loader=load_feed_config_defaults,
             )
         ],
@@ -369,6 +373,8 @@ async def test_auto_apply_does_not_record_applied_when_send_button_is_missing(br
             AutoApplyHandler(
                 screener=CandidateScreener(llm_client=_mock_llm_client()),
                 pages=build_feed_device_world,
+                job_store=broker.job_store,
+                candidate_memory=broker.candidate_memory,
                 feed_config_defaults_loader=load_feed_config_defaults,
             )
         ],

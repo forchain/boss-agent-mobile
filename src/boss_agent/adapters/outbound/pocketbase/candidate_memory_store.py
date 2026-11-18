@@ -25,6 +25,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from boss_agent.adapters.outbound.config.settings import resolve_pocketbase_url
 from boss_agent.core.candidate.domain.candidate_profile import CandidateProfile
 from boss_agent.core.candidate.interfaces.candidate_memory_store import CandidateMemoryStore
 from boss_agent.core.shared.errors import (
@@ -32,6 +33,7 @@ from boss_agent.core.shared.errors import (
 )
 
 from .async_bridge import execute_broker_request
+from .pocketbase_auth import pocketbase_headers
 
 logger = logging.getLogger("boss_agent.adapters.outbound.pocketbase.candidate_memory_store")
 
@@ -460,12 +462,29 @@ class PocketBaseCandidateMemoryStore(CandidateMemoryStore):
             raise
 
 
+def resolve_candidate_memory_store(base_url: str | None = None) -> CandidateMemoryStore:
+    """Construct the standalone PocketBase CandidateMemoryStore without a TaskBroker."""
+    import requests
+
+    auth_token = os.getenv("POCKETBASE_AUTH_TOKEN")
+
+    def _headers() -> dict[str, str]:
+        return pocketbase_headers(auth_token)
+
+    return PocketBaseCandidateMemoryStore(
+        base_url=resolve_pocketbase_url(explicit_url=base_url),
+        session=requests.Session(),
+        headers=_headers,
+    )
+
+
 async def async_migrate_legacy_candidate_profile(
     local_path: Path | str | None = None,
     broker: Any = None,
     user_id: str = "default",
+    candidate_memory: CandidateMemoryStore | None = None,
 ) -> dict[str, Any] | None:
-    """Lift an existing local candidate profile JSON file into the broker's Candidate Profile collection.
+    """Lift an existing local candidate profile JSON file into the Candidate Profile store.
 
     Converts legacy profile formats (such as dictionary-shaped core_skills, raw_summary-only
     profile documents, or legacy project structures) into the canonical CandidateProfile
@@ -499,25 +518,28 @@ async def async_migrate_legacy_candidate_profile(
     profile = CandidateProfile.from_dict(raw_data)
     profile_dict = profile.to_dict()
 
-    if broker is None:
-        from .pocketbase_adapter import PocketBaseTaskBroker
+    store = candidate_memory
+    if store is None:
+        store = broker.candidate_memory if broker is not None else resolve_candidate_memory_store()
 
-        broker = PocketBaseTaskBroker()
-
-    return await broker.candidate_memory.save_candidate_profile(profile_dict, user_id=user_id)
+    return await store.save_candidate_profile(profile_dict, user_id=user_id)
 
 
 def migrate_legacy_candidate_profile(
     local_path: Path | str | None = None,
     broker: Any = None,
     user_id: str = "default",
+    candidate_memory: CandidateMemoryStore | None = None,
 ) -> dict[str, Any] | None:
     """Synchronous entry point for async_migrate_legacy_candidate_profile."""
     from .async_bridge import run_sync
 
     return run_sync(
         async_migrate_legacy_candidate_profile(
-            local_path=local_path, broker=broker, user_id=user_id
+            local_path=local_path,
+            broker=broker,
+            user_id=user_id,
+            candidate_memory=candidate_memory,
         ),
         timeout=10.0,
     )

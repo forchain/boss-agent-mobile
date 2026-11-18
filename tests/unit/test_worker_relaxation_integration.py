@@ -24,18 +24,21 @@ from boss_agent.core.job.use_cases.screening import CandidateScreener
 from boss_agent.core.task.domain.models import TaskType
 
 
-def _scrape_handler(llm_client=None) -> ScrapeJobsHandler:
+def _scrape_handler(broker, llm_client=None) -> ScrapeJobsHandler:
     return ScrapeJobsHandler(
         screener=CandidateScreener(llm_client=llm_client or MagicMock()),
         pages=build_feed_device_world,
+        job_store=broker.job_store,
         feed_config_defaults_loader=load_feed_config_defaults,
     )
 
 
-def _apply_handler(llm_client=None) -> AutoApplyHandler:
+def _apply_handler(broker, llm_client=None) -> AutoApplyHandler:
     return AutoApplyHandler(
         screener=CandidateScreener(llm_client=llm_client or MagicMock()),
         pages=build_feed_device_world,
+        job_store=broker.job_store,
+        candidate_memory=broker.candidate_memory,
         feed_config_defaults_loader=load_feed_config_defaults,
     )
 
@@ -66,7 +69,7 @@ async def test_auto_apply_rescued_headhunter_job_persists_relaxation_audit():
     screening_audit in the job record."""
     broker = InMemoryTaskBroker()
     context = WorkerContext(config=WorkerConfig(worker_id="w-relax-apply"), driver=_mock_driver())
-    handler = _apply_handler(llm_client=_drafting_llm())
+    handler = _apply_handler(broker, llm_client=_drafting_llm())
 
     task = await broker.create_task(
         task_type=TaskType.AUTO_APPLY,
@@ -117,7 +120,7 @@ async def test_auto_apply_app_rule_rejection_persists_ignored_record():
     broker = InMemoryTaskBroker()
     context = WorkerContext(config=WorkerConfig(worker_id="w-reject-apply"), driver=_mock_driver())
     llm = _drafting_llm()
-    handler = _apply_handler(llm_client=llm)
+    handler = _apply_handler(broker, llm_client=llm)
 
     posting = _headhunter_posting()
     posting.title = "云原生平台工程师"
@@ -221,7 +224,7 @@ async def test_scrape_jobs_relaxed_headhunter_card_persists_audit_fields():
     rescued, navigated, and persisted with relaxed_by_whitelist + screening_audit."""
     broker = InMemoryTaskBroker()
     context = WorkerContext(config=WorkerConfig(worker_id="w-relax-scrape"), driver=_mock_driver())
-    handler = _scrape_handler()
+    handler = _scrape_handler(broker)
 
     card_elem = MagicMock()
     card = JobCardBrief(
@@ -285,7 +288,7 @@ async def test_scrape_jobs_app_rule_violation_without_rescue_is_ignored():
     short-circuited to an ignored record without opening the detail page."""
     broker = InMemoryTaskBroker()
     context = WorkerContext(config=WorkerConfig(worker_id="w-reject-scrape"), driver=_mock_driver())
-    handler = _scrape_handler()
+    handler = _scrape_handler(broker)
 
     card_elem = MagicMock()
     card = JobCardBrief(
@@ -356,7 +359,7 @@ async def test_auto_apply_distant_job_is_ignored_before_chat_entry():
         config=WorkerConfig(worker_id="w-distance-apply"), driver=_mock_driver()
     )
     llm = _drafting_llm()
-    handler = _apply_handler(llm_client=llm)
+    handler = _apply_handler(broker, llm_client=llm)
 
     task = await broker.create_task(
         task_type=TaskType.AUTO_APPLY,
@@ -419,7 +422,7 @@ async def test_auto_apply_distant_job_is_never_rescued_by_whitelist():
     broker = InMemoryTaskBroker()
     context = WorkerContext(config=WorkerConfig(worker_id="w-distance-hard"), driver=_mock_driver())
     llm = _drafting_llm()
-    handler = _apply_handler(llm_client=llm)
+    handler = _apply_handler(broker, llm_client=llm)
 
     task = await broker.create_task(
         task_type=TaskType.AUTO_APPLY,
@@ -477,7 +480,7 @@ async def test_auto_apply_nearby_job_proceeds_and_probes_distance():
     """
     broker = InMemoryTaskBroker()
     context = WorkerContext(config=WorkerConfig(worker_id="w-distance-near"), driver=_mock_driver())
-    handler = _apply_handler(llm_client=_drafting_llm())
+    handler = _apply_handler(broker, llm_client=_drafting_llm())
 
     task = await broker.create_task(
         task_type=TaskType.AUTO_APPLY,
@@ -539,7 +542,7 @@ async def test_auto_apply_in_an_unlisted_district_skips_the_probe_and_defaults_s
     """
     broker = InMemoryTaskBroker()
     context = WorkerContext(config=WorkerConfig(worker_id="w-distance-near"), driver=_mock_driver())
-    handler = _apply_handler(llm_client=_drafting_llm())
+    handler = _apply_handler(broker, llm_client=_drafting_llm())
 
     task = await broker.create_task(
         task_type=TaskType.AUTO_APPLY,
@@ -589,7 +592,7 @@ async def test_auto_apply_skips_distance_probe_when_filter_disabled():
     """With the ceiling disabled, no bottom scroll latency is paid."""
     broker = InMemoryTaskBroker()
     context = WorkerContext(config=WorkerConfig(worker_id="w-distance-off"), driver=_mock_driver())
-    handler = _apply_handler(llm_client=_drafting_llm())
+    handler = _apply_handler(broker, llm_client=_drafting_llm())
 
     task = await broker.create_task(
         task_type=TaskType.AUTO_APPLY,
@@ -630,7 +633,7 @@ async def test_auto_apply_headhunter_target_skips_distance_probe_and_proceeds():
     context = WorkerContext(
         config=WorkerConfig(worker_id="w-distance-apply-hh"), driver=_mock_driver()
     )
-    handler = _apply_handler(llm_client=_drafting_llm())
+    handler = _apply_handler(broker, llm_client=_drafting_llm())
 
     task = await broker.create_task(
         task_type=TaskType.AUTO_APPLY,
@@ -681,7 +684,7 @@ async def test_scrape_jobs_headhunter_card_skips_distance_probe_and_fails_open()
     context = WorkerContext(
         config=WorkerConfig(worker_id="w-distance-scrape-hh"), driver=_mock_driver()
     )
-    handler = _scrape_handler()
+    handler = _scrape_handler(broker)
     card, _card_elem = _scrape_card(recruiter_name="钟先生 · 猎头顾问")
     assert card.is_headhunter is True
 
@@ -733,7 +736,7 @@ async def test_scrape_jobs_distant_job_is_ingested_as_ignored():
     context = WorkerContext(
         config=WorkerConfig(worker_id="w-distance-scrape"), driver=_mock_driver()
     )
-    handler = _scrape_handler()
+    handler = _scrape_handler(broker)
     card, _card_elem = _scrape_card()
 
     task = await broker.create_task(
@@ -797,7 +800,7 @@ async def test_scrape_jobs_distant_job_is_never_rescued_by_whitelist():
     context = WorkerContext(
         config=WorkerConfig(worker_id="w-distance-scrape-relax"), driver=_mock_driver()
     )
-    handler = _scrape_handler()
+    handler = _scrape_handler(broker)
     card, _card_elem = _scrape_card()
 
     task = await broker.create_task(
@@ -860,7 +863,7 @@ async def test_scrape_jobs_enriched_title_cannot_rescue_a_distant_job():
     context = WorkerContext(
         config=WorkerConfig(worker_id="w-distance-scrape-enriched"), driver=_mock_driver()
     )
-    handler = _scrape_handler()
+    handler = _scrape_handler(broker)
     card, _card_elem = _scrape_card(title="技术专家")
 
     task = await broker.create_task(
@@ -909,7 +912,7 @@ async def test_scrape_jobs_skips_distance_probe_when_filter_disabled():
     context = WorkerContext(
         config=WorkerConfig(worker_id="w-distance-scrape-off"), driver=_mock_driver()
     )
-    handler = _scrape_handler()
+    handler = _scrape_handler(broker)
     card, _card_elem = _scrape_card()
 
     task = await broker.create_task(
@@ -963,7 +966,7 @@ async def test_scrape_jobs_channel_relaxation_does_not_rescue_a_distant_job():
     context = WorkerContext(
         config=WorkerConfig(worker_id="w-distance-invariant"), driver=_mock_driver()
     )
-    handler = _scrape_handler()
+    handler = _scrape_handler(broker)
     card, _card_elem = _scrape_card(recruiter_name="钟先生 · 猎头顾问")
     assert card.is_headhunter is True
 

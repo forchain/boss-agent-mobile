@@ -66,6 +66,9 @@ from boss_agent.adapters.outbound.llm.tracing import (
     build_traced_screener,
 )
 from boss_agent.adapters.outbound.pocketbase.async_bridge import run_sync
+from boss_agent.adapters.outbound.pocketbase.candidate_memory_store import (
+    resolve_candidate_memory_store,
+)
 from boss_agent.adapters.outbound.pocketbase.pocketbase_adapter import PocketBaseTaskBroker
 from boss_agent.adapters.outbound.pocketbase.saved_search_store import (
     missing_saved_search_message,
@@ -82,6 +85,7 @@ from boss_agent.core.job.interfaces.device import FeedDeviceWorld
 from boss_agent.core.job.interfaces.store import JobRecordStore
 from boss_agent.core.job.use_cases.matching import JobMatchGreetingService
 from boss_agent.core.job.use_cases.screening import CandidateScreener
+from boss_agent.core.search.interfaces.store import SavedSearchStore
 from boss_agent.core.task.interfaces.broker import BaseTaskBroker
 from boss_agent.core.task.use_cases.startup_cleanup import StartupCleanupGate
 from boss_agent.core.task.use_cases.sweeper import TaskLeaseSweeper
@@ -300,11 +304,14 @@ def build_worker(
             ScrapeJobsHandler(
                 screener=screener,
                 pages=build_feed_device_world,
+                job_store=broker.job_store,
                 feed_config_defaults_loader=load_feed_config_defaults,
             ),
             AutoApplyHandler(
                 screener=screener,
                 pages=build_feed_device_world,
+                job_store=broker.job_store,
+                candidate_memory=broker.candidate_memory,
                 feed_config_defaults_loader=load_feed_config_defaults,
             ),
             CheckChatHandler(
@@ -324,18 +331,24 @@ def build_scheduler(
     pocketbase_url: str | None = None,
     poll_interval_sec: float = 30.0,
     broker: BaseTaskBroker | None = None,
+    saved_searches: SavedSearchStore | None = None,
 ) -> AutomationScheduler:
     """Compose the standalone Cron scheduler daemon."""
-    resolved_broker = broker or PocketBaseTaskBroker(
-        base_url=resolve_pocketbase_url(explicit_url=pocketbase_url)
+    resolved_pb_url = resolve_pocketbase_url(explicit_url=pocketbase_url)
+    resolved_broker = broker or PocketBaseTaskBroker(base_url=resolved_pb_url)
+    resolved_searches = saved_searches or resolve_saved_search_store(base_url=resolved_pb_url)
+    return AutomationScheduler(
+        broker=resolved_broker,
+        saved_searches=resolved_searches,
+        poll_interval_sec=poll_interval_sec,
     )
-    return AutomationScheduler(broker=resolved_broker, poll_interval_sec=poll_interval_sec)
 
 
 def build_supervised_services(
     worker: AutomationWorker,
     *,
     scheduler_poll_interval_sec: float = 30.0,
+    saved_searches: SavedSearchStore | None = None,
 ) -> list[Coroutine[Any, Any, None]]:
     """The auxiliary loops supervised beside the worker's claim loop."""
     config = worker.config
@@ -347,9 +360,13 @@ def build_supervised_services(
         ).start(interval_sec=config.lease_sweep_interval_sec)
     ]
     if config.enable_scheduler:
+        resolved_searches = saved_searches or resolve_saved_search_store(
+            base_url=config.pocketbase_url
+        )
         services.append(
             AutomationScheduler(
                 broker=worker.broker,
+                saved_searches=resolved_searches,
                 poll_interval_sec=scheduler_poll_interval_sec,
                 startup_gate=worker.startup_gate,
             ).run_forever()
@@ -395,7 +412,7 @@ def build_resume_memory_manager(
     memory_file_path: str | Path | None = None,
 ) -> ResumeMemoryManager:
     client = llm_client or create_llm_client()
-    store = candidate_memory or PocketBaseTaskBroker().candidate_memory
+    store = candidate_memory or resolve_candidate_memory_store()
     return ResumeMemoryManager(
         llm_client=client,
         candidate_memory=store,
@@ -491,12 +508,12 @@ class ResumePipeline:
 
     extractor: ResumeTextExtractor
     memory_manager: ResumeMemoryManager
-    broker: Any = None
+    candidate_memory: CandidateMemoryStore
 
     def run(self, **kwargs: Any) -> Any:
         return run_resume_lifecycle_graph(
             llm_client=self.memory_manager.llm_client,
-            broker=self.broker,
+            candidate_memory=self.candidate_memory,
             **kwargs,
         )
 
@@ -510,18 +527,18 @@ def build_resume_pipeline(
     *,
     llm_client: LLMDecisionClient | None = None,
     memory_file_path: str | Path | None = None,
-    broker: Any | None = None,
+    candidate_memory: CandidateMemoryStore | None = None,
 ) -> ResumePipeline:
-    resolved_broker = broker or PocketBaseTaskBroker()
+    resolved_memory = candidate_memory or resolve_candidate_memory_store()
     manager = build_resume_memory_manager(
         llm_client=llm_client,
-        candidate_memory=resolved_broker.candidate_memory,
+        candidate_memory=resolved_memory,
         memory_file_path=memory_file_path,
     )
     return ResumePipeline(
         extractor=manager.extractor,
         memory_manager=manager,
-        broker=resolved_broker,
+        candidate_memory=resolved_memory,
     )
 
 

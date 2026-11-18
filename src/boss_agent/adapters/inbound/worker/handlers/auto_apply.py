@@ -17,8 +17,10 @@ from typing import Any
 from boss_agent.adapters.inbound.worker.context import WorkerContext
 from boss_agent.adapters.inbound.worker.handlers.base import BaseTaskHandler, HandlerResult
 from boss_agent.core.candidate.domain.candidate_profile import CandidateProfile
+from boss_agent.core.candidate.interfaces.candidate_memory_store import CandidateMemoryStore
 from boss_agent.core.job.domain.feed_stream import FeedStreamConfig
 from boss_agent.core.job.interfaces.device import FeedDeviceWorld
+from boss_agent.core.job.interfaces.store import JobRecordStore
 from boss_agent.core.job.use_cases.feed_pipeline import JobFeedPipeline
 from boss_agent.core.job.use_cases.screening import CandidateScreener
 from boss_agent.core.shared.errors import BrokerError, TransportError
@@ -37,11 +39,15 @@ class AutoApplyHandler(BaseTaskHandler):
         *,
         screener: CandidateScreener,
         pages: Callable[[Any], FeedDeviceWorld],
+        job_store: JobRecordStore,
+        candidate_memory: CandidateMemoryStore,
         feed_config_defaults: dict[str, Any] | None = None,
         feed_config_defaults_loader: Callable[[], dict[str, Any]] | None = None,
     ) -> None:
         self.screener = screener
         self._pages = pages
+        self._job_store = job_store
+        self._candidate_memory = candidate_memory
         self._feed_config_defaults = dict(feed_config_defaults or {})
         self._feed_config_defaults_loader = feed_config_defaults_loader
 
@@ -61,7 +67,7 @@ class AutoApplyHandler(BaseTaskHandler):
             return HandlerResult(success=False, error_message="Driver session is unavailable")
 
         payload = task.payload or {}
-        store = broker.job_store  # type: ignore[attr-defined]
+        store = self._job_store
         screener = self.screener
         try:
             profile = await self._resolve_profile(broker, payload, task_id=task.id)
@@ -150,9 +156,7 @@ class AutoApplyHandler(BaseTaskHandler):
         profile_data = payload.get("candidate_profile")
         if not profile_data:
             try:
-                profile_data = await broker.candidate_memory.get_candidate_profile(
-                    user_id="default"
-                )
+                profile_data = await self._candidate_memory.get_candidate_profile(user_id="default")
             except (TransportError, BrokerError) as err:
                 if task_id:
                     await broker.append_log(

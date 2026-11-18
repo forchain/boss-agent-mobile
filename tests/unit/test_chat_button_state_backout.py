@@ -31,18 +31,21 @@ from boss_agent.core.shared.identifier_helpers import classify_chat_button
 from boss_agent.core.task.domain.models import TaskStatus, TaskType
 
 
-def _scrape_handler(llm_client=None) -> ScrapeJobsHandler:
+def _scrape_handler(broker, llm_client=None) -> ScrapeJobsHandler:
     return ScrapeJobsHandler(
         screener=CandidateScreener(llm_client=llm_client or MagicMock()),
         pages=build_feed_device_world,
+        job_store=broker.job_store,
         feed_config_defaults_loader=load_feed_config_defaults,
     )
 
 
-def _apply_handler(llm_client=None) -> AutoApplyHandler:
+def _apply_handler(broker, llm_client=None) -> AutoApplyHandler:
     return AutoApplyHandler(
         screener=CandidateScreener(llm_client=llm_client or MagicMock()),
         pages=build_feed_device_world,
+        job_store=broker.job_store,
+        candidate_memory=broker.candidate_memory,
         feed_config_defaults_loader=load_feed_config_defaults,
     )
 
@@ -143,7 +146,7 @@ async def test_scrape_records_platform_historical_contact_and_backs_out(broker):
         config=config,
         broker=broker,
         context=context,
-        handlers=[_scrape_handler()],
+        handlers=[_scrape_handler(broker)],
     )
 
     task = await broker.create_task(
@@ -211,7 +214,7 @@ async def test_scrape_marks_expired_posting_as_ignored_and_backs_out(broker):
         config=config,
         broker=broker,
         context=context,
-        handlers=[_scrape_handler()],
+        handlers=[_scrape_handler(broker)],
     )
 
     task = await broker.create_task(
@@ -269,7 +272,7 @@ async def test_auto_apply_aborts_without_llm_waste_on_communicated_job(broker):
     context = WorkerContext(config=config, driver=mock_driver)
 
     mock_llm = MagicMock()
-    apply_handler = _apply_handler(llm_client=mock_llm)
+    apply_handler = _apply_handler(broker, llm_client=mock_llm)
 
     worker = AutomationWorker(
         config=config,

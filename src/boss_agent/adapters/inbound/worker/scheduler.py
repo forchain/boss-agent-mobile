@@ -17,6 +17,7 @@ from boss_agent.adapters.outbound.config.settings import (
     resolve_run_cleanup_on_startup,
 )
 from boss_agent.core.search.domain.launch import LaunchSource
+from boss_agent.core.search.interfaces.store import SavedSearchStore
 from boss_agent.core.search.use_cases.dispatch import build_dispatch, should_dispatch
 from boss_agent.core.task.domain.models import AutomationTask
 from boss_agent.core.task.interfaces.broker import BaseTaskBroker
@@ -47,11 +48,14 @@ class AutomationScheduler:
     def __init__(
         self,
         broker: BaseTaskBroker,
+        *,
+        saved_searches: SavedSearchStore,
         poll_interval_sec: float = 30.0,
         startup_gate: StartupCleanupGate | None = None,
         tz: tzinfo | None = None,
     ) -> None:
         self.broker = broker
+        self.saved_searches = saved_searches
         self.poll_interval_sec = poll_interval_sec
         self.startup_gate = startup_gate or StartupCleanupGate(
             broker,
@@ -73,7 +77,7 @@ class AutomationScheduler:
         if now is None:
             now = datetime.now(self.tz)
 
-        saved_searches = await self.broker.saved_searches.list_saved_searches()
+        saved_searches = await self.saved_searches.list_saved_searches()
         dispatched_tasks: list[AutomationTask] = []
 
         for search in saved_searches:
@@ -115,7 +119,7 @@ class AutomationScheduler:
             search.last_run_at = now.isoformat()
             persisted = None
             try:
-                persisted = await self.broker.saved_searches.save_saved_search(search)
+                persisted = await self.saved_searches.save_saved_search(search)
             except Exception as e:
                 logger.warning(
                     "Could not persist last_run_at for search %s (%s): %s; it may dispatch "

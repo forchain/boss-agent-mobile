@@ -54,6 +54,7 @@ async def test_scrape_jobs_delegates_search_to_fast_entry_without_pre_navigation
     handler = ScrapeJobsHandler(
         screener=CandidateScreener(llm_client=MagicMock()),
         pages=build_feed_device_world,
+        job_store=broker.job_store,
         feed_config_defaults_loader=load_feed_config_defaults,
     )
     task = await broker.create_task(
@@ -81,6 +82,7 @@ async def test_scrape_jobs_retry_logging_marks_exhaustion_and_never_lies(broker,
     handler = ScrapeJobsHandler(
         screener=CandidateScreener(llm_client=MagicMock()),
         pages=build_feed_device_world,
+        job_store=broker.job_store,
         feed_config_defaults_loader=load_feed_config_defaults,
     )
     task = await broker.create_task(
@@ -110,6 +112,8 @@ async def test_auto_apply_delegates_search_to_fast_entry_without_pre_navigation(
     handler = AutoApplyHandler(
         screener=CandidateScreener(llm_client=llm_client),
         pages=build_feed_device_world,
+        job_store=broker.job_store,
+        candidate_memory=broker.candidate_memory,
         feed_config_defaults_loader=load_feed_config_defaults,
     )
     task = await broker.create_task(
