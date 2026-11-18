@@ -577,24 +577,24 @@ def test_structured_alias_is_an_identity_alias_not_a_subclass():
 
 def test_memory_reexports_the_same_class_object():
     """memory.py must hand out the identical class, or isinstance() silently fails."""
+    from boss_agent.adapters.outbound.resume.memory import StructuredCandidateProfile as legacy
     from boss_agent.core.candidate.domain.candidate_profile import (
         StructuredCandidateProfile as canonical,
     )
-    from boss_agent.memory import StructuredCandidateProfile as legacy
 
     assert legacy is canonical is CandidateProfile
 
 
 def test_memory_reexports_candidate_profile_by_its_canonical_name():
     """The new name is importable from the legacy module too."""
-    from boss_agent.memory import CandidateProfile as canonical
+    from boss_agent.adapters.outbound.resume.memory import CandidateProfile as canonical
 
     assert canonical is CandidateProfile
 
 
 def test_memory_still_exports_its_legacy_surface():
     """12 test files, 3 scripts, and __init__.py import these four names from memory."""
-    from boss_agent import memory
+    from boss_agent.adapters.outbound.resume import memory
 
     for symbol in (
         "ProfileNormalizer",
@@ -607,8 +607,8 @@ def test_memory_still_exports_its_legacy_surface():
 
 def test_profile_normalizer_education_extraction_delegates_to_the_entity_module():
     """There must be exactly one implementation of the education heuristic."""
+    from boss_agent.adapters.outbound.resume.memory import ProfileNormalizer
     from boss_agent.core.candidate.domain.candidate_profile import extract_education_from_text
-    from boss_agent.memory import ProfileNormalizer
 
     corpus = "- 沙迦美国大学 | 硕士 | 计算机工程\n- 湘潭大学 | 本科 | 计算机科学与技术"
 
@@ -658,9 +658,9 @@ FORBIDDEN_IN_CLOSURE = {
     "httpx",
     "openai",
     "droid_agent_core",
-    "boss_agent.memory",
-    "boss_agent.llm_config",
-    "boss_agent.graph",
+    "boss_agent.adapters.outbound.resume.memory",
+    "boss_agent.adapters.outbound.llm.llm_config",
+    "boss_agent.adapters.outbound.resume.graph",
     "boss_agent.adapters.memory.candidate_memory_store",
     "boss_agent.adapters.outbound.pocketbase.candidate_memory_store",
 }
@@ -774,9 +774,9 @@ def test_candidate_entities_never_references_the_memory_module():
     """A single reference would reintroduce the candidate_entities -> memory cycle."""
     source = SOURCE_FILE.read_text(encoding="utf-8")
 
-    assert "boss_agent.memory" not in source
+    assert "boss_agent.adapters.outbound.resume.memory" not in source
     assert "from .memory" not in source
-    assert "from boss_agent import memory" not in source
+    assert "from boss_agent.adapters.outbound.resume import memory" not in source
 
 
 def test_candidate_entities_does_not_import_json_or_pathlib():

@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from boss_agent.graph import (
+from boss_agent.adapters.outbound.resume.graph import (
     build_resume_lifecycle_graph,
     run_resume_lifecycle_graph,
 )

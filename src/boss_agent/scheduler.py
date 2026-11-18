@@ -12,15 +12,15 @@ import os
 import zoneinfo
 from datetime import UTC, datetime, tzinfo
 
+from boss_agent.adapters.outbound.config.settings import (
+    resolve_chat_acknowledgment_settings,
+    resolve_run_cleanup_on_startup,
+)
 from boss_agent.core.search.domain.launch import LaunchSource
 from boss_agent.core.search.use_cases.dispatch import build_dispatch, should_dispatch
 from boss_agent.core.task.domain.models import AutomationTask
 from boss_agent.core.task.interfaces.broker import BaseTaskBroker
 from boss_agent.core.task.use_cases.startup_cleanup import StartupCleanupGate
-from boss_agent.settings import (
-    resolve_chat_acknowledgment_settings,
-    resolve_run_cleanup_on_startup,
-)
 
 logger = logging.getLogger("boss_agent.scheduler")
 

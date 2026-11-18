@@ -28,8 +28,8 @@ _src_root = str(Path(__file__).resolve().parents[4])
 if _src_root not in sys.path:
     sys.path.insert(0, _src_root)
 
+from boss_agent.adapters.outbound.config.settings import resolve_pocketbase_db_path  # noqa: E402
 from boss_agent.core.shared.errors import TransportError, ValidationError  # noqa: E402
-from boss_agent.settings import resolve_pocketbase_db_path  # noqa: E402
 
 from .collection_schema import (  # noqa: E402
     COLLECTIONS,

@@ -192,10 +192,18 @@ def test_the_spy_would_actually_catch_a_forbidden_import() -> None:
     see it, the assertion proves nothing.
     """
     spy = _ImportSpy(FORBIDDEN_ROOTS)
-    with _fresh_package_import(spy, "boss_agent.memory") as (_, failure, _):
-        assert failure is None, f"importing boss_agent.memory failed: {failure}"
+    with _fresh_package_import(spy, "boss_agent.adapters.outbound.resume.memory") as (
+        _,
+        failure,
+        _,
+    ):
+        assert failure is None, (
+            f"importing boss_agent.adapters.outbound.resume.memory failed: {failure}"
+        )
 
-    assert spy.attempts, "the spy observed no forbidden import while importing boss_agent.memory"
+    assert spy.attempts, (
+        "the spy observed no forbidden import while importing boss_agent.adapters.outbound.resume.memory"
+    )
 
 
 def test_the_isolation_harness_restores_sys_modules() -> None:
@@ -255,8 +263,8 @@ def test_the_compatibility_alias_stays_on_the_light_module() -> None:
 
         # Identity, not merely equivalence: ``screening.py`` dispatches on ``isinstance``.
         assert boss_agent.StructuredCandidateProfile is leaf
-        assert "boss_agent.memory" not in sys.modules, (
-            "resolving the compatibility alias imported boss_agent.memory"
+        assert "boss_agent.adapters.outbound.resume.memory" not in sys.modules, (
+            "resolving the compatibility alias imported boss_agent.adapters.outbound.resume.memory"
         )
         assert spy.attempts == [], (
             f"resolving the alias imported {len(spy.attempts)} modules under {spy.touched_roots}"

@@ -8,15 +8,10 @@ lives in :mod:`boss_agent.core.job.domain.matching`. This use case composes thos
 with an LLM decision client and a Greeting Prompt document supplied by the caller, so it
 never creates a client or reads a prompt file mid-run.
 
-langsmith tracing and Rich rendering stay on this use-case module as a documented
-interim; #458 externalizes both to an adapter.
+Tracing and Rich rendering live in the adapters: core composes and returns data.
 """
 
 import sys
-
-from langsmith import traceable
-from rich.console import Console
-from rich.panel import Panel
 
 from boss_agent.core.candidate.domain.candidate_profile import CandidateProfile
 from boss_agent.core.job.domain.job_entities import JobPosting
@@ -32,8 +27,6 @@ from boss_agent.core.shared.identifier_helpers import (
     is_substantive_jd,
 )
 from droid_agent_core.llm import LLMDecisionClient
-
-console = Console(stderr=True)
 
 __all__ = [
     "JobMatchGreetingService",
@@ -113,7 +106,6 @@ class JobMatchGreetingService:
             "应判定为实质不匹配：显著调低 match_score，保持中性表述，避免任何赞美话术。\n"
         )
 
-    @traceable(name="JobMatchGreetingService.evaluate_and_draft_greeting", run_type="chain")
     def evaluate_and_draft_greeting(
         self,
         job: JobPosting,
@@ -195,12 +187,12 @@ class JobMatchGreetingService:
             )
             return result
         except Exception as e:
-            console.print(f"[bold red]❌ LLM match evaluation error:[/bold red] {e}")
+            sys.stderr.write(f"❌ LLM match evaluation error: {e}\n")
+            sys.stderr.flush()
             result = offline_match_result(job, profile=profile)
             result.match_reasons.insert(0, f"自动降级为离线评估 (LLM调用异常: {e})")
             return result
 
-    @traceable(name="JobMatchGreetingService.refine_with_critique", run_type="chain")
     def refine_with_critique(
         self,
         job: JobPosting,
@@ -279,7 +271,6 @@ class JobMatchGreetingService:
 
         raise RuntimeError(f"LLM 微调失败，无法生成优化文案：{llm_error}")
 
-    @traceable(name="JobMatchGreetingService.refine_greeting_prompt", run_type="chain")
     def refine_greeting_prompt(
         self,
         job: JobPosting,
@@ -337,50 +328,3 @@ class JobMatchGreetingService:
             # stderr only: the caller parses a JSON contract from stdout.
             sys.stderr.write(f"❌ Greeting Prompt refinement error: {e}\n")
             raise RuntimeError(f"提示词打磨失败，无法生成改进版 Greeting Prompt：{e}") from e
-
-    def render_match_card(self, job: JobPosting, result: MatchGreetingResult) -> None:
-        """Render a formatted Rich card in the console showing match breakdown and greeting text."""
-        # Color coding for match score
-        if result.match_score >= 80:
-            score_color = "bold green"
-            score_badge = "🔥 高度匹配"
-        elif result.match_score >= 60:
-            score_color = "bold yellow"
-            score_badge = "⚖️ 较为匹配"
-        else:
-            score_color = "bold red"
-            score_badge = "⚠️ 匹配度一般"
-
-        lines = [
-            f"[bold]职位:[/bold] {job.title} | [bold]公司:[/bold] {job.company_name} | [bold]薪资:[/bold] {job.salary_range}",
-            f"[bold]匹配度评分:[/bold] [{score_color}]{result.match_score}分[/{score_color}] ({score_badge})",
-        ]
-
-        if result.jd_key_requirements:
-            lines.append("")
-            lines.append("[bold cyan]🔍 JD 核心诉求提炼:[/bold cyan]")
-            for req in result.jd_key_requirements:
-                lines.append(f"  • {req}")
-
-        lines.append("")
-        lines.append("[bold cyan]🎯 针对性匹配亮点:[/bold cyan]")
-        for reason in result.match_reasons:
-            lines.append(f"  • {reason}")
-
-        lines.extend(
-            [
-                "",
-                "[bold cyan]💬 AI 定制破冰招呼语 (结合 JD 痛点，未发送):[/bold cyan]",
-                f"[italic white]{result.greeting_message}[/italic white]",
-            ]
-        )
-
-        content = "\n".join(lines)
-        console.print(
-            Panel(
-                content,
-                title="[bold magenta]🤖 AI Job Match & Greeting Analysis[/bold magenta]",
-                border_style="cyan",
-                expand=False,
-            )
-        )

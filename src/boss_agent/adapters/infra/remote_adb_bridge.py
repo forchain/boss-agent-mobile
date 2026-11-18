@@ -1,6 +1,6 @@
 """
-src/boss_agent/services/remote_adb_bridge.py
-============================================
+src/boss_agent/adapters/infra/remote_adb_bridge.py
+==================================================
 Remote ADB Bridge daemon with concurrent multi-client sessions (spec #241, ticket #243,
 revised after the 2026-09-24 eviction-war incident).
 

@@ -31,6 +31,7 @@ from _chat_triage_harness import (
     triage_run,
 )
 
+from boss_agent.adapters.outbound.config.screening_config import load_screening_policy
 from boss_agent.adapters.outbound.device.pages.chat_adapters import (
     ChatActorAdapter,
     CommunicationListAdapter,
@@ -49,7 +50,6 @@ from boss_agent.core.chat.use_cases.triage import (
     MAX_INSPECTED_CARDS,
 )
 from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
-from boss_agent.screening_config import load_screening_policy
 
 
 @pytest.fixture

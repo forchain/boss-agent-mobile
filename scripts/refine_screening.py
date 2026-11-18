@@ -16,10 +16,13 @@ root_dir = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(root_dir))
 sys.path.insert(0, str(root_dir / "src"))
 
+from boss_agent.adapters.outbound.llm.llm_config import (  # noqa: E402
+    create_llm_client,
+    load_llm_config,
+)
+from boss_agent.adapters.outbound.llm.tracing import TracedCandidateScreener  # noqa: E402
 from boss_agent.core.job.domain.job_entities import JobPosting  # noqa: E402
 from boss_agent.core.job.domain.screening_policy import ScreeningPolicy  # noqa: E402
-from boss_agent.core.job.use_cases.screening import CandidateScreener  # noqa: E402
-from boss_agent.llm_config import create_llm_client, load_llm_config  # noqa: E402
 from droid_agent_core.llm import LLMConfig, LLMDecisionClient  # noqa: E402
 
 
@@ -123,7 +126,7 @@ def main() -> None:
 
     if policy is None:
         try:
-            from boss_agent.settings import load_settings
+            from boss_agent.adapters.outbound.config.settings import load_settings
 
             app_settings = load_settings()
             # load_settings() returns the merged Configuration Realm dict with the
@@ -136,14 +139,14 @@ def main() -> None:
     screening_prompt = args.screening_prompt
     if screening_prompt is None:
         try:
-            from boss_agent.screening_prompt import load_screening_prompt
+            from boss_agent.adapters.outbound.config.screening_prompt import load_screening_prompt
 
             screening_prompt = load_screening_prompt()
         except FileNotFoundError:
             screening_prompt = None
 
     llm_client = build_llm_client(args.llm_config)
-    screener = CandidateScreener(
+    screener = TracedCandidateScreener(
         llm_client=llm_client,
         screening_prompt=screening_prompt,
     )

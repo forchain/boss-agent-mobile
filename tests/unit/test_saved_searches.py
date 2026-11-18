@@ -276,7 +276,9 @@ def test_smoke_harness_with_saved_search_id():
         # a live client one call away. It has to be a stub: a screener handed none builds a
         # real one and fails open, which costs a round trip and a token bill without
         # failing anything.
-        patch("boss_agent.llm_config.create_llm_client", return_value=stub_llm()),
+        patch(
+            "boss_agent.adapters.outbound.llm.llm_config.create_llm_client", return_value=stub_llm()
+        ),
     ):
         job = harness.run_smoke_test()
 

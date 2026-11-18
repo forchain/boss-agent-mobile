@@ -17,14 +17,17 @@ root_dir = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(root_dir))
 sys.path.insert(0, str(root_dir / "src"))
 
-from boss_agent.core.candidate.domain.candidate_profile import CandidateProfile  # noqa: E402
-from boss_agent.core.candidate.domain.profile_normalizer import ProfileNormalizer  # noqa: E402
-from boss_agent.graph import run_resume_lifecycle_graph  # noqa: E402
-from boss_agent.llm_config import create_llm_client, load_llm_config  # noqa: E402
-from boss_agent.memory import (  # noqa: E402
+from boss_agent.adapters.outbound.llm.llm_config import (  # noqa: E402
+    create_llm_client,
+    load_llm_config,
+)
+from boss_agent.adapters.outbound.resume.graph import run_resume_lifecycle_graph  # noqa: E402
+from boss_agent.adapters.outbound.resume.memory import (  # noqa: E402
     ResumeMemoryManager,
     ResumeTextExtractor,
 )
+from boss_agent.core.candidate.domain.candidate_profile import CandidateProfile  # noqa: E402
+from boss_agent.core.candidate.domain.profile_normalizer import ProfileNormalizer  # noqa: E402
 from droid_agent_core.llm import LLMConfig, LLMDecisionClient  # noqa: E402
 
 log_dir = root_dir / ".boss_agent"
@@ -81,7 +84,10 @@ def parse_args() -> argparse.Namespace:
 
 def _is_masked_key(val: str | None) -> bool:
     """Whether a configured key is unset or still a masked/placeholder display value."""
-    from boss_agent.config_realm import PLACEHOLDER_API_KEY, is_mask_placeholder
+    from boss_agent.adapters.outbound.config.config_realm import (
+        PLACEHOLDER_API_KEY,
+        is_mask_placeholder,
+    )
 
     if not val:
         return True

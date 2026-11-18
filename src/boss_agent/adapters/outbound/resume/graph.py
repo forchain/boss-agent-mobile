@@ -1,6 +1,6 @@
 """
-boss_agent.graph
-================
+boss_agent.adapters.outbound.resume.graph
+=========================================
 LangGraph workflows.
 
 The module now holds the resume lifecycle workflow only: stateful ingestion,
@@ -14,13 +14,14 @@ from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
-from .core.candidate.use_cases.resume_lifecycle import (
+from boss_agent.core.candidate.use_cases.resume_lifecycle import (
     analyze_profile_diff,
     extract_resume_text,
     generate_profile_document,
     normalize_extracted_profile,
     persist_resume_profile,
 )
+
 from .memory import ResumeTextExtractor
 
 logger = logging.getLogger(__name__)
@@ -67,7 +68,7 @@ def make_resume_document_generator_node(llm_client: Any | None = None):
     def resume_document_generator_node(state: ResumeLifecycleState) -> dict[str, Any]:
         client = llm_client
         if not client:
-            from .llm_config import create_llm_client
+            from boss_agent.adapters.outbound.llm.llm_config import create_llm_client
 
             client = create_llm_client()
 
@@ -92,11 +93,11 @@ def make_resume_diff_analyzer_node(broker: Any | None = None):
         user_id = state.get("user_id") or "default"
         nonlocal broker
         if not broker:
-            from .broker import PocketBaseBroker
+            from boss_agent.broker import PocketBaseBroker
 
             broker = PocketBaseBroker()
 
-        from .adapters.outbound.pocketbase.async_bridge import run_sync
+        from boss_agent.adapters.outbound.pocketbase.async_bridge import run_sync
 
         existing = run_sync(
             broker.candidate_memory.get_candidate_profile(user_id=user_id), timeout=5.0
@@ -118,11 +119,11 @@ def make_resume_persister_node(broker: Any | None = None):
         user_id = state.get("user_id") or "default"
         nonlocal broker
         if not broker:
-            from .broker import PocketBaseBroker
+            from boss_agent.broker import PocketBaseBroker
 
             broker = PocketBaseBroker()
 
-        from .adapters.outbound.pocketbase.async_bridge import run_sync
+        from boss_agent.adapters.outbound.pocketbase.async_bridge import run_sync
 
         return run_sync(
             persist_resume_profile(

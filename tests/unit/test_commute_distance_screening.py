@@ -12,8 +12,8 @@ from pathlib import Path
 
 import yaml
 
+from boss_agent.adapters.outbound.config.screening_config import load_screening_policy, save_policy
 from boss_agent.core.job.domain.screening_policy import HARD_CONSTRAINT_MARKER, ScreeningPolicy
-from boss_agent.screening_config import load_screening_policy, save_policy
 
 
 def test_commute_limit_defaults_to_40km():

@@ -600,7 +600,7 @@ def test_anthropic_client_parses_json_through_the_same_recovery_as_openai():
 
 @pytest.mark.parametrize("provider", ["anthropic", "Anthropic", " anthropic "])
 def test_create_llm_client_dispatches_to_the_anthropic_protocol(provider):
-    from boss_agent.llm_config import create_llm_client
+    from boss_agent.adapters.outbound.llm.llm_config import create_llm_client
 
     client = create_llm_client(config=LLMConfig(provider=provider))
 
@@ -609,7 +609,7 @@ def test_create_llm_client_dispatches_to_the_anthropic_protocol(provider):
 
 @pytest.mark.parametrize("provider", ["openai", "OpenAI"])
 def test_create_llm_client_dispatches_to_the_openai_protocol(provider):
-    from boss_agent.llm_config import create_llm_client
+    from boss_agent.adapters.outbound.llm.llm_config import create_llm_client
 
     client = create_llm_client(config=LLMConfig(provider=provider))
 
@@ -618,7 +618,7 @@ def test_create_llm_client_dispatches_to_the_openai_protocol(provider):
 
 @pytest.mark.parametrize("provider", ["minimax", "deepseek", "", "something-else"])
 def test_create_llm_client_converges_legacy_providers_to_the_default_protocol(provider):
-    from boss_agent.llm_config import create_llm_client
+    from boss_agent.adapters.outbound.llm.llm_config import create_llm_client
 
     client = create_llm_client(config=LLMConfig(provider=provider))
 
@@ -626,7 +626,7 @@ def test_create_llm_client_converges_legacy_providers_to_the_default_protocol(pr
 
 
 def test_create_llm_client_returns_the_shared_abstraction():
-    from boss_agent.llm_config import create_llm_client
+    from boss_agent.adapters.outbound.llm.llm_config import create_llm_client
 
     client = create_llm_client(config=LLMConfig(provider="anthropic"))
 
@@ -635,7 +635,7 @@ def test_create_llm_client_returns_the_shared_abstraction():
 
 
 def test_create_llm_client_passes_the_resolved_config_through():
-    from boss_agent.llm_config import create_llm_client
+    from boss_agent.adapters.outbound.llm.llm_config import create_llm_client
 
     config = _anthropic_config(model="some-anthropic-model")
     client = create_llm_client(config=config)

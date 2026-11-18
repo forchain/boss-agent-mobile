@@ -13,16 +13,16 @@ import sys
 from collections.abc import Coroutine, Sequence
 from typing import Any
 
-from boss_agent.adapters.outbound.pocketbase.pocketbase_adapter import PocketBaseTaskBroker
-from boss_agent.core.task.interfaces.broker import BaseTaskBroker
-from boss_agent.core.task.use_cases.startup_cleanup import StartupCleanupGate
-from boss_agent.core.task.use_cases.sweeper import TaskLeaseSweeper
-from boss_agent.settings import (
+from boss_agent.adapters.outbound.config.settings import (
     resolve_chat_acknowledgment_settings,
     resolve_enable_scheduler,
     resolve_pocketbase_url,
     resolve_server_url,
 )
+from boss_agent.adapters.outbound.pocketbase.pocketbase_adapter import PocketBaseTaskBroker
+from boss_agent.core.task.interfaces.broker import BaseTaskBroker
+from boss_agent.core.task.use_cases.startup_cleanup import StartupCleanupGate
+from boss_agent.core.task.use_cases.sweeper import TaskLeaseSweeper
 from boss_agent.worker.config import WorkerConfig
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.daemon import AutomationWorker

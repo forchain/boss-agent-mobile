@@ -11,6 +11,7 @@ import time
 from collections.abc import Sequence
 from typing import Any, cast
 
+from boss_agent.adapters.outbound.config.settings import resolve_chat_acknowledgment_settings
 from boss_agent.core.task.domain.models import AutomationTask, TaskStatus, TaskType
 from boss_agent.core.task.interfaces.broker import BaseTaskBroker
 from boss_agent.core.task.use_cases.startup_cleanup import StartupCleanupGate
@@ -19,7 +20,6 @@ from boss_agent.core.task.use_cases.test_reclaim import (
     TEST_RECLAIM_REASON,
     is_test_sourced,
 )
-from boss_agent.settings import resolve_chat_acknowledgment_settings
 from boss_agent.worker.config import WorkerConfig
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.handlers.base import BaseTaskHandler, HandlerResult
@@ -28,7 +28,7 @@ logger = logging.getLogger("boss_agent.worker")
 
 # Acknowledgment marker emitted the instant a termination signal is received. Supervisors and
 # test harnesses match on this line to prove the worker accepted the signal — never reword it
-# without updating the callers that verify it (see boss_agent.services.teardown).
+# without updating the callers that verify it (see boss_agent.adapters.infra.teardown).
 SHUTDOWN_ACK_MARKER = "[Worker] Received shutdown signal"
 
 # Reason recorded in the State Stream Broker when a termination signal aborts an in-flight task.

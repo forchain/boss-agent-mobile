@@ -46,6 +46,12 @@ import importlib
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - import-time work for static type checkers only
+    from .adapters.outbound.config.greeting_prompt import load_greeting_prompt
+    from .adapters.outbound.config.screening_config import (
+        append_company_blacklist_entry,
+        is_writable_screening_path,
+        resolve_writable_screening_config_path,
+    )
     from .core.candidate.domain.candidate_profile import CandidateProfile
     from .core.job.domain.feed_stream import FeedStreamConfig, FeedStreamResult
     from .core.job.domain.job_entities import JobPosting
@@ -71,12 +77,6 @@ if TYPE_CHECKING:  # pragma: no cover - import-time work for static type checker
         is_headhunter_agency_name,
         is_masked_company_name,
         parse_recruiter_title,
-    )
-    from .greeting_prompt import load_greeting_prompt
-    from .screening_config import (
-        append_company_blacklist_entry,
-        is_writable_screening_path,
-        resolve_writable_screening_config_path,
     )
 
 _LAZY_EXPORTS: dict[str, str] = {
@@ -109,9 +109,9 @@ _LAZY_EXPORTS: dict[str, str] = {
     "PocketBaseJobRecordStore": ".adapters.outbound.pocketbase.job_store",
     "PocketBaseSavedSearchStore": ".adapters.outbound.pocketbase.saved_search_store",
     "ProfileNormalizer": ".core.candidate.domain.profile_normalizer",
-    "ResumeLifecycleState": ".graph",
-    "ResumeMemoryManager": ".memory",
-    "ResumeTextExtractor": ".memory",
+    "ResumeLifecycleState": ".adapters.outbound.resume.graph",
+    "ResumeMemoryManager": ".adapters.outbound.resume.memory",
+    "ResumeTextExtractor": ".adapters.outbound.resume.memory",
     "SavedSearch": ".core.search.domain.models",
     "SavedSearchStore": ".core.search.interfaces.store",
     "ScreeningPolicy": ".core.job.domain.screening_policy",
@@ -121,23 +121,23 @@ _LAZY_EXPORTS: dict[str, str] = {
     "StartupDialogPage": ".adapters.outbound.device.pages",
     "StructuredCandidateProfile": ".core.candidate.domain.candidate_profile",
     "TakeoverHandler": ".adapters.outbound.device.takeover",
-    "append_company_blacklist_entry": ".screening_config",
-    "build_resume_lifecycle_graph": ".graph",
+    "append_company_blacklist_entry": ".adapters.outbound.config.screening_config",
+    "build_resume_lifecycle_graph": ".adapters.outbound.resume.graph",
     "ensure_greeting_prefix": ".core.job.use_cases.matching",
     "format_recruiter_greeting_prefix": ".core.shared.identifier_helpers",
     "is_headhunter_agency_name": ".core.shared.identifier_helpers",
     "is_masked_company_name": ".core.shared.identifier_helpers",
-    "is_writable_screening_path": ".screening_config",
-    "load_greeting_prompt": ".greeting_prompt",
-    "load_settings": ".settings",
+    "is_writable_screening_path": ".adapters.outbound.config.screening_config",
+    "load_greeting_prompt": ".adapters.outbound.config.greeting_prompt",
+    "load_settings": ".adapters.outbound.config.settings",
     "parse_recruiter_title": ".core.shared.identifier_helpers",
-    "resolve_git_common_root": ".settings",
-    "resolve_pocketbase_data_dir": ".settings",
-    "resolve_pocketbase_db_path": ".settings",
-    "resolve_pocketbase_url": ".settings",
+    "resolve_git_common_root": ".adapters.outbound.config.settings",
+    "resolve_pocketbase_data_dir": ".adapters.outbound.config.settings",
+    "resolve_pocketbase_db_path": ".adapters.outbound.config.settings",
+    "resolve_pocketbase_url": ".adapters.outbound.config.settings",
     "resolve_saved_search_store": ".adapters.outbound.pocketbase.saved_search_store",
-    "resolve_writable_screening_config_path": ".screening_config",
-    "run_resume_lifecycle_graph": ".graph",
+    "resolve_writable_screening_config_path": ".adapters.outbound.config.screening_config",
+    "run_resume_lifecycle_graph": ".adapters.outbound.resume.graph",
 }
 
 

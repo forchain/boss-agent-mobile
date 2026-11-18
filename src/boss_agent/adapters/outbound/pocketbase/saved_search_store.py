@@ -25,9 +25,9 @@ from typing import Any
 import requests
 
 from boss_agent.adapters.memory.saved_search_store import InMemorySavedSearchStore
+from boss_agent.adapters.outbound.config.settings import resolve_pocketbase_url
 from boss_agent.core.search.domain.models import SavedSearch
 from boss_agent.core.search.interfaces.store import SavedSearchStore
-from boss_agent.settings import resolve_pocketbase_url
 
 from .async_bridge import execute_broker_request
 from .pocketbase_auth import pocketbase_headers

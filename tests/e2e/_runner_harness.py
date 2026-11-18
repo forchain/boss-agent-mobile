@@ -313,7 +313,7 @@ _FAKE_PYTHON = r"""#!/usr/bin/env bash
 # to the real interpreter, so the runners under test keep working.
 set -u
 
-if [[ "${1:-}" == "-m" && "${2:-}" == "boss_agent.services.remote_adb_bridge" ]]; then
+if [[ "${1:-}" == "-m" && "${2:-}" == "boss_agent.adapters.infra.remote_adb_bridge" ]]; then
     shift 2
     if [[ "${1:-}" == "--print-lan-ip" ]]; then
         printf '%s\n' "${FAKE_LAN_IP}"

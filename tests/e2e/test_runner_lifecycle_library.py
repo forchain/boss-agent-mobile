@@ -458,7 +458,7 @@ def test_the_shutdown_acknowledgment_has_one_definition_per_service() -> None:
     half hand-copied into the teardown service. A test that names the offender is what
     replaces the comment.
     """
-    from boss_agent.services.teardown import WEB_SHUTDOWN_ACK, WORKER_SHUTDOWN_ACK
+    from boss_agent.adapters.infra.teardown import WEB_SHUTDOWN_ACK, WORKER_SHUTDOWN_ACK
     from boss_agent.worker.daemon import SHUTDOWN_ACK_MARKER
 
     library = RUNNER_LIB.read_text(encoding="utf-8")
@@ -473,7 +473,7 @@ def test_the_shutdown_acknowledgment_has_one_definition_per_service() -> None:
 
 def test_the_dashboard_runner_no_longer_restates_the_ack_literal() -> None:
     """dashboard.sh references the shared definition rather than carrying a copy."""
-    from boss_agent.services.teardown import WEB_SHUTDOWN_ACK
+    from boss_agent.adapters.infra.teardown import WEB_SHUTDOWN_ACK
 
     web = (REPO_ROOT / "dashboard.sh").read_text(encoding="utf-8")
     assert "RUNNER_WEB_SHUTDOWN_ACK" in web, "dashboard.sh must use the library's definition"

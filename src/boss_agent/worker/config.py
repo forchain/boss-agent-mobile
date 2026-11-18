@@ -8,7 +8,7 @@ import uuid
 
 from pydantic import BaseModel, Field
 
-from boss_agent.settings import (
+from boss_agent.adapters.outbound.config.settings import (
     resolve_enable_scheduler,
     resolve_pocketbase_url,
     resolve_run_cleanup_on_startup,

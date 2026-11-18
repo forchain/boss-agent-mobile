@@ -216,7 +216,7 @@ def test_cli_evaluate_loads_policy_from_settings_when_flag_omitted(capsys):
 
     with (
         patch("sys.argv", test_args),
-        patch("boss_agent.settings.load_settings", return_value=settings),
+        patch("boss_agent.adapters.outbound.config.settings.load_settings", return_value=settings),
         patch.object(script, "build_llm_client", return_value=mock_llm),
     ):
         script.main()

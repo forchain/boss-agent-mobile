@@ -1,6 +1,6 @@
 """
-boss_agent.screening_prompt
-===========================
+boss_agent.adapters.outbound.config.screening_prompt
+====================================================
 Loader for the single living Screening Prompt document (ADR 0010, Spec #340).
 
 The Screening Prompt is the one and only long-term screening memory surface:

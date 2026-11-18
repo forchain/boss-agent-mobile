@@ -41,12 +41,17 @@ from boss_agent.adapters.inbound.verification.feed_verification import (
     render_greeting_match_card,
     run_verification_feed,
 )
+from boss_agent.adapters.outbound.config.greeting_prompt import load_greeting_prompt
+from boss_agent.adapters.outbound.config.screening_config import load_screening_policy
 from boss_agent.adapters.outbound.device.takeover import TakeoverHandler
+from boss_agent.adapters.outbound.llm.llm_config import create_llm_client
+from boss_agent.adapters.outbound.llm.tracing import TracedJobMatchGreetingService
 from boss_agent.adapters.outbound.pocketbase.async_bridge import run_sync
 from boss_agent.adapters.outbound.pocketbase.saved_search_store import (
     missing_saved_search_message,
     resolve_saved_search_store,
 )
+from boss_agent.adapters.outbound.resume.memory import ResumeMemoryManager
 from boss_agent.core.candidate.domain.candidate_profile import CandidateProfile
 from boss_agent.core.job.domain.job_entities import JobPosting
 from boss_agent.core.job.domain.screening_policy import ScreeningPolicy, resolve_screening_policy
@@ -54,10 +59,6 @@ from boss_agent.core.job.use_cases.matching import JobMatchGreetingService
 from boss_agent.core.search.domain.models import FilterConfig, SavedSearch, SearchConfig
 from boss_agent.core.search.interfaces.store import SavedSearchStore
 from boss_agent.core.shared.enums import AuthStatus
-from boss_agent.greeting_prompt import load_greeting_prompt
-from boss_agent.llm_config import create_llm_client
-from boss_agent.memory import ResumeMemoryManager
-from boss_agent.screening_config import load_screening_policy
 
 
 def _require_saved_search(store: SavedSearchStore, search_id: str) -> SavedSearch:
@@ -112,7 +113,7 @@ class SmokeHarness:
         self.force_refresh_memory = force_refresh_memory
         self.enable_greeting_draft = enable_greeting_draft
         self.memory_manager = memory_manager or ResumeMemoryManager()
-        self.matching_service = matching_service or JobMatchGreetingService(
+        self.matching_service = matching_service or TracedJobMatchGreetingService(
             llm_client=create_llm_client(),
             greeting_prompt=load_greeting_prompt(),
         )

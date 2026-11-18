@@ -5,7 +5,7 @@ Screening policy domain entity and card-level keyword evaluation (Issue #311, Sp
 
 This is a pure rule object: ``from_dict``/``to_dict`` and the rule methods, nothing else.
 Loading, saving and blacklist persistence live with the Configuration Realm adapter
-(``boss_agent.screening_config`` until #458) and are invoked at the edge.
+(``boss_agent.adapters.outbound.config.screening_config``) and are invoked at the edge.
 """
 
 from __future__ import annotations

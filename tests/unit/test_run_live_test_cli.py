@@ -34,18 +34,21 @@ import pytest
 import scripts.run_live_test as runner
 from _feed_harness import ScriptedFeed, _card, _detail_page, _posting, script_pages, stub_llm
 
+from boss_agent.adapters.outbound.llm.tracing import (
+    TracedCandidateScreener,
+    TracedJobMatchGreetingService,
+)
+from boss_agent.adapters.outbound.resume.memory import StructuredCandidateProfile
 from boss_agent.core.job.domain.job_entities import JobPosting
 from boss_agent.core.job.use_cases.feed_pipeline import FeedStreamResult, JobFeedPipeline
-from boss_agent.core.job.use_cases.matching import JobMatchGreetingService
-from boss_agent.core.job.use_cases.screening import CandidateScreener, JobVerdictStage
+from boss_agent.core.job.use_cases.screening import JobVerdictStage
 from boss_agent.core.shared.enums import AuthStatus, JobRecordStatus, TargetAction
-from boss_agent.memory import StructuredCandidateProfile
 
 # Captured before any patching: the tests replace these attributes to observe composition,
 # and must still be able to reach the real classes through them.
 _REAL_PIPELINE = JobFeedPipeline
-_REAL_SCREENER = CandidateScreener
-_REAL_GREETING = JobMatchGreetingService
+_REAL_SCREENER = TracedCandidateScreener
+_REAL_GREETING = TracedJobMatchGreetingService
 
 POSTING_TITLE = "资深 Python / Android 自动化专家"
 POSTING_COMPANY = "北京智联前沿科技有限公司"
@@ -131,9 +134,9 @@ def _run(
             side_effect=_compose_pipeline,
         ),
         patch(
-            "boss_agent.adapters.inbound.verification.feed_verification.CandidateScreener"
+            "boss_agent.adapters.inbound.verification.feed_verification.TracedCandidateScreener"
         ) as screener_cls,
-        patch.object(runner, "JobMatchGreetingService") as greeting_cls,
+        patch.object(runner, "TracedJobMatchGreetingService") as greeting_cls,
     ):
         screener_cls.side_effect = lambda **kw: _REAL_SCREENER(**{**kw, "llm_client": verdict})
         greeting_cls.side_effect = lambda **kw: _REAL_GREETING(**{**kw, "llm_client": stub_llm()})

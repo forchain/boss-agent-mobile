@@ -526,7 +526,7 @@ runner_runtime_dir() {
 # Supervisors and test harnesses match on these lines to prove a service accepted a
 # termination signal and actually shut down. They are a contract across three
 # producers and one consumer, so they are defined once, here, and referenced by the
-# runners; boss_agent.services.teardown mirrors the worker's half.
+# runners; boss_agent.adapters.infra.teardown mirrors the worker's half.
 
 #: The Web Dashboard echoes this when its runner accepts a stop command.
 RUNNER_WEB_SHUTDOWN_ACK="Received stop command"

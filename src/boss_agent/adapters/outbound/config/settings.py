@@ -1,6 +1,6 @@
 """
-src/boss_agent/settings.py
-==========================
+boss_agent.adapters.outbound.config.settings
+=============================================
 Centralized configuration loading and PocketBase URL/database path resolution.
 """
 
@@ -9,8 +9,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from . import config_realm
-from .core.chat.domain.rejection import (
+from boss_agent.core.chat.domain.rejection import (
     DEFAULT_MAX_SCAN_DEPTH,
     DEFAULT_MAX_SCROLL_SWIPES,
     DEFAULT_REJECTION_REPLY_TEXT,
@@ -18,6 +17,8 @@ from .core.chat.domain.rejection import (
     coerce_bool,
     coerce_positive_int,
 )
+
+from . import config_realm
 
 try:
     # Rebound to None by tests that exercise the no-PyYAML fallback parser. The realm
@@ -30,7 +31,8 @@ logger = logging.getLogger("boss_agent.settings")
 
 #: The Configuration Realm's chain, highest precedence first. Declared here because this
 #: name is the historical test/embedder seam; the realm reads it late so a rebinding is
-#: honoured. The values themselves live in :mod:`boss_agent.config_realm`.
+#: honoured. The values themselves live in
+#: :mod:`boss_agent.adapters.outbound.config.config_realm`.
 DEFAULT_CONFIG_SEARCH_PATHS: list[Path] = list(config_realm.CONFIG_CHAIN)
 
 DEFAULT_POCKETBASE_URL: str = config_realm.DEFAULT_POCKETBASE_URL
@@ -339,7 +341,7 @@ def load_feed_config_defaults() -> dict[str, Any]:
     Screening Policy, the greeting ceiling and the cool-down window is the edge's job,
     and this is the one place the task handlers ask for them.
     """
-    from boss_agent.screening_config import load_screening_policy
+    from boss_agent.adapters.outbound.config.screening_config import load_screening_policy
 
     settings = load_settings()
     return {

@@ -16,11 +16,14 @@ root_dir = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(root_dir))
 sys.path.insert(0, str(root_dir / "src"))
 
+from boss_agent.adapters.outbound.config.greeting_prompt import load_greeting_prompt  # noqa: E402
+from boss_agent.adapters.outbound.llm.llm_config import (  # noqa: E402
+    create_llm_client,
+    load_llm_config,
+)
+from boss_agent.adapters.outbound.llm.tracing import TracedJobMatchGreetingService  # noqa: E402
 from boss_agent.core.candidate.domain.candidate_profile import CandidateProfile  # noqa: E402
 from boss_agent.core.job.domain.job_entities import JobPosting  # noqa: E402
-from boss_agent.core.job.use_cases.matching import JobMatchGreetingService  # noqa: E402
-from boss_agent.greeting_prompt import load_greeting_prompt  # noqa: E402
-from boss_agent.llm_config import create_llm_client, load_llm_config  # noqa: E402
 from droid_agent_core.llm import LLMConfig, LLMDecisionClient  # noqa: E402
 
 
@@ -143,7 +146,7 @@ def main() -> None:
         or candidate_profile.name in ("测试候选人", "求职者", "")
     ):
         try:
-            from boss_agent.memory import ResumeMemoryManager
+            from boss_agent.adapters.outbound.resume.memory import ResumeMemoryManager
 
             mgr = ResumeMemoryManager()
             cached = mgr.load_cached_memory()
@@ -168,7 +171,7 @@ def main() -> None:
             sys.stderr.write(f"Warning: Failed to parse history JSON ({e})\n")
 
     llm_client = build_llm_client(args.llm_config)
-    service = JobMatchGreetingService(
+    service = TracedJobMatchGreetingService(
         llm_client=llm_client,
         candidate_profile=candidate_profile,
         greeting_prompt=args.greeting_prompt or load_greeting_prompt(),

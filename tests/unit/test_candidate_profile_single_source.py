@@ -20,12 +20,12 @@ from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
 from boss_agent.adapters.outbound.pocketbase.candidate_memory_store import (
     migrate_legacy_candidate_profile,
 )
-from boss_agent.core.shared.errors import BrokerError, TransportError
-from boss_agent.graph import run_resume_lifecycle_graph
-from boss_agent.memory import (
+from boss_agent.adapters.outbound.resume.graph import run_resume_lifecycle_graph
+from boss_agent.adapters.outbound.resume.memory import (
     ResumeMemoryManager,
     StructuredCandidateProfile,
 )
+from boss_agent.core.shared.errors import BrokerError, TransportError
 
 
 def test_in_memory_store_isolated_from_local_file(tmp_path, monkeypatch):

@@ -15,6 +15,7 @@ Shared by ``test_chat_triage.py``, ``test_check_chat_telemetry.py`` and
 from pathlib import Path
 from typing import Any
 
+from boss_agent.adapters.outbound.config.screening_config import ScreeningConfigBlacklistSink
 from boss_agent.adapters.outbound.device.pages.chat_adapters import (
     ChatActorAdapter,
     CommunicationListAdapter,
@@ -28,7 +29,6 @@ from boss_agent.core.chat.domain.rejection import (
 from boss_agent.core.chat.interfaces.device import TriagePages
 from boss_agent.core.chat.use_cases.triage import ChatTriage
 from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
-from boss_agent.screening_config import ScreeningConfigBlacklistSink
 
 REJECTION_TEXT = "我们感谢您的投递，但您的专业技能与我们目前的职位需求并不完全吻合。"
 INVITATION_TEXT = "您好，方便约个时间聊聊吗？"

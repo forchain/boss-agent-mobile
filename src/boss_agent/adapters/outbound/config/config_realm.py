@@ -1,6 +1,6 @@
 """
-boss_agent.config_realm
-=======================
+boss_agent.adapters.outbound.config.config_realm
+================================================
 The one loader, precedence chain and defaults table for the Configuration Realm.
 
 The realm (`config/*.yaml`) is the declared single source of truth, but it used to be
@@ -146,7 +146,7 @@ def _chat_defaults() -> dict[str, Any]:
     than replaced, so one key's default cannot mask another's. The values are the
     rejection module's own constants rather than a second copy of them.
     """
-    from .core.chat.domain.rejection import (
+    from boss_agent.core.chat.domain.rejection import (
         DEFAULT_MAX_SCAN_DEPTH,
         DEFAULT_MAX_SCROLL_SWIPES,
         DEFAULT_REJECTION_REPLY_TEXT,
@@ -190,7 +190,7 @@ def is_mask_placeholder(value: Any) -> bool:
 
 
 def _compat_attr(name: str, fallback: Any) -> Any:
-    """Read a compatibility knob from `boss_agent.settings`, late.
+    """Read a compatibility knob from `boss_agent.adapters.outbound.config.settings`, late.
 
     `DEFAULT_CONFIG_SEARCH_PATHS` and `yaml` are rebound by tests and embedders; the
     lookup has to happen at call time or rebinding them would silently stop working.
@@ -641,7 +641,7 @@ class LlmSettings:
 
     #: The wire protocol to speak — ``openai`` (Chat Completions) or ``anthropic``
     #: (Messages). This realm only carries the value; the protocol a client is built
-    #: from is resolved by :func:`boss_agent.llm_config.create_llm_client`, which falls
+    #: from is resolved by :func:`boss_agent.adapters.outbound.llm.llm_config.create_llm_client`, which falls
     #: back to the default protocol for any other value. A vendor is chosen by
     #: ``base_url`` and ``model``, never by this field.
     provider: str
@@ -726,7 +726,7 @@ def worker_settings(
     settings: dict[str, Any] | None = None,
     config_path: str | Path | None = None,
 ) -> WorkerSettings:
-    from .core.chat.domain.rejection import coerce_bool
+    from boss_agent.core.chat.domain.rejection import coerce_bool
 
     merged = _section(settings, config_path)
     return WorkerSettings(

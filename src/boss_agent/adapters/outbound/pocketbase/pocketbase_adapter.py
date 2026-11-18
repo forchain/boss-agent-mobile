@@ -16,10 +16,10 @@ from typing import Any
 
 import requests
 
+from boss_agent.adapters.outbound.config.settings import resolve_pocketbase_url
 from boss_agent.core.shared.errors import ConflictError, ValidationError
 from boss_agent.core.task.domain.models import AutomationTask, TaskStatus, TaskType
 from boss_agent.core.task.interfaces.broker import BaseTaskBroker
-from boss_agent.settings import resolve_pocketbase_url
 
 from .async_bridge import execute_broker_request
 from .candidate_memory_store import PocketBaseCandidateMemoryStore
