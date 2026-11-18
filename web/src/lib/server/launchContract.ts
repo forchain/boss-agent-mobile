@@ -12,7 +12,13 @@ export interface BuiltLaunch {
 }
 
 export class LaunchIntentError extends Error {
-	status = 400;
+	/** 400 for a contract refusal (CLI exit 2), 500 when the contract itself crashed. */
+	readonly status: number;
+
+	constructor(message: string, status = 400) {
+		super(message);
+		this.status = status;
+	}
 }
 
 export interface LaunchIntent {
@@ -36,7 +42,9 @@ async function runContract(command: 'build' | 'rerun', request: unknown): Promis
 		} catch {
 			// stderr was not the contract's JSON error; keep the raw text.
 		}
-		throw new LaunchIntentError(message);
+		// Exit 2 is the contract's own refusal; anything else is a crash (a traceback is
+		// not the client's fault).
+		throw new LaunchIntentError(message, code === 2 ? 400 : 500);
 	}
 	return JSON.parse(stdout) as BuiltLaunch;
 }

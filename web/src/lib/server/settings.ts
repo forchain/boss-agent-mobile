@@ -233,11 +233,43 @@ export function resolveCooldownDays(raw: unknown): number {
 	return Math.floor(parsed);
 }
 
+//: The only keys a settings POST may write. The body is untrusted, and a stray
+//: `pocketbase_db_path` would redirect the worker's SQLite target; the realm's patch
+//: engine would happily persist anything it is handed.
+const WRITABLE_SETTINGS_KEYS = new Set<string>([
+	'device',
+	'avd_name',
+	'server_url',
+	'pocketbase_url',
+	'provider',
+	'model',
+	'base_url',
+	'temperature',
+	'timeout_sec',
+	'max_tokens',
+	'langsmith_tracing',
+	'langsmith_project',
+	'daily_greeting_limit',
+	'preview_timeout_sec',
+	'enable_greeting',
+	'communication_cooldown_days',
+	'enable_screening',
+	'title_whitelist',
+	'title_blacklist',
+	'company_blacklist',
+	'jd_blacklist',
+	'business_district_blacklist',
+	'business_district_inspect_list',
+	'channel_preference',
+	'max_commute_distance_km',
+	'run_cleanup_on_startup',
+	'chat'
+]);
+
 export function saveSettingsToLocalYaml(
 	newSettings: Partial<SystemSettings>
 ): { success: boolean; message: string } {
 	const targetFile = getSettingsLocalPath();
-	const current = loadMergedSettings();
 
 	// Empty strings, masked display values and template placeholders must never
 	// land in the file as a "new" secret (issue #185: fixtures clobbering real keys).
@@ -248,30 +280,25 @@ export function saveSettingsToLocalYaml(
 		!isMaskedDisplayValue(val) &&
 		!PLACEHOLDER_SECRETS.has(val);
 
-	const resolveSecret = (incoming: string | undefined, onDisk: string | undefined): string =>
-		isUsableSecret(incoming) ? incoming : isUsableSecret(onDisk) ? onDisk : '';
-
-	// Only stated keys are patched; the realm deep-merges `chat` and preserves every
-	// key, comment and section the dashboard does not know about.
+	// Only stated, writable keys are patched; the realm deep-merges `chat` and preserves
+	// every key, comment and section the dashboard does not know about.
 	const patch: Record<string, unknown> = {};
 	for (const [key, value] of Object.entries(newSettings)) {
-		if (value !== undefined) patch[key] = value;
-	}
-	if ('api_key' in newSettings) {
-		patch.api_key = resolveSecret(newSettings.api_key, current.api_key);
-	}
-	if ('communication_cooldown_days' in newSettings) {
-		// 0 is meaningful (permanent suppression); an out-of-range or malformed value is
-		// clamped to the documented 30-day baseline at this HTTP boundary.
-		patch.communication_cooldown_days = resolveCooldownDays(
-			newSettings.communication_cooldown_days
-		);
-	}
-	if ('langsmith_api_key' in newSettings) {
-		patch.langsmith_api_key = resolveSecret(
-			newSettings.langsmith_api_key,
-			current.langsmith_api_key
-		);
+		if (value === undefined) continue;
+		if (key === 'api_key' || key === 'langsmith_api_key') {
+			// A masked/placeholder/empty secret states no new value. Leaving the key out
+			// keeps whatever the file holds — copying the merged view back would promote
+			// the developer's pre-realm `llm.local.yaml` key into this file (issue #185).
+			if (isUsableSecret(value)) patch[key] = value;
+			continue;
+		}
+		if (key === 'communication_cooldown_days') {
+			// 0 is meaningful (permanent suppression); an out-of-range or malformed value
+			// is clamped to the documented 30-day baseline at this HTTP boundary.
+			patch[key] = resolveCooldownDays(value);
+			continue;
+		}
+		if (WRITABLE_SETTINGS_KEYS.has(key)) patch[key] = value;
 	}
 
 	if (Object.keys(patch).length > 0) {

@@ -220,11 +220,6 @@ class FakeFeedPagePort:
 
 def _seat_port(pipeline: JobFeedPipeline, port: FakeFeedPagePort) -> None:
     pipeline.page_port = port
-    pipeline.list_page = port.list_page
-    pipeline.detail_page = port.detail_page
-    pipeline.search_page = port.search_page
-    pipeline.chat_page = port.chat_page
-    pipeline.startup_page = port.startup_page
 
 
 def script_pages(

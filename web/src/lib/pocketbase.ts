@@ -44,7 +44,6 @@ export {
 } from '$lib/stores/savedSearches';
 export {
 	cancelTask,
-	createAutomationTask,
 	deleteTask,
 	getAutomationTask,
 	launchAutomationTask,

@@ -96,17 +96,22 @@ describe('GET /api/tasks forwards the filter to the broker', () => {
 		expect(sent).toContain("task_type='SCRAPE_JOBS'");
 	});
 
-	it('refuses an unknown or absent task_type instead of defaulting to AUTO_APPLY', async () => {
-		// The default turned a UI bug into a greeting run rather than a refusal.
+	it('refuses a client-built task_type instead of admitting it directly', async () => {
+		// A launch intent is the only way in (ADR 0022): an absent kind is a missing
+		// field, and a hand-built payload is not an intent.
 		const { POST: handleTasksPost } = await import('../routes/api/tasks/+server');
-		for (const body of [{ payload: {} }, { task_type: 'AUTO_APPLYY', payload: {} }]) {
+		for (const body of [
+			{ payload: {} },
+			{ task_type: 'AUTO_APPLYY', payload: {} },
+			{ task_type: 'AUTO_APPLY', payload: {} }
+		]) {
 			const res = await handleTasksPost({
 				request: { json: async () => body }
 			} as any);
 			expect(res.status).toBe(400);
 			const json = await res.json();
 			expect(json.success).toBe(false);
-			expect(json.message).toContain('Unknown task_type');
+			expect(json.message).toContain('requires a kind');
 		}
 	});
 

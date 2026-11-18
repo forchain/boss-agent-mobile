@@ -132,7 +132,13 @@ def test_the_pipeline_imports_no_page_model_except_the_parsed_card() -> None:
 
 
 def test_no_feed_test_monkey_patches_a_page_class() -> None:
-    """The in-memory port is the one scripted seam; page-class patches are retired."""
+    """No test scripts the engine by patching a page class on its import path.
+
+    Worker-level tests still patch the production adapter's page classes
+    (``boss_agent.feed_page_port.*``): that adapter is the one object allowed to
+    construct them, and the worker composes it with no lower seam to inject a fake into.
+    What is here to stay retired is a *pipeline-level* page-class patch.
+    """
     offenders: list[str] = []
     for path in (REPO_ROOT / "tests").rglob("*.py"):
         text = path.read_text(encoding="utf-8")

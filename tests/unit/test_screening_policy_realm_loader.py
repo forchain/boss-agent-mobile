@@ -148,6 +148,38 @@ def test_screening_policy_loader_precedence_levels(tmp_path: Path, monkeypatch: 
     assert p4.source_path == str(settings_local_yaml)
 
 
+def test_a_legacy_screening_file_is_visible_to_the_dashboard_and_the_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """One loader (ADR 0021 §1): a pre-realm screening file feeds the merged view too.
+
+    The worker always honoured ``config/screening.local.yaml`` when the settings chain
+    stated no screening keys, while the dashboard projected the merged view — so the
+    dashboard showed realm defaults for a policy the phone was enforcing.
+    """
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    settings_local = config_dir / "settings.local.yaml"
+    settings_local.write_text('device: "legacy-policy-device"\n', encoding="utf-8")
+    legacy_llm = tmp_path / "llm.local.yaml"
+    legacy_llm.write_text("", encoding="utf-8")
+    legacy_screening = config_dir / "screening.local.yaml"
+    legacy_screening.write_text(
+        yaml.safe_dump({"company_blacklist": ["遗留避雷企业"]}), encoding="utf-8"
+    )
+
+    monkeypatch.setenv("BOSS_CONFIG_ROOT", str(tmp_path))
+    monkeypatch.setenv("BOSS_SETTINGS_LOCAL_PATH", str(settings_local))
+    monkeypatch.setenv("BOSS_LEGACY_LLM_PATH", str(legacy_llm))
+    config_realm.invalidate_cache()
+
+    assert load_screening_policy().company_blacklist == ["遗留避雷企业"]
+    view = config_realm.read_config()
+    assert view["settings"]["company_blacklist"] == ["遗留避雷企业"]
+    assert view["screening_policy"]["company_blacklist"] == ["遗留避雷企业"]
+    assert view["settings"]["device"] == "legacy-policy-device"
+
+
 def test_import_graph_independence():
     """Verify editing screening_policy leaves enums and keyword_constants untouched."""
     enums_path = REPO_ROOT / "src/boss_agent/enums.py"

@@ -89,6 +89,28 @@ def test_blacklist_append_is_idempotent_and_comment_preserving(tmp_path: Path) -
     assert yaml.safe_load(content)["company_blacklist"] == ["传音控股"]
 
 
+def test_patch_refuses_to_discard_a_non_mapping_document(tmp_path: Path) -> None:
+    path = _write(tmp_path, "- not\n- a mapping\n")
+
+    with pytest.raises(ValueError):
+        config_realm.patch_settings({"daily_greeting_limit": 15}, config_path=path)
+
+    assert path.read_text(encoding="utf-8") == "- not\n- a mapping\n"
+
+
+def test_patch_follows_a_symlinked_store_instead_of_replacing_it(tmp_path: Path) -> None:
+    real = tmp_path / "shared" / "settings.local.yaml"
+    real.parent.mkdir()
+    real.write_text(ORIGINAL, encoding="utf-8")
+    link = tmp_path / "settings.local.yaml"
+    link.symlink_to(real)
+
+    config_realm.patch_settings({"daily_greeting_limit": 9}, config_path=link)
+
+    assert link.is_symlink()
+    assert yaml.safe_load(real.read_text(encoding="utf-8"))["daily_greeting_limit"] == 9
+
+
 def test_read_config_exposes_settings_and_screening_policy(tmp_path: Path) -> None:
     path = _write(tmp_path)
 
@@ -96,12 +118,6 @@ def test_read_config_exposes_settings_and_screening_policy(tmp_path: Path) -> No
 
     assert view["settings"]["future_python_key"] == "keep-me"
     assert "company_blacklist" in view["screening_policy"]
-
-
-def _cli(*args: str) -> tuple[int, str, str]:
-    from scripts.config_realm_cli import main
-
-    return main(list(args)), "", ""
 
 
 def test_cli_read_and_patch_round_trip(tmp_path: Path, capsys) -> None:

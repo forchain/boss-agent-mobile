@@ -150,7 +150,7 @@ def test_smoke_harness_app_rule_violation_short_circuits_greeting():
 
     matching_service.evaluate_and_draft_greeting.assert_not_called()
     matching_service.render_match_card.assert_not_called()
-    harness.pipeline.detail_page.open_chat.assert_not_called()
+    harness.pipeline.page_port.detail_page.open_chat.assert_not_called()
     chat_page.type_greeting_message.assert_not_called()
 
 
@@ -199,7 +199,7 @@ def test_smoke_harness_keyword_rejection_never_spends_a_jd_evaluation():
     assert "命中职位黑名单关键词: '平台负责人'" in output
     mock_matching_svc.evaluate_and_draft_greeting.assert_not_called()
     mock_matching_svc.render_match_card.assert_not_called()
-    harness.pipeline.detail_page.open_chat.assert_not_called()
+    harness.pipeline.page_port.detail_page.open_chat.assert_not_called()
 
 
 def test_smoke_harness_spends_nothing_on_a_rejection_it_has_never_seen():
@@ -233,7 +233,7 @@ def test_smoke_harness_spends_nothing_on_a_rejection_it_has_never_seen():
     screener.evaluate_job.assert_not_called()
     mock_matching_svc.evaluate_and_draft_greeting.assert_not_called()
     mock_matching_svc.render_match_card.assert_not_called()
-    harness.pipeline.detail_page.open_chat.assert_not_called()
+    harness.pipeline.page_port.detail_page.open_chat.assert_not_called()
     # The rejection is still surfaced rather than silently swallowed: an unknown stage
     # reads as a keyword rejection, because every card-stage rejection is 初筛.
     assert "初筛淘汰" in buffer.getvalue()

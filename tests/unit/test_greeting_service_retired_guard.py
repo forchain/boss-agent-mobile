@@ -16,11 +16,7 @@ def _imported_names(path: Path) -> set[str]:
         return set()
     names: set[str] = set()
     for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.ImportFrom)
-            and node.module == "boss_agent.matching"
-            or isinstance(node, ast.Import)
-        ):
+        if isinstance(node, ast.ImportFrom) and node.module == "boss_agent.matching":
             names.update(alias.name for alias in node.names)
     return names
 

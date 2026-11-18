@@ -250,7 +250,7 @@ describe('normalizeLlmProvider', () => {
 // `.../v1beta/messages` — a green "connection succeeded" on a URL never used.
 //
 // The Python pattern is read from source rather than restated here, so this test
-// fails the moment either side changes alone. Same spirit as defaultsParity.test.ts.
+// fails the moment either side changes alone.
 describe('Anthropic endpoint parity with the Python client', () => {
 	const PY_SOURCE = path.join(
 		getProjectRoot(),

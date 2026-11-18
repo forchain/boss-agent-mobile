@@ -121,7 +121,7 @@ def git_tag_lookup(cwd: str | Path | None = None) -> str | None:
     This is the one and only place this module touches a subprocess, and it is always
     called through the injectable ``tag_lookup`` seam -- the fast unit tier forbids
     spawning processes, and a real-git check belongs in `tests/e2e`. Degradation follows
-    `resolve_git_common_root` in `src/boss_agent/settings.py`: a bare `except Exception`
+    `resolve_git_common_root` in `src/boss_agent/config_realm.py`: a bare `except Exception`
     returning `None` rather than propagating, so a detached checkout with no `.git` or no
     git binary still produces a usable manifest.
     """

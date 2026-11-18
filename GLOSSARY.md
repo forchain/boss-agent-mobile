@@ -21,7 +21,7 @@ The focused, independently importable domain entity modules replacing the retire
 - `boss_agent.candidate_entities`: Candidate profile data models (`CandidateProfile`).
 - `boss_agent.search_entities`: Search and filter configuration models (`SearchConfig`, `FilterConfig`, `SavedSearch`).
 - `boss_agent.screening_policy`: Deterministic card and posting screening policies (`ScreeningPolicy`).
-- `boss_agent.screening_config`: Configuration Realm file persistence and loader for screening policies.
+- `boss_agent.config_realm`: the one loader, precedence chain and patch engine for the Configuration Realm, including screening policies.
 - `boss_agent.entities`: Facade re-exporting the seven core domain entities.
 _Avoid_: `boss_agent.models`, monolithic models module, God model
 

@@ -52,6 +52,10 @@ from .screening import CandidateScreener
 from .screening_policy import ScreeningPolicy
 from .search_entities import FilterConfig, SearchConfig
 
+#: Captured at import so the "is this already a screener" check still recognises the real
+#: class when a test replaces the module attribute to observe how the run composes.
+_SCREENER_TYPE = CandidateScreener
+
 console = Console()
 
 BOSS_PACKAGE = "com.hpbr.bosszhipin"
@@ -151,9 +155,16 @@ def build_verification_pipeline(
     for itself, so the greeting is drafted by the object the caller configured and can assert
     on. That is the only wiring here that a caller cannot substitute for itself.
     """
+    # A real screener is used as-is: wrapping one inside another gives the run two
+    # instances and two lazy LLM clients. Only an injected fake needs the adaptor shape.
+    screener = (
+        matching_service
+        if isinstance(matching_service, _SCREENER_TYPE)
+        else CandidateScreener(matching_service=matching_service)
+    )
     return JobFeedPipeline(
         driver=driver,
-        screener=CandidateScreener(matching_service=matching_service),
+        screener=screener,
         log=log,
     )
 

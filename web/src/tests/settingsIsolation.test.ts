@@ -219,3 +219,51 @@ describe('Settings persistence isolation (issue #185)', () => {
 	// Byte-guard against issue #185 recurrences: runs after every save above.
 	it('left the developer settings file untouched', () => sandbox.assertRealConfigUntouched());
 });
+
+// The write boundary itself: which keys a POST may reach, and which secrets a save may
+// carry into the target file (Spec #444 review).
+describe('Settings write boundary', () => {
+	let sandbox: SettingsSandbox;
+
+	beforeAll(() => {
+		sandbox = setupSettingsSandbox('device: "boundary-device"\n');
+	});
+
+	afterAll(() => {
+		sandbox.cleanup();
+	});
+
+	it('ignores keys the dashboard does not own', async () => {
+		const { saveSettingsToLocalYaml } = await import('../lib/server/settings');
+
+		saveSettingsToLocalYaml({
+			daily_greeting_limit: 11,
+			pocketbase_db_path: '/tmp/redirected.db',
+			enable_scheduler: false
+		} as any);
+
+		const written = fs.readFileSync(sandbox.file, 'utf-8');
+		expect(written).toContain('daily_greeting_limit: 11');
+		// A POST body is untrusted; these would redirect the worker's SQLite file or
+		// start the scheduler from an HTTP request.
+		expect(written).not.toContain('pocketbase_db_path');
+		expect(written).not.toContain('enable_scheduler');
+	});
+
+	it('a masked save never promotes the legacy llm.local key into the target file', async () => {
+		const { saveSettingsToLocalYaml } = await import('../lib/server/settings');
+		const legacy = `${sandbox.dir}/llm.local.yaml`;
+		fs.writeFileSync(legacy, 'api_key: "sk-legacy-key-do-not-copy"\n');
+		const priorLegacy = process.env.BOSS_LEGACY_LLM_PATH;
+		process.env.BOSS_LEGACY_LLM_PATH = legacy;
+		try {
+			saveSettingsToLocalYaml({ api_key: 'sk-abcd••••••••wxyz' } as any);
+		} finally {
+			if (priorLegacy === undefined) delete process.env.BOSS_LEGACY_LLM_PATH;
+			else process.env.BOSS_LEGACY_LLM_PATH = priorLegacy;
+		}
+
+		const written = fs.readFileSync(sandbox.file, 'utf-8');
+		expect(written).not.toContain('sk-legacy-key-do-not-copy');
+	});
+});

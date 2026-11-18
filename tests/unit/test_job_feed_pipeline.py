@@ -106,6 +106,27 @@ async def test_stale_card_handle_does_not_abort_the_scan():
 
 
 @pytest.mark.asyncio
+async def test_placeholder_card_is_neither_indexed_nor_inspected():
+    """A card the Job Record Store refuses must not become a result.
+
+    The store answers ``None`` for an incomplete/placeholder posting ("宁可不录入"), and
+    the pipeline must stop there: appending the refused write would index an empty record
+    and open its detail page, spending greeting quota on a posting the ledger declined to
+    keep (Spec #303, story #8).
+    """
+    store = InMemoryJobRecordStore()
+    detail = _detail_page()
+    feed = ScriptedFeed([[_card("未注明职位", "未注明公司")]])
+    pipeline = _pipeline(store, feed=feed, detail=detail)
+
+    result = await pipeline.stream_jobs(FeedStreamConfig(keyword="Agent", max_jobs=5))
+
+    assert result.jobs == []
+    assert detail.extract_job_posting.call_count == 0
+    assert await store.list_job_records() == []
+
+
+@pytest.mark.asyncio
 async def test_stale_feed_boundary_handle_does_not_abort_the_scan():
     """The feed-bottom banner is read the same way, so it must degrade the same way.
 
@@ -118,7 +139,7 @@ async def test_stale_feed_boundary_handle_does_not_abort_the_scan():
     detail = _detail_page()
     pipeline = _pipeline(store, feed=feed, detail=detail)
 
-    pipeline.list_page.get_feed_bottom_boundary = lambda: _StaleElement()
+    pipeline.page_port.list_page.get_feed_bottom_boundary = lambda: _StaleElement()
 
     result = await pipeline.stream_jobs(FeedStreamConfig(keyword="Agent", max_jobs=10))
 
@@ -212,7 +233,7 @@ async def test_cards_below_the_boundary_marker_are_recommendations():
 async def test_search_failure_aborts_the_run():
     store = InMemoryJobRecordStore()
     pipeline = _pipeline(store)
-    pipeline.search_page.search.return_value = False
+    pipeline.page_port.search_page.search.return_value = False
 
     result = await pipeline.stream_jobs(FeedStreamConfig(keyword="Agent"))
 
@@ -1009,7 +1030,7 @@ async def test_a_queued_direct_target_never_becomes_a_search():
 
     # The negative, stated where the behaviour is: no search, no card, no greeting.
     entered_search.assert_not_called()
-    pipeline.search_page.search.assert_not_called()
+    pipeline.page_port.search_page.search.assert_not_called()
     chat.type_greeting_message.assert_not_called()
     assert result.scanned == 0
     assert result.jobs == []

@@ -1,15 +1,10 @@
 import type { ScreeningPolicy } from '$lib/types';
 import { normalizeCommuteLimit } from '$lib/commute';
-import { loadMergedSettings, saveSettingsToLocalYaml, getSettingsLocalPath } from './settings';
+import { loadMergedSettings, saveSettingsToLocalYaml } from './settings';
 
 // Screening rules are part of the one merged Configuration Realm view; this module
 // only projects them into the dashboard's ScreeningPolicy shape and routes writes
 // through the same patch engine as every other settings save (spec #444, ticket #446).
-
-export function getScreeningConfigPath(): string {
-	// The unified local settings file is the realm's only writable screening store.
-	return getSettingsLocalPath();
-}
 
 export function readScreeningPolicy(): ScreeningPolicy {
 	const settings = loadMergedSettings();

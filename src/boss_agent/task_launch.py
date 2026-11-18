@@ -44,8 +44,8 @@ the shape that used to degrade silently.
 
 This module turns ``(kind, provenance, search, mode)`` into a validated payload. The
 defaults are declared once, the wire keys stay stable for rollout, and
-``config/task_launch.cases.json`` pins the output so the TypeScript builder cannot
-drift from it.
+``config/task_launch.cases.json`` pins the output of this owner (ADR 0022 retired the
+TypeScript mirror that once read the same table).
 """
 
 from __future__ import annotations
@@ -252,6 +252,7 @@ def build_chat_cleanup_launch(
     source: LaunchSource,
     search: SavedSearch | None = None,
     mode: LaunchMode | None = None,
+    dry_run: bool | None = None,
     rejection_reply_text: str | None = None,
     max_scan_depth: int | None = None,
     max_scroll_swipes: int | None = None,
@@ -259,14 +260,22 @@ def build_chat_cleanup_launch(
     """Launch a 仅沟通 rejection cleanup.
 
     Rejection cleanup is keyword-independent, so it carries resolved triage settings
-    rather than a search strategy. ``mode=None`` lets the configured ``chat.dry_run``
-    win — the convention the searches-page trigger already used and the reason the
-    other two callers should stop stating a ``dry_run`` of their own.
+    rather than a search strategy. Depth precedence is ``mode`` > a ``dry_run`` the
+    caller carried over > the configured ``chat.dry_run``. The middle rung is what a
+    rerun needs: a drill re-run has no mode of its own, so without it the *current*
+    configuration decides and a saved drill silently becomes a live reply run.
     """
     ack = resolve_chat_acknowledgment_settings()
 
+    if mode is not None:
+        resolved_dry_run = mode == LaunchMode.DRAFT
+    elif dry_run is not None:
+        resolved_dry_run = bool(dry_run)
+    else:
+        resolved_dry_run = ack.dry_run
+
     payload: dict[str, Any] = {
-        "dry_run": ack.dry_run if mode is None else mode == LaunchMode.DRAFT,
+        "dry_run": resolved_dry_run,
         "rejection_reply_text": (
             ack.rejection_reply_text if rejection_reply_text is None else rejection_reply_text
         ),
@@ -362,6 +371,7 @@ def rebuild_rerun_launch(
         launch = build_chat_cleanup_launch(
             source=source,
             search=search,
+            dry_run=prior.get("dry_run"),
             rejection_reply_text=prior.get("rejection_reply_text"),
             max_scan_depth=prior.get("max_scan_depth"),
             max_scroll_swipes=prior.get("max_scroll_swipes"),
@@ -384,7 +394,9 @@ def rebuild_rerun_launch(
         str(prior.get("saved_search_id") or prior.get("search_id") or ""),
         {
             "name": prior.get("search_name"),
-            "keyword": prior.get("keyword"),
+            # A task queued before the payload carried a keyword searched nothing; the
+            # rerun must not invent one from SavedSearch.from_dict's "agent" default.
+            "keyword": prior.get("keyword") or "",
             "enable_search": prior.get("enable_search"),
             "enable_filter": prior.get("enable_filter"),
             "filter": prior.get("filter"),

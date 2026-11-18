@@ -45,8 +45,14 @@ class FeedVerdictLedger:
     async def find_by_fingerprint(self, fingerprint: str) -> dict[str, Any] | None:
         return await self.store.get_job_record_by_fingerprint(fingerprint)
 
-    async def upsert(self, record: dict[str, Any]) -> dict[str, Any]:
-        return await self.store.upsert_job_record(dict(record)) or {}
+    async def upsert(self, record: dict[str, Any]) -> dict[str, Any] | None:
+        """Write one record, keeping the store's ``None`` for placeholder junk.
+
+        ``JobRecordStore`` returns ``None`` for an incomplete or placeholder card
+        (``宁可不录入``). Coercing it to ``{}`` here would make the pipeline's refusal
+        check unreachable, index an empty record and inspect it.
+        """
+        return await self.store.upsert_job_record(dict(record))
 
     async def clear_communication(self, record_id: Any) -> None:
         await self.store.clear_job_communication(record_id)

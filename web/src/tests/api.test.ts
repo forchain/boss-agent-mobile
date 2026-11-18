@@ -4,8 +4,27 @@ import path from 'node:path';
 import { setupSettingsSandbox, type SettingsSandbox } from './settingsSandbox';
 import { POST as handleResumePost } from '../routes/api/candidate/resume/+server';
 import { POST as handleMatchPost } from '../routes/api/match/evaluate/+server';
-import { getCandidateProfile, saveCandidateProfile, createAutomationTask } from '../lib/pocketbase';
+import { getCandidateProfile, saveCandidateProfile } from '../lib/pocketbase';
 import { apiDelete } from '../lib/apiClient';
+
+// The launch contract is a Python subprocess; the route round-trips tested here only need
+// a validated launch, and the contract itself is pinned by the Python suite.
+vi.mock('../lib/server/launchContract', () => ({
+	LaunchIntentError: class LaunchIntentError extends Error {
+		status = 400;
+	},
+	buildLaunch: vi.fn(async (intent: any) => ({
+		task_type:
+			intent.kind === 'chat_cleanup'
+				? 'CHECK_CHAT'
+				: intent.kind === 'login_diagnostic'
+					? 'CHECK_LOGIN'
+					: 'AUTO_APPLY',
+		payload: { keyword: 'agent' },
+		source: intent.source ?? 'manual',
+		fields: {}
+	}))
+}));
 
 // Issue #214: every automation task this suite persists is hard-deleted on teardown.
 // A leftover `pending` record is claimed by a live Automation Worker (poll interval
@@ -167,7 +186,7 @@ describe('BFF routes against a faked broker', () => {
 
 		const created = await (
 			await createTask({
-				request: { json: async () => ({ task_type: 'AUTO_APPLY', payload: { keyword: 'agent' } }) }
+				request: { json: async () => ({ kind: 'search', search: { id: 's1' } }) }
 			} as any)
 		).json();
 
@@ -184,9 +203,7 @@ describe('BFF routes against a faked broker', () => {
 		const { POST: createTask } = await import('../routes/api/tasks/+server');
 		const created = await (
 			await createTask({
-				request: {
-					json: async () => ({ task_type: 'SCRAPE_JOBS', payload: {}, source: 'scheduler' })
-				}
+				request: { json: async () => ({ kind: 'search', source: 'scheduler' }) }
 			} as any)
 		).json();
 		expect(created.task.source).toBe('scheduler');

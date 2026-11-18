@@ -558,11 +558,6 @@ class JobFeedPipeline:
         self.page_port: FeedPagePort | None = (
             page_port if page_port is not None else (AppiumFeedPagePort(driver) if driver else None)
         )
-        self.startup_page = self.page_port.startup_page if self.page_port else None
-        self.list_page = self.page_port.list_page if self.page_port else None
-        self.search_page = self.page_port.search_page if self.page_port else None
-        self.detail_page = self.page_port.detail_page if self.page_port else None
-        self.chat_page = self.page_port.chat_page if self.page_port else None
 
         # Companies contacted during this run: a newly discovered communication must
         # suppress the company's other postings immediately, not on the next pass.
@@ -608,7 +603,7 @@ class JobFeedPipeline:
             result.error_message = "Driver session is unavailable"
             return result
 
-        if self.startup_page and self.page_port.is_startup_dialog_present():
+        if self.page_port and self.page_port.is_startup_dialog_present():
             self.page_port.dismiss_startup_dialog()
 
         if config.screening_policy and config.screening_policy.is_commute_filter_active:
@@ -1534,11 +1529,9 @@ class JobFeedPipeline:
         The count is read here once per card and kept on the run so the callers that only
         need it for a log line reuse this read rather than issuing their own.
         """
-        try:
-            run.applied_today = await self.ledger.applied_today()
-        except TransportError as e:
-            await self._log(f"⚠️ [持久化降级] 今日投递额度查询遇到持久化异常（{e}），无法确认配额")
-            raise
+        # The ledger owns the degradation log and re-raises, so this path does not log it
+        # a second time.
+        run.applied_today = await self.ledger.applied_today()
         if self.ledger.quota_exhausted(run.applied_today, run.config.daily_greeting_limit):
             run.result.quota_exhausted = True
             return True

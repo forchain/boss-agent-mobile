@@ -36,6 +36,7 @@ import json
 import logging
 import os
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -76,6 +77,29 @@ DEFAULT_CONFIG_SEARCH_PATHS: list[Path] = list(CONFIG_CHAIN)
 #: Legacy file, consulted only when the chain produced no usable API key. It predates
 #: the realm and is kept as an explicit chain entry rather than as a hidden second pass.
 LEGACY_LLM_FILE: Path = Path("config/llm.local.yaml")
+
+#: The keys that make a file a Screening Policy store. One list, so the merged view and
+#: :func:`load_screening_policy` cannot disagree about which file is "the screening one".
+SCREENING_KEYS: tuple[str, ...] = (
+    "enable_screening",
+    "title_blacklist",
+    "title_whitelist",
+    "jd_blacklist",
+    "company_blacklist",
+    "channel_preference",
+    "max_commute_distance_km",
+)
+
+#: Pre-realm Screening Policy files, consulted only when no file in the chain states a
+#: screening key. They are a rescue pass of the whole-realm loader, so the dashboard and
+#: the worker read one policy (ADR 0021 §1).
+LEGACY_SCREENING_FILES: tuple[Path, ...] = (
+    Path("config/screening.local.yaml"),
+    Path("config/screening.local.yml"),
+    Path("config/screening.local.json"),
+    Path("config/screening.yaml"),
+    Path("config/screening.example.yaml"),
+)
 
 #: The wire protocols this realm resolves `provider` to — OpenAI Chat Completions and
 #: Anthropic Messages. A vendor is *not* a protocol: it is chosen by `base_url` and
@@ -280,13 +304,18 @@ def _env_signature() -> tuple:
 
 
 def _legacy_signature() -> tuple:
-    """The legacy LLM file's stat, as part of the cache key.
+    """The legacy rescue files' stats, as part of the cache key.
 
-    It is resolved *relative to the working directory*, so two loads can share a chain
-    and an environment yet read different files. Leaving it out of the key made the
-    cache answer with a value read from a different directory entirely.
+    The LLM file is resolved *relative to the working directory*, so two loads can share
+    a chain and an environment yet read different files. Leaving it out of the key made
+    the cache answer with a value read from a different directory entirely. The legacy
+    screening files are candidates of a rescue pass, so an edit to any of them must also
+    invalidate the merged view.
     """
-    return _chain_signature([get_legacy_llm_file()])
+    root = resolve_config_root()
+    return _chain_signature(
+        [get_legacy_llm_file(), *(root / rel for rel in LEGACY_SCREENING_FILES)]
+    )
 
 
 def _chain_signature(chain: list[Path]) -> tuple:
@@ -433,6 +462,42 @@ def _apply_legacy_llm_file(merged: dict[str, Any]) -> None:
         merged[key] = value
 
 
+def _screening_source_file() -> Path | None:
+    """The file that states the active Screening Policy: chain first, then legacy."""
+    for path in resolve_chain():
+        data = _parse_file(path) or {}
+        if any(key in data for key in SCREENING_KEYS):
+            return path
+    root = resolve_config_root()
+    for rel in LEGACY_SCREENING_FILES:
+        candidate = root / rel
+        data = _parse_file(candidate) or {}
+        if any(key in data for key in SCREENING_KEYS):
+            return candidate
+    return None
+
+
+def _apply_legacy_screening_file(merged: dict[str, Any], chain: list[Path]) -> None:
+    """Rescue screening keys from a pre-realm file when no chain file states any.
+
+    The worker used to apply this fallback inside :func:`load_screening_policy` alone,
+    while the dashboard projected the merged view — so an operator with
+    ``config/screening.local.yaml`` saw realm defaults in the dashboard and had the
+    legacy rules enforced on the phone (ADR 0021 §1).
+    """
+    for path in chain:
+        data = _parse_file(path) or {}
+        if any(key in data for key in SCREENING_KEYS):
+            return
+    root = resolve_config_root()
+    for rel in LEGACY_SCREENING_FILES:
+        data = _parse_file(root / rel) or {}
+        stated = {key: value for key, value in data.items() if key in SCREENING_KEYS}
+        if stated:
+            _apply_file(merged, stated)
+            return
+
+
 def _apply_env_overrides(merged: dict[str, Any]) -> None:
     for key, env_names in ENV_OVERRIDES:
         for env_name in env_names:
@@ -471,15 +536,22 @@ def _coerce_bool(val: Any) -> bool:
 
 
 def _coerce_scalar_types(merged: dict[str, Any]) -> None:
+    # A malformed scalar falls back to the realm default instead of surviving as a string:
+    # every reader of these keys is typed as a number (the dashboard binds
+    # ``temperature`` / ``max_tokens`` / ``daily_greeting_limit`` straight into inputs).
     for int_key in ("max_tokens", "daily_greeting_limit", "communication_cooldown_days"):
         if int_key in merged and merged[int_key] is not None:
-            with contextlib.suppress(ValueError, TypeError):
+            try:
                 merged[int_key] = int(merged[int_key])
+            except (ValueError, TypeError):
+                merged[int_key] = DEFAULTS[int_key]
 
     for float_key in ("temperature", "timeout_sec", "preview_timeout_sec"):
         if float_key in merged and merged[float_key] is not None:
-            with contextlib.suppress(ValueError, TypeError):
+            try:
                 merged[float_key] = float(merged[float_key])
+            except (ValueError, TypeError):
+                merged[float_key] = DEFAULTS[float_key]
 
     if "max_commute_distance_km" in merged:
         val = merged["max_commute_distance_km"]
@@ -567,6 +639,7 @@ def _load_uncached(chain: list[Path], *, include_legacy_fallback: bool) -> dict[
 
     if include_legacy_fallback:
         _apply_legacy_llm_file(merged)
+        _apply_legacy_screening_file(merged, chain)
 
     _apply_env_overrides(merged)
     _apply_chat_env_overrides(merged)
@@ -661,20 +734,42 @@ def _roundtrip_yaml() -> YAML:
 
 
 def _load_roundtrip(path: Path) -> CommentedMap:
-    """Load a YAML store without discarding comments, or an empty mapping."""
+    """Load a YAML store without discarding comments, or an empty mapping.
+
+    A document that exists but is not a mapping is refused, not replaced: patching it
+    would silently discard the operator's file.
+    """
     yaml = _roundtrip_yaml()
     if not path.is_file():
         return CommentedMap()
     with path.open(encoding="utf-8") as handle:
         loaded = yaml.load(handle)
-    return loaded if isinstance(loaded, CommentedMap) else CommentedMap()
+    if loaded is None:
+        return CommentedMap()
+    if not isinstance(loaded, CommentedMap):
+        raise ValueError(f"{path} is not a YAML mapping; refusing to patch it")
+    return loaded
 
 
 def _write_roundtrip(path: Path, data: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    """Write the store atomically, following a symlink instead of replacing it.
+
+    The file on disk is often a symlink into the shared checkout, and an in-place ``"w"``
+    truncates the operator's config before the dump has succeeded.
+    """
+    target = path.resolve()
+    target.parent.mkdir(parents=True, exist_ok=True)
     yaml = _roundtrip_yaml()
-    with path.open("w", encoding="utf-8") as handle:
-        yaml.dump(data, handle)
+    handle_fd, temp_name = tempfile.mkstemp(
+        dir=str(target.parent), prefix=f".{target.name}.", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(handle_fd, "w", encoding="utf-8") as handle:
+            yaml.dump(data, handle)
+        os.replace(temp_name, target)
+    except BaseException:
+        Path(temp_name).unlink(missing_ok=True)
+        raise
 
 
 def _reject_secret(key: str, value: Any) -> bool:
@@ -1032,7 +1127,12 @@ def resolve_enable_scheduler(
 
 
 def load_screening_policy(config_path: str | Path | None = None):
-    """Load the Screening Policy through this realm's chain."""
+    """Load the Screening Policy from the one merged Configuration Realm view.
+
+    ``read_config`` projects this same view, so the dashboard and the worker cannot
+    disagree about the active policy. Only ``source_path`` needs its own lookup: it
+    answers "which file did the operator state this in", which the merged values cannot.
+    """
     from .screening_policy import ScreeningPolicy
 
     if config_path:
@@ -1044,46 +1144,10 @@ def load_screening_policy(config_path: str | Path | None = None):
             return policy
         return ScreeningPolicy()
 
-    chain = resolve_chain()
-    screening_keys = (
-        "enable_screening",
-        "title_blacklist",
-        "title_whitelist",
-        "jd_blacklist",
-        "company_blacklist",
-        "channel_preference",
-        "max_commute_distance_km",
-    )
-    source_path = None
-    for p in chain:
-        if p.is_file():
-            data = _parse_file(p)
-            if data and any(k in data for k in screening_keys):
-                source_path = str(p)
-                break
-
-    # If no file in chain had screening keys, check legacy screening files as fallback.
-    if source_path is None:
-        root = resolve_git_common_root()
-        for candidate_rel in (
-            Path("config/screening.local.yaml"),
-            Path("config/screening.local.yml"),
-            Path("config/screening.local.json"),
-            Path("config/screening.yaml"),
-            Path("config/screening.example.yaml"),
-        ):
-            cand = root / candidate_rel
-            if cand.is_file():
-                data = _parse_file(cand)
-                if data and any(k in data for k in screening_keys):
-                    policy = ScreeningPolicy.from_dict(data)
-                    policy.source_path = str(cand)
-                    return policy
-
-    merged = load_settings()
-    policy = ScreeningPolicy.from_dict(merged)
-    if source_path:
-        policy.source_path = source_path
+    policy = ScreeningPolicy.from_dict(load_settings())
+    source = _screening_source_file()
+    if source is not None:
+        policy.source_path = str(source)
     return policy
 
 

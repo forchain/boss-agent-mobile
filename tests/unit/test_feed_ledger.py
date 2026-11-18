@@ -78,3 +78,20 @@ async def test_persist_verdict_keeps_a_human_copy_and_the_stored_score() -> None
     assert persisted.record["status"] == JobRecordStatus.MATCHED.value
     assert persisted.record["match_score"] == 88
     assert persisted.match_score == 88
+
+
+@pytest.mark.asyncio
+async def test_upsert_preserves_the_store_refusal_of_a_placeholder_card() -> None:
+    """``None`` from the store means "nothing was written" and must survive this seam.
+
+    The pipeline's ``persisted is None`` guard is the only thing keeping a placeholder
+    card out of ``result.jobs`` and off the detail page; coercing the store's refusal to
+    ``{}`` here made that guard unreachable (Spec #303, story #8).
+    """
+    ledger = FeedVerdictLedger(InMemoryJobRecordStore(), _noop)
+
+    refused = await ledger.upsert(
+        {"title": "未注明职位", "company_name": "未注明公司", "recruiter_name": ""}
+    )
+
+    assert refused is None

@@ -3,7 +3,6 @@ import type { RequestHandler } from './$types';
 import { createTask, listTasks } from '$lib/server/collections';
 import { BrokerError } from '$lib/server/broker';
 import { buildLaunch, LaunchIntentError } from '$lib/server/launchContract';
-import { TASK_TYPES, type TaskType } from '$lib/types';
 
 export const GET: RequestHandler = async ({ url }) => {
 	try {
@@ -36,38 +35,26 @@ export const GET: RequestHandler = async ({ url }) => {
 export const POST: RequestHandler = async ({ request }) => {
 	try {
 		const body = await request.json();
-		// Launch intent: the contract owner builds and validates the payload server-side.
-		if (body && typeof body.kind === 'string' && !body.task_type) {
-			const built = await buildLaunch(body);
-			const task = await createTask({
-				task_type: built.task_type,
-				payload: built.payload,
-				source: built.source
-			});
-			return json({ success: true, task, fields: built.fields });
-		}
-		// An absent task_type is a missing field, not an invitation to guess: defaulting
-		// to AUTO_APPLY meant a UI bug silently started a greeting run.
-		const taskType = body.task_type;
-		if (typeof taskType !== 'string' || !TASK_TYPES.includes(taskType as TaskType)) {
+		// A launch intent is the only way in: the contract owner builds and validates the
+		// payload server-side, so no Web caller can author a task_type or a payload
+		// (ADR 0022). An absent kind is a missing field, not an invitation to guess.
+		if (!body || typeof body.kind !== 'string') {
 			return json(
-				{
-					success: false,
-					message: `Unknown task_type ${JSON.stringify(taskType)}; expected one of ${TASK_TYPES.join(', ')}`
-				},
+				{ success: false, message: 'A launch intent requires a kind' },
 				{ status: 400 }
 			);
 		}
+		const built = await buildLaunch(body);
 		const task = await createTask({
-			task_type: taskType,
-			payload: body.payload || {},
-			source: typeof body.source === 'string' && body.source ? body.source : 'manual'
+			task_type: built.task_type,
+			payload: built.payload,
+			source: built.source
 		});
-		return json({ success: true, task });
+		return json({ success: true, task, fields: built.fields });
 	} catch (e: any) {
 		return json(
 			{ success: false, message: e?.message || 'Failed to create automation task' },
-			{ status: e instanceof LaunchIntentError ? 400 : e instanceof BrokerError ? e.status : 500 }
+			{ status: e instanceof LaunchIntentError ? e.status : e instanceof BrokerError ? e.status : 500 }
 		);
 	}
 };

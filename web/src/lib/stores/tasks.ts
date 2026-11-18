@@ -10,8 +10,6 @@ import { apiDelete, apiGet, apiPatch, apiPost } from '$lib/apiClient';
 import { buildTaskQueryString, clampTaskLimit, clampTaskPage } from '$lib/taskQuery';
 import type { AutomationTask } from '$lib/types';
 
-export type LaunchSource = 'manual' | 'test' | 'scheduler';
-
 export interface TaskPage {
 	items: AutomationTask[];
 	totalItems: number;
@@ -54,19 +52,6 @@ export async function getAutomationTask(taskId: string): Promise<AutomationTask 
 		if (err?.status === 404) return null;
 		throw err;
 	}
-}
-
-export async function createAutomationTask(
-	taskType: string,
-	payload: Record<string, any>,
-	source: LaunchSource = 'manual'
-): Promise<AutomationTask> {
-	const data = await apiPost<{ task: AutomationTask }>('/api/tasks', {
-		task_type: taskType,
-		payload,
-		source
-	});
-	return data.task;
 }
 
 /**
