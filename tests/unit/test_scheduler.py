@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from boss_agent.adapters.inbound.worker.scheduler import AutomationScheduler
 from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
 from boss_agent.core.search.domain.models import SavedSearch
 from boss_agent.core.search.use_cases.cron import (
@@ -16,7 +17,6 @@ from boss_agent.core.task.use_cases.startup_cleanup import (
     STARTUP_CLEANUP_MARKER,
     StartupCleanupGate,
 )
-from boss_agent.scheduler import AutomationScheduler
 
 
 def test_parse_cron_field():
@@ -196,7 +196,7 @@ async def test_scheduler_dispatches_check_chat_task_for_inbox_cleanup_strategy()
     now = datetime(2026, 9, 7, 21, 0, 0, tzinfo=UTC)
 
     with patch(
-        "boss_agent.scheduler.resolve_chat_acknowledgment_settings",
+        "boss_agent.adapters.inbound.worker.scheduler.resolve_chat_acknowledgment_settings",
         return_value=ChatAcknowledgmentSettings(
             rejection_reply_text="谢谢，祝招聘顺利", max_scan_depth=7
         ),
@@ -244,7 +244,7 @@ async def test_scheduled_chat_cleanup_honours_the_configured_drill_mode():
     now = datetime(2026, 9, 7, 21, 0, 0, tzinfo=UTC)
 
     with patch(
-        "boss_agent.scheduler.resolve_chat_acknowledgment_settings",
+        "boss_agent.adapters.inbound.worker.scheduler.resolve_chat_acknowledgment_settings",
         return_value=ChatAcknowledgmentSettings(dry_run=True),
     ):
         tasks = await scheduler.run_once(now=now)
@@ -356,7 +356,7 @@ async def test_scheduler_evaluates_cron_in_local_timezone_when_now_is_none():
         broker=broker, startup_gate=StartupCleanupGate(broker, enabled=False), tz=cst
     )
 
-    with patch("boss_agent.scheduler.datetime") as mock_dt:
+    with patch("boss_agent.adapters.inbound.worker.scheduler.datetime") as mock_dt:
         mock_dt.now.side_effect = lambda tz=None: beijing_9am.astimezone(tz) if tz else beijing_9am
         mock_dt.fromisoformat = datetime.fromisoformat
         tasks = await scheduler.run_once(now=None)

@@ -20,7 +20,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from boss_agent.worker.daemon import SHUTDOWN_ACK_MARKER
+from boss_agent.adapters.inbound.worker.daemon import SHUTDOWN_ACK_MARKER
 
 # The worker's acknowledgment is owned by the producer; the dashboard's is emitted by
 # `dashboard.sh` (see its `log_web_event` call in `cmd_stop`) and can only be mirrored here.

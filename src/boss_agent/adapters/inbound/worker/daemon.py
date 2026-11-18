@@ -11,6 +11,9 @@ import time
 from collections.abc import Sequence
 from typing import Any, cast
 
+from boss_agent.adapters.inbound.worker.config import WorkerConfig
+from boss_agent.adapters.inbound.worker.context import WorkerContext
+from boss_agent.adapters.inbound.worker.handlers.base import BaseTaskHandler, HandlerResult
 from boss_agent.adapters.outbound.config.settings import resolve_chat_acknowledgment_settings
 from boss_agent.core.task.domain.models import AutomationTask, TaskStatus, TaskType
 from boss_agent.core.task.interfaces.broker import BaseTaskBroker
@@ -20,9 +23,6 @@ from boss_agent.core.task.use_cases.test_reclaim import (
     TEST_RECLAIM_REASON,
     is_test_sourced,
 )
-from boss_agent.worker.config import WorkerConfig
-from boss_agent.worker.context import WorkerContext
-from boss_agent.worker.handlers.base import BaseTaskHandler, HandlerResult
 
 logger = logging.getLogger("boss_agent.worker")
 

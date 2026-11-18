@@ -138,8 +138,8 @@ async def test_the_scheduler_passes_its_resolved_settings_into_the_dispatch():
     """The edge resolves once per tick and the use case never reaches for them."""
     from unittest.mock import patch
 
+    from boss_agent.adapters.inbound.worker.scheduler import AutomationScheduler
     from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
-    from boss_agent.scheduler import AutomationScheduler
 
     broker = InMemoryTaskBroker()
     await broker.saved_searches.save_saved_search(
@@ -153,7 +153,7 @@ async def test_the_scheduler_passes_its_resolved_settings_into_the_dispatch():
 
     scheduler = AutomationScheduler(broker=broker)
     with patch(
-        "boss_agent.scheduler.resolve_chat_acknowledgment_settings",
+        "boss_agent.adapters.inbound.worker.scheduler.resolve_chat_acknowledgment_settings",
         return_value=ChatAcknowledgmentSettings(dry_run=True, max_scan_depth=7),
     ):
         tasks = await scheduler.run_once(now=MONDAY_9AM)

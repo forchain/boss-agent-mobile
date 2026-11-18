@@ -8,6 +8,7 @@ resolution hierarchy, precedence rules, and URL normalization.
 from pathlib import Path
 from unittest.mock import patch
 
+from boss_agent.adapters.inbound.worker.config import WorkerConfig
 from boss_agent.adapters.outbound.config.settings import (
     load_settings,
     resolve_chat_acknowledgment_settings,
@@ -19,7 +20,6 @@ from boss_agent.adapters.outbound.config.settings import (
 )
 from boss_agent.adapters.outbound.pocketbase.pocketbase_adapter import PocketBaseTaskBroker
 from boss_agent.core.chat.domain.rejection import ChatAcknowledgmentSettings
-from boss_agent.worker.config import WorkerConfig
 
 
 def test_resolve_pocketbase_url_default():

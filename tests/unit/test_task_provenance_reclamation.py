@@ -12,12 +12,12 @@ worker for the device.
 
 import pytest
 
+from boss_agent.adapters.inbound.worker.config import WorkerConfig
+from boss_agent.adapters.inbound.worker.daemon import TEST_RECLAIM_REASON, AutomationWorker
 from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
 from boss_agent.core.search.domain.launch import LaunchSource, TaskKind, build_launch
 from boss_agent.core.search.domain.models import FilterConfig, SavedSearch, SearchConfig
 from boss_agent.core.task.domain.models import TaskStatus
-from boss_agent.worker.config import WorkerConfig
-from boss_agent.worker.daemon import TEST_RECLAIM_REASON, AutomationWorker
 
 
 async def _queue(broker: InMemoryTaskBroker, search_id: str, source: LaunchSource):

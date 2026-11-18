@@ -16,14 +16,9 @@ root_dir = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(root_dir))
 sys.path.insert(0, str(root_dir / "src"))
 
-from boss_agent.adapters.outbound.llm.llm_config import (  # noqa: E402
-    create_llm_client,
-    load_llm_config,
-)
-from boss_agent.adapters.outbound.llm.tracing import TracedCandidateScreener  # noqa: E402
 from boss_agent.core.job.domain.job_entities import JobPosting  # noqa: E402
 from boss_agent.core.job.domain.screening_policy import ScreeningPolicy  # noqa: E402
-from droid_agent_core.llm import LLMConfig, LLMDecisionClient  # noqa: E402
+from boss_agent.main import build_llm_client, build_screener  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -64,39 +59,6 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--llm-config", type=str, default=None, help="LLM config as JSON string")
     return parser.parse_args()
-
-
-def build_llm_client(llm_config_arg: str | None) -> LLMDecisionClient:
-    if llm_config_arg:
-        try:
-            if llm_config_arg.strip().startswith("{"):
-                config_data = json.loads(llm_config_arg)
-                base_url = config_data.get("base_url") or "https://api.minimaxi.com/v1"
-                api_key = config_data.get("api_key") or None
-                model = config_data.get("model") or "MiniMax-M3"
-                temp = float(config_data.get("temperature") or 0.2)
-
-                default_cfg = load_llm_config()
-                if not api_key:
-                    api_key = default_cfg.api_key
-                if (
-                    not base_url or base_url == "https://api.openai.com/v1"
-                ) and not config_data.get("api_key"):
-                    base_url = default_cfg.base_url
-                    model = default_cfg.model
-
-                llm_cfg = LLMConfig(
-                    provider=config_data.get("provider", default_cfg.provider),
-                    base_url=base_url.rstrip("/"),
-                    api_key=api_key,
-                    model=model,
-                    temperature=temp,
-                )
-                return create_llm_client(config=llm_cfg)
-        except Exception as e:
-            sys.stderr.write(f"Warning: Failed to parse custom LLM config ({e}), falling back.\n")
-
-    return create_llm_client()
 
 
 def main() -> None:
@@ -146,7 +108,7 @@ def main() -> None:
             screening_prompt = None
 
     llm_client = build_llm_client(args.llm_config)
-    screener = TracedCandidateScreener(
+    screener = build_screener(
         llm_client=llm_client,
         screening_prompt=screening_prompt,
     )

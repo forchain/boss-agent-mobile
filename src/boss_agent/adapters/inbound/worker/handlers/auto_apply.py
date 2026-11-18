@@ -13,6 +13,12 @@ configures the run with ``target_action=auto_apply``.
 import logging
 from typing import Any
 
+from boss_agent.adapters.inbound.worker.context import WorkerContext
+from boss_agent.adapters.inbound.worker.handlers.base import (
+    BaseTaskHandler,
+    HandlerResult,
+    load_prompt_or_default,
+)
 from boss_agent.adapters.outbound.config.greeting_prompt import load_greeting_prompt
 from boss_agent.adapters.outbound.config.screening_prompt import load_screening_prompt
 from boss_agent.adapters.outbound.config.settings import load_feed_config_defaults
@@ -27,8 +33,6 @@ from boss_agent.core.shared.errors import BrokerError, TransportError
 from boss_agent.core.shared.identifier_helpers import is_masked_company_name
 from boss_agent.core.task.domain.models import AutomationTask, TaskType
 from boss_agent.core.task.interfaces.broker import BaseTaskBroker
-from boss_agent.worker.context import WorkerContext
-from boss_agent.worker.handlers.base import BaseTaskHandler, HandlerResult
 
 logger = logging.getLogger(__name__)
 
@@ -58,8 +62,8 @@ class AutoApplyHandler(BaseTaskHandler):
         store = broker.job_store
         screener = TracedCandidateScreener(
             llm_client=self.llm_client or create_llm_client(),
-            greeting_prompt=load_greeting_prompt(),
-            screening_prompt=load_screening_prompt(),
+            greeting_prompt=load_prompt_or_default(load_greeting_prompt),
+            screening_prompt=load_prompt_or_default(load_screening_prompt) or None,
         )
         try:
             profile = await self._resolve_profile(broker, payload, task_id=task.id)

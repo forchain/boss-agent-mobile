@@ -18,6 +18,8 @@ and the chat instead of patching this module's globals (#268).
 import logging
 from typing import Any
 
+from boss_agent.adapters.inbound.worker.context import WorkerContext
+from boss_agent.adapters.inbound.worker.handlers.base import BaseTaskHandler, HandlerResult
 from boss_agent.adapters.outbound.config.screening_config import (
     ScreeningConfigBlacklistSink,
     load_screening_policy,
@@ -33,8 +35,6 @@ from boss_agent.core.chat.use_cases.triage import ChatTriage
 from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
 from boss_agent.core.task.domain.models import AutomationTask, TaskType
 from boss_agent.core.task.interfaces.broker import BaseTaskBroker
-from boss_agent.worker.context import WorkerContext
-from boss_agent.worker.handlers.base import BaseTaskHandler, HandlerResult
 
 logger = logging.getLogger(__name__)
 

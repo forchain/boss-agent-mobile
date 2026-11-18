@@ -17,18 +17,13 @@ root_dir = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(root_dir))
 sys.path.insert(0, str(root_dir / "src"))
 
-from boss_agent.adapters.outbound.llm.llm_config import (  # noqa: E402
-    create_llm_client,
-    load_llm_config,
-)
-from boss_agent.adapters.outbound.resume.graph import run_resume_lifecycle_graph  # noqa: E402
-from boss_agent.adapters.outbound.resume.memory import (  # noqa: E402
-    ResumeMemoryManager,
-    ResumeTextExtractor,
-)
 from boss_agent.core.candidate.domain.candidate_profile import CandidateProfile  # noqa: E402
 from boss_agent.core.candidate.domain.profile_normalizer import ProfileNormalizer  # noqa: E402
-from droid_agent_core.llm import LLMConfig, LLMDecisionClient  # noqa: E402
+from boss_agent.main import (  # noqa: E402
+    build_llm_client,
+    build_resume_pipeline,
+    build_resume_text_source,
+)
 
 log_dir = root_dir / ".boss_agent"
 log_dir.mkdir(parents=True, exist_ok=True)
@@ -82,59 +77,6 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _is_masked_key(val: str | None) -> bool:
-    """Whether a configured key is unset or still a masked/placeholder display value."""
-    from boss_agent.adapters.outbound.config.config_realm import (
-        PLACEHOLDER_API_KEY,
-        is_mask_placeholder,
-    )
-
-    if not val:
-        return True
-    s = str(val).strip()
-    return not s or s == PLACEHOLDER_API_KEY or is_mask_placeholder(s)
-
-
-def build_llm_client(llm_config_arg: str | None) -> LLMDecisionClient:
-    if llm_config_arg:
-        try:
-            if llm_config_arg.strip().startswith("{"):
-                config_data = json.loads(llm_config_arg)
-                base_url = config_data.get("base_url") or "https://api.minimaxi.com/v1"
-                api_key = config_data.get("api_key") or None
-                model = config_data.get("model") or "MiniMax-M3"
-                temp = float(config_data.get("temperature") or 0.2)
-
-                default_cfg = load_llm_config()
-                if _is_masked_key(api_key):
-                    api_key = default_cfg.api_key
-                if (not base_url or base_url == "https://api.openai.com/v1") and _is_masked_key(
-                    config_data.get("api_key")
-                ):
-                    base_url = default_cfg.base_url
-                    model = default_cfg.model
-
-                llm_cfg = LLMConfig(
-                    provider=config_data.get("provider", default_cfg.provider),
-                    base_url=base_url.rstrip("/"),
-                    api_key=api_key,
-                    model=model,
-                    temperature=temp,
-                    timeout_sec=float(config_data.get("timeout_sec") or 300.0),
-                    max_tokens=int(config_data.get("max_tokens") or 16384),
-                )
-                return create_llm_client(config=llm_cfg)
-            else:
-                llm_cfg = load_llm_config(llm_config_arg)
-                return create_llm_client(config=llm_cfg)
-        except Exception as e:
-            sys.stderr.write(
-                f"Warning: Failed to parse custom LLM config ({e}), falling back to default.\n"
-            )
-
-    return create_llm_client()
-
-
 def main() -> None:
     args = parse_args()
     file_path = Path(args.file)
@@ -146,9 +88,8 @@ def main() -> None:
         sys.stdout.write(json.dumps({"success": False, "message": msg}, ensure_ascii=False) + "\n")
         sys.exit(1)
 
-    extractor = ResumeTextExtractor()
     try:
-        raw_text = extractor.extract_text(file_path)
+        raw_text = build_resume_text_source().extract_text(file_path)
         logger.info("Extracted %d characters of text from %s", len(raw_text), file_path.name)
     except Exception as e:
         msg = f"Failed to extract text from file: {e}"
@@ -162,7 +103,16 @@ def main() -> None:
         sys.stdout.write(json.dumps({"success": False, "message": msg}, ensure_ascii=False) + "\n")
         sys.exit(1)
 
-    llm_client = build_llm_client(args.llm_config)
+    llm_client = build_llm_client(
+        args.llm_config,
+        allow_config_path=True,
+        timeout_sec=300.0,
+        max_tokens=16384,
+    )
+    pipeline = build_resume_pipeline(
+        llm_client=llm_client,
+        memory_file_path=args.memory_path or None,
+    )
     logger.info(
         "Using LLM model: %s (base_url: %s, max_tokens: %d)",
         llm_client.config.model,
@@ -171,13 +121,12 @@ def main() -> None:
     )
 
     try:
-        lifecycle_result = run_resume_lifecycle_graph(
+        lifecycle_result = pipeline.run(
             file_path=str(file_path),
             file_name=args.file_name or file_path.name,
             user_id=args.user_id,
             merge_mode=args.merge_mode or None,
             await_review=args.await_review,
-            llm_client=llm_client,
         )
 
         final_profile = (
@@ -190,10 +139,7 @@ def main() -> None:
         if args.memory_path and final_profile:
             try:
                 prof_obj = CandidateProfile.from_dict(final_profile)
-                ResumeMemoryManager(
-                    llm_client=llm_client,
-                    memory_file_path=args.memory_path,
-                ).save_memory_profile(prof_obj)
+                pipeline.memory_manager.save_memory_profile(prof_obj)
             except Exception as mem_err:
                 logger.warning(
                     "Failed to sync profile to memory file %s: %s", args.memory_path, mem_err
@@ -225,10 +171,7 @@ def main() -> None:
             normalized = ProfileNormalizer.normalize({}, raw_text=raw_text)
             profile_obj = CandidateProfile.from_dict(normalized)
             if args.memory_path:
-                ResumeMemoryManager(
-                    llm_client=llm_client,
-                    memory_file_path=args.memory_path,
-                ).save_memory_profile(profile_obj)
+                pipeline.memory_manager.save_memory_profile(profile_obj)
 
             logger.info(
                 "Resume parsed via heuristic fallback and saved for candidate: %s",

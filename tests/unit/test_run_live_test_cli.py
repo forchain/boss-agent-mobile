@@ -34,6 +34,7 @@ import pytest
 import scripts.run_live_test as runner
 from _feed_harness import ScriptedFeed, _card, _detail_page, _posting, script_pages, stub_llm
 
+from boss_agent import main as composition
 from boss_agent.adapters.outbound.llm.tracing import (
     TracedCandidateScreener,
     TracedJobMatchGreetingService,
@@ -126,9 +127,9 @@ def _run(
     with (
         patch("pathlib.Path.home", return_value=tmp_path),
         patch("time.sleep", return_value=None),
-        patch.object(runner, "AppiumSession", return_value=session),
-        patch.object(runner, "TakeoverHandler", return_value=takeover),
-        patch.object(runner, "ResumeMemoryManager", return_value=memory),
+        patch.object(composition, "AppiumSession", return_value=session),
+        patch.object(composition, "TakeoverHandler", return_value=takeover),
+        patch.object(composition, "ResumeMemoryManager", return_value=memory),
         patch(
             "boss_agent.adapters.inbound.verification.feed_verification.JobFeedPipeline",
             side_effect=_compose_pipeline,
@@ -136,7 +137,7 @@ def _run(
         patch(
             "boss_agent.adapters.inbound.verification.feed_verification.TracedCandidateScreener"
         ) as screener_cls,
-        patch.object(runner, "TracedJobMatchGreetingService") as greeting_cls,
+        patch.object(composition, "TracedJobMatchGreetingService") as greeting_cls,
     ):
         screener_cls.side_effect = lambda **kw: _REAL_SCREENER(**{**kw, "llm_client": verdict})
         greeting_cls.side_effect = lambda **kw: _REAL_GREETING(**{**kw, "llm_client": stub_llm()})

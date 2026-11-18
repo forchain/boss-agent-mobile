@@ -19,6 +19,8 @@ import pytest
 import requests
 from _job_store_harness import FakePocketBaseSession, pocketbase_job_store
 
+from boss_agent.adapters.inbound.worker.context import WorkerContext
+from boss_agent.adapters.inbound.worker.handlers.auto_apply import AutoApplyHandler
 from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
 from boss_agent.adapters.outbound.pocketbase.candidate_memory_store import (
     PocketBaseCandidateMemoryStore,
@@ -28,8 +30,6 @@ from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
 from boss_agent.core.job.use_cases.feed_pipeline import FeedStreamConfig, JobFeedPipeline
 from boss_agent.core.shared.errors import TransportError, ValidationError
 from boss_agent.core.task.domain.models import TaskType
-from boss_agent.worker.context import WorkerContext
-from boss_agent.worker.handlers.auto_apply import AutoApplyHandler
 
 
 class FailingSession:
@@ -226,7 +226,7 @@ async def test_auto_apply_handler_logs_degradation_on_profile_transport_error():
         side_effect=TransportError("PocketBase unreachable: 503")
     )
 
-    from boss_agent.worker.config import WorkerConfig
+    from boss_agent.adapters.inbound.worker.config import WorkerConfig
 
     context = WorkerContext(config=WorkerConfig(), driver=MagicMock())
     handler = AutoApplyHandler()
@@ -270,7 +270,7 @@ async def test_auto_apply_handler_logs_degradation_on_exclusion_pool_transport_e
         side_effect=TransportError("Database connection lost")
     )
 
-    from boss_agent.worker.config import WorkerConfig
+    from boss_agent.adapters.inbound.worker.config import WorkerConfig
 
     context = WorkerContext(config=WorkerConfig(), driver=MagicMock())
     handler = AutoApplyHandler()

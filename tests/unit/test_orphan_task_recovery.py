@@ -22,11 +22,11 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from boss_agent.adapters.inbound.worker.config import WorkerConfig
 from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
 from boss_agent.adapters.outbound.pocketbase.pocketbase_adapter import PocketBaseTaskBroker
 from boss_agent.core.task.domain.models import TaskStatus, TaskType
 from boss_agent.core.task.use_cases.sweeper import TaskLeaseSweeper
-from boss_agent.worker.config import WorkerConfig
 
 #: The Appium server drops a session after this long without a command. A handler can
 #: block the event loop for up to one of these inside a single synchronous driver call.
@@ -226,14 +226,18 @@ async def test_worker_entrypoint_supervises_the_lease_sweeper():
     scheduler only. This asserts the wiring exists, so the recovery path cannot be
     dropped again without a test going red.
     """
-    from scripts import worker as worker_entrypoint
-
+    from boss_agent.adapters.inbound.worker.context import WorkerContext
+    from boss_agent.adapters.inbound.worker.daemon import AutomationWorker
     from boss_agent.core.task.use_cases.sweeper import TaskLeaseSweeper as _Sweeper
+    from boss_agent.main import build_supervised_services
 
-    supervised = worker_entrypoint.build_supervised_services(
-        config=WorkerConfig(enable_scheduler=False),
+    config = WorkerConfig(enable_scheduler=False)
+    worker = AutomationWorker(
+        config=config,
         broker=InMemoryTaskBroker(),
+        context=WorkerContext(config=config),
     )
+    supervised = build_supervised_services(worker)
 
     try:
         assert any(coro.cr_code.co_name == _Sweeper.start.__name__ for coro in supervised), (

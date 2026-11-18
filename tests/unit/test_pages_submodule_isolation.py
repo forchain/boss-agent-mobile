@@ -470,7 +470,7 @@ SCREEN_DRIVERS = frozenset(
 
 #: Subtrees excluded from the domain sweep: `pages` is the layer under guard, and `worker` is
 #: the automation driver whose handlers exist to press the screens `pages` models.
-NOT_DOMAIN = ("boss_agent.adapters.outbound.device.pages", "boss_agent.worker")
+NOT_DOMAIN = ("boss_agent.adapters.outbound.device.pages", "boss_agent.adapters.inbound.worker")
 
 #: The modules the ticket names as the minimum the domain sweep must reach. Discovery below
 #: is derived from the tree rather than pinned by hand, so a rename that quietly drops a

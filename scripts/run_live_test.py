@@ -43,25 +43,17 @@ from rich.markup import escape
 from rich.table import Table
 
 from boss_agent.adapters.inbound.verification.feed_verification import (
-    BOSS_PACKAGE,
     activate_app,
-    build_verification_pipeline,
     load_candidate_profile,
     render_greeting_match_card,
     run_verification_feed,
 )
 from boss_agent.adapters.outbound.config.config_realm import DEFAULTS
-from boss_agent.adapters.outbound.config.greeting_prompt import load_greeting_prompt
 from boss_agent.adapters.outbound.config.settings import load_settings
-from boss_agent.adapters.outbound.device.takeover import TakeoverHandler
-from boss_agent.adapters.outbound.llm.llm_config import create_llm_client
-from boss_agent.adapters.outbound.llm.tracing import TracedJobMatchGreetingService
 from boss_agent.adapters.outbound.pocketbase.async_bridge import run_sync
 from boss_agent.adapters.outbound.pocketbase.saved_search_store import (
     missing_saved_search_message,
-    resolve_saved_search_store,
 )
-from boss_agent.adapters.outbound.resume.memory import ResumeMemoryManager
 from boss_agent.core.job.domain.feed_stream import FeedStreamResult
 from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
 from boss_agent.core.job.use_cases.screening import JobVerdictStage
@@ -69,7 +61,18 @@ from boss_agent.core.search.domain.models import FilterConfig, SavedSearch, Sear
 from boss_agent.core.search.interfaces.store import SavedSearchStore
 from boss_agent.core.shared.enums import AuthStatus
 from boss_agent.core.shared.errors import BrokerError
-from droid_agent_core.driver import AppiumSession, DriverConfig
+from boss_agent.main import (
+    build_device_session,
+    build_matching_service,
+    build_resume_memory_manager,
+    build_saved_search_store,
+    build_takeover_handler,
+    build_verification_pipeline,
+)
+
+# The store resolution stays a module-level name so a caller can substitute it; the
+# composition root owns the concrete adapter it resolves to.
+resolve_saved_search_store = build_saved_search_store
 
 console = Console()
 
@@ -258,27 +261,7 @@ def run_live_test(
     else:
         console.print("[dim]Filters disabled: proceeding without filtering.[/dim]")
 
-    # Target device configuration
-    config = DriverConfig(
-        server_url=server_url,
-        platform_name="Android",
-        automation_name="UiAutomator2",
-        device_name=device_udid,
-        app_package=BOSS_PACKAGE,
-        app_activity="com.hpbr.bosszhipin.module.launcher.WelcomeActivity",
-        no_reset=True,
-        auto_grant_permissions=True,
-        new_command_timeout=300,
-        extra_capabilities={
-            "appium:udid": device_udid,
-            "appium:uiautomator2ServerInstallTimeout": 60000,
-            "appium:adbExecTimeout": 60000,
-            "appium:ensureWebviewsHavePages": True,
-            "appium:nativeWebScreenshot": True,
-        },
-    )
-
-    session = AppiumSession(config)
+    session = build_device_session(device_udid=device_udid, server_url=server_url)
     output_dir = Path.home() / ".boss_agent" / "artifacts"
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -303,7 +286,7 @@ def run_live_test(
         # challenge has to stop the run *here*, not after it has begun scrolling a login
         # wall (issue #391). It runs before the engine is even composed so a blocked run
         # costs an operator nothing but the wait for them to solve it.
-        takeover = TakeoverHandler(driver, auto_confirm_for_test=False)
+        takeover = build_takeover_handler(driver, auto_confirm_for_test=False)
         auth_status = takeover.check_and_handle_takeover()
         if auth_status != AuthStatus.AUTHENTICATED:
             raise RuntimeError(f"Authentication failed: {auth_status}")
@@ -314,17 +297,14 @@ def run_live_test(
         # (issue #389). The screener carries *this* run's matching service, so the greeting
         # is drafted by the object the operator configured rather than by a second one the
         # pipeline built for itself.
-        matching_service = TracedJobMatchGreetingService(
-            llm_client=create_llm_client(),
-            greeting_prompt=load_greeting_prompt(),
-        )
+        matching_service = build_matching_service()
         # Loading the profile is the expensive half of drafting a greeting: with
         # ``--force-refresh-memory`` it regenerates the profile from the resume through the
         # LLM. So it happens only on the greeting path — ``--no-greeting`` skips it rather
         # than paying for an answer the run will not use (issue #391).
         candidate_profile = (
             load_candidate_profile(
-                memory_manager=ResumeMemoryManager(),
+                memory_manager=build_resume_memory_manager(),
                 resume_file=resume_file,
                 force_refresh_memory=force_refresh_memory,
                 matching_service=matching_service,

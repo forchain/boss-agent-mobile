@@ -3,6 +3,9 @@
 scripts/evaluate_match.py
 =========================
 CLI entrypoint to evaluate job-candidate fit and generate customized greeting message using LLM.
+
+Composition lives in :mod:`boss_agent.main`; this module parses the job/profile JSON and
+reports the result.
 """
 
 import argparse
@@ -15,16 +18,14 @@ root_dir = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(root_dir))
 sys.path.insert(0, str(root_dir / "src"))
 
-from boss_agent.adapters.outbound.config.greeting_prompt import load_greeting_prompt  # noqa: E402
-from boss_agent.adapters.outbound.llm.llm_config import (  # noqa: E402
-    create_llm_client,
-    load_llm_config,
-)
-from boss_agent.adapters.outbound.llm.tracing import TracedJobMatchGreetingService  # noqa: E402
 from boss_agent.core.candidate.domain.candidate_profile import CandidateProfile  # noqa: E402
 from boss_agent.core.job.domain.job_entities import JobPosting  # noqa: E402
 from boss_agent.core.shared.identifier_helpers import format_recruiter_greeting_prefix  # noqa: E402
-from droid_agent_core.llm import LLMConfig, LLMDecisionClient  # noqa: E402
+from boss_agent.main import (  # noqa: E402
+    build_llm_client,
+    build_matching_service,
+    build_resume_memory_manager,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -41,52 +42,6 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--llm-config", type=str, default=None, help="LLM config as JSON string")
     return parser.parse_args()
-
-
-def _is_masked_key(val: str | None) -> bool:
-    """Whether a configured key is unset or still a masked/placeholder display value."""
-    from boss_agent.adapters.outbound.config.config_realm import (
-        PLACEHOLDER_API_KEY,
-        is_mask_placeholder,
-    )
-
-    if not val:
-        return True
-    s = str(val).strip()
-    return not s or s == PLACEHOLDER_API_KEY or is_mask_placeholder(s)
-
-
-def build_llm_client(llm_config_arg: str | None) -> LLMDecisionClient:
-    if llm_config_arg:
-        try:
-            if llm_config_arg.strip().startswith("{"):
-                config_data = json.loads(llm_config_arg)
-                base_url = config_data.get("base_url") or "https://api.minimaxi.com/v1"
-                api_key = config_data.get("api_key") or None
-                model = config_data.get("model") or "MiniMax-M3"
-                temp = float(config_data.get("temperature") or 0.2)
-
-                default_cfg = load_llm_config()
-                if _is_masked_key(api_key):
-                    api_key = default_cfg.api_key
-                if (not base_url or base_url == "https://api.openai.com/v1") and _is_masked_key(
-                    config_data.get("api_key")
-                ):
-                    base_url = default_cfg.base_url
-                    model = default_cfg.model
-
-                llm_cfg = LLMConfig(
-                    provider=config_data.get("provider", default_cfg.provider),
-                    base_url=base_url.rstrip("/"),
-                    api_key=api_key,
-                    model=model,
-                    temperature=temp,
-                )
-                return create_llm_client(config=llm_cfg)
-        except Exception as e:
-            sys.stderr.write(f"Warning: Failed to parse custom LLM config ({e}), falling back.\n")
-
-    return create_llm_client()
 
 
 def main() -> None:
@@ -127,10 +82,7 @@ def main() -> None:
         or candidate_profile.name in ("测试候选人", "求职者", "")
     ):
         try:
-            from boss_agent.adapters.outbound.resume.memory import ResumeMemoryManager
-
-            mgr = ResumeMemoryManager()
-            cached = mgr.load_cached_memory()
+            cached = build_resume_memory_manager().load_cached_memory()
             if (
                 cached
                 and (cached.profile_document or cached.work_experiences or cached.core_skills)
@@ -145,10 +97,10 @@ def main() -> None:
             sys.stderr.write(f"Warning: Failed to load cached candidate memory ({e})\n")
 
     llm_client = build_llm_client(args.llm_config)
-    service = TracedJobMatchGreetingService(
+    service = build_matching_service(
         llm_client=llm_client,
         candidate_profile=candidate_profile,
-        greeting_prompt=args.greeting_prompt or load_greeting_prompt(),
+        greeting_prompt=args.greeting_prompt or None,
     )
 
     try:

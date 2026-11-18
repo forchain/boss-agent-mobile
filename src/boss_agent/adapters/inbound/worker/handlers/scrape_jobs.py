@@ -11,6 +11,12 @@ its result.
 import logging
 from typing import Any
 
+from boss_agent.adapters.inbound.worker.context import WorkerContext
+from boss_agent.adapters.inbound.worker.handlers.base import (
+    BaseTaskHandler,
+    HandlerResult,
+    load_prompt_or_default,
+)
 from boss_agent.adapters.outbound.config.greeting_prompt import load_greeting_prompt
 from boss_agent.adapters.outbound.config.screening_prompt import load_screening_prompt
 from boss_agent.adapters.outbound.config.settings import load_feed_config_defaults
@@ -21,8 +27,6 @@ from boss_agent.core.job.domain.feed_stream import FeedStreamConfig
 from boss_agent.core.job.use_cases.feed_pipeline import JobFeedPipeline
 from boss_agent.core.task.domain.models import AutomationTask, TaskType
 from boss_agent.core.task.interfaces.broker import BaseTaskBroker
-from boss_agent.worker.context import WorkerContext
-from boss_agent.worker.handlers.base import BaseTaskHandler, HandlerResult
 
 logger = logging.getLogger(__name__)
 
@@ -72,8 +76,8 @@ class ScrapeJobsHandler(BaseTaskHandler):
             world=build_feed_device_world(driver),
             screener=TracedCandidateScreener(
                 llm_client=self.llm_client or create_llm_client(),
-                greeting_prompt=load_greeting_prompt(),
-                screening_prompt=load_screening_prompt(),
+                greeting_prompt=load_prompt_or_default(load_greeting_prompt),
+                screening_prompt=load_prompt_or_default(load_screening_prompt) or None,
             ),
         )
         result = await pipeline.stream_jobs(config)

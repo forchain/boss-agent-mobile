@@ -39,7 +39,7 @@ CORE_JOB_ROOT = REPO_ROOT / "src" / "boss_agent" / "core" / "job"
 
 FORBIDDEN_CORE_ROOTS = (
     "boss_agent.adapters",
-    "boss_agent.worker",
+    "boss_agent.adapters.inbound.worker",
     "selenium",
     "appium",
     "droid_agent_core.driver",

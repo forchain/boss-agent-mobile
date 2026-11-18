@@ -458,8 +458,8 @@ def test_the_shutdown_acknowledgment_has_one_definition_per_service() -> None:
     half hand-copied into the teardown service. A test that names the offender is what
     replaces the comment.
     """
+    from boss_agent.adapters.inbound.worker.daemon import SHUTDOWN_ACK_MARKER
     from boss_agent.adapters.infra.teardown import WEB_SHUTDOWN_ACK, WORKER_SHUTDOWN_ACK
-    from boss_agent.worker.daemon import SHUTDOWN_ACK_MARKER
 
     library = RUNNER_LIB.read_text(encoding="utf-8")
     assert f'RUNNER_WEB_SHUTDOWN_ACK="{WEB_SHUTDOWN_ACK}"' in library, (

@@ -24,15 +24,15 @@ from _chat_triage_harness import (
     throwaway_config,
 )
 
+from boss_agent.adapters.inbound.worker.config import WorkerConfig
+from boss_agent.adapters.inbound.worker.context import WorkerContext
+from boss_agent.adapters.inbound.worker.handlers import check_chat as check_chat_module
+from boss_agent.adapters.inbound.worker.handlers.check_chat import CheckChatHandler
 from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
 from boss_agent.adapters.outbound.config.screening_config import load_screening_policy
 from boss_agent.core.chat.domain.rejection import ChatAcknowledgmentSettings
 from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
 from boss_agent.core.task.domain.models import TaskType
-from boss_agent.worker.config import WorkerConfig
-from boss_agent.worker.context import WorkerContext
-from boss_agent.worker.handlers import check_chat as check_chat_module
-from boss_agent.worker.handlers.check_chat import CheckChatHandler
 
 #: Every key the dashboard reads off a finished CHECK_CHAT task. Pinned as a literal
 #: set: a key added, dropped or renamed must fail this suite rather than reach the
