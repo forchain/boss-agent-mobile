@@ -39,6 +39,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from ruamel.yaml import YAML
+from ruamel.yaml.comments import CommentedMap, CommentedSeq
+
 logger = logging.getLogger("boss_agent.config_realm")
 
 DEFAULT_POCKETBASE_URL: str = "http://127.0.0.1:8090"
@@ -622,6 +625,169 @@ def load_chain(
 
 
 # --------------------------------------------------------------------------- #
+# The patch engine: one round-trip writer for every Configuration Realm store
+# --------------------------------------------------------------------------- #
+
+#: Keys whose value is a secret. A masked display value or the shipped template's
+#: placeholder must never be persisted as a real key (issue #185).
+SECRET_KEYS: frozenset[str] = frozenset({"api_key", "langsmith_api_key"})
+
+#: Display/placeholder secrets that must never be written back. The mask glyphs are
+#: covered by :func:`is_mask_placeholder`; these are the example template's literal docs.
+PLACEHOLDER_SECRETS: frozenset[str] = frozenset(
+    {"your-api-key-here", "your-langsmith-api-key-here"}
+)
+
+
+def resolve_writable_settings_path(config_path: str | Path | None = None) -> Path:
+    """The highest-precedence writable file: the ``settings.local.yaml`` target.
+
+    Honours the sandbox seams exactly like the loader (``BOSS_SETTINGS_LOCAL_PATH``,
+    ``BOSS_CONFIG_ROOT``), so a test patch and a test read see the same file.
+    """
+    if config_path:
+        return Path(config_path)
+    return resolve_chain()[0]
+
+
+def _roundtrip_yaml() -> YAML:
+    yaml = YAML()
+    yaml.preserve_quotes = True
+    yaml.indent(mapping=2, sequence=4, offset=2)
+    return yaml
+
+
+def _load_roundtrip(path: Path) -> CommentedMap:
+    """Load a YAML store without discarding comments, or an empty mapping."""
+    yaml = _roundtrip_yaml()
+    if not path.is_file():
+        return CommentedMap()
+    with path.open(encoding="utf-8") as handle:
+        loaded = yaml.load(handle)
+    return loaded if isinstance(loaded, CommentedMap) else CommentedMap()
+
+
+def _write_roundtrip(path: Path, data: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    yaml = _roundtrip_yaml()
+    with path.open("w", encoding="utf-8") as handle:
+        yaml.dump(data, handle)
+
+
+def _reject_secret(key: str, value: Any) -> bool:
+    """True when ``value`` must not be persisted for a secret key.
+
+    An empty string is a valid "clear the secret" statement only when the caller means
+    it; the Web layer already resolves real-vs-display keys before patching, so here we
+    simply refuse anything that is not a usable secret.
+    """
+    if key not in SECRET_KEYS:
+        return False
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return True
+    text = str(value)
+    return text in PLACEHOLDER_SECRETS or is_mask_placeholder(text)
+
+
+def _merge_patch(target: dict[str, Any], patch: dict[str, Any]) -> None:
+    for key, value in patch.items():
+        if _reject_secret(key, value):
+            continue
+        if key in DEEP_MERGED_BLOCKS and isinstance(value, dict):
+            existing = target.get(key)
+            if not isinstance(existing, dict):
+                target[key] = CommentedMap()
+                existing = target[key]
+            _merge_patch(existing, value)
+            continue
+        target[key] = value
+
+
+def patch_settings(
+    patch: dict[str, Any],
+    *,
+    config_path: str | Path | None = None,
+) -> Path:
+    """Apply a partial settings object to the writable local store.
+
+    Only keys the patch states change; every other key, comment and section ordering
+    survives the round-trip. The nested ``chat`` block deep-merges. Masked display
+    values and template placeholders are never written as secrets.
+    """
+    if not isinstance(patch, dict):
+        raise TypeError("settings patch must be a JSON object")
+    target = resolve_writable_settings_path(config_path)
+    data = _load_roundtrip(target)
+    _merge_patch(data, patch)
+    _write_roundtrip(target, data)
+    invalidate_cache()
+    return target
+
+
+def read_config(config_path: str | Path | None = None) -> dict[str, Any]:
+    """The merged view the Web Dashboard consumes: settings plus screening policy.
+
+    One loader, so the dashboard and the worker cannot disagree about the active
+    policy. The screening view is the merged settings projected onto the policy keys.
+    """
+    from .screening_policy import ScreeningPolicy
+
+    merged = load_settings(config_path=config_path)
+    return {
+        "settings": merged,
+        "screening_policy": ScreeningPolicy.from_dict(merged).to_dict(),
+    }
+
+
+def append_company_blacklist_entry(
+    company_name: str,
+    path: str | Path | None = None,
+    policy: Any = None,
+) -> bool:
+    """Append one company to ``company_blacklist`` through the round-trip engine.
+
+    Idempotent and comment-preserving: returns True only when the file changed.
+    ``policy`` supplies the full snapshot used when the target file does not exist.
+    """
+    cleaned = (company_name or "").strip()
+    if not cleaned:
+        return False
+
+    target = Path(path) if path else resolve_writable_settings_path()
+    if target.suffix == ".json":
+        # The realm's writable store is YAML; a JSON layer has no comment-preserving
+        # round-trip and sits above the YAML target, so writing here would be inert.
+        return False
+
+    if not target.is_file():
+        from .screening_policy import ScreeningPolicy
+
+        snapshot = (policy or ScreeningPolicy.load_default()).to_dict()
+        blacklist = [str(item) for item in snapshot.get("company_blacklist", [])]
+        if cleaned not in blacklist:
+            snapshot["company_blacklist"] = [*blacklist, cleaned]
+        patch_settings(snapshot, config_path=target)
+        return True
+
+    data = _load_roundtrip(target)
+    existing = data.get("company_blacklist")
+    if existing is None:
+        data["company_blacklist"] = CommentedSeq([cleaned])
+    elif not isinstance(existing, list) or cleaned in [str(item) for item in existing]:
+        return False
+    else:
+        existing.append(cleaned)
+    _write_roundtrip(target, data)
+    invalidate_cache()
+    return True
+
+
+def save_screening_policy(policy: Any, config_path: str | Path | None = None) -> Path:
+    """Persist a ScreeningPolicy through the one patch engine."""
+    return patch_settings(policy.to_dict(), config_path=config_path)
+
+
+# --------------------------------------------------------------------------- #
 # Typed accessors
 # --------------------------------------------------------------------------- #
 
@@ -766,16 +932,24 @@ __all__ = [
     "LlmSettings",
     "MASK_MARKERS",
     "PLACEHOLDER_API_KEY",
+    "PLACEHOLDER_SECRETS",
     "PocketBaseSettings",
+    "SECRET_KEYS",
     "WorkerSettings",
+    "append_company_blacklist_entry",
     "format_resolved_values",
     "invalidate_cache",
     "is_mask_placeholder",
     "llm_settings",
+    "load_chain",
     "load_settings",
     "normalize_provider",
     "normalize_url",
+    "patch_settings",
     "pocketbase_settings",
+    "read_config",
     "resolve_chain",
+    "resolve_writable_settings_path",
+    "save_screening_policy",
     "worker_settings",
 ]
