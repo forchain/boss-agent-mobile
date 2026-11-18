@@ -41,6 +41,33 @@ export function getScreeningStageLabel(stage: string | null | undefined): string
 	}
 }
 
+export const HEADHUNTER_AGENCY_KEYWORDS = [
+	'人力资源',
+	'人力资本',
+	'劳务派遣',
+	'劳务服务',
+	'人才服务',
+	'人才中介',
+	'人才咨询',
+	'人才招聘',
+	'招聘服务',
+	'职业介绍',
+	'企业管理咨询',
+	'猎头',
+	'代招'
+] as const;
+
+export function isHeadhunterAgencyName(name: string | null | undefined): boolean {
+	if (!name || typeof name !== 'string') {
+		return false;
+	}
+	const cleaned = name.trim();
+	if (!cleaned) {
+		return false;
+	}
+	return HEADHUNTER_AGENCY_KEYWORDS.some((keyword) => cleaned.includes(keyword));
+}
+
 export function isMaskedCompanyName(name: string | null | undefined): boolean {
 	if (!name || typeof name !== 'string') {
 		return false;
@@ -83,6 +110,13 @@ export function validateCanBlacklistCompany(
 		return {
 			allowed: false,
 			notice: `【黑名单保护生效】岗位为猎头代招岗位，公司名称 "${cleaned}" 为聚合或代招渠道，禁止加入全局黑名单以避免误伤其他雇主`
+		};
+	}
+
+	if (isHeadhunterAgencyName(cleaned)) {
+		return {
+			allowed: false,
+			notice: `【黑名单保护生效】"${cleaned}" 的企业名称表明其为人力资源/代招机构，禁止加入全局黑名单以避免误伤其代理的其他雇主`
 		};
 	}
 

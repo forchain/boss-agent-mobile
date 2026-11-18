@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { JobRecord } from '$lib/types';
-	import { isMaskedCompanyName } from '$lib/screening';
+	import { isHeadhunterAgencyName, isMaskedCompanyName } from '$lib/screening';
 
 	let {
 		job,
@@ -114,7 +114,7 @@
 					title={blacklistGuardrail.notice}
 				>
 					<span class="text-amber-400">🛡️</span>
-					<span>{job.is_headhunter ? '猎头代招免屏蔽' : '保密公司免屏蔽'}</span>
+					<span>{job.is_headhunter ? '猎头代招免屏蔽' : isHeadhunterAgencyName(job.company_name) ? '代招机构免屏蔽' : '保密公司免屏蔽'}</span>
 				</span>
 			{/if}
 		</div>
