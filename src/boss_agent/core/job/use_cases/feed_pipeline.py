@@ -35,7 +35,7 @@ from boss_agent.core.job.domain.feed_stream import (
     JobAction,
     JobOutcome,
 )
-from boss_agent.core.job.domain.job_entities import JobCardBrief
+from boss_agent.core.job.domain.job_entities import JobCardBrief, JobPosting
 from boss_agent.core.job.domain.screening import (
     CardScreeningVerdict,
     CardVerdictStage,
@@ -43,7 +43,7 @@ from boss_agent.core.job.domain.screening import (
     JobVerdictStage,
 )
 from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
-from boss_agent.core.job.interfaces.device import FeedDeviceWorld
+from boss_agent.core.job.interfaces.device import FeedCardHandle, FeedDeviceWorld
 from boss_agent.core.job.interfaces.store import JobRecordStore
 from boss_agent.core.job.use_cases.screening import CandidateScreener
 from boss_agent.core.shared.enums import (
@@ -119,9 +119,9 @@ class _CardRun:
     result: FeedStreamResult
     on_job: Callable[[JobOutcome], Awaitable[None]] | None = None
     card: JobCardBrief | None = None
-    # The element the brief was read from. Only the boundary check and the detail tap
-    # touch it; every other stage works from `card`.
-    located: Any | None = None
+    # Typed card handle paired with the brief. Only the boundary check and card tap use it;
+    # every other stage works strictly from `card`.
+    located: FeedCardHandle | None = None
     card_record: dict[str, Any] = field(default_factory=dict)
     verdict: CardScreeningVerdict | None = None
     # Position of this card's record in ``result.jobs``, replaced in place by the
@@ -141,36 +141,6 @@ class _CardRun:
     # plus where it came from, so the log can say it. See `_resolve_human_greeting`.
     human_greeting: str = ""
     human_greeting_origin: str = ""
-
-
-def _element_y(elem: Any) -> float | None:
-    """Vertical position of a UI element, or None when the driver does not report one.
-
-    Both callers read a coordinate the pipeline will use to decide something worth
-    getting wrong: the per-card boundary check drops a card sitting below the feed's
-    "no more results" banner, and the banner read decides whether pagination is over. A
-    missing coordinate is therefore a fact worth handling, and the one that matters most
-    is an element the driver has already evicted — processing a card opens its detail
-    page and navigates back, which rebuilds the feed and invalidates the handles held for
-    the cards not yet reached, so the boundary check is the read most likely to meet a
-    stale handle. An unreachable element has no position, so it answers None like any
-    other unreadable one and its caller falls through to its existing "position unknown"
-    path; letting the driver's error escape would spend a whole run to learn that one
-    coordinate was unavailable.
-
-    Duck-typed and exception-broad on purpose: the pipeline never imports the driver's
-    exception types (``_open_detail`` guards its own element read the same way), and a
-    handle can also fail on a driver-level error other than staleness.
-    """
-    if elem is None:
-        return None
-    try:
-        location = getattr(elem, "location", None)
-        if not isinstance(location, dict):
-            return None
-        return float(location.get("y", 0))
-    except Exception:
-        return None
 
 
 def station_probe_upgrade(
@@ -221,13 +191,12 @@ class JobFeedPipeline:
         self._log_sink = log
         self._cancel_probe = is_cancelled
 
-        # The five attributes the engine has always exposed; the filter dialogs are part
-        # of the same injected bundle but stay private to the run.
-        self.startup_page = world.startup_page
-        self.list_page = world.list_page
-        self.search_page = world.search_page
-        self.detail_page = world.detail_page
-        self.chat_page = world.chat_page
+        # All page objects from the injected bundle are private to the pipeline run.
+        self._startup_page = world.startup_page
+        self._list_page = world.list_page
+        self._search_page = world.search_page
+        self._detail_page = world.detail_page
+        self._chat_page = world.chat_page
         self._filter_page = world.filter_page
         self._industry_filter_page = world.industry_filter_page
 
@@ -272,8 +241,8 @@ class JobFeedPipeline:
         """Run one feed pass and return what happened to every job it saw."""
         result = FeedStreamResult()
 
-        if self.startup_page and self.startup_page.is_dialog_present():
-            self.startup_page.dismiss_dialog()
+        if self._startup_page and self._startup_page.is_dialog_present():
+            self._startup_page.dismiss_dialog()
 
         if config.screening_policy and config.screening_policy.is_commute_filter_active:
             await self._log(
@@ -305,7 +274,7 @@ class JobFeedPipeline:
                 return result
             await self._log(f"Executed search for keyword '{config.keyword}'")
         elif not config.enable_search:
-            self.list_page.navigate_to_home()
+            self._list_page.navigate_to_home()
             await self._log(
                 "enable_search is False; browsing home recommendations without search keyword"
             )
@@ -335,9 +304,9 @@ class JobFeedPipeline:
     async def _enter_search(self, keyword: str) -> bool:
         """Enter the search screen and submit ``keyword``, retrying once on failure."""
         for attempt in range(MAX_SEARCH_ATTEMPTS):
-            if not self.search_page.is_search_page():
-                self.list_page.open_search(timeout_sec=OPEN_SEARCH_TIMEOUT_SEC)
-            if self.search_page.search(keyword, timeout_sec=SEARCH_SUBMIT_TIMEOUT_SEC):
+            if not self._search_page.is_search_page():
+                self._list_page.open_search(timeout_sec=OPEN_SEARCH_TIMEOUT_SEC)
+            if self._search_page.search(keyword, timeout_sec=SEARCH_SUBMIT_TIMEOUT_SEC):
                 return True
             if attempt < MAX_SEARCH_ATTEMPTS - 1:
                 await self._log(
@@ -408,11 +377,10 @@ class JobFeedPipeline:
                 )
                 return
 
-            bottom_elem = self.list_page.get_feed_bottom_boundary()
-            boundary_y = _element_y(bottom_elem)
-            visible_cards = self.list_page.extract_visible_job_cards(max_cards=CARDS_PER_VIEWPORT)
+            boundary = self._list_page.get_feed_boundary()
+            visible_cards = self._list_page.extract_visible_job_cards(max_cards=CARDS_PER_VIEWPORT)
             if not visible_cards:
-                if bottom_elem is not None:
+                if boundary.visible is True:
                     result.boundary_reached = True
                     await self._log(BOUNDARY_LOG)
                 break
@@ -422,8 +390,7 @@ class JobFeedPipeline:
                 card = located.card
                 if len(scanned_fingerprints) >= config.max_jobs:
                     break
-                card_y = _element_y(located.element)
-                if boundary_y is not None and card_y is not None and card_y >= boundary_y:
+                if self._list_page.is_card_below_boundary(located, boundary) is True:
                     # Below the boundary marker: a recommendation, not a search result.
                     continue
                 if card.fingerprint in scanned_fingerprints:
@@ -472,12 +439,12 @@ class JobFeedPipeline:
             else:
                 consecutive_empty_scrolls = 0
 
-            if bottom_elem is not None or self.list_page.is_feed_bottom_reached() is True:
+            if boundary.visible is True or self._list_page.is_feed_bottom_reached() is True:
                 result.boundary_reached = True
                 await self._log(BOUNDARY_LOG)
                 break
 
-            self.list_page.scroll_job_list()
+            self._list_page.scroll_job_list()
 
         if result.scanned == 0 and not result.cancelled:
             # No card was ever readable: the operator may be parked on a detail page
@@ -640,7 +607,7 @@ class JobFeedPipeline:
         """Open the detail page, screen the JD, and apply the target action."""
         card = run.card
         assert card is not None
-        tag = "[猎头]" if getattr(card, "is_headhunter", False) else "[直招]"
+        tag = "[猎头]" if card.is_headhunter else "[直招]"
         await self._log(
             f"🔍 [Detail Inspection] Inspecting {tag} '{card.title}' @ '{card.company_name}'"
         )
@@ -660,14 +627,14 @@ class JobFeedPipeline:
             run.postings_index = len(run.result.postings) - 1
             await self._evaluate_and_act(run, posting)
         finally:
-            self.detail_page.navigate_back()
+            self._detail_page.navigate_back()
 
     async def _read_posting(
         self,
         run: _CardRun,
         card: JobCardBrief,
         existing_record: dict[str, Any] | None,
-    ) -> Any | None:
+    ) -> JobPosting | None:
         """The posting behind this card — from the record's JD when it can be, else from the device.
 
         Issue #301. A card that comes back for a second look has usually been read already,
@@ -734,26 +701,15 @@ class JobFeedPipeline:
         try:
             # The page object owns its own swipe budget; this path only declines to re-read
             # the description around the probe.
-            distance_km, distance_text = self.detail_page.extract_commute_distance()
+            distance_km, distance_text = self._detail_page.extract_commute_distance()
         except Exception as e:
             logger.warning("Commute probe failed for '%s': %s", card.title, e)
             return None, ""
         return distance_km, str(distance_text or "")
 
-    async def _open_detail(self, located: Any | None) -> bool:
-        """Tap the card (or fall back to the first list item) to reach its detail page.
-
-        The one place besides the boundary check that needs the device handle rather
-        than the parsed brief.
-        """
-        element = located.element if located is not None else None
-        if element is not None and hasattr(element, "click"):
-            try:
-                element.click()
-                return True
-            except Exception:
-                pass
-        return self.list_page.select_first_job(timeout_sec=2.0)
+    async def _open_detail(self, located: FeedCardHandle | None) -> bool:
+        """Ask the list screen to open ``located`` (or fall back to the first item)."""
+        return self._list_page.open_card(located, timeout_sec=2.0)
 
     async def _back_out_if_contacted(self, run: _CardRun, fingerprint: str) -> bool:
         """Zero-cost backout: consult the call-to-action button before reading any JD.
@@ -762,7 +718,7 @@ class JobFeedPipeline:
         nothing to evaluate — and a platform contact must still be recorded as `applied`
         so its company joins the same-company exclusion pool.
         """
-        chat_state = self.detail_page.get_chat_button_state()
+        chat_state = self._detail_page.get_chat_button_state()
         if chat_state not in (ChatButtonState.COMMUNICATED, ChatButtonState.CLOSED):
             return False
 
@@ -820,8 +776,8 @@ class JobFeedPipeline:
         A missing detail-page title is not fatal: the card's own title still identifies
         the posting, and dropping the enrichment would lose a job we already hold.
         """
-        card_is_headhunter = getattr(card, "is_headhunter", False)
-        card_location = str(getattr(card, "location", "") or "")
+        card_is_headhunter = card.is_headhunter
+        card_location = str(card.location or "")
         resolved_policy = policy or ScreeningPolicy()
         should_probe = resolved_policy.should_probe_commute_distance(
             card_is_headhunter, location=card_location
@@ -835,7 +791,7 @@ class JobFeedPipeline:
             await self._log(f"📍 [App端强制过滤] '{card.title}' @ '{card.company_name}' {reason}")
 
         try:
-            posting = self.detail_page.extract_job_posting(
+            posting = self._detail_page.extract_job_posting(
                 timeout_sec=4.0,
                 fallback_company=card.company_name,
                 fallback_title=card.title,
@@ -937,10 +893,10 @@ class JobFeedPipeline:
             run.result.job = {
                 "title": title,
                 "company_name": company,
-                "salary_range": getattr(posting, "salary_range", ""),
+                "salary_range": posting.salary_range,
             }
 
-    async def _evaluate_and_act(self, run: _CardRun, posting: Any) -> None:
+    async def _evaluate_and_act(self, run: _CardRun, posting: JobPosting) -> None:
         """Run full-JD evaluation and persist whichever outcome the target action implies."""
         card = run.card
         assert card is not None
@@ -966,7 +922,7 @@ class JobFeedPipeline:
         # Whitelist Relaxation is deliberately not consulted: an operator who refuses a
         # region does not get it back because the title said something they like. Runs
         # before the LLM is asked anything, so a refused station costs no tokens.
-        location_line = str(getattr(posting, "location_line", "") or "")
+        location_line = posting.location_line or ""
         location_pass, location_violation = config.screening_policy.evaluate_location_blacklist(
             location_line or str(card.location or "")
         )
@@ -989,7 +945,7 @@ class JobFeedPipeline:
         # split #437 drew for the non-native filters), so — unlike the channel preference
         # — it never consults Whitelist Relaxation: an operator who will not commute the
         # distance does not get the job back because the title said something they like.
-        commute_dist = getattr(posting, "commute_distance_km", None)
+        commute_dist = posting.commute_distance_km
         commute_pass, commute_violation = config.screening_policy.evaluate_commute_distance(
             commute_dist
         )
@@ -1027,9 +983,9 @@ class JobFeedPipeline:
             if config.filter_config and hasattr(config.filter_config, "to_dict")
             else None
         )
-        if hasattr(posting, "search_filter") and not getattr(posting, "search_filter", None):
+        if not posting.search_filter:
             posting.search_filter = filter_dict
-        if hasattr(card, "search_filter") and not getattr(card, "search_filter", None):
+        if not card.search_filter:
             card.search_filter = filter_dict
 
         evaluation = self.screener.evaluate_job(
@@ -1167,9 +1123,9 @@ class JobFeedPipeline:
             return
 
         dispatched = False
-        if self.detail_page.open_chat(timeout_sec=5.0):
-            self.chat_page.type_greeting_message(greeting, timeout_sec=5.0)
-            dispatched = self.chat_page.click_send(timeout_sec=3.0)
+        if self._detail_page.open_chat(timeout_sec=5.0):
+            self._chat_page.type_greeting_message(greeting, timeout_sec=5.0)
+            dispatched = self._chat_page.click_send(timeout_sec=3.0)
             if dispatched:
                 # The count read at the quota gate, plus the greeting just sent.
                 applied_today = run.applied_today + 1
@@ -1183,7 +1139,7 @@ class JobFeedPipeline:
                     "send control unavailable. Not counted as communicated; the record "
                     "stays re-sendable (status: matched)."
                 )
-            self.chat_page.navigate_back()
+            self._chat_page.navigate_back()
 
         # Only a message that actually left the app counts as applied; otherwise the
         # employer would become a same-company exclusion anchor without being contacted.
@@ -1266,7 +1222,7 @@ class JobFeedPipeline:
         screening_stage = payload.get("screening_stage") or (
             ScreeningStage.DEEP_SCREENER.value
             if status is JobRecordStatus.IGNORED
-            and getattr(evaluation, "stage", None) is JobVerdictStage.FILTERED_BY_DEEP_SCREENER
+            and evaluation.stage is JobVerdictStage.FILTERED_BY_DEEP_SCREENER
             else ""
         )
         payload = {
@@ -1365,7 +1321,7 @@ class JobFeedPipeline:
 
         run.result.scanned = max(run.result.scanned, 1)
 
-        chat_state = self.detail_page.get_chat_button_state()
+        chat_state = self._detail_page.get_chat_button_state()
         if chat_state in (ChatButtonState.COMMUNICATED, ChatButtonState.CLOSED):
             is_historical = chat_state == ChatButtonState.COMMUNICATED
             if is_historical:
@@ -1376,7 +1332,7 @@ class JobFeedPipeline:
                 JobRecordStatus.APPLIED.value if is_historical else JobRecordStatus.IGNORED.value
             )
             run.result.skipped += 1
-            self.detail_page.navigate_back()
+            self._detail_page.navigate_back()
             return
 
         policy = run.config.screening_policy or ScreeningPolicy()
@@ -1394,7 +1350,7 @@ class JobFeedPipeline:
             await self._log(f"📍 [App端强制过滤] '当前岗位' {reason}")
 
         try:
-            posting = self.detail_page.extract_job_posting(
+            posting = self._detail_page.extract_job_posting(
                 timeout_sec=5.0,
                 probe_commute_distance=probe_commute_distance,
                 is_headhunter=target_is_headhunter,
@@ -1424,12 +1380,12 @@ class JobFeedPipeline:
             company_name=posting.company_name,
             recruiter_name=posting.recruiter_name or "",
             recruiter_title=posting.recruiter_title or "",
-            is_headhunter=getattr(posting, "is_headhunter", False),
+            is_headhunter=posting.is_headhunter,
             salary_range=posting.salary_range,
             location=posting.location or "",
-            tags=list(getattr(posting, "tags", None) or []),
-            commute_distance_km=getattr(posting, "commute_distance_km", None),
-            commute_distance_text=str(getattr(posting, "commute_distance_text", "") or ""),
+            tags=list(posting.tags),
+            commute_distance_km=posting.commute_distance_km,
+            commute_distance_text=posting.commute_distance_text or "",
         )
         run.card = card
         run.card_record = card_facets_record(

@@ -344,11 +344,13 @@ async def test_scrape_jobs_handler_preliminary_card_screening_and_enrichment():
     assert result.output["skipped_count"] == 1
     assert result.output["scraped_count"] == 1
 
-    # Card 1 must NOT have been clicked (zero UI navigation)
-    card1_elem.click.assert_not_called()
-
-    # Card 2 was clicked
-    card2_elem.click.assert_called_once()
+    # Opening a card is the list screen's job since issue #481: the engine asks the
+    # screen to open the card and never taps the device handle itself. Card 1 was
+    # turned down at the card stage, so it was never opened (zero UI navigation);
+    # card 2 was.
+    opened = [call.args[0] for call in mock_list.open_card.call_args_list]
+    assert len(opened) == 1, "only the card that survived card screening is opened"
+    assert opened[0].card is card2
 
     # Verify Card 1 persisted as ignored
     ignored_records = await broker.job_store.list_job_records(status="ignored")

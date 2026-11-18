@@ -32,7 +32,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import scripts.run_live_test as runner
-from _feed_harness import ScriptedFeed, _card, _detail_page, _posting, script_pages, stub_llm
+from _feed_harness import ScriptedFeed, _card, _detail_page, _posting, scripted_world, stub_llm
 
 from boss_agent import main as composition
 from boss_agent.adapters.outbound.llm.tracing import (
@@ -69,7 +69,8 @@ def _run(
 ):
     """Drive ``run_live_test`` over a scripted device; return what the run was made of.
 
-    The pipeline the runner composes is captured and scripted through ``script_pages`` —
+    The pipeline the runner composes is captured and driven over a scripted device world
+    that is injected at construction — so ``stream_jobs`` really runs
     the seam ``SmokeHarness``-owned pipelines already get — so ``stream_jobs`` really runs
     over a scripted feed rather than being mocked into agreeing with the test. The config
     it was handed is recorded too, because the runner's decisions live in that config and
@@ -100,15 +101,19 @@ def _run(
         detail.extract_job_posting.return_value = None
 
     def _compose_pipeline(**kwargs):
-        pipeline = _REAL_PIPELINE(**kwargs)
-        composed.append(pipeline)
-        script_pages(
-            pipeline,
+        """Build the pipeline with a complete scripted world already in it.
+
+        The world is injected at construction (issue #481) — the engine's screens are
+        never rebound after the fact.
+        """
+        kwargs["world"] = scripted_world(
             feed=feed
             if feed is not None
             else ScriptedFeed([[_card(POSTING_TITLE, POSTING_COMPANY)]]),
             detail=detail,
         )
+        pipeline = _REAL_PIPELINE(**kwargs)
+        composed.append(pipeline)
         real_stream = pipeline.stream_jobs
 
         async def _record(config, on_job=None):

@@ -273,7 +273,9 @@ async def test_scrape_jobs_relaxed_headhunter_card_persists_audit_fields():
     assert result.success is True
     assert result.output["skipped_count"] == 0
     assert result.output["scraped_count"] == 1
-    card_elem.click.assert_called_once()
+    # Opening the card is the list screen's job since issue #481: the engine asks the
+    # screen to open the card and never touches the device handle itself.
+    list_cls.return_value.open_card.assert_called_once()
 
     records = await broker.job_store.list_job_records()
     rec = next(r for r in records if r.get("title") == "大模型技术负责人")
@@ -337,7 +339,7 @@ async def test_scrape_jobs_app_rule_violation_without_rescue_is_ignored():
     assert result.success is True
     assert result.output["skipped_count"] == 1
     assert result.output["scraped_count"] == 0
-    card_elem.click.assert_not_called()
+    list_cls.return_value.open_card.assert_not_called()
     detail_cls.return_value.extract_job_posting.assert_not_called()
 
     ignored = await broker.job_store.list_job_records(status="ignored")

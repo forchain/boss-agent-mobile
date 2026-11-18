@@ -21,9 +21,29 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 
+from boss_agent.core.job.domain.job_entities import JobCardBrief, JobPosting
 from boss_agent.core.shared.enums import ChatButtonState
+
+
+@dataclass(frozen=True)
+class FeedBoundary:
+    """Bottom boundary banner state reported by the job list screen."""
+
+    visible: bool = False
+    y_position: float | None = None
+
+
+@runtime_checkable
+class FeedCardHandle(Protocol):
+    """A parsed card brief paired with its opaque screen handle and optional Y coordinate."""
+
+    card: JobCardBrief
+
+    @property
+    def y_position(self) -> float | None:
+        """Viewport vertical coordinate if readable, otherwise ``None``."""
 
 
 class StartupDialogPageProtocol(Protocol):
@@ -35,15 +55,21 @@ class StartupDialogPageProtocol(Protocol):
 
 
 class JobListPageProtocol(Protocol):
-    """The search-result viewport: entry, cards, boundary and pagination."""
+    """The search-result viewport: entry, cards, boundary, card opening and pagination."""
 
     def navigate_to_home(self) -> Any: ...
 
     def open_search(self, timeout_sec: float = ...) -> bool: ...
 
-    def get_feed_bottom_boundary(self) -> Any | None: ...
+    def get_feed_boundary(self) -> FeedBoundary: ...
 
-    def extract_visible_job_cards(self, max_cards: int = ...) -> list[Any]: ...
+    def is_card_below_boundary(self, card: FeedCardHandle, boundary: FeedBoundary) -> bool: ...
+
+    def extract_visible_job_cards(self, max_cards: int = ...) -> list[FeedCardHandle]: ...
+
+    def open_card(
+        self, card: FeedCardHandle | None = None, *, timeout_sec: float = ...
+    ) -> bool: ...
 
     def select_first_job(self, timeout_sec: float = ...) -> bool: ...
 
@@ -69,7 +95,7 @@ class JobDetailPageProtocol(Protocol):
 
     def extract_commute_distance(self) -> tuple[float | None, str]: ...
 
-    def extract_job_posting(self, **kwargs: Any) -> Any: ...
+    def extract_job_posting(self, **kwargs: Any) -> JobPosting: ...
 
     def open_chat(self, timeout_sec: float = ...) -> bool: ...
 

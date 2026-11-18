@@ -12,13 +12,12 @@ import io
 from unittest.mock import MagicMock, patch
 
 import pytest
-from _feed_harness import ScriptedFeed, _card, _detail_page, _posting, script_pages
+from _feed_harness import ScriptedFeed, _card, _detail_page, _posting, scripted_world
 from rich.console import Console
 
 from boss_agent.adapters.inbound.verification import feed_verification
 from boss_agent.adapters.memory.job_store import InMemoryJobRecordStore
 from boss_agent.adapters.outbound.device.pages import ChatPage
-from boss_agent.adapters.outbound.device.pages.feed_bundle import build_feed_device_world
 from boss_agent.core.candidate.domain.candidate_profile import CandidateProfile
 from boss_agent.core.job.domain.job_entities import JobPosting
 from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
@@ -46,12 +45,24 @@ def _record_console():
     )
 
 
-def _pipeline(driver: MagicMock, *, matching_service: MagicMock | None = None):
+def _pipeline(
+    driver: MagicMock,
+    *,
+    matching_service: MagicMock | None = None,
+    feed: ScriptedFeed | None = None,
+    detail: MagicMock | None = None,
+    chat: MagicMock | None = None,
+):
+    """Build a verification pipeline over a **complete** scripted device world.
+
+    The world is composed whole and injected at construction (issue #481): there is no
+    post-construction rebinding of the engine's screens.
+    """
     screener = CandidateScreener(llm_client=MagicMock(), matching_service=matching_service)
     return feed_verification.build_verification_pipeline(
         driver,
         screener=screener,
-        world=build_feed_device_world(driver),
+        world=scripted_world(feed=feed, detail=detail, chat=chat),
         store=InMemoryJobRecordStore(),
     )
 
@@ -72,9 +83,8 @@ def test_run_verification_feed_returns_extracted_job_posting():
             "3. 具备 5 年以上 Python / Android SDK / Appium 深度实战经验。"
         ),
     )
-    pipeline = _pipeline(driver)
-    script_pages(
-        pipeline,
+    pipeline = _pipeline(
+        driver,
         feed=ScriptedFeed(
             [[_card("资深 Python / Android 自动化专家", "北京智联前沿科技有限公司")]]
         ),
@@ -107,9 +117,8 @@ def test_run_verification_feed_fails_loudly_when_nothing_was_extracted():
     driver = MagicMock()
     driver.get_window_size.return_value = {"width": 1080, "height": 2400}
 
-    pipeline = _pipeline(driver)
-    script_pages(
-        pipeline,
+    pipeline = _pipeline(
+        driver,
         feed=ScriptedFeed([[_card("AI Agent 平台工程师", "智元创新")]]),
         detail=_detail_page(
             posting=JobPosting(
@@ -146,14 +155,14 @@ def test_verification_feed_drafts_and_renders_greeting_for_extracted_posting():
     driver = MagicMock()
     driver.get_window_size.return_value = {"width": 1080, "height": 2400}
     matching_service = _matching_service()
-    pipeline = _pipeline(driver, matching_service=matching_service)
     candidate_profile = CandidateProfile(
         name="测试候选人",
         years_of_experience=7,
         core_skills=["Python", "Appium", "LLM"],
     )
-    script_pages(
-        pipeline,
+    pipeline = _pipeline(
+        driver,
+        matching_service=matching_service,
         feed=ScriptedFeed([[_card("资深 Agent 研发工程师", "未来智能")]]),
         detail=_detail_page(posting=_posting("资深 Agent 研发工程师", "未来智能")),
     )
@@ -195,10 +204,10 @@ def _headhunter_verification_setup(channel_policy: str, whitelist=None, **policy
     driver = MagicMock()
     driver.get_window_size.return_value = {"width": 1080, "height": 2400}
     matching_service = _matching_service()
-    pipeline = _pipeline(driver, matching_service=matching_service)
     chat_page = MagicMock(spec=ChatPage)
-    script_pages(
-        pipeline,
+    pipeline = _pipeline(
+        driver,
+        matching_service=matching_service,
         feed=ScriptedFeed(
             [[_card("大模型平台负责人", "某人力资源服务公司", recruiter_title="猎头顾问")]]
         ),
@@ -239,7 +248,7 @@ def test_verification_feed_app_rule_violation_short_circuits_greeting():
 
     matching_service.evaluate_and_draft_greeting.assert_not_called()
     render_match_card.assert_not_called()
-    pipeline.detail_page.open_chat.assert_not_called()
+    pipeline.world.detail_page.open_chat.assert_not_called()
     chat_page.type_greeting_message.assert_not_called()
 
 
@@ -289,7 +298,7 @@ def test_verification_feed_keyword_rejection_spends_no_jd_evaluation():
     assert "命中职位黑名单关键词: '平台负责人'" in output
     matching_service.evaluate_and_draft_greeting.assert_not_called()
     render_match_card.assert_not_called()
-    pipeline.detail_page.open_chat.assert_not_called()
+    pipeline.world.detail_page.open_chat.assert_not_called()
 
 
 def test_verification_feed_unknown_rejection_stage_spends_zero_tokens():

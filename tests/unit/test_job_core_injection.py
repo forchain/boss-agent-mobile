@@ -28,7 +28,7 @@ from boss_agent.adapters.memory.job_store import InMemoryJobRecordStore
 from boss_agent.core.job.domain.feed_stream import FeedStreamConfig
 from boss_agent.core.job.domain.job_entities import JobPosting
 from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
-from boss_agent.core.job.interfaces.device import FeedDeviceWorld
+from boss_agent.core.job.interfaces.device import FeedBoundary, FeedDeviceWorld
 from boss_agent.core.job.interfaces.store import JobRecordStore
 from boss_agent.core.job.use_cases.feed_pipeline import JobFeedPipeline
 from boss_agent.core.job.use_cases.matching import JobMatchGreetingService
@@ -57,7 +57,7 @@ def _world() -> FeedDeviceWorld:
         industry_filter_page=MagicMock(),
     )
     world.startup_page.is_dialog_present.return_value = False
-    world.list_page.get_feed_bottom_boundary.return_value = None
+    world.list_page.get_feed_boundary.return_value = FeedBoundary()
     world.list_page.is_feed_bottom_reached.return_value = True
     world.list_page.extract_visible_job_cards.return_value = []
     world.detail_page.get_chat_button_state.return_value = ChatButtonState.UNCONTACTED
@@ -91,11 +91,14 @@ def test_constructing_the_pipeline_never_builds_a_page_object() -> None:
     for page_cls in (startup_cls, list_cls, search_cls, detail_cls, chat_cls):
         page_cls.assert_not_called()
 
-    assert pipeline.startup_page is world.startup_page
-    assert pipeline.list_page is world.list_page
-    assert pipeline.search_page is world.search_page
-    assert pipeline.detail_page is world.detail_page
-    assert pipeline.chat_page is world.chat_page
+    # The engine's screens are private and bound at construction (issue #481): the
+    # world is the only public seam, and nothing rebinds a page after the fact.
+    assert pipeline.world is world
+    assert pipeline._startup_page is world.startup_page
+    assert pipeline._list_page is world.list_page
+    assert pipeline._search_page is world.search_page
+    assert pipeline._detail_page is world.detail_page
+    assert pipeline._chat_page is world.chat_page
 
 
 @pytest.mark.asyncio

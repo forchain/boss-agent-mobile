@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from _feed_harness import GOOD_JD, ScriptedFeed, _card, _detail_page, script_pages, stub_llm
+from _feed_harness import GOOD_JD, ScriptedFeed, _card, _detail_page, scripted_world, stub_llm
 
 import boss_agent
 from boss_agent.adapters.inbound.verification.feed_verification import (
@@ -14,7 +14,6 @@ from boss_agent.adapters.inbound.verification.feed_verification import (
 )
 from boss_agent.adapters.memory.job_store import InMemoryJobRecordStore
 from boss_agent.adapters.memory.saved_search_store import InMemorySavedSearchStore
-from boss_agent.adapters.outbound.device.pages.feed_bundle import build_feed_device_world
 from boss_agent.adapters.outbound.pocketbase import saved_search_store
 from boss_agent.adapters.outbound.pocketbase.async_bridge import run_sync
 from boss_agent.adapters.outbound.pocketbase.saved_search_store import (
@@ -245,19 +244,22 @@ def test_saved_search_preset_drives_feed_verification_and_launch_config():
 
     mock_driver = MagicMock()
     mock_driver.get_window_size.return_value = {"width": 1080, "height": 2400}
-    pipeline = build_verification_pipeline(
-        mock_driver,
-        screener=CandidateScreener(llm_client=stub_llm()),
-        world=build_feed_device_world(mock_driver),
-        store=InMemoryJobRecordStore(),
-    )
-
     posting = JobPosting(
         title="资深 Agent 专家",
         company_name="智元创新",
         salary_range="40-60K",
         job_description=GOOD_JD,
     )
+    pipeline = build_verification_pipeline(
+        mock_driver,
+        screener=CandidateScreener(llm_client=stub_llm()),
+        world=scripted_world(
+            feed=ScriptedFeed([[_card("资深 Agent 专家", "智元创新")]]),
+            detail=_detail_page(posting=posting),
+        ),
+        store=InMemoryJobRecordStore(),
+    )
+
     configs: list[FeedStreamConfig] = []
 
     async def _record(config, on_job=None):
@@ -266,11 +268,6 @@ def test_saved_search_preset_drives_feed_verification_and_launch_config():
 
     _real_stream = pipeline.stream_jobs
     pipeline.stream_jobs = _record
-    script_pages(
-        pipeline,
-        feed=ScriptedFeed([[_card("资深 Agent 专家", "智元创新")]]),
-        detail=_detail_page(posting=posting),
-    )
 
     with patch("time.sleep", return_value=None):
         result = run_verification_feed(

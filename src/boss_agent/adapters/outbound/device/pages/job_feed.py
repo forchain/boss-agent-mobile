@@ -22,6 +22,7 @@ from boss_agent.core.job.domain.card_parser import (
     parse_card,
 )
 from boss_agent.core.job.domain.job_entities import JobCardBrief
+from boss_agent.core.job.interfaces.device import FeedBoundary, FeedCardHandle
 from boss_agent.core.search.domain.models import FilterConfig
 from droid_agent_core.gestures import Point
 from droid_agent_core.locators import wait_until
@@ -29,18 +30,34 @@ from droid_agent_core.locators import wait_until
 from .base import BACK_INTERVAL_SEC, BaseBossPage, logger
 
 
+def element_y_position(elem: Any) -> float | None:
+    """Vertical position of a UI element, or ``None`` when unavailable or stale."""
+    if elem is None:
+        return None
+    try:
+        location = getattr(elem, "location", None)
+        if not isinstance(location, dict):
+            return None
+        return float(location.get("y", 0))
+    except Exception:
+        return None
+
+
 @dataclass
 class LocatedJobCard:
-    """A parsed card brief together with the element it was read from.
+    """A parsed card brief together with the opaque device element it was read from.
 
-    The element is an opaque device handle; it crosses to the feed pipeline only for
-    viewport geometry and the detail-page tap. Everything else consumes the brief,
-    which is pure domain data — the same shape Chat Triage proved with
-    ``CommunicationCard``.
+    The element never crosses into core business logic directly; core reads only
+    ``card`` and ``y_position`` and asks ``JobListPage`` to open the card.
     """
 
     card: JobCardBrief
     element: Any = None
+
+    @property
+    def y_position(self) -> float | None:
+        """Viewport Y coordinate read safely from the underlying element handle."""
+        return element_y_position(self.element)
 
 
 class JobListPage(BaseBossPage):
@@ -164,6 +181,31 @@ class JobListPage(BaseBossPage):
     def is_feed_bottom_reached(self, timeout_sec: float = 0.5) -> bool:
         """Check if the search feed bottom boundary banner ('暂无其他符合职位，为你推荐') is visible."""
         return self.get_feed_bottom_boundary(timeout_sec=timeout_sec) is not None
+
+    def get_feed_boundary(self, timeout_sec: float = 0.5) -> FeedBoundary:
+        """Return typed bottom-boundary presence and vertical coordinate."""
+        elem = self.get_feed_bottom_boundary(timeout_sec=timeout_sec)
+        if elem is None:
+            return FeedBoundary()
+        return FeedBoundary(visible=True, y_position=element_y_position(elem))
+
+    def is_card_below_boundary(self, card: FeedCardHandle, boundary: FeedBoundary) -> bool:
+        """Return whether ``card`` sits at or below the bottom boundary marker."""
+        if boundary.y_position is None:
+            return False
+        card_y = card.y_position
+        return card_y is not None and card_y >= boundary.y_position
+
+    def open_card(self, card: FeedCardHandle | None = None, *, timeout_sec: float = 2.0) -> bool:
+        """Open a located card's detail page, falling back to selecting the first item."""
+        element = getattr(card, "element", None) if card is not None else None
+        if element is not None and hasattr(element, "click"):
+            try:
+                element.click()
+                return True
+            except Exception:
+                pass
+        return self.select_first_job(timeout_sec=timeout_sec)
 
     def scroll_job_list(self) -> None:
         """Perform a humanized scroll downwards on the job list."""

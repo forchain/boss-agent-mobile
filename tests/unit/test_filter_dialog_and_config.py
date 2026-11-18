@@ -42,12 +42,17 @@ NOTHING_TO_APPLY = FilterConfig(
 )
 
 
-def _feed_pipeline():
-    """A pipeline over a scripted feed, with the filter dialog left observable."""
+def _feed_pipeline(filter_page: MagicMock | None = None):
+    """A pipeline over a scripted feed, with the filter dialog left observable.
+
+    The filter dialog is part of the injected device world (issue #481), so a test
+    observes the screen it handed in rather than a patched production class.
+    """
     return _pipeline(
         None,
         feed=ScriptedFeed([[_card("AI Agent 平台工程师", "智元创新")]]),
         detail=_detail_page(posting=_posting()),
+        filter_page=filter_page,
     )
 
 
@@ -262,16 +267,14 @@ async def test_a_configured_filter_reaches_the_dialog_as_the_operator_wrote_it()
     the pipeline rebuilt or defaulted it, an operator's preset would silently stop
     describing the search they asked for.
     """
-    with patch(
-        "boss_agent.adapters.outbound.device.pages.feed_bundle.FilterDialogPage"
-    ) as filter_cls:
-        pipeline = _feed_pipeline()
-        result = await pipeline.stream_jobs(
-            FeedStreamConfig(keyword="Agent", max_jobs=1, filter_config=CONFIGURED)
-        )
+    filter_page = MagicMock()
+    pipeline = _feed_pipeline(filter_page=filter_page)
+    result = await pipeline.stream_jobs(
+        FeedStreamConfig(keyword="Agent", max_jobs=1, filter_config=CONFIGURED)
+    )
 
-    filter_cls.return_value.apply_filters.assert_called_once()
-    applied = filter_cls.return_value.apply_filters.call_args.args[0]
+    filter_page.apply_filters.assert_called_once()
+    applied = filter_page.apply_filters.call_args.args[0]
     assert applied is CONFIGURED
     assert (applied.education, applied.salary) == ("硕士", "50K以上")
     # The run is still a verification run: filtering decides what the feed shows, not
@@ -291,13 +294,11 @@ async def test_a_run_with_nothing_to_apply_clears_the_conditions_a_previous_run_
     flag arrives through a task payload's ``enable_filter``; this is the runner's version,
     where the filter config arrives directly from the operator's preset.
     """
-    with patch(
-        "boss_agent.adapters.outbound.device.pages.feed_bundle.FilterDialogPage"
-    ) as filter_cls:
-        pipeline = _feed_pipeline()
-        await pipeline.stream_jobs(
-            FeedStreamConfig(keyword="Agent", max_jobs=1, filter_config=NOTHING_TO_APPLY)
-        )
+    filter_page = MagicMock()
+    pipeline = _feed_pipeline(filter_page=filter_page)
+    await pipeline.stream_jobs(
+        FeedStreamConfig(keyword="Agent", max_jobs=1, filter_config=NOTHING_TO_APPLY)
+    )
 
-    filter_cls.return_value.clear_filters.assert_called_once()
-    filter_cls.return_value.apply_filters.assert_not_called()
+    filter_page.clear_filters.assert_called_once()
+    filter_page.apply_filters.assert_not_called()

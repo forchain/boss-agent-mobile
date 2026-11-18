@@ -25,8 +25,16 @@ The cross-aggregate primitives — enums, keyword constants, identifier helpers,
 _Avoid_: utils, common, helpers
 
 **FeedDeviceWorld**:
-The structural Protocol bundle the Mobile Job Feed Pipeline drives instead of constructing page objects: startup, list, search, detail, chat, and filter screens. Production composition is `adapters.outbound.device.pages.feed_bundle`; page objects satisfy it structurally, with no wrapper classes.
+The structural Protocol bundle the Mobile Job Feed Pipeline drives instead of constructing page objects: startup, list, search, detail, chat, and filter screens. Production composition is `adapters.outbound.device.pages.feed_bundle`; page objects satisfy it structurally, with no wrapper classes. The world is the engine's only public seam — the screens it holds are private and bound at construction, so nothing rebinds a page after the fact.
 _Avoid_: Page factory, device adapter, screen wrapper
+
+**FeedCardHandle**:
+The typed card the list screen hands across the device seam: a parsed `JobCardBrief` plus the opaque device handle it was read from and its viewport position. Core reads the brief and the position; the handle itself is never inspected, tapped, or coordinate-read outside the screen that produced it — the same typed-data boundary Chat Triage proved in ADR 0016.
+_Avoid_: Element wrapper, card element, Appium handle
+
+**FeedBoundary**:
+The feed's bottom-boundary banner as a value rather than a driver element: whether it is visible, and the viewport coordinate it sits at. A card at or below that coordinate is a recommendation, not a search result. The comparison is the list screen's job, so the coordinate vocabulary stays in the adapter.
+_Avoid_: Boundary element, feed tip, banner handle
 
 **BlacklistSink**:
 The one-method port through which Chat Triage persists a company blacklist entry. The production implementation writes through the Configuration Realm adapter; core never performs file IO for a triage run.

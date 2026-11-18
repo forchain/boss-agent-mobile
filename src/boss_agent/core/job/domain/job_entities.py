@@ -120,6 +120,7 @@ class JobCardBrief:
     # (spec #209). None = unknown; screening fails open on it.
     commute_distance_km: float | None = None
     commute_distance_text: str = ""
+    search_filter: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if self.title:
