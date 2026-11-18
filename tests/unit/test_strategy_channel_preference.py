@@ -351,14 +351,13 @@ def test_resolve_screening_policy_inherits_when_a_strategy_says_nothing(stated):
 
 
 def test_interactive_runner_agrees_with_the_worker_on_the_same_strategy():
-    """One preset must not screen one channel under a cron run and another under the CLI.
+    """One preset must not screen one channel under a cron run and another interactively.
 
-    The SmokeHarness is the second caller of this rule, and it used to pass the preset's
-    stored policy straight through — so a direct-only strategy silently widened itself
-    whenever a person ran it instead of scheduling it.
+    Both interactive user launches (``LaunchSource.MANUAL``) and scheduled worker runs
+    (``LaunchSource.SCHEDULER``) translate a ``SavedSearch`` through ``build_search_launch``
+    and ``FeedStreamConfig.from_payload``, and direct verification callers resolve through the
+    same ``resolve_screening_policy`` helper.
     """
-    from boss_agent.adapters.inbound.verification.smoke_harness import SmokeHarness
-
     strategy = SavedSearch(
         id="s_two_paths",
         search=SearchConfig(keyword="agent"),
@@ -366,23 +365,20 @@ def test_interactive_runner_agrees_with_the_worker_on_the_same_strategy():
         screening_policy=ScreeningPolicy(channel_preference="all"),
     )
 
-    # The harness only needs a driver-shaped object to construct its page objects; the
-    # channel resolution happens in __init__ and never touches the device.
-    harness = SmokeHarness(
-        driver=MagicMock(),
-        takeover_handler=MagicMock(),
-        screener=MagicMock(),
-        world=MagicMock(),
-        store=MagicMock(),
-        saved_search=strategy,
-        enable_greeting_draft=False,
+    interactive_policy = FeedStreamConfig.from_payload(
+        build_search_launch(strategy, source=LaunchSource.MANUAL).payload
+    ).screening_policy
+    direct_resolved_policy = resolve_screening_policy(
+        strategy.screening_policy,
+        channel_preference=strategy.filter.channel_preference,
     )
     worker_policy = FeedStreamConfig.from_payload(
         build_search_launch(strategy, source=LaunchSource.SCHEDULER).payload
     ).screening_policy
 
-    assert harness.screening_policy.channel_preference == "direct_only"
-    assert harness.screening_policy.channel_preference == worker_policy.channel_preference
+    assert interactive_policy.channel_preference == "direct_only"
+    assert direct_resolved_policy.channel_preference == "direct_only"
+    assert interactive_policy.channel_preference == worker_policy.channel_preference
 
 
 def test_resolve_screening_policy_does_not_edit_the_policy_it_was_given():
@@ -407,13 +403,11 @@ def test_resolve_screening_policy_does_not_edit_the_policy_it_was_given():
 async def test_stored_policy_survives_a_strategy_run():
     """End of the blast radius: running one direct-only strategy must not narrow the rest.
 
-    The preset is written through the store and then read back by id, which is the path
-    the harness actually takes now that it resolves named presets through the seam. A
-    store read hands back the object the store holds, so an in-place override would
-    replace the operator's stored screening configuration for the rest of the process.
+    The preset is written through the store, read back by id, and translated through both
+    ``build_search_launch`` + ``FeedStreamConfig.from_payload`` and
+    ``resolve_screening_policy``. None of those paths may mutate the stored preset's policy
+    in place.
     """
-    from boss_agent.adapters.inbound.verification.smoke_harness import SmokeHarness
-
     strategy = SavedSearch(
         id="s_leak",
         search=SearchConfig(keyword="agent"),
@@ -423,17 +417,19 @@ async def test_stored_policy_survives_a_strategy_run():
     store = InMemorySavedSearchStore()
     await store.save_saved_search(strategy)
 
-    SmokeHarness(
-        driver=MagicMock(),
-        takeover_handler=MagicMock(),
-        screener=MagicMock(),
-        world=MagicMock(),
-        store=MagicMock(),
-        saved_search_id=strategy.id,
-        saved_search_store=store,
-        enable_greeting_draft=False,
+    loaded = await store.get_saved_search(strategy.id)
+    assert loaded is not None
+
+    launch_config = FeedStreamConfig.from_payload(
+        build_search_launch(loaded, source=LaunchSource.MANUAL).payload
+    )
+    resolved_direct = resolve_screening_policy(
+        loaded.screening_policy,
+        channel_preference=loaded.filter.channel_preference,
     )
 
+    assert launch_config.screening_policy.channel_preference == "direct_only"
+    assert resolved_direct.channel_preference == "direct_only"
     stored = await store.get_saved_search(strategy.id)
     assert stored is not None
     assert stored.screening_policy.channel_preference == "all"
