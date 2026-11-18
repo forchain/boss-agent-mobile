@@ -1,13 +1,16 @@
 """
-boss_agent.screening_policy
-===========================
+boss_agent.core.job.domain.screening_policy
+===========================================
 Screening policy domain entity and card-level keyword evaluation (Issue #311, Spec #303).
+
+This is a pure rule object: ``from_dict``/``to_dict`` and the rule methods, nothing else.
+Loading, saving and blacklist persistence live with the Configuration Realm adapter
+(``boss_agent.screening_config`` until #458) and are invoked at the edge.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from pathlib import Path
 from typing import Any
 
 from boss_agent.core.shared.enums import (
@@ -77,7 +80,7 @@ class ScreeningPolicy:
     enable_screening: bool = True
     channel_preference: str = ChannelPreference.ALL
     max_commute_distance_km: float | None = 40.0
-    #: Config file `load_default` resolved this policy from; where blacklist
+    #: Config file the edge loader resolved this policy from; where blacklist
     #: additions are written back. Excluded from equality and serialization.
     source_path: str | None = field(default=None, repr=False, compare=False)
 
@@ -438,28 +441,9 @@ class ScreeningPolicy:
             ),
         )
 
-    @classmethod
-    def load_default(cls, config_path: str | Path | None = None) -> ScreeningPolicy:
-        """Load ScreeningPolicy through the Configuration Realm chain."""
-        from boss_agent.screening_config import load_screening_policy
-
-        return load_screening_policy(config_path=config_path)
-
-    def persist_company_blacklist(self, company_name: str) -> Path | None:
-        """Write one blacklisted company back to this policy's active config file."""
-        from boss_agent import screening_config
-
-        return screening_config.persist_company_blacklist(self, company_name)
-
-    def save_default(self, config_path: str | Path | None = None) -> Path:
-        """Persist this policy to the declarative local YAML configuration file."""
-        from boss_agent import screening_config
-
-        return screening_config.save_policy(self, config_path=config_path)
-
 
 def resolve_screening_policy(
-    policy: ScreeningPolicy | None = None,
+    policy: ScreeningPolicy,
     *,
     channel_preference: Any = None,
 ) -> ScreeningPolicy:
@@ -479,8 +463,6 @@ def resolve_screening_policy(
     the rest of the process. A strategy that states nothing — absent, empty or unrecognized —
     yields the policy unchanged, which is the whole meaning of "inherit global".
     """
-    if policy is None:
-        policy = ScreeningPolicy.load_default()
     stated = normalize_channel_preference(channel_preference, default=INHERIT_CHANNEL)
     if not stated:
         return policy

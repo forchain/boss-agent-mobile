@@ -22,7 +22,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).parents[2]
 PAGES_ROOT = REPO_ROOT / "src" / "boss_agent" / "pages"
-FEED_PIPELINE = REPO_ROOT / "src" / "boss_agent" / "feed_pipeline.py"
+FEED_PIPELINE = REPO_ROOT / "src" / "boss_agent" / "core" / "job" / "use_cases" / "feed_pipeline.py"
 
 #: The page-layer submodules on disk, so an imported *name* can be read as the submodule it
 #: names rather than as a facade symbol: `from boss_agent.pages import job_feed` binds the
@@ -31,21 +31,13 @@ PAGE_SUBMODULES = frozenset(
     path.stem for path in PAGES_ROOT.glob("*.py") if path.stem != "__init__"
 )
 
-#: Every page model the feed engine owns, mapped to the submodule that declares it. The facade
-#: is spelled ``<facade>`` so a regression that routes one of these back through it is
-#: visible as a wrong value rather than as a missing key.
-FEED_OWNED_PAGE_MODELS: dict[str, str] = {
-    "JobListPage": "job_feed",
-    "SearchPage": "job_feed",
-    "FilterDialogPage": "job_feed",
-    "IndustryFilterDialogPage": "job_feed",
-    "LocatedJobCard": "job_feed",
-    "JobDetailPage": "job_detail",
-    "StartupDialogPage": "system",
-}
+#: The engine imports no page model at all now: the device world is injected
+#: (``core.job.interfaces.device``) and production composition lives in
+#: ``boss_agent.pages.feed_bundle``. The empty mapping is the assertion.
+FEED_OWNED_PAGE_MODELS: dict[str, str] = {}
 
-#: Bound by the greeting dispatch (typing the draft, clicking send, navigating back).
-GREETING_DISPATCH_PAGE_MODEL = "ChatPage"
+#: Kept as a parameter so the second rule's set arithmetic reads unchanged.
+GREETING_DISPATCH_PAGE_MODEL = None
 
 
 def _page_import_sources(module_path: Path) -> dict[str, str]:

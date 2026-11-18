@@ -48,7 +48,7 @@ public observability contract: log greps and string-targeted patches such as
 
 # Re-exported so callers that reach domain types *through* `pages` -- the three unit modules
 # importing `JobCardBrief` today -- keep working across the split.
-from ..job_entities import JobCardBrief
+from ..core.job.domain.job_entities import JobCardBrief
 from .base import (
     BACK_INTERVAL_SEC,
     BaseBossPage,

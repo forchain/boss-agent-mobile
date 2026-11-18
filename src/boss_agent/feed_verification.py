@@ -44,14 +44,18 @@ from rich.console import Console
 
 from .async_bridge import run_sync
 from .core.candidate.domain.candidate_profile import StructuredCandidateProfile
+from .core.job.domain.feed_stream import FeedStreamConfig, FeedStreamResult
+from .core.job.domain.job_entities import JobPosting
+from .core.job.domain.screening_policy import ScreeningPolicy
+from .core.job.use_cases.feed_pipeline import JobFeedPipeline
+from .core.job.use_cases.matching import JobMatchGreetingService, MatchGreetingResult
+from .core.job.use_cases.screening import CandidateScreener
 from .core.search.domain.models import FilterConfig, SearchConfig
 from .core.shared.enums import TargetAction
-from .feed_pipeline import FeedStreamConfig, FeedStreamResult, JobFeedPipeline
-from .job_entities import JobPosting
-from .matching import JobMatchGreetingService, MatchGreetingResult
+from .job_store import InMemoryJobRecordStore
 from .memory import ResumeMemoryManager
-from .screening import CandidateScreener
-from .screening_policy import ScreeningPolicy
+from .pages.feed_bundle import build_feed_device_world
+from .screening_prompt import load_screening_prompt
 
 console = Console()
 
@@ -145,16 +149,26 @@ def build_verification_pipeline(
     """Compose the engine for one verification run: no store, nothing persisted.
 
     The worker builds its pipeline through ``for_task()`` with a store behind it; a
-    verification run has no broker and wants no writes, so ``store`` is left at its default
-    in-memory one (issue #389) and every record the run makes dies with it.
+    verification run has no broker and wants no writes, so it composes the volatile
+    in-memory store explicitly (issue #389) and every record the run makes dies with it.
 
     The screener carries *this* run's matching service rather than one the pipeline builds
     for itself, so the greeting is drafted by the object the caller configured and can assert
-    on. That is the only wiring here that a caller cannot substitute for itself.
+    on. The Screening Prompt is loaded here, at the edge, and injected as a string.
     """
+    try:
+        screening_prompt = load_screening_prompt()
+    except FileNotFoundError:
+        screening_prompt = ""
+
     return JobFeedPipeline(
-        driver=driver,
-        screener=CandidateScreener(matching_service=matching_service),
+        world=build_feed_device_world(driver),
+        store=InMemoryJobRecordStore(),
+        screener=CandidateScreener(
+            llm_client=matching_service.llm_client,
+            matching_service=matching_service,
+            screening_prompt=screening_prompt,
+        ),
         log=log,
     )
 

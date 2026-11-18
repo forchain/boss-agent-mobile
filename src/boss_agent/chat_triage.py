@@ -49,7 +49,9 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Any, Protocol, runtime_checkable
 
-from .feed_pipeline import is_task_cancelled
+from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
+from boss_agent.core.job.use_cases.feed_pipeline import is_task_cancelled
+
 from .pages.communication import (
     OUTBOUND_STATUS_MARKERS,
     ChatPage,
@@ -58,7 +60,6 @@ from .pages.communication import (
 )
 from .pages.system import StartupDialogPage
 from .rejection import DEFAULT_MAX_SCROLL_SWIPES, ChatAcknowledgmentSettings
-from .screening_policy import ScreeningPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -745,7 +746,9 @@ class ChatTriage:
             return False, False
 
         try:
-            written = self.policy.persist_company_blacklist(company)
+            from boss_agent import screening_config
+
+            written = screening_config.persist_company_blacklist(self.policy, company)
         except Exception as exc:  # noqa: BLE001 - the in-memory policy still holds
             await self._log(f"⚠️ [持久化] 企业 '{company}' 已加入内存黑名单，但写入配置失败: {exc}")
             return True, False

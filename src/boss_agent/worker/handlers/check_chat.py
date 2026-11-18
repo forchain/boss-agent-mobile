@@ -19,10 +19,11 @@ import logging
 from typing import Any
 
 from boss_agent.chat_triage import ChatTriage, StopReason, TriagePages
+from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
 from boss_agent.core.task.domain.models import AutomationTask, TaskType
 from boss_agent.core.task.interfaces.broker import BaseTaskBroker
 from boss_agent.rejection import ChatAcknowledgmentSettings, RejectionClassifier
-from boss_agent.screening_policy import ScreeningPolicy
+from boss_agent.screening_config import load_screening_policy
 from boss_agent.settings import resolve_chat_acknowledgment_settings
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.handlers.base import BaseTaskHandler, HandlerResult
@@ -67,7 +68,7 @@ class CheckChatHandler(BaseTaskHandler):
         """
         if self._policy is not None:
             return self._policy
-        return ScreeningPolicy.load_default()
+        return load_screening_policy()
 
     async def handle(
         self,

@@ -14,12 +14,18 @@ import logging
 from typing import Any
 
 from boss_agent.core.candidate.domain.candidate_profile import CandidateProfile
+from boss_agent.core.job.domain.feed_stream import FeedStreamConfig
+from boss_agent.core.job.use_cases.feed_pipeline import JobFeedPipeline
+from boss_agent.core.job.use_cases.screening import CandidateScreener
 from boss_agent.core.shared.errors import BrokerError, TransportError
 from boss_agent.core.shared.identifier_helpers import is_masked_company_name
 from boss_agent.core.task.domain.models import AutomationTask, TaskType
 from boss_agent.core.task.interfaces.broker import BaseTaskBroker
-from boss_agent.feed_pipeline import FeedStreamConfig, JobFeedPipeline
-from boss_agent.screening import CandidateScreener
+from boss_agent.greeting_prompt import load_greeting_prompt
+from boss_agent.llm_config import create_llm_client
+from boss_agent.pages.feed_bundle import build_feed_device_world
+from boss_agent.screening_prompt import load_screening_prompt
+from boss_agent.settings import load_feed_config_defaults
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.handlers.base import BaseTaskHandler, HandlerResult
 
@@ -49,7 +55,11 @@ class AutoApplyHandler(BaseTaskHandler):
 
         payload = task.payload or {}
         store = broker.job_store
-        screener = CandidateScreener(llm_client=self.llm_client)
+        screener = CandidateScreener(
+            llm_client=self.llm_client or create_llm_client(),
+            greeting_prompt=load_greeting_prompt(),
+            screening_prompt=load_screening_prompt(),
+        )
         try:
             profile = await self._resolve_profile(broker, payload, task_id=task.id)
         except TransportError as err:
@@ -62,7 +72,9 @@ class AutoApplyHandler(BaseTaskHandler):
         # afterwards: an AUTO_APPLY run streams outreach even when the payload omitted the
         # redundant target_action field, and depth must have exactly one answering site
         # (issue #302). A payload that *does* state a Target Action keeps it.
-        config = FeedStreamConfig.from_payload(payload, task_type=TaskType.AUTO_APPLY)
+        config = FeedStreamConfig.from_payload(
+            payload, task_type=TaskType.AUTO_APPLY, **load_feed_config_defaults()
+        )
         config.source_task_id = task.id
         config.candidate_profile = profile
 
@@ -89,7 +101,10 @@ class AutoApplyHandler(BaseTaskHandler):
             return refusal
 
         pipeline = JobFeedPipeline.for_task(
-            broker=broker, task_id=task.id, driver=driver, screener=screener
+            broker=broker,
+            task_id=task.id,
+            world=build_feed_device_world(driver),
+            screener=screener,
         )
         try:
             result = await pipeline.stream_jobs(config)

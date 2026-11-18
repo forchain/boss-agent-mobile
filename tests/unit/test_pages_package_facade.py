@@ -28,7 +28,7 @@ import pytest
 from rich.console import Console
 
 from boss_agent import pages
-from boss_agent.job_entities import JobCardBrief
+from boss_agent.core.job.domain.job_entities import JobCardBrief
 
 #: Every public name the monolith *defined*, mapped to the submodule that now owns it. The
 #: left-hand side is the contract: a name missing here is a symbol a caller can no longer import.

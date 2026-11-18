@@ -16,10 +16,10 @@ import pytest
 from _card_fixtures import located
 
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker, PocketBaseTaskBroker
+from boss_agent.core.job.domain.job_entities import JobCardBrief
 from boss_agent.core.shared.enums import ChatButtonState
 from boss_agent.core.shared.identifier_helpers import is_communication_expired
 from boss_agent.core.task.domain.models import TaskType
-from boss_agent.job_entities import JobCardBrief
 from boss_agent.worker.config import WorkerConfig
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.daemon import AutomationWorker
@@ -211,10 +211,10 @@ async def test_scrape_skips_card_already_recorded_as_applied(broker, mock_driver
     )
 
     with (
-        patch("boss_agent.feed_pipeline.StartupDialogPage") as mock_startup_cls,
-        patch("boss_agent.feed_pipeline.JobListPage") as mock_list_cls,
-        patch("boss_agent.feed_pipeline.SearchPage") as mock_search_cls,
-        patch("boss_agent.feed_pipeline.JobDetailPage") as mock_detail_cls,
+        patch("boss_agent.pages.feed_bundle.StartupDialogPage") as mock_startup_cls,
+        patch("boss_agent.pages.feed_bundle.JobListPage") as mock_list_cls,
+        patch("boss_agent.pages.feed_bundle.SearchPage") as mock_search_cls,
+        patch("boss_agent.pages.feed_bundle.JobDetailPage") as mock_detail_cls,
     ):
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_list = mock_list_cls.return_value
@@ -264,10 +264,10 @@ async def test_scrape_skips_other_roles_from_communicated_direct_hire_company(br
     )
 
     with (
-        patch("boss_agent.feed_pipeline.StartupDialogPage") as mock_startup_cls,
-        patch("boss_agent.feed_pipeline.JobListPage") as mock_list_cls,
-        patch("boss_agent.feed_pipeline.SearchPage") as mock_search_cls,
-        patch("boss_agent.feed_pipeline.JobDetailPage") as mock_detail_cls,
+        patch("boss_agent.pages.feed_bundle.StartupDialogPage") as mock_startup_cls,
+        patch("boss_agent.pages.feed_bundle.JobListPage") as mock_list_cls,
+        patch("boss_agent.pages.feed_bundle.SearchPage") as mock_search_cls,
+        patch("boss_agent.pages.feed_bundle.JobDetailPage") as mock_detail_cls,
     ):
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_list = mock_list_cls.return_value
@@ -316,10 +316,10 @@ async def test_scrape_admits_headhunter_roles_from_same_company_name(broker, moc
     )
 
     with (
-        patch("boss_agent.feed_pipeline.StartupDialogPage") as mock_startup_cls,
-        patch("boss_agent.feed_pipeline.JobListPage") as mock_list_cls,
-        patch("boss_agent.feed_pipeline.SearchPage") as mock_search_cls,
-        patch("boss_agent.feed_pipeline.JobDetailPage") as mock_detail_cls,
+        patch("boss_agent.pages.feed_bundle.StartupDialogPage") as mock_startup_cls,
+        patch("boss_agent.pages.feed_bundle.JobListPage") as mock_list_cls,
+        patch("boss_agent.pages.feed_bundle.SearchPage") as mock_search_cls,
+        patch("boss_agent.pages.feed_bundle.JobDetailPage") as mock_detail_cls,
     ):
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_list = mock_list_cls.return_value
@@ -369,10 +369,10 @@ async def test_masked_company_names_never_join_the_exclusion_pool(broker, mock_d
     )
 
     with (
-        patch("boss_agent.feed_pipeline.StartupDialogPage") as mock_startup_cls,
-        patch("boss_agent.feed_pipeline.JobListPage") as mock_list_cls,
-        patch("boss_agent.feed_pipeline.SearchPage") as mock_search_cls,
-        patch("boss_agent.feed_pipeline.JobDetailPage") as mock_detail_cls,
+        patch("boss_agent.pages.feed_bundle.StartupDialogPage") as mock_startup_cls,
+        patch("boss_agent.pages.feed_bundle.JobListPage") as mock_list_cls,
+        patch("boss_agent.pages.feed_bundle.SearchPage") as mock_search_cls,
+        patch("boss_agent.pages.feed_bundle.JobDetailPage") as mock_detail_cls,
     ):
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_list = mock_list_cls.return_value
@@ -408,10 +408,10 @@ async def test_newly_communicated_company_is_cached_within_the_same_run(broker, 
     )
 
     with (
-        patch("boss_agent.feed_pipeline.StartupDialogPage") as mock_startup_cls,
-        patch("boss_agent.feed_pipeline.JobListPage") as mock_list_cls,
-        patch("boss_agent.feed_pipeline.SearchPage") as mock_search_cls,
-        patch("boss_agent.feed_pipeline.JobDetailPage") as mock_detail_cls,
+        patch("boss_agent.pages.feed_bundle.StartupDialogPage") as mock_startup_cls,
+        patch("boss_agent.pages.feed_bundle.JobListPage") as mock_list_cls,
+        patch("boss_agent.pages.feed_bundle.SearchPage") as mock_search_cls,
+        patch("boss_agent.pages.feed_bundle.JobDetailPage") as mock_detail_cls,
     ):
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_list = mock_list_cls.return_value
@@ -466,10 +466,10 @@ async def test_expired_communication_releases_card_for_reevaluation(broker, mock
     )
 
     with (
-        patch("boss_agent.feed_pipeline.StartupDialogPage") as mock_startup_cls,
-        patch("boss_agent.feed_pipeline.JobListPage") as mock_list_cls,
-        patch("boss_agent.feed_pipeline.SearchPage") as mock_search_cls,
-        patch("boss_agent.feed_pipeline.JobDetailPage") as mock_detail_cls,
+        patch("boss_agent.pages.feed_bundle.StartupDialogPage") as mock_startup_cls,
+        patch("boss_agent.pages.feed_bundle.JobListPage") as mock_list_cls,
+        patch("boss_agent.pages.feed_bundle.SearchPage") as mock_search_cls,
+        patch("boss_agent.pages.feed_bundle.JobDetailPage") as mock_detail_cls,
     ):
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_list = mock_list_cls.return_value
@@ -544,10 +544,10 @@ async def test_expired_communication_releases_record_back_to_candidate_pool(brok
     )
 
     with (
-        patch("boss_agent.feed_pipeline.StartupDialogPage") as mock_startup_cls,
-        patch("boss_agent.feed_pipeline.JobListPage") as mock_list_cls,
-        patch("boss_agent.feed_pipeline.SearchPage") as mock_search_cls,
-        patch("boss_agent.feed_pipeline.JobDetailPage") as mock_detail_cls,
+        patch("boss_agent.pages.feed_bundle.StartupDialogPage") as mock_startup_cls,
+        patch("boss_agent.pages.feed_bundle.JobListPage") as mock_list_cls,
+        patch("boss_agent.pages.feed_bundle.SearchPage") as mock_search_cls,
+        patch("boss_agent.pages.feed_bundle.JobDetailPage") as mock_detail_cls,
     ):
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_list = mock_list_cls.return_value
@@ -621,10 +621,10 @@ async def test_auto_apply_refuses_other_role_from_communicated_direct_hire_compa
     )
 
     with (
-        patch("boss_agent.feed_pipeline.StartupDialogPage") as mock_startup_cls,
-        patch("boss_agent.feed_pipeline.JobListPage"),
-        patch("boss_agent.feed_pipeline.SearchPage"),
-        patch("boss_agent.feed_pipeline.JobDetailPage") as mock_detail_cls,
+        patch("boss_agent.pages.feed_bundle.StartupDialogPage") as mock_startup_cls,
+        patch("boss_agent.pages.feed_bundle.JobListPage"),
+        patch("boss_agent.pages.feed_bundle.SearchPage"),
+        patch("boss_agent.pages.feed_bundle.JobDetailPage") as mock_detail_cls,
     ):
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_detail = mock_detail_cls.return_value
@@ -693,10 +693,10 @@ async def test_auto_apply_permits_headhunter_target_from_communicated_company(br
     )
 
     with (
-        patch("boss_agent.feed_pipeline.StartupDialogPage") as mock_startup_cls,
-        patch("boss_agent.feed_pipeline.JobListPage"),
-        patch("boss_agent.feed_pipeline.SearchPage"),
-        patch("boss_agent.feed_pipeline.JobDetailPage") as mock_detail_cls,
+        patch("boss_agent.pages.feed_bundle.StartupDialogPage") as mock_startup_cls,
+        patch("boss_agent.pages.feed_bundle.JobListPage"),
+        patch("boss_agent.pages.feed_bundle.SearchPage"),
+        patch("boss_agent.pages.feed_bundle.JobDetailPage") as mock_detail_cls,
     ):
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_detail = mock_detail_cls.return_value
@@ -738,10 +738,10 @@ async def test_permanent_cooldown_keeps_excluding_old_communications(broker, moc
     )
 
     with (
-        patch("boss_agent.feed_pipeline.StartupDialogPage") as mock_startup_cls,
-        patch("boss_agent.feed_pipeline.JobListPage") as mock_list_cls,
-        patch("boss_agent.feed_pipeline.SearchPage") as mock_search_cls,
-        patch("boss_agent.feed_pipeline.JobDetailPage") as mock_detail_cls,
+        patch("boss_agent.pages.feed_bundle.StartupDialogPage") as mock_startup_cls,
+        patch("boss_agent.pages.feed_bundle.JobListPage") as mock_list_cls,
+        patch("boss_agent.pages.feed_bundle.SearchPage") as mock_search_cls,
+        patch("boss_agent.pages.feed_bundle.JobDetailPage") as mock_detail_cls,
     ):
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_list = mock_list_cls.return_value

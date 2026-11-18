@@ -27,14 +27,14 @@ import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
-from .core.shared.identifier_helpers import (
+from boss_agent.core.shared.identifier_helpers import (
     clean_job_title,
     is_invalid_company_name,
     is_likely_location,
     sanitize_tags,
     split_recruiter_name,
 )
-from .core.shared.keyword_constants import (
+from boss_agent.core.shared.keyword_constants import (
     KNOWN_CITIES,
     PLATFORM_BADGE_MARKERS,
     RECRUITER_SEPARATORS,

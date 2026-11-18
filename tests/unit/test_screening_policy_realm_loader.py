@@ -23,7 +23,6 @@ import yaml
 
 from boss_agent import config_realm
 from boss_agent.screening_config import load_screening_policy
-from boss_agent.screening_policy import ScreeningPolicy
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -57,7 +56,7 @@ def test_screening_policy_loader_explicit_path(tmp_path: Path):
     assert policy.source_path == str(custom_yaml)
 
     # Class method load_default delegation
-    policy_class = ScreeningPolicy.load_default(config_path=custom_yaml)
+    policy_class = load_screening_policy(config_path=custom_yaml)
     assert policy_class.to_dict() == policy.to_dict()
     assert policy_class.source_path == policy.source_path
 
@@ -152,7 +151,7 @@ def test_import_graph_independence():
     """Verify editing screening_policy leaves enums and keyword_constants untouched."""
     enums_path = REPO_ROOT / "src/boss_agent/core/shared/enums.py"
     keywords_path = REPO_ROOT / "src/boss_agent/core/shared/keyword_constants.py"
-    policy_path = REPO_ROOT / "src/boss_agent/screening_policy.py"
+    policy_path = REPO_ROOT / "src/boss_agent/core/job/domain/screening_policy.py"
 
     enums_tree = ast.parse(enums_path.read_text(encoding="utf-8"))
     keywords_tree = ast.parse(keywords_path.read_text(encoding="utf-8"))
@@ -173,13 +172,13 @@ def test_import_graph_independence():
     policy_imports = get_imported_modules(policy_tree)
 
     # enums and keyword_constants MUST NOT import screening_policy
-    assert "boss_agent.screening_policy" not in enums_imports
+    assert "boss_agent.core.job.domain.screening_policy" not in enums_imports
     assert ".screening_policy" not in enums_imports
-    assert "boss_agent.screening_policy" not in keywords_imports
+    assert "boss_agent.core.job.domain.screening_policy" not in keywords_imports
     assert ".screening_policy" not in keywords_imports
 
     # screening_policy must not import entities
-    assert "boss_agent.job_entities" not in policy_imports
+    assert "boss_agent.core.job.domain.job_entities" not in policy_imports
     assert "boss_agent.candidate_entities" not in policy_imports
     assert "boss_agent.core.search.domain.models" not in policy_imports
     assert "boss_agent.entities" not in policy_imports

@@ -10,9 +10,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from boss_agent.job_entities import JobCardBrief
-from boss_agent.screening import CandidateScreener, JobVerdictStage
-from boss_agent.screening_policy import ScreeningPolicy
+from boss_agent.core.job.domain.job_entities import JobCardBrief
+from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
+from boss_agent.core.job.use_cases.screening import CandidateScreener, JobVerdictStage
 from boss_agent.screening_prompt import load_screening_prompt
 
 SEED_TEXT = "# 默认种子精筛提示词\n严禁臆造黑名单外淘汰条件。"
@@ -130,18 +130,15 @@ def test_screener_uses_injected_screening_prompt():
     assert "外包" in system_prompt
 
 
-def test_screener_loads_living_screening_prompt_from_config(tmp_path, monkeypatch):
-    import boss_agent.screening_prompt as sp
-
-    _make_config(tmp_path, local="【本地沉淀规则】：复合技术工种正常落地偏向不予淘汰")
-    monkeypatch.setattr(sp, "resolve_git_common_root", lambda: tmp_path)
+def test_screener_uses_the_injected_living_screening_prompt():
+    local_prompt = "【本地沉淀规则】：复合技术工种正常落地偏向不予淘汰"
 
     mock_llm = MagicMock()
     mock_llm.chat_completion_json.return_value = {
         "approved": True,
         "reason": "【合格保留】符合复合工种准则",
     }
-    screener = CandidateScreener(llm_client=mock_llm)
+    screener = CandidateScreener(llm_client=mock_llm, screening_prompt=local_prompt)
 
     card = JobCardBrief(
         title="AI Agent 平台架构师",

@@ -11,12 +11,11 @@ facets and the enriched record — can be read and tested without a driver or a 
 
 from typing import Any
 
-from .core.shared.enums import JobRecordStatus
-from .core.shared.identifier_helpers import is_invalid_company_name
-from .core.shared.keyword_constants import INVALID_COMPANY_NAMES
-from .job_entities import JobCardBrief, JobPosting
-from .job_store import INVALID_JOB_TITLES
-from .screening import CardScreeningVerdict
+from boss_agent.core.job.domain.job_entities import JobCardBrief, JobPosting
+from boss_agent.core.job.domain.screening import CardScreeningVerdict
+from boss_agent.core.shared.enums import JobRecordStatus
+from boss_agent.core.shared.identifier_helpers import is_invalid_company_name
+from boss_agent.core.shared.keyword_constants import INVALID_COMPANY_NAMES, INVALID_JOB_TITLES
 
 
 def effective_title(posting: Any, card: JobCardBrief) -> str:

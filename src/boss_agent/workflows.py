@@ -12,6 +12,9 @@ from rich.console import Console
 
 from .async_bridge import run_sync
 from .core.candidate.domain.candidate_profile import CandidateProfile
+from .core.job.domain.job_entities import JobPosting
+from .core.job.domain.screening_policy import ScreeningPolicy, resolve_screening_policy
+from .core.job.use_cases.matching import JobMatchGreetingService
 from .core.search.domain.models import FilterConfig, SavedSearch, SearchConfig
 from .core.search.interfaces.store import SavedSearchStore
 from .core.shared.enums import AuthStatus
@@ -22,15 +25,15 @@ from .feed_verification import (
     render_greeting_match_card,
     run_verification_feed,
 )
-from .job_entities import JobPosting
-from .matching import JobMatchGreetingService
+from .greeting_prompt import load_greeting_prompt
+from .llm_config import create_llm_client
 from .memory import ResumeMemoryManager
 from .pages.system import LoginPage
 from .saved_search_store import (
     missing_saved_search_message,
     resolve_saved_search_store,
 )
-from .screening_policy import ScreeningPolicy, resolve_screening_policy
+from .screening_config import load_screening_policy
 
 console = Console()
 
@@ -152,7 +155,10 @@ class SmokeHarness:
         self.force_refresh_memory = force_refresh_memory
         self.enable_greeting_draft = enable_greeting_draft
         self.memory_manager = memory_manager or ResumeMemoryManager()
-        self.matching_service = matching_service or JobMatchGreetingService()
+        self.matching_service = matching_service or JobMatchGreetingService(
+            llm_client=create_llm_client(),
+            greeting_prompt=load_greeting_prompt(),
+        )
         # Kept on the constructor because it is part of the adapter's published signature —
         # callers still pass it (``tests/unit/test_smoke_harness_greeting.py`` sets it to a
         # tenth of a second) and ticket #394 migrates this constructor against it, so
@@ -188,7 +194,7 @@ class SmokeHarness:
             # (issue #368). Resolving it only on the task path would make one preset mean
             # two things: direct-only under a cron run, unrestricted under this runner.
             self.screening_policy = resolve_screening_policy(
-                saved_search.screening_policy,
+                saved_search.screening_policy or load_screening_policy(),
                 channel_preference=saved_search.filter.channel_preference,
             )
         elif saved_search_id:
@@ -202,7 +208,7 @@ class SmokeHarness:
             self.search_config = loaded_search.search
             self.filter_config = loaded_search.filter
             self.screening_policy = resolve_screening_policy(
-                loaded_search.screening_policy,
+                loaded_search.screening_policy or load_screening_policy(),
                 channel_preference=loaded_search.filter.channel_preference,
             )
         else:

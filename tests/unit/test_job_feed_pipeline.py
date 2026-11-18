@@ -26,6 +26,21 @@ from _feed_harness import (
 )
 from selenium.common.exceptions import StaleElementReferenceException
 
+from boss_agent.core.job.domain.job_entities import (
+    JobCardBrief,
+    JobPosting,
+)
+from boss_agent.core.job.domain.screening_policy import (
+    ScreeningPolicy,
+)
+from boss_agent.core.job.use_cases.feed_pipeline import (
+    FeedStreamConfig,
+    JobAction,
+    JobFeedPipeline,
+    _element_y,
+    is_task_cancelled,
+)
+from boss_agent.core.job.use_cases.screening import CandidateScreener, JobVerdictStage
 from boss_agent.core.shared.enums import (
     ChatButtonState,
     JobRecordStatus,
@@ -33,22 +48,7 @@ from boss_agent.core.shared.enums import (
     TargetAction,
 )
 from boss_agent.core.shared.keyword_constants import APPLIED_SOURCE_AGENT
-from boss_agent.feed_pipeline import (
-    FeedStreamConfig,
-    JobAction,
-    JobFeedPipeline,
-    _element_y,
-    is_task_cancelled,
-)
-from boss_agent.job_entities import (
-    JobCardBrief,
-    JobPosting,
-)
 from boss_agent.job_store import InMemoryJobRecordStore
-from boss_agent.screening import CandidateScreener, JobVerdictStage
-from boss_agent.screening_policy import (
-    ScreeningPolicy,
-)
 
 
 class _StaleElement:
@@ -384,7 +384,7 @@ async def test_evaluate_card_runs_before_detail_and_evaluate_job_after():
     screener.evaluate_card.return_value = verdict
     screener.evaluate_job.return_value = MagicMock(
         stage=__import__(
-            "boss_agent.screening", fromlist=["JobVerdictStage"]
+            "boss_agent.core.job.use_cases.screening", fromlist=["JobVerdictStage"]
         ).JobVerdictStage.PASSED,
         passed=True,
         reason="精筛完成",
@@ -422,7 +422,6 @@ async def test_filtering_disabled_clears_conditions_instead_of_applying_them():
     still clears the previous run's conditions rather than applying its own.
     """
     store = InMemoryJobRecordStore()
-    pipeline = _pipeline(store, feed=ScriptedFeed([[_card("AI Agent 一号", "甲公司")]]))
     config = FeedStreamConfig.from_payload(
         {
             "keyword": "Agent",
@@ -435,9 +434,10 @@ async def test_filtering_disabled_clears_conditions_instead_of_applying_them():
     assert config.filter_config.enable_filter is False
 
     with (
-        patch("boss_agent.feed_pipeline.FilterDialogPage") as filter_cls,
-        patch("boss_agent.feed_pipeline.IndustryFilterDialogPage") as industry_cls,
+        patch("boss_agent.pages.feed_bundle.FilterDialogPage") as filter_cls,
+        patch("boss_agent.pages.feed_bundle.IndustryFilterDialogPage") as industry_cls,
     ):
+        pipeline = _pipeline(store, feed=ScriptedFeed([[_card("AI Agent 一号", "甲公司")]]))
         await pipeline.stream_jobs(config)
 
     filter_cls.return_value.clear_filters.assert_called_once()
@@ -886,9 +886,12 @@ def test_for_task_wires_the_brokers_job_ledger():
     store-typed code — so the type story no longer said which object was passed.
     """
     from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
+    from boss_agent.pages.feed_bundle import build_feed_device_world
 
     broker = InMemoryTaskBroker()
-    pipeline = JobFeedPipeline.for_task(broker, "task-1", driver=None)
+    pipeline = JobFeedPipeline.for_task(
+        broker, "task-1", world=build_feed_device_world(MagicMock())
+    )
     assert pipeline.store is broker.job_store
 
 

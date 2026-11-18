@@ -17,9 +17,10 @@ sys.path.insert(0, str(root_dir))
 sys.path.insert(0, str(root_dir / "src"))
 
 from boss_agent.core.candidate.domain.candidate_profile import CandidateProfile  # noqa: E402
-from boss_agent.job_entities import JobPosting  # noqa: E402
+from boss_agent.core.job.domain.job_entities import JobPosting  # noqa: E402
+from boss_agent.core.job.use_cases.matching import JobMatchGreetingService  # noqa: E402
+from boss_agent.greeting_prompt import load_greeting_prompt  # noqa: E402
 from boss_agent.llm_config import create_llm_client, load_llm_config  # noqa: E402
-from boss_agent.matching import JobMatchGreetingService  # noqa: E402
 from droid_agent_core.llm import LLMConfig, LLMDecisionClient  # noqa: E402
 
 
@@ -170,6 +171,7 @@ def main() -> None:
     service = JobMatchGreetingService(
         llm_client=llm_client,
         candidate_profile=candidate_profile,
+        greeting_prompt=args.greeting_prompt or load_greeting_prompt(),
     )
 
     if args.action == "refine":

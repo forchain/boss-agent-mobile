@@ -27,9 +27,9 @@ from boss_agent.core.candidate.domain.candidate_profile import (
     CandidateProfile,
     StructuredCandidateProfile,
 )
-from boss_agent.job_entities import JobCardBrief, JobPosting
-from boss_agent.screening import CandidateScreener
-from boss_agent.screening_policy import ScreeningPolicy
+from boss_agent.core.job.domain.job_entities import JobCardBrief, JobPosting
+from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
+from boss_agent.core.job.use_cases.screening import CandidateScreener
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -37,9 +37,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 # import statement, which is what pulled the LLM client and the filesystem cache onto the
 # hot path.
 CONSUMER_MODULES = (
-    "src/boss_agent/screening.py",
-    "src/boss_agent/matching.py",
-    "src/boss_agent/feed_pipeline.py",
+    "src/boss_agent/core/job/use_cases/screening.py",
+    "src/boss_agent/core/job/use_cases/matching.py",
+    "src/boss_agent/core/job/domain/feed_stream.py",
     "src/boss_agent/worker/handlers/auto_apply.py",
 )
 
@@ -109,7 +109,7 @@ def test_profile_alias_is_an_identity_alias() -> None:
 
 def test_resolve_profile_accepts_candidate_profile() -> None:
     """A profile object passes through the type dispatch untouched."""
-    from boss_agent.screening import _resolve_profile
+    from boss_agent.core.job.use_cases.screening import _resolve_profile
 
     profile = CandidateProfile(name="李华", core_skills=["Python", "LangGraph"])
 
@@ -125,7 +125,7 @@ def test_resolve_profile_still_accepts_a_dict() -> None:
     ``isinstance`` on a real class. If the two names ever diverge, this test is what says
     so instead of a screening run silently screening against no profile at all.
     """
-    from boss_agent.screening import _resolve_profile
+    from boss_agent.core.job.use_cases.screening import _resolve_profile
 
     resolved = _resolve_profile({"name": "李华", "core_skills": ["Python"]})
 
@@ -138,7 +138,7 @@ def test_resolve_profile_still_accepts_a_dict() -> None:
 @pytest.mark.parametrize("empty_input", [None, {}])
 def test_resolve_profile_returns_none_for_empty_input(empty_input) -> None:
     """An absent or empty profile resolves to None, as it always has."""
-    from boss_agent.screening import _resolve_profile
+    from boss_agent.core.job.use_cases.screening import _resolve_profile
 
     assert _resolve_profile(empty_input) is None
 
@@ -195,7 +195,7 @@ def test_job_match_greeting_service_accepts_a_candidate_profile() -> None:
     """JobMatchGreetingService takes the profile in its constructor and via the setter."""
     from unittest.mock import MagicMock
 
-    from boss_agent.matching import JobMatchGreetingService, offline_match_result
+    from boss_agent.core.job.use_cases.matching import JobMatchGreetingService, offline_match_result
 
     profile = CandidateProfile(name="李华", years_of_experience=6, core_skills=["Python"])
     service = JobMatchGreetingService(llm_client=MagicMock(), candidate_profile=profile)
@@ -217,7 +217,7 @@ def test_job_match_greeting_service_accepts_a_candidate_profile() -> None:
 
 def test_feed_pipeline_config_accepts_a_candidate_profile() -> None:
     """The feed config holds the profile and hands it to the screener unchanged."""
-    from boss_agent.feed_pipeline import FeedStreamConfig
+    from boss_agent.core.job.use_cases.feed_pipeline import FeedStreamConfig
 
     profile = CandidateProfile(name="李华", core_skills=["Python"])
 

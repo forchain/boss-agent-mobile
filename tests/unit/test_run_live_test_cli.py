@@ -34,12 +34,12 @@ import pytest
 import scripts.run_live_test as runner
 from _feed_harness import ScriptedFeed, _card, _detail_page, _posting, script_pages, stub_llm
 
+from boss_agent.core.job.domain.job_entities import JobPosting
+from boss_agent.core.job.use_cases.feed_pipeline import FeedStreamResult, JobFeedPipeline
+from boss_agent.core.job.use_cases.matching import JobMatchGreetingService
+from boss_agent.core.job.use_cases.screening import CandidateScreener, JobVerdictStage
 from boss_agent.core.shared.enums import AuthStatus, JobRecordStatus, TargetAction
-from boss_agent.feed_pipeline import FeedStreamResult, JobFeedPipeline
-from boss_agent.job_entities import JobPosting
-from boss_agent.matching import JobMatchGreetingService
 from boss_agent.memory import StructuredCandidateProfile
-from boss_agent.screening import CandidateScreener, JobVerdictStage
 
 # Captured before any patching: the tests replace these attributes to observe composition,
 # and must still be able to reach the real classes through them.
@@ -130,8 +130,8 @@ def _run(
         patch("boss_agent.feed_verification.CandidateScreener") as screener_cls,
         patch.object(runner, "JobMatchGreetingService") as greeting_cls,
     ):
-        screener_cls.side_effect = lambda **kw: _REAL_SCREENER(llm_client=verdict, **kw)
-        greeting_cls.side_effect = lambda **kw: _REAL_GREETING(llm_client=stub_llm(), **kw)
+        screener_cls.side_effect = lambda **kw: _REAL_SCREENER(**{**kw, "llm_client": verdict})
+        greeting_cls.side_effect = lambda **kw: _REAL_GREETING(**{**kw, "llm_client": stub_llm()})
         outcome = runner.run_live_test(
             search_id=None,
             keyword="Agent",

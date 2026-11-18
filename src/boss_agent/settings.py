@@ -332,6 +332,23 @@ def resolve_communication_cooldown_days(overrides: dict[str, Any] | None = None)
         return DEFAULT_COMMUNICATION_COOLDOWN_DAYS
 
 
+def load_feed_config_defaults() -> dict[str, Any]:
+    """The operator-resolved defaults a feed task payload is overlaid on.
+
+    The feed parser is pure (``FeedStreamConfig.from_payload``); resolving the global
+    Screening Policy, the greeting ceiling and the cool-down window is the edge's job,
+    and this is the one place the task handlers ask for them.
+    """
+    from boss_agent.screening_config import load_screening_policy
+
+    settings = load_settings()
+    return {
+        "default_policy": load_screening_policy(),
+        "default_daily_greeting_limit": int(settings.get("daily_greeting_limit", 20)),
+        "default_cooldown_days": resolve_communication_cooldown_days(),
+    }
+
+
 def load_settings(config_path: str | Path | None = None) -> dict[str, Any]:
     """The merged Configuration Realm, from the realm's one chain and defaults table.
 

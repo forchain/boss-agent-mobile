@@ -3,8 +3,9 @@ from pathlib import Path
 
 import yaml
 
-from boss_agent.job_entities import JobRecord
-from boss_agent.screening_policy import ScreeningPolicy
+from boss_agent.core.job.domain.job_entities import JobRecord
+from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
+from boss_agent.screening_config import load_screening_policy, save_policy
 
 
 def test_screening_policy_load_from_example():
@@ -12,7 +13,7 @@ def test_screening_policy_load_from_example():
     example_path = Path("config/settings.example.yaml")
     assert example_path.exists(), "config/settings.example.yaml must exist"
 
-    policy = ScreeningPolicy.load_default(config_path=example_path)
+    policy = load_screening_policy(config_path=example_path)
     assert policy.enable_screening is True
     assert isinstance(policy.title_blacklist, list)
     assert "销售" in policy.title_blacklist
@@ -30,7 +31,7 @@ def test_screening_policy_save_and_load_roundtrip():
             jd_blacklist=["驻场", "外包"],
             enable_screening=True,
         )
-        saved_path = policy.save_default(config_path=tmp_config)
+        saved_path = save_policy(policy, config_path=tmp_config)
         assert saved_path == tmp_config
         assert tmp_config.exists()
 
@@ -40,7 +41,7 @@ def test_screening_policy_save_and_load_roundtrip():
         assert data["company_blacklist"] == ["避雷科技"]
 
         # Loader check
-        loaded = ScreeningPolicy.load_default(config_path=tmp_config)
+        loaded = load_screening_policy(config_path=tmp_config)
         assert loaded.title_whitelist == ["Python", "Agent"]
         assert loaded.title_blacklist == ["销售", "实习"]
         assert loaded.company_blacklist == ["避雷科技"]
@@ -269,9 +270,9 @@ def test_screening_policy_business_district_blacklist_dict_roundtrip():
 def test_save_and_load_policy_preserves_business_district_blacklist(tmp_path):
     target = tmp_path / "settings.local.yaml"
     policy = ScreeningPolicy(business_district_blacklist=["崇明区", "金山"])
-    policy.save_default(config_path=target)
+    save_policy(policy, config_path=target)
 
-    loaded = ScreeningPolicy.load_default(config_path=target)
+    loaded = load_screening_policy(config_path=target)
     assert loaded.business_district_blacklist == ["崇明区", "金山"]
 
 
@@ -291,8 +292,8 @@ def test_save_and_load_policy_preserves_business_district_inspect_list(tmp_path)
         business_district_blacklist=["崇明区"],
         business_district_inspect_list=["漕河泾", "13/16号线"],
     )
-    policy.save_default(config_path=target)
+    save_policy(policy, config_path=target)
 
-    loaded = ScreeningPolicy.load_default(config_path=target)
+    loaded = load_screening_policy(config_path=target)
     assert loaded.business_district_inspect_list == ["漕河泾", "13/16号线"]
     assert loaded.business_district_blacklist == ["崇明区"]

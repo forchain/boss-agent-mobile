@@ -10,6 +10,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
+from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
 from boss_agent.core.shared.enums import (
     CHECK_CHAT_ACTION,
     INHERIT_CHANNEL,
@@ -17,7 +18,6 @@ from boss_agent.core.shared.enums import (
     TargetTaskType,
     normalize_channel_preference,
 )
-from boss_agent.screening_policy import ScreeningPolicy
 
 
 @dataclass
