@@ -12,8 +12,8 @@ worker for the device.
 
 import pytest
 
-from boss_agent.broker.models import TaskStatus
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
+from boss_agent.core.task.domain.models import TaskStatus
 from boss_agent.search_entities import FilterConfig, SavedSearch, SearchConfig
 from boss_agent.task_launch import LaunchSource, TaskKind, build_launch
 from boss_agent.worker.config import WorkerConfig

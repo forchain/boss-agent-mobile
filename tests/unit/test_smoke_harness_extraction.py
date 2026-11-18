@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from _feed_harness import GOOD_JD, ScriptedFeed, _card, _detail_page, script_pages
 
-from boss_agent.enums import AuthStatus
+from boss_agent.core.shared.enums import AuthStatus
 from boss_agent.job_entities import JobPosting
 from boss_agent.screening_policy import ScreeningPolicy
 from boss_agent.search_entities import FilterConfig, SearchConfig

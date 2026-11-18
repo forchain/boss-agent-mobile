@@ -43,7 +43,7 @@ from typing import Any
 from rich.console import Console
 
 from .async_bridge import run_sync
-from .enums import TargetAction
+from .core.shared.enums import TargetAction
 from .feed_pipeline import FeedStreamConfig, FeedStreamResult, JobFeedPipeline
 from .job_entities import JobPosting
 from .matching import JobMatchGreetingService, MatchGreetingResult

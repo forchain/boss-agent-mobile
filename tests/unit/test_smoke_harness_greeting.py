@@ -22,7 +22,7 @@ from _feed_harness import ScriptedFeed, _card, _detail_page, _posting, script_pa
 from rich.console import Console
 
 from boss_agent.candidate_entities import CandidateProfile
-from boss_agent.enums import ChatButtonState
+from boss_agent.core.shared.enums import ChatButtonState
 from boss_agent.matching import MatchGreetingResult
 from boss_agent.pages import ChatPage
 from boss_agent.screening import CardScreeningVerdict

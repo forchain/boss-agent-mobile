@@ -1,6 +1,6 @@
 """
-src/boss_agent/startup_cleanup.py
-=================================
+src/boss_agent/core/task/use_cases/startup_cleanup.py
+=====================================================
 Startup 拒信清扫 barrier (issue #230).
 
 A service that starts up ("开服") queues one CHECK_CHAT before anything else and
@@ -20,8 +20,8 @@ import logging
 from collections.abc import Sequence
 from typing import Any
 
-from boss_agent.broker.models import AutomationTask, TaskStatus, TaskType
-from boss_agent.broker.pocketbase_adapter import BaseTaskBroker
+from boss_agent.core.task.domain.models import AutomationTask, TaskStatus, TaskType
+from boss_agent.core.task.interfaces.broker import BaseTaskBroker
 from boss_agent.task_launch import LaunchSource, build_chat_cleanup_launch
 
 logger = logging.getLogger("boss_agent.startup_cleanup")

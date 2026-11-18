@@ -24,7 +24,7 @@ from typing import Any
 from langsmith import traceable
 
 from .candidate_entities import CandidateProfile
-from .identifier_helpers import is_substantive_jd, resolve_headhunter_channel
+from .core.shared.identifier_helpers import is_substantive_jd, resolve_headhunter_channel
 from .job_entities import JobCardBrief, JobPosting
 from .matching import JobMatchGreetingService
 from .screening_policy import ScreeningPolicy

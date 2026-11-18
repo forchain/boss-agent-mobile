@@ -5,12 +5,12 @@ PocketBase State Stream Broker Adapter and In-Memory Broker implementations.
 """
 
 import asyncio
+import copy
 import json
 import logging
 import os
 import re
 import uuid
-from abc import ABC, abstractmethod
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
@@ -18,23 +18,21 @@ from typing import Any
 import requests
 
 from boss_agent.async_bridge import execute_broker_request
-from boss_agent.broker.models import AutomationTask, TaskStatus, TaskType
 from boss_agent.candidate_memory_store import (
-    CandidateMemoryStore,
     InMemoryCandidateMemoryStore,
     PocketBaseCandidateMemoryStore,
 )
-from boss_agent.errors import ConflictError, ValidationError
+from boss_agent.core.shared.errors import ConflictError, ValidationError
+from boss_agent.core.task.domain.models import AutomationTask, TaskStatus, TaskType
+from boss_agent.core.task.interfaces.broker import BaseTaskBroker
 from boss_agent.job_store import (
     InMemoryJobRecordStore,
-    JobRecordStore,
     PocketBaseJobRecordStore,
 )
 from boss_agent.pocketbase_auth import pocketbase_headers
 from boss_agent.saved_search_store import (
     InMemorySavedSearchStore,
     PocketBaseSavedSearchStore,
-    SavedSearchStore,
 )
 from boss_agent.settings import resolve_pocketbase_url
 
@@ -97,99 +95,6 @@ def resolve_text_constraint_limit(response_text: Any) -> int:
     return POCKETBASE_DEFAULT_TEXT_MAX_CHARS
 
 
-class BaseTaskBroker(ABC):
-    """Abstract interface for the State Stream Task Broker.
-
-    Confined to task-stream lifecycle, lease heartbeats and candidate memory.
-
-    Job records, exclusion pools, cool-down math and quota counting moved to the dedicated
-    ``JobRecordStore`` seam, reachable as ``broker.job_store`` (ADR 0013 §3). The ADR names
-    only the task lifecycle; candidate profiles and resume revisions deliberately stay here
-    for now, since no seam was specified for them.
-    """
-
-    @abstractmethod
-    async def create_task(
-        self,
-        task_type: TaskType | str,
-        payload: dict[str, Any] | None = None,
-        source: str = "manual",
-    ) -> AutomationTask:
-        """Create and persist a new task with PENDING status.
-
-        ``source`` is Task Provenance: where the task came from. The worker's startup
-        sweep cancels ``test``-sourced tasks so an automated suite never contends with
-        the live worker for the device.
-        """
-        pass
-
-    @abstractmethod
-    async def claim_task(self, task_id: str, worker_id: str) -> AutomationTask | None:
-        """Atomically claim a pending task for a worker. Returns None if already claimed."""
-        pass
-
-    @abstractmethod
-    async def get_task(self, task_id: str) -> AutomationTask | None:
-        """Fetch a task by ID."""
-        pass
-
-    @abstractmethod
-    async def update_heartbeat(self, task_id: str, worker_id: str) -> bool:
-        """Update last_heartbeat_at timestamp for a running task."""
-        pass
-
-    @abstractmethod
-    async def update_task_status(
-        self,
-        task_id: str,
-        status: TaskStatus,
-        logs: list[str] | None = None,
-        error_message: str | None = None,
-        worker_id: str | None = None,
-    ) -> AutomationTask:
-        """Transition task to a new status and optionally update logs / error message."""
-        pass
-
-    @abstractmethod
-    async def append_log(self, task_id: str, log_line: str) -> bool:
-        """Append a single log line to the task."""
-        pass
-
-    async def flush_logs(self, task_id: str | None = None) -> None:  # noqa: B027
-        """Flush any buffered log lines to the persistent broker."""
-        pass
-
-    @abstractmethod
-    async def list_pending_tasks(self, limit: int = 10) -> list[AutomationTask]:
-        """List unassigned tasks currently in PENDING state."""
-        pass
-
-    @abstractmethod
-    async def list_stale_running_tasks(
-        self, lease_timeout_sec: float = 60.0
-    ) -> list[AutomationTask]:
-        """List running tasks whose heartbeat has expired."""
-        pass
-
-    @abstractmethod
-    async def requeue_task(self, task_id: str, retry_count: int) -> AutomationTask:
-        """Re-queue an expired task back to PENDING state."""
-        pass
-
-    @abstractmethod
-    def subscribe_tasks(self, callback: Callable[[str, AutomationTask], Any]) -> None:
-        """Register a callback for task lifecycle events (create, update)."""
-        pass
-
-    # The three repository seams this broker *composes* rather than inherits from
-    # (ADR 0013). Concrete adapters assign them in __init__; callers that want job
-    # records, candidate memory or saved searches should depend on the store directly,
-    # which is why none of their verbs appear above.
-    job_store: JobRecordStore
-    candidate_memory: CandidateMemoryStore
-    saved_searches: SavedSearchStore
-
-
 class InMemoryTaskBroker(BaseTaskBroker):
     """Thread-safe & asyncio-safe in-memory broker for tests and local development."""
 
@@ -226,7 +131,7 @@ class InMemoryTaskBroker(BaseTaskBroker):
             self._tasks[task.id] = task
 
         await self._notify_subscribers("create", task)
-        return task.model_copy(deep=True)
+        return copy.deepcopy(task)
 
     async def claim_task(self, task_id: str, worker_id: str) -> AutomationTask | None:
         async with self._lock:
@@ -242,7 +147,7 @@ class InMemoryTaskBroker(BaseTaskBroker):
             task.locked_at = now
             task.last_heartbeat_at = now
             task.updated = now
-            claimed_task = task.model_copy(deep=True)
+            claimed_task = copy.deepcopy(task)
 
         await self._notify_subscribers("update", claimed_task)
         return claimed_task
@@ -250,7 +155,7 @@ class InMemoryTaskBroker(BaseTaskBroker):
     async def get_task(self, task_id: str) -> AutomationTask | None:
         async with self._lock:
             task = self._tasks.get(task_id)
-            return task.model_copy(deep=True) if task else None
+            return copy.deepcopy(task) if task else None
 
     async def update_heartbeat(self, task_id: str, worker_id: str) -> bool:
         async with self._lock:
@@ -287,7 +192,7 @@ class InMemoryTaskBroker(BaseTaskBroker):
             if worker_id is not None:
                 task.worker_id = worker_id
             task.updated = now
-            updated_task = task.model_copy(deep=True)
+            updated_task = copy.deepcopy(task)
 
         await self._notify_subscribers("update", updated_task)
         return updated_task
@@ -306,9 +211,7 @@ class InMemoryTaskBroker(BaseTaskBroker):
     async def list_pending_tasks(self, limit: int = 10) -> list[AutomationTask]:
         async with self._lock:
             pending = [
-                t.model_copy(deep=True)
-                for t in self._tasks.values()
-                if t.status == TaskStatus.PENDING
+                copy.deepcopy(t) for t in self._tasks.values() if t.status == TaskStatus.PENDING
             ]
             pending.sort(key=lambda x: x.created)
             return pending[:limit]
@@ -326,7 +229,7 @@ class InMemoryTaskBroker(BaseTaskBroker):
                     if hb.tzinfo is None:
                         hb = hb.replace(tzinfo=UTC)
                     if (now - hb).total_seconds() > lease_timeout_sec:
-                        stale.append(t.model_copy(deep=True))
+                        stale.append(copy.deepcopy(t))
             return stale
 
     async def requeue_task(self, task_id: str, retry_count: int) -> AutomationTask:
@@ -341,7 +244,7 @@ class InMemoryTaskBroker(BaseTaskBroker):
             task.last_heartbeat_at = None
             task.retry_count = retry_count
             task.updated = now
-            requeued = task.model_copy(deep=True)
+            requeued = copy.deepcopy(task)
 
         await self._notify_subscribers("update", requeued)
         return requeued
@@ -352,7 +255,7 @@ class InMemoryTaskBroker(BaseTaskBroker):
     async def _notify_subscribers(self, event_type: str, task: AutomationTask) -> None:
         for sub in self._subscribers:
             try:
-                res = sub(event_type, task.model_copy(deep=True))
+                res = sub(event_type, copy.deepcopy(task))
                 if asyncio.iscoroutine(res):
                     await res
             except Exception as e:

@@ -17,16 +17,16 @@ from pathlib import Path
 
 import pytest
 
-import boss_agent.enums as enums
-import boss_agent.identifier_helpers as ih
-import boss_agent.keyword_constants as kc
+import boss_agent.core.shared.enums as enums
+import boss_agent.core.shared.identifier_helpers as ih
+import boss_agent.core.shared.keyword_constants as kc
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
 def test_enums_isolated_ast():
-    """Verify boss_agent.enums imports only from standard library enum and __future__."""
-    source_file = REPO_ROOT / "src/boss_agent/enums.py"
+    """Verify boss_agent.core.shared.enums imports only from standard library enum and __future__."""
+    source_file = REPO_ROOT / "src/boss_agent/core/shared/enums.py"
     tree = ast.parse(source_file.read_text(encoding="utf-8"))
 
     imported_modules = set()
@@ -57,8 +57,8 @@ def test_enums_isolated_ast():
 
 
 def test_keyword_constants_isolated_ast():
-    """Verify boss_agent.keyword_constants imports only from standard library re and __future__."""
-    source_file = REPO_ROOT / "src/boss_agent/keyword_constants.py"
+    """Verify boss_agent.core.shared.keyword_constants imports only from standard library re and __future__."""
+    source_file = REPO_ROOT / "src/boss_agent/core/shared/keyword_constants.py"
     tree = ast.parse(source_file.read_text(encoding="utf-8"))
 
     imported_modules = set()
@@ -82,8 +82,8 @@ def test_keyword_constants_isolated_ast():
 
 
 def test_identifier_helpers_isolated_ast():
-    """Verify boss_agent.identifier_helpers imports NO domain entities."""
-    source_file = REPO_ROOT / "src/boss_agent/identifier_helpers.py"
+    """Verify boss_agent.core.shared.identifier_helpers imports NO domain entities."""
+    source_file = REPO_ROOT / "src/boss_agent/core/shared/identifier_helpers.py"
     tree = ast.parse(source_file.read_text(encoding="utf-8"))
 
     imported_modules = set()

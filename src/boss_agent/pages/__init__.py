@@ -32,7 +32,7 @@ reached by accident — ``parse_card``, ``wait_until``, ``classify_chat_button``
 ``JobPosting``, ``FilterConfig`` and their like, plus the stdlib and typing that leaked through it
 (``time``, ``logging``, ``re``, ``hashlib``, ``dataclass``, ``Any``, ``Callable``, ``Point``,
 ``Console``). Each has a real owner in the tree (``boss_agent.card_parser``,
-``boss_agent.identifier_helpers``, ``boss_agent.enums``, ``boss_agent.job_entities``,
+``boss_agent.core.shared.identifier_helpers``, ``boss_agent.core.shared.enums``, ``boss_agent.job_entities``,
 ``boss_agent.search_entities``), and every caller in this repo reaches them there; none reaches them
 through the facade.
 

@@ -20,9 +20,8 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
-from .broker.models import TaskType
 from .candidate_entities import CandidateProfile
-from .enums import (
+from .core.shared.enums import (
     DEPTH_DECLARED,
     DEPTH_LEGACY_HALF_PAIR,
     DEPTH_LEGACY_PAIR,
@@ -33,24 +32,14 @@ from .enums import (
     TargetAction,
     depth_already_reached,
 )
-from .errors import BrokerError, TransportError
-from .feed_records import (
-    card_facets_record,
-    card_record,
-    effective_company,
-    effective_title,
-    enriched_record,
-    posting_from_record,
-)
-from .identifier_helpers import (
+from .core.shared.errors import BrokerError, TransportError
+from .core.shared.identifier_helpers import (
     greeting_is_human,
     is_communication_expired,
     is_direct_hire_company,
     jd_is_usable_on_file,
 )
-from .job_entities import JobCardBrief, JobPosting
-from .job_store import INVALID_JOB_TITLES, InMemoryJobRecordStore, JobRecordStore
-from .keyword_constants import (
+from .core.shared.keyword_constants import (
     APPLIED_SOURCE_AGENT,
     APPLIED_SOURCE_PLATFORM_HISTORICAL,
     EXPIRED_POSTING_REASON,
@@ -59,6 +48,17 @@ from .keyword_constants import (
     HEADHUNTER_COMMUTE_PROBE_SKIP_REASON,
     NOT_INSPECTED_DISTRICT_SKIP_REASON,
 )
+from .core.task.domain.models import TaskType
+from .feed_records import (
+    card_facets_record,
+    card_record,
+    effective_company,
+    effective_title,
+    enriched_record,
+    posting_from_record,
+)
+from .job_entities import JobCardBrief, JobPosting
+from .job_store import INVALID_JOB_TITLES, InMemoryJobRecordStore, JobRecordStore
 from .pages.communication import ChatPage
 from .pages.job_detail import JobDetailPage
 from .pages.job_feed import (
@@ -516,7 +516,7 @@ def station_probe_upgrade(
 
 async def is_task_cancelled(broker: Any, task_id: str) -> bool:
     """Whether the user cancelled the task this run belongs to."""
-    from .broker.models import TaskStatus
+    from .core.task.domain.models import TaskStatus
 
     task = await broker.get_task(task_id)
     return task is not None and task.status == TaskStatus.CANCELLED

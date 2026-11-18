@@ -26,9 +26,9 @@ from _chat_triage_harness import (
     throwaway_config,
 )
 
-from boss_agent.broker.models import TaskStatus, TaskType
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
 from boss_agent.chat_triage import TriagePages
+from boss_agent.core.task.domain.models import TaskStatus, TaskType
 from boss_agent.pages.communication import CommunicationListPage
 from boss_agent.rejection import DEFAULT_REJECTION_REPLY_TEXT, ChatAcknowledgmentSettings
 from boss_agent.screening_policy import ScreeningPolicy

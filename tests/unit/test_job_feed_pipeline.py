@@ -26,12 +26,13 @@ from _feed_harness import (
 )
 from selenium.common.exceptions import StaleElementReferenceException
 
-from boss_agent.enums import (
+from boss_agent.core.shared.enums import (
     ChatButtonState,
     JobRecordStatus,
     ScreeningStage,
     TargetAction,
 )
+from boss_agent.core.shared.keyword_constants import APPLIED_SOURCE_AGENT
 from boss_agent.feed_pipeline import (
     FeedStreamConfig,
     JobAction,
@@ -44,7 +45,6 @@ from boss_agent.job_entities import (
     JobPosting,
 )
 from boss_agent.job_store import InMemoryJobRecordStore
-from boss_agent.keyword_constants import APPLIED_SOURCE_AGENT
 from boss_agent.screening import CandidateScreener, JobVerdictStage
 from boss_agent.screening_policy import (
     ScreeningPolicy,
@@ -894,8 +894,8 @@ def test_for_task_wires_the_brokers_job_ledger():
 
 @pytest.mark.asyncio
 async def test_is_task_cancelled_reads_the_task_lease():
-    from boss_agent.broker.models import TaskStatus, TaskType
     from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
+    from boss_agent.core.task.domain.models import TaskStatus, TaskType
 
     broker = InMemoryTaskBroker()
     task = await broker.create_task(task_type=TaskType.SCRAPE_JOBS, payload={})

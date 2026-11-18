@@ -9,9 +9,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 from _card_fixtures import located
 
-from boss_agent.broker.models import AutomationTask, TaskType
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
-from boss_agent.identifier_helpers import compute_job_fingerprint
+from boss_agent.core.shared.identifier_helpers import compute_job_fingerprint
+from boss_agent.core.task.domain.models import AutomationTask, TaskType
 from boss_agent.job_entities import JobCardBrief, JobPosting
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.handlers.scrape_jobs import ScrapeJobsHandler
@@ -506,7 +506,7 @@ async def test_scrape_jobs_handler_logs_error_when_jd_contains_view_more():
 @pytest.mark.asyncio
 async def test_scrape_jobs_cancelled_task_does_not_execute_fallback():
     """Cancelled scrape task terminates immediately and does not fallback to extracting from current screen."""
-    from boss_agent.broker.models import TaskStatus
+    from boss_agent.core.task.domain.models import TaskStatus
     from boss_agent.worker.config import WorkerConfig
 
     broker = InMemoryTaskBroker()

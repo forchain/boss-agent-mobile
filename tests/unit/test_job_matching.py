@@ -283,7 +283,7 @@ def test_job_match_greeting_service_default_client_uses_realm(monkeypatch):
 
 
 def test_parse_recruiter_title_and_format_prefix():
-    from boss_agent.identifier_helpers import (
+    from boss_agent.core.shared.identifier_helpers import (
         format_recruiter_greeting_prefix,
         parse_recruiter_title,
     )

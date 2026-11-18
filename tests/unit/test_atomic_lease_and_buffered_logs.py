@@ -9,8 +9,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from boss_agent.broker.models import TaskStatus, TaskType
 from boss_agent.broker.pocketbase_adapter import PocketBaseTaskBroker
+from boss_agent.core.task.domain.models import TaskStatus, TaskType
 
 
 def _running_task_record(task_id: str = "task_stream") -> dict:

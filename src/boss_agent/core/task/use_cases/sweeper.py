@@ -1,14 +1,14 @@
 """
-src/boss_agent/broker/sweeper.py
-================================
+src/boss_agent/core/task/use_cases/sweeper.py
+=============================================
 Background task lease sweeper for crash detection and orphan task recovery.
 """
 
 import asyncio
 import logging
 
-from boss_agent.broker.models import TaskStatus
-from boss_agent.broker.pocketbase_adapter import BaseTaskBroker
+from boss_agent.core.task.domain.models import TaskStatus
+from boss_agent.core.task.interfaces.broker import BaseTaskBroker
 
 logger = logging.getLogger("boss_agent.sweeper")
 

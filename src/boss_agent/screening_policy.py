@@ -10,12 +10,12 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-from boss_agent.enums import (
+from boss_agent.core.shared.enums import (
     INHERIT_CHANNEL,
     ChannelPreference,
     normalize_channel_preference,
 )
-from boss_agent.identifier_helpers import (
+from boss_agent.core.shared.identifier_helpers import (
     is_headhunter_agency_name,
     is_masked_company_name,
 )

@@ -47,14 +47,14 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - import-time work for static type checkers only
     from .candidate_entities import CandidateProfile
-    from .enums import AuthStatus, ChannelPreference
-    from .greeting_prompt import load_greeting_prompt
-    from .identifier_helpers import (
+    from .core.shared.enums import AuthStatus, ChannelPreference
+    from .core.shared.identifier_helpers import (
         format_recruiter_greeting_prefix,
         is_headhunter_agency_name,
         is_masked_company_name,
         parse_recruiter_title,
     )
+    from .greeting_prompt import load_greeting_prompt
     from .job_entities import JobPosting
     from .screening import (
         CandidateScreener,
@@ -72,13 +72,13 @@ if TYPE_CHECKING:  # pragma: no cover - import-time work for static type checker
     from .search_entities import FilterConfig, SavedSearch, SearchConfig
 
 _LAZY_EXPORTS: dict[str, str] = {
-    "AuthStatus": ".enums",
+    "AuthStatus": ".core.shared.enums",
     "BaseBossPage": ".pages",
     "CandidateProfile": ".candidate_entities",
     "CandidateScreener": ".screening",
     "CardScreeningVerdict": ".screening",
     "CardVerdictStage": ".screening",
-    "ChannelPreference": ".enums",
+    "ChannelPreference": ".core.shared.enums",
     "ChatPage": ".pages",
     "FeedStreamConfig": ".feed_pipeline",
     "FeedStreamResult": ".feed_pipeline",
@@ -116,13 +116,13 @@ _LAZY_EXPORTS: dict[str, str] = {
     "append_company_blacklist_entry": ".screening_config",
     "build_resume_lifecycle_graph": ".graph",
     "ensure_greeting_prefix": ".matching",
-    "format_recruiter_greeting_prefix": ".identifier_helpers",
-    "is_headhunter_agency_name": ".identifier_helpers",
-    "is_masked_company_name": ".identifier_helpers",
+    "format_recruiter_greeting_prefix": ".core.shared.identifier_helpers",
+    "is_headhunter_agency_name": ".core.shared.identifier_helpers",
+    "is_masked_company_name": ".core.shared.identifier_helpers",
     "is_writable_screening_path": ".screening_config",
     "load_greeting_prompt": ".greeting_prompt",
     "load_settings": ".settings",
-    "parse_recruiter_title": ".identifier_helpers",
+    "parse_recruiter_title": ".core.shared.identifier_helpers",
     "resolve_git_common_root": ".settings",
     "resolve_pocketbase_data_dir": ".settings",
     "resolve_pocketbase_db_path": ".settings",

@@ -16,8 +16,8 @@ from typing import Any
 from droid_agent_core.gestures import Point, calculate_probe_coordinate
 from droid_agent_core.locators import LocatorRegistry
 
-from ..enums import ChatButtonState
-from ..identifier_helpers import classify_chat_button, jd_is_truncated
+from ..core.shared.enums import ChatButtonState
+from ..core.shared.identifier_helpers import classify_chat_button, jd_is_truncated
 from ..job_entities import JobLocationLine, JobPosting
 from .base import BaseBossPage, _log_error, _log_info, _log_warn
 

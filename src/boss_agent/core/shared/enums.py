@@ -1,5 +1,5 @@
 """
-boss_agent.enums
+boss_agent.core.shared.enums
 ================
 Domain enumerations and rank mappings for the Boss Application Layer (Issue #311, Spec #303).
 """

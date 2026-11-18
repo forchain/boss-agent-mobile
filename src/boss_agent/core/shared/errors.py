@@ -1,5 +1,5 @@
 """
-boss_agent.errors
+boss_agent.core.shared.errors
 =================
 Typed failure hierarchy for broker and persistence repository seams (Spec #303, ADR 0013).
 """

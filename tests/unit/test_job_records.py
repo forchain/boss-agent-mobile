@@ -9,8 +9,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
-from boss_agent.errors import TransportError, ValidationError
-from boss_agent.identifier_helpers import compute_job_fingerprint
+from boss_agent.core.shared.errors import TransportError, ValidationError
+from boss_agent.core.shared.identifier_helpers import compute_job_fingerprint
 
 
 def test_compute_job_fingerprint_consistency_and_normalization():
@@ -398,7 +398,10 @@ async def test_pocketbase_broker_delete_job_record():
 
 def test_extract_digest_and_tags_from_jd():
     """extract_digest_from_jd extracts concise summary and extract_tags_from_text matches tech tags."""
-    from boss_agent.identifier_helpers import extract_digest_from_jd, extract_tags_from_text
+    from boss_agent.core.shared.identifier_helpers import (
+        extract_digest_from_jd,
+        extract_tags_from_text,
+    )
     from boss_agent.job_entities import JobRecord
 
     raw_jd = """岗位职责
@@ -440,7 +443,7 @@ def test_extract_digest_and_tags_from_jd():
 def test_extract_digest_from_jd_english_headers_and_word_boundary():
     """English/bilingual JDs: bracketed section headers must not leak into the digest,
     and the 100-char truncation must not cut a Latin word in half."""
-    from boss_agent.identifier_helpers import extract_digest_from_jd
+    from boss_agent.core.shared.identifier_helpers import extract_digest_from_jd
 
     raw_jd = """【 Role Summary 】；
 We are seeking a passionate and experienced Senior Engineer to join our team to build the architecture of our shared coding agent platform used in your daily workflow and deeply integrated tooling.

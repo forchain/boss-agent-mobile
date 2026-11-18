@@ -13,8 +13,8 @@ from boss_agent.broker.collection_schema import (
     AUTOMATION_TASKS,
     pocketbase_collection_payload,
 )
-from boss_agent.broker.models import AutomationTask, TaskStatus, TaskType
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker, PocketBaseTaskBroker
+from boss_agent.core.task.domain.models import AutomationTask, TaskStatus, TaskType
 
 
 def test_pocketbase_schema_definition_validity():
@@ -320,7 +320,7 @@ async def test_list_pending_tasks_handles_request_exception():
     """Verify PocketBaseTaskBroker raises TransportError on network/connection error."""
     import requests
 
-    from boss_agent.errors import TransportError
+    from boss_agent.core.shared.errors import TransportError
 
     mock_session = MagicMock()
     mock_session.get.side_effect = requests.exceptions.ConnectionError("Connection refused")

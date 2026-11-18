@@ -4,8 +4,12 @@ from datetime import UTC, datetime
 
 import pytest
 
-from boss_agent.broker.models import TaskType
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
+from boss_agent.core.task.domain.models import TaskType
+from boss_agent.core.task.use_cases.startup_cleanup import (
+    STARTUP_CLEANUP_MARKER,
+    StartupCleanupGate,
+)
 from boss_agent.scheduler import (
     AutomationScheduler,
     get_next_cron_run,
@@ -13,7 +17,6 @@ from boss_agent.scheduler import (
     parse_cron_field,
 )
 from boss_agent.search_entities import SavedSearch
-from boss_agent.startup_cleanup import STARTUP_CLEANUP_MARKER, StartupCleanupGate
 
 
 def test_parse_cron_field():

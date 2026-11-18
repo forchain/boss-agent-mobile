@@ -14,7 +14,7 @@ from boss_agent.broker.provisioner import (
     provision_remote_pocketbase,
     provision_sqlite_database,
 )
-from boss_agent.errors import TransportError, ValidationError
+from boss_agent.core.shared.errors import TransportError, ValidationError
 
 _COLLECTIONS_DDL = """
     CREATE TABLE _collections (

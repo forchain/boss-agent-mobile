@@ -55,8 +55,8 @@ from enum import StrEnum
 from typing import Any
 
 from .broker.collection_schema import SAVED_SEARCH_MAX_JOBS
-from .broker.models import TaskType
-from .enums import TargetAction, TargetTaskType
+from .core.shared.enums import TargetAction, TargetTaskType
+from .core.task.domain.models import TaskType
 from .search_entities import SavedSearch
 from .settings import resolve_chat_acknowledgment_settings
 

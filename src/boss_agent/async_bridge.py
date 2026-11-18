@@ -14,7 +14,13 @@ from typing import Any, TypeVar
 
 import requests
 
-from .errors import BrokerError, ConflictError, RecordNotFoundError, TransportError, ValidationError
+from .core.shared.errors import (
+    BrokerError,
+    ConflictError,
+    RecordNotFoundError,
+    TransportError,
+    ValidationError,
+)
 
 T = TypeVar("T")
 

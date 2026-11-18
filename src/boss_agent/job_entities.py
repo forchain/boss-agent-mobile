@@ -10,7 +10,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from boss_agent.identifier_helpers import (
+from boss_agent.core.shared.identifier_helpers import (
     clean_job_title,
     compute_job_fingerprint,
     extract_digest_from_jd,

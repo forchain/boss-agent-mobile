@@ -9,7 +9,7 @@ from _feed_harness import GOOD_JD, ScriptedFeed, _card, _detail_page, script_pag
 
 import boss_agent
 from boss_agent import saved_search_store
-from boss_agent.errors import TransportError
+from boss_agent.core.shared.errors import TransportError
 from boss_agent.feed_pipeline import FeedStreamConfig
 from boss_agent.job_entities import JobPosting
 from boss_agent.saved_search_store import (
