@@ -8,7 +8,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from boss_agent.worker.config import WorkerConfig
+from boss_agent.adapters.inbound.worker.config import WorkerConfig
 
 logger = logging.getLogger("boss_agent.worker")
 

@@ -15,8 +15,8 @@ from unittest.mock import MagicMock
 import pytest
 from selenium.common.exceptions import WebDriverException
 
-from boss_agent.worker.config import WorkerConfig
-from boss_agent.worker.context import WorkerContext
+from boss_agent.adapters.inbound.worker.config import WorkerConfig
+from boss_agent.adapters.inbound.worker.context import WorkerContext
 
 
 class _DeadDriver:

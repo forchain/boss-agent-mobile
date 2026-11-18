@@ -9,12 +9,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 from _card_fixtures import located
 
+from boss_agent.adapters.inbound.worker.context import WorkerContext
+from boss_agent.adapters.inbound.worker.handlers.scrape_jobs import ScrapeJobsHandler
 from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
 from boss_agent.core.job.domain.job_entities import JobCardBrief, JobPosting
 from boss_agent.core.shared.identifier_helpers import compute_job_fingerprint
 from boss_agent.core.task.domain.models import AutomationTask, TaskType
-from boss_agent.worker.context import WorkerContext
-from boss_agent.worker.handlers.scrape_jobs import ScrapeJobsHandler
 
 
 def test_job_card_brief_fingerprint():
@@ -65,7 +65,7 @@ async def test_scrape_jobs_handler_skips_existing_and_scrapes_new():
         recruiter_name="李总",
     )
 
-    from boss_agent.worker.config import WorkerConfig
+    from boss_agent.adapters.inbound.worker.config import WorkerConfig
 
     handler = ScrapeJobsHandler(llm_client=MagicMock())
     context = WorkerContext(config=WorkerConfig(worker_id="test-worker"), driver=mock_driver)
@@ -142,7 +142,7 @@ async def test_scrape_jobs_handler_direct_ingestion_even_when_detail_fails():
         snippet="负责基于agent的devops体系的架构",
     )
 
-    from boss_agent.worker.config import WorkerConfig
+    from boss_agent.adapters.inbound.worker.config import WorkerConfig
 
     handler = ScrapeJobsHandler(llm_client=MagicMock())
     context = WorkerContext(config=WorkerConfig(worker_id="test-worker"), driver=mock_driver)
@@ -276,7 +276,7 @@ async def test_scrape_jobs_handler_preliminary_card_screening_and_enrichment():
         digest="负责核心智能体工作流平台搭建",
     )
 
-    from boss_agent.worker.config import WorkerConfig
+    from boss_agent.adapters.inbound.worker.config import WorkerConfig
 
     handler = ScrapeJobsHandler(llm_client=MagicMock())
     context = WorkerContext(config=WorkerConfig(worker_id="test-worker"), driver=mock_driver)
@@ -356,7 +356,7 @@ async def test_scrape_jobs_handler_preliminary_card_screening_and_enrichment():
 @pytest.mark.asyncio
 async def test_scrape_jobs_handler_facet_persistence_and_recruitment_type_telemetry():
     """Verify ScrapeJobsHandler persists company_scale, industry, tags, recruiter_title, and is_headhunter with logs."""
-    from boss_agent.worker.config import WorkerConfig
+    from boss_agent.adapters.inbound.worker.config import WorkerConfig
 
     broker = InMemoryTaskBroker()
     mock_driver = MagicMock()
@@ -477,7 +477,7 @@ async def test_scrape_jobs_handler_facet_persistence_and_recruitment_type_teleme
 @pytest.mark.asyncio
 async def test_scrape_jobs_handler_logs_error_when_jd_contains_view_more():
     """Verify that when JD still contains '查看更多', an explicit error log is recorded in task logs."""
-    from boss_agent.worker.config import WorkerConfig
+    from boss_agent.adapters.inbound.worker.config import WorkerConfig
 
     broker = InMemoryTaskBroker()
     mock_driver = MagicMock()
@@ -536,8 +536,8 @@ async def test_scrape_jobs_handler_logs_error_when_jd_contains_view_more():
 @pytest.mark.asyncio
 async def test_scrape_jobs_cancelled_task_does_not_execute_fallback():
     """Cancelled scrape task terminates immediately and does not fallback to extracting from current screen."""
+    from boss_agent.adapters.inbound.worker.config import WorkerConfig
     from boss_agent.core.task.domain.models import TaskStatus
-    from boss_agent.worker.config import WorkerConfig
 
     broker = InMemoryTaskBroker()
     mock_driver = MagicMock()
@@ -577,7 +577,7 @@ async def test_scrape_jobs_cancelled_task_does_not_execute_fallback():
 @pytest.mark.asyncio
 async def test_scrape_jobs_fallback_ignores_unspecified_title():
     """Fallback extraction must not persist records with '未注明职位'."""
-    from boss_agent.worker.config import WorkerConfig
+    from boss_agent.adapters.inbound.worker.config import WorkerConfig
 
     broker = InMemoryTaskBroker()
     mock_driver = MagicMock()
@@ -615,7 +615,7 @@ async def test_scrape_jobs_fallback_ignores_unspecified_title():
 @pytest.mark.asyncio
 async def test_scrape_jobs_detail_enrichment_does_not_overwrite_title_with_unspecified():
     """Enrichment must never overwrite a valid card title with '未注明职位'."""
-    from boss_agent.worker.config import WorkerConfig
+    from boss_agent.adapters.inbound.worker.config import WorkerConfig
 
     broker = InMemoryTaskBroker()
     mock_driver = MagicMock()

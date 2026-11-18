@@ -3,6 +3,10 @@
 scripts/worker.py
 =================
 CLI entrypoint for running the out-of-process Automation Worker daemon.
+
+The path is frozen: Cross-Worktree Service Preemption and System Doctor identify the
+worker process by ``pgrep -f scripts/worker.py``. Composition lives in
+:mod:`boss_agent.main`; this module keeps the flags and the process supervision.
 """
 
 import argparse
@@ -13,64 +17,12 @@ import sys
 from collections.abc import Coroutine, Sequence
 from typing import Any
 
-from boss_agent.adapters.outbound.config.settings import (
-    resolve_chat_acknowledgment_settings,
-    resolve_enable_scheduler,
-    resolve_pocketbase_url,
-    resolve_server_url,
-)
-from boss_agent.adapters.outbound.pocketbase.pocketbase_adapter import PocketBaseTaskBroker
-from boss_agent.core.task.interfaces.broker import BaseTaskBroker
-from boss_agent.core.task.use_cases.startup_cleanup import StartupCleanupGate
-from boss_agent.core.task.use_cases.sweeper import TaskLeaseSweeper
-from boss_agent.worker.config import WorkerConfig
-from boss_agent.worker.context import WorkerContext
-from boss_agent.worker.daemon import AutomationWorker
-from boss_agent.worker.handlers.auto_apply import AutoApplyHandler
-from boss_agent.worker.handlers.check_chat import CheckChatHandler
-from boss_agent.worker.handlers.check_login import CheckLoginHandler
-from boss_agent.worker.handlers.scrape_jobs import ScrapeJobsHandler
-from droid_agent_core.driver import AppiumSession, DriverConfig
+from boss_agent.adapters.inbound.worker.daemon import AutomationWorker
+from boss_agent.main import build_supervised_services, build_worker
 
 logger = logging.getLogger("worker_main")
 
 TERMINATION_SIGNALS = (signal.SIGTERM, signal.SIGINT)
-
-
-def build_supervised_services(
-    config: WorkerConfig,
-    broker: BaseTaskBroker,
-    startup_gate: StartupCleanupGate | None = None,
-) -> list[Coroutine[Any, Any, None]]:
-    """The auxiliary service loops supervised alongside the worker's claim loop.
-
-    The lease sweeper is what makes a crashed worker recoverable. Without it a task whose
-    worker died mid-run keeps its `running` status forever -- the heartbeat freezes with
-    the dead process, and the dashboard reports a permanently active task that nobody is
-    executing. It belongs to every worker process rather than to one particular mode, so
-    recovery cannot be switched off along with the scheduler.
-
-    Returns the coroutines themselves: `run_services` creates the tasks, so the list is
-    inert until it is supervised.
-    """
-    services: list[Coroutine[Any, Any, None]] = [
-        TaskLeaseSweeper(
-            broker=broker,
-            lease_timeout_sec=config.lease_timeout_sec,
-            retry_limit=config.max_task_retries,
-        ).start(interval_sec=config.lease_sweep_interval_sec)
-    ]
-
-    if config.enable_scheduler:
-        from boss_agent.scheduler import AutomationScheduler
-
-        services.append(
-            AutomationScheduler(
-                broker=broker, poll_interval_sec=30.0, startup_gate=startup_gate
-            ).run_forever()
-        )
-
-    return services
 
 
 async def run_services(
@@ -184,55 +136,15 @@ def main() -> None:
     )
     logger = logging.getLogger("worker_main")
 
-    resolved_pb_url = resolve_pocketbase_url(explicit_url=args.pb_url)
-    resolved_appium_url = resolve_server_url(explicit_url=args.appium_url)
-
-    config = WorkerConfig(
-        worker_id=args.worker_id or f"worker-{args.device_id}",
+    worker = build_worker(
+        worker_id=args.worker_id,
         device_id=args.device_id,
-        appium_url=resolved_appium_url,
-        pocketbase_url=resolved_pb_url,
+        appium_url=args.appium_url,
+        pocketbase_url=args.pb_url,
         poll_interval_sec=args.poll_interval,
-        enable_scheduler=resolve_enable_scheduler(explicit=args.enable_scheduler),
+        enable_scheduler=args.enable_scheduler,
     )
-
-    broker = PocketBaseTaskBroker(base_url=resolved_pb_url)
-
-    def driver_factory():
-        logger.info("Initializing Appium driver session for device %s", config.device_id)
-        driver_cfg = DriverConfig(
-            server_url=config.appium_url,
-            app_package="com.hpbr.bosszhipin",
-            extra_capabilities={"udid": config.device_id},
-        )
-        session = AppiumSession(driver_cfg)
-        return session.start()
-
-    context = WorkerContext(config=config, driver_factory=driver_factory)
-
-    handlers = [
-        CheckLoginHandler(),
-        ScrapeJobsHandler(),
-        AutoApplyHandler(),
-        CheckChatHandler(),
-    ]
-
-    # One gate shared by both services in this process, so --enable-scheduler queues
-    # the startup 拒信清扫 exactly once even though the worker and the scheduler
-    # initialize together (issue #230).
-    startup_gate = StartupCleanupGate(
-        broker,
-        enabled=config.run_cleanup_on_startup,
-        acknowledgment=resolve_chat_acknowledgment_settings(),
-    )
-
-    worker = AutomationWorker(
-        config=config,
-        broker=broker,
-        context=context,
-        handlers=handlers,
-        startup_gate=startup_gate,
-    )
+    config = worker.config
 
     logger.info(
         "Starting Automation Worker %s bound to device %s (PocketBase: %s)",
@@ -241,11 +153,7 @@ def main() -> None:
         config.pocketbase_url,
     )
 
-    service_coros: list[Coroutine[Any, Any, None]] = build_supervised_services(
-        config=config,
-        broker=broker,
-        startup_gate=startup_gate,
-    )
+    service_coros = build_supervised_services(worker)
     if config.enable_scheduler:
         logger.info("Integrated Cron scheduler enabled")
     logger.info(

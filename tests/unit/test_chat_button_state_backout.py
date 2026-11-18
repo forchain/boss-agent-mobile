@@ -15,17 +15,17 @@ from unittest.mock import MagicMock, patch
 import pytest
 from _card_fixtures import located
 
+from boss_agent.adapters.inbound.worker.config import WorkerConfig
+from boss_agent.adapters.inbound.worker.context import WorkerContext
+from boss_agent.adapters.inbound.worker.daemon import AutomationWorker
+from boss_agent.adapters.inbound.worker.handlers.auto_apply import AutoApplyHandler
+from boss_agent.adapters.inbound.worker.handlers.scrape_jobs import ScrapeJobsHandler
 from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
 from boss_agent.adapters.outbound.device.pages.job_detail import JobDetailPage
 from boss_agent.core.job.domain.job_entities import JobCardBrief
 from boss_agent.core.shared.enums import ChatButtonState
 from boss_agent.core.shared.identifier_helpers import classify_chat_button
 from boss_agent.core.task.domain.models import TaskStatus, TaskType
-from boss_agent.worker.config import WorkerConfig
-from boss_agent.worker.context import WorkerContext
-from boss_agent.worker.daemon import AutomationWorker
-from boss_agent.worker.handlers.auto_apply import AutoApplyHandler
-from boss_agent.worker.handlers.scrape_jobs import ScrapeJobsHandler
 
 
 @pytest.mark.parametrize(

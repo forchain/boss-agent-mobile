@@ -13,6 +13,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from boss_agent.adapters.inbound.worker.config import WorkerConfig
+from boss_agent.adapters.inbound.worker.context import WorkerContext
+from boss_agent.adapters.inbound.worker.daemon import AutomationWorker
+from boss_agent.adapters.inbound.worker.handlers.auto_apply import AutoApplyHandler
+from boss_agent.adapters.inbound.worker.handlers.scrape_jobs import ScrapeJobsHandler
 from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
 from boss_agent.adapters.outbound.device.pages.job_feed import JobListPage
 from boss_agent.core.search.domain.models import (
@@ -26,11 +31,6 @@ from boss_agent.core.shared.enums import (
     TargetAction,
 )
 from boss_agent.core.task.domain.models import TaskStatus, TaskType
-from boss_agent.worker.config import WorkerConfig
-from boss_agent.worker.context import WorkerContext
-from boss_agent.worker.daemon import AutomationWorker
-from boss_agent.worker.handlers.auto_apply import AutoApplyHandler
-from boss_agent.worker.handlers.scrape_jobs import ScrapeJobsHandler
 
 # ---------------------------------------------------------------------------
 # Ticket 1 (Issue #135): Feed Bottom Boundary & Pagination Tests

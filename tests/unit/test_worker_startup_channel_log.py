@@ -14,12 +14,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from boss_agent.adapters.inbound.worker.config import WorkerConfig
+from boss_agent.adapters.inbound.worker.context import WorkerContext
+from boss_agent.adapters.inbound.worker.handlers.auto_apply import AutoApplyHandler
+from boss_agent.adapters.inbound.worker.handlers.scrape_jobs import ScrapeJobsHandler
 from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
 from boss_agent.core.job.use_cases.feed_pipeline import FeedStreamResult
-from boss_agent.worker.config import WorkerConfig
-from boss_agent.worker.context import WorkerContext
-from boss_agent.worker.handlers.auto_apply import AutoApplyHandler
-from boss_agent.worker.handlers.scrape_jobs import ScrapeJobsHandler
 
 
 @pytest.fixture
@@ -49,8 +49,8 @@ async def _run(handler, broker, context, payload) -> str:
 
 
 def handler_module(handler):
-    import boss_agent.worker.handlers.auto_apply as auto_apply_module
-    import boss_agent.worker.handlers.scrape_jobs as scrape_jobs_module
+    import boss_agent.adapters.inbound.worker.handlers.auto_apply as auto_apply_module
+    import boss_agent.adapters.inbound.worker.handlers.scrape_jobs as scrape_jobs_module
 
     return auto_apply_module if isinstance(handler, AutoApplyHandler) else scrape_jobs_module
 

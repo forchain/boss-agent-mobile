@@ -1,0 +1,386 @@
+"""
+boss_agent.main
+===============
+The single composition root.
+
+This is the only module that knows every concrete adapter class. CLI scripts under
+``scripts/`` keep their paths (process identity is part of their contract) and shrink
+to argparse, calls into the builders below, and process supervision; they do not
+assemble broker, stores, device sessions, prompts, or LLM clients themselves.
+
+Dependencies point inward: this module imports core and adapters, never the reverse,
+and no core or adapter module imports it.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import sys
+from collections.abc import Coroutine
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+from boss_agent.adapters.inbound.verification.feed_verification import (
+    build_verification_pipeline as _build_verification_pipeline,
+)
+from boss_agent.adapters.inbound.verification.smoke_harness import SmokeHarness
+from boss_agent.adapters.inbound.worker.config import WorkerConfig
+from boss_agent.adapters.inbound.worker.context import WorkerContext
+from boss_agent.adapters.inbound.worker.daemon import AutomationWorker
+from boss_agent.adapters.inbound.worker.handlers import (
+    AutoApplyHandler,
+    CheckChatHandler,
+    CheckLoginHandler,
+    ScrapeJobsHandler,
+)
+from boss_agent.adapters.inbound.worker.scheduler import AutomationScheduler
+from boss_agent.adapters.outbound.config.config_realm import (
+    PLACEHOLDER_API_KEY,
+    is_mask_placeholder,
+)
+from boss_agent.adapters.outbound.config.greeting_prompt import load_greeting_prompt
+from boss_agent.adapters.outbound.config.settings import (
+    resolve_chat_acknowledgment_settings,
+    resolve_enable_scheduler,
+    resolve_pocketbase_url,
+    resolve_server_url,
+)
+from boss_agent.adapters.outbound.device.takeover import TakeoverHandler
+from boss_agent.adapters.outbound.llm.llm_config import create_llm_client, load_llm_config
+from boss_agent.adapters.outbound.llm.tracing import (
+    TracedCandidateScreener,
+    TracedJobMatchGreetingService,
+)
+from boss_agent.adapters.outbound.pocketbase.pocketbase_adapter import PocketBaseTaskBroker
+from boss_agent.adapters.outbound.pocketbase.saved_search_store import resolve_saved_search_store
+from boss_agent.adapters.outbound.resume.graph import run_resume_lifecycle_graph
+from boss_agent.adapters.outbound.resume.memory import ResumeMemoryManager, ResumeTextExtractor
+from boss_agent.core.candidate.domain.candidate_profile import CandidateProfile
+from boss_agent.core.job.use_cases.matching import JobMatchGreetingService
+from boss_agent.core.task.interfaces.broker import BaseTaskBroker
+from boss_agent.core.task.use_cases.startup_cleanup import StartupCleanupGate
+from boss_agent.core.task.use_cases.sweeper import TaskLeaseSweeper
+from droid_agent_core.driver import AppiumSession, DriverConfig
+from droid_agent_core.llm import LLMConfig, LLMDecisionClient
+
+#: Device capabilities shared by the worker's lazy session and the live verification runner.
+BOSS_APP_PACKAGE = "com.hpbr.bosszhipin"
+
+
+# --------------------------------------------------------------------------- LLM
+
+
+def _is_masked_key(value: str | None) -> bool:
+    """Whether a configured key is unset or still a masked/placeholder display value."""
+    if not value:
+        return True
+    stripped = str(value).strip()
+    return not stripped or stripped == PLACEHOLDER_API_KEY or is_mask_placeholder(stripped)
+
+
+def build_llm_client(
+    llm_config_arg: str | None = None,
+    *,
+    allow_config_path: bool = False,
+    timeout_sec: float | None = None,
+    max_tokens: int | None = None,
+) -> LLMDecisionClient:
+    """Build the LLM decision client from an optional inline JSON config.
+
+    Every evaluation/refinement script routes through here, so which wire protocol is
+    spoken is decided once by the configuration. A masked configured key falls back to
+    the realm's real key rather than being sent on the wire.
+    """
+    if llm_config_arg:
+        try:
+            if llm_config_arg.strip().startswith("{"):
+                config_data = json.loads(llm_config_arg)
+                base_url = config_data.get("base_url") or "https://api.minimaxi.com/v1"
+                api_key = config_data.get("api_key") or None
+                model = config_data.get("model") or "MiniMax-M3"
+                temperature = float(config_data.get("temperature") or 0.2)
+
+                default_cfg = load_llm_config()
+                if _is_masked_key(api_key):
+                    api_key = default_cfg.api_key
+                if (not base_url or base_url == "https://api.openai.com/v1") and _is_masked_key(
+                    config_data.get("api_key")
+                ):
+                    base_url = default_cfg.base_url
+                    model = default_cfg.model
+
+                overrides: dict[str, Any] = {}
+                if timeout_sec is not None:
+                    overrides["timeout_sec"] = timeout_sec
+                if max_tokens is not None:
+                    overrides["max_tokens"] = max_tokens
+                llm_cfg = LLMConfig(
+                    provider=config_data.get("provider", default_cfg.provider),
+                    base_url=base_url.rstrip("/"),
+                    api_key=api_key,
+                    model=model,
+                    temperature=temperature,
+                    **overrides,
+                )
+                return create_llm_client(config=llm_cfg)
+            if allow_config_path:
+                return create_llm_client(config=load_llm_config(llm_config_arg))
+        except Exception as e:
+            sys.stderr.write(f"Warning: Failed to parse custom LLM config ({e}), falling back.\n")
+
+    return create_llm_client()
+
+
+def build_matching_service(
+    *,
+    llm_client: LLMDecisionClient | None = None,
+    candidate_profile: CandidateProfile | None = None,
+    greeting_prompt: str | None = None,
+) -> TracedJobMatchGreetingService:
+    """The traced greeting service, with the settled Greeting Prompt injected verbatim."""
+    return TracedJobMatchGreetingService(
+        llm_client=llm_client or create_llm_client(),
+        candidate_profile=candidate_profile,
+        greeting_prompt=(
+            greeting_prompt if greeting_prompt is not None else load_greeting_prompt()
+        ),
+    )
+
+
+def build_screener(
+    *,
+    llm_client: LLMDecisionClient | None = None,
+    matching_service: JobMatchGreetingService | None = None,
+    greeting_prompt: str | None = None,
+    screening_prompt: str | None = None,
+) -> TracedCandidateScreener:
+    """The traced screener; prompt documents are injected, never read by core."""
+    return TracedCandidateScreener(
+        llm_client=llm_client,
+        matching_service=matching_service,
+        greeting_prompt=greeting_prompt,
+        screening_prompt=screening_prompt,
+    )
+
+
+# ------------------------------------------------------------------- worker daemon
+
+
+def _driver_factory(config: WorkerConfig) -> Any:
+    def create() -> Any:
+        logging.getLogger("worker_main").info(
+            "Initializing Appium driver session for device %s", config.device_id
+        )
+        driver_cfg = DriverConfig(
+            server_url=config.appium_url,
+            app_package=BOSS_APP_PACKAGE,
+            extra_capabilities={"udid": config.device_id},
+        )
+        return AppiumSession(driver_cfg).start()
+
+    return create
+
+
+def build_worker(
+    *,
+    worker_id: str | None = None,
+    device_id: str = "emulator-5554",
+    appium_url: str | None = None,
+    pocketbase_url: str | None = None,
+    poll_interval_sec: float = 2.0,
+    enable_scheduler: bool | None = None,
+) -> AutomationWorker:
+    """Compose one worker process: broker, session factory, handlers, and startup gate."""
+    resolved_pb_url = resolve_pocketbase_url(explicit_url=pocketbase_url)
+    resolved_appium_url = resolve_server_url(explicit_url=appium_url)
+
+    config = WorkerConfig(
+        worker_id=worker_id or f"worker-{device_id}",
+        device_id=device_id,
+        appium_url=resolved_appium_url,
+        pocketbase_url=resolved_pb_url,
+        poll_interval_sec=poll_interval_sec,
+        enable_scheduler=resolve_enable_scheduler(explicit=enable_scheduler),
+    )
+    broker = PocketBaseTaskBroker(base_url=resolved_pb_url)
+    context = WorkerContext(config=config, driver_factory=_driver_factory(config))
+
+    # One gate shared by both services in this process, so the integrated scheduler
+    # queues the startup 拒信清扫 exactly once (#230).
+    startup_gate = StartupCleanupGate(
+        broker,
+        enabled=config.run_cleanup_on_startup,
+        acknowledgment=resolve_chat_acknowledgment_settings(),
+    )
+    return AutomationWorker(
+        config=config,
+        broker=broker,
+        context=context,
+        handlers=[
+            CheckLoginHandler(),
+            ScrapeJobsHandler(),
+            AutoApplyHandler(),
+            CheckChatHandler(),
+        ],
+        startup_gate=startup_gate,
+    )
+
+
+def build_scheduler(
+    *,
+    pocketbase_url: str | None = None,
+    poll_interval_sec: float = 30.0,
+    broker: BaseTaskBroker | None = None,
+) -> AutomationScheduler:
+    """Compose the standalone Cron scheduler daemon."""
+    resolved_broker = broker or PocketBaseTaskBroker(
+        base_url=resolve_pocketbase_url(explicit_url=pocketbase_url)
+    )
+    return AutomationScheduler(broker=resolved_broker, poll_interval_sec=poll_interval_sec)
+
+
+def build_supervised_services(
+    worker: AutomationWorker,
+    *,
+    scheduler_poll_interval_sec: float = 30.0,
+) -> list[Coroutine[Any, Any, None]]:
+    """The auxiliary loops supervised beside the worker's claim loop."""
+    config = worker.config
+    services: list[Coroutine[Any, Any, None]] = [
+        TaskLeaseSweeper(
+            broker=worker.broker,
+            lease_timeout_sec=config.lease_timeout_sec,
+            retry_limit=config.max_task_retries,
+        ).start(interval_sec=config.lease_sweep_interval_sec)
+    ]
+    if config.enable_scheduler:
+        services.append(
+            AutomationScheduler(
+                broker=worker.broker,
+                poll_interval_sec=scheduler_poll_interval_sec,
+                startup_gate=worker.startup_gate,
+            ).run_forever()
+        )
+    return services
+
+
+# --------------------------------------------------------------------- device/session
+
+
+def build_device_session(*, device_udid: str, server_url: str) -> AppiumSession:
+    """A not-yet-started Appium session configured for the Boss 直聘 app."""
+    return AppiumSession(
+        DriverConfig(
+            server_url=server_url,
+            platform_name="Android",
+            automation_name="UiAutomator2",
+            device_name=device_udid,
+            app_package=BOSS_APP_PACKAGE,
+            app_activity="com.hpbr.bosszhipin.module.launcher.WelcomeActivity",
+            no_reset=True,
+            auto_grant_permissions=True,
+            new_command_timeout=300,
+            extra_capabilities={
+                "appium:udid": device_udid,
+                "appium:uiautomator2ServerInstallTimeout": 60000,
+                "appium:adbExecTimeout": 60000,
+                "appium:ensureWebviewsHavePages": True,
+                "appium:nativeWebScreenshot": True,
+            },
+        )
+    )
+
+
+def build_takeover_handler(driver: Any, *, auto_confirm_for_test: bool = False) -> TakeoverHandler:
+    return TakeoverHandler(driver, auto_confirm_for_test=auto_confirm_for_test)
+
+
+def build_resume_memory_manager(
+    *,
+    llm_client: LLMDecisionClient | None = None,
+    memory_file_path: str | Path | None = None,
+) -> ResumeMemoryManager:
+    return ResumeMemoryManager(llm_client=llm_client, memory_file_path=memory_file_path)
+
+
+def build_saved_search_store(*, prefer_database: bool = True) -> Any:
+    return resolve_saved_search_store(prefer_database=prefer_database)
+
+
+# ------------------------------------------------------------------- verification
+
+
+def build_verification_pipeline(
+    driver: Any,
+    *,
+    matching_service: JobMatchGreetingService | None = None,
+    **kwargs: Any,
+) -> Any:
+    """One verification feed run, composing the traced screener and prompt at this edge."""
+    return _build_verification_pipeline(
+        driver,
+        matching_service=matching_service or build_matching_service(),
+        **kwargs,
+    )
+
+
+def build_smoke_harness(driver: Any, **kwargs: Any) -> SmokeHarness:
+    """The interactive runner's harness, with its adapter dependencies wired here."""
+    kwargs.setdefault(
+        "takeover_handler", build_takeover_handler(driver, auto_confirm_for_test=True)
+    )
+    kwargs.setdefault("matching_service", build_matching_service())
+    kwargs.setdefault("memory_manager", build_resume_memory_manager())
+    return SmokeHarness(driver, **kwargs)
+
+
+# ----------------------------------------------------------------------- resume
+
+
+@dataclass(frozen=True)
+class ResumePipeline:
+    """A resume text extractor plus the wired LangGraph lifecycle runner."""
+
+    extractor: ResumeTextExtractor
+    memory_manager: ResumeMemoryManager
+
+    def run(self, **kwargs: Any) -> Any:
+        return run_resume_lifecycle_graph(
+            llm_client=self.memory_manager.llm_client,
+            **kwargs,
+        )
+
+
+def build_resume_text_source() -> ResumeTextExtractor:
+    """The text extractor alone, before an LLM client is worth building."""
+    return ResumeTextExtractor()
+
+
+def build_resume_pipeline(
+    *,
+    llm_client: LLMDecisionClient | None = None,
+    memory_file_path: str | Path | None = None,
+) -> ResumePipeline:
+    manager = ResumeMemoryManager(llm_client=llm_client, memory_file_path=memory_file_path)
+    return ResumePipeline(extractor=manager.extractor, memory_manager=manager)
+
+
+__all__ = [
+    "ResumePipeline",
+    "build_device_session",
+    "build_llm_client",
+    "build_matching_service",
+    "build_resume_memory_manager",
+    "build_resume_pipeline",
+    "build_resume_text_source",
+    "build_saved_search_store",
+    "build_scheduler",
+    "build_screener",
+    "build_smoke_harness",
+    "build_supervised_services",
+    "build_takeover_handler",
+    "build_verification_pipeline",
+    "build_worker",
+]
