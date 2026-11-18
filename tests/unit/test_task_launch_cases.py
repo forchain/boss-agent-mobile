@@ -3,9 +3,10 @@ tests/unit/test_task_launch_cases.py
 ====================================
 The AutomationTask launch contract — the Python half.
 
-``config/task_launch.cases.json`` is consumed by this tier *and* by
-``web/src/tests/taskLaunchCases.test.ts``. Neither builder owns the contract; the case
-table does, including the one-per-payload rule for how a run states its depth (#302). The divergences it pins were real: ``min_score`` was 75 in the launch
+``config/task_launch.cases.json`` is asserted only by this tier since ADR 0022 retired the
+TypeScript mirror: :mod:`boss_agent.task_launch` is the one owner of Depth Expression and
+Task Provenance. The case table still pins the one-per-payload rule for how a run states its
+depth (#302). The divergences it pins were real: ``min_score`` was 75 in the launch
 modal, 70 in the scheduler and absent from "run scheduled now"; the scheduler sent
 ``preview_only=False`` where every web builder sent ``True``, so the same SavedSearch
 produced inverted execution depth depending on who dispatched it.

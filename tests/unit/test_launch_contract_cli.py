@@ -106,3 +106,23 @@ def test_invalid_json_is_a_transport_error(capsys, command: str) -> None:
 
     assert code == 2
     assert "error" in json.loads(err)
+
+
+def test_the_typescript_launch_mirror_is_gone() -> None:
+    """ADR 0022: one owner. A deleted builder must fail loudly, not be shimmed."""
+    from pathlib import Path
+
+    root = Path(__file__).parents[2]
+    assert not (root / "web" / "src" / "lib" / "taskLaunch.ts").exists()
+    offenders = [
+        str(path.relative_to(root))
+        for path in (root / "web" / "src").rglob("*")
+        if path.suffix in (".ts", ".svelte")
+        and "lib/taskLaunch" in path.read_text(encoding="utf-8")
+    ]
+    assert offenders == []
+    assert not any(
+        "task_launch.cases.json" in path.read_text(encoding="utf-8")
+        for path in (root / "web" / "src").rglob("*")
+        if path.suffix in (".ts", ".svelte")
+    )

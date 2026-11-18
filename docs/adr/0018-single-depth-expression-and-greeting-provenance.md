@@ -126,3 +126,23 @@ human copy does that.
 - **Deferred, deliberately.** A legacy 定向投递 payload that stated no depth still drafts —
   the honest reading of what its writer asked for, pinned by
   `test_a_payload_that_states_no_depth_at_all_keeps_its_old_default`.
+
+
+## Amendment (2026-11-18, ADR 0022): the TypeScript mirror is retired
+
+This ADR accepted a TypeScript mirror of the launch contract, pinned to the Python output by
+`config/task_launch.cases.json`, because no server-side Python bridge existed when the
+dashboard was built. A server-side `pythonRunner` path is now an established pattern (ADR
+0021 uses the same shape for the Configuration Realm), and the dual implementation has
+become the larger risk: every contract change needed two implementations, two suites and a
+fixture to keep them aligned.
+
+The mirror is therefore deleted. `boss_agent.task_launch` is the sole owner of Depth
+Expression and Task Provenance; the Web Dashboard posts a launch *intent* to `/api/tasks`
+(and `POST /api/tasks/:id/rerun` for a rerun), and the server delegates construction and
+validation to the same Python module through `scripts/launch_contract.py`. A refusal is a
+4xx at that boundary. `config/task_launch.cases.json` remains the behavioural fixture,
+asserted only by the Python suite; it is no longer a cross-language lock.
+
+The presentational helper that renders a strategy's stored depth in the dashboard stays in
+Web; it displays data, and does not decide what a launch dispatches.

@@ -31,6 +31,8 @@ We follow the decision record format to capture the context, options considered,
 
 | [0021](0021-single-owner-configuration-realm.md) | Single-Owner Configuration Realm and the Web-Delegates-to-Python Contract | `ACCEPTED` | 2026-11-18 | Made `boss_agent.config_realm` the only reader/writer of the Configuration Realm, added the round-trip patch engine and JSON CLI, deleted the Python wrappers and the TypeScript settings template, and retired the cross-language defaults fixture. |
 
+| [0022](0022-single-owner-launch-contract.md) | Single-Owner Launch Contract Reached Through the Server | `ACCEPTED` | 2026-11-18 | Made `boss_agent.task_launch` the only owner of Depth Expression and Task Provenance, added the server-side launch-intent and rerun endpoints, deleted the TypeScript mirror, and amended ADR 0018. |
+
 ## Contributing New Decisions
 
 When proposing a new architectural decision:

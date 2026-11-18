@@ -21,7 +21,7 @@ const mocks = vi.hoisted(() => ({
 	createSavedSearch: vi.fn(),
 	updateSavedSearch: vi.fn(),
 	deleteSavedSearch: vi.fn(),
-	createAutomationTask: vi.fn()
+	launchAutomationTask: vi.fn()
 }));
 
 vi.mock('$lib/pocketbase', () => ({
@@ -30,7 +30,7 @@ vi.mock('$lib/pocketbase', () => ({
 	createSavedSearch: mocks.createSavedSearch,
 	updateSavedSearch: mocks.updateSavedSearch,
 	deleteSavedSearch: mocks.deleteSavedSearch,
-	createAutomationTask: mocks.createAutomationTask
+	launchAutomationTask: mocks.launchAutomationTask
 }));
 
 vi.mock('$lib/dashboardRealtime', () => ({
@@ -41,11 +41,6 @@ vi.mock('$lib/dashboardRealtime', () => ({
 }));
 
 import SearchesPage from '../routes/searches/+page.svelte';
-import {
-	buildSearchLaunch,
-	rebuildRerunPayload,
-	type SearchLaunchInput
-} from '../lib/taskLaunch';
 
 const DIRECT_ONLY_SEARCH = {
 	id: 's_direct',
@@ -211,50 +206,6 @@ describe('/searches strategy card channel badges', () => {
 
 		expect(screen.queryByText('🏢 仅直招')).toBeNull();
 		expect(screen.queryByText('👔 仅猎头')).toBeNull();
-	});
-});
-
-describe('launch contract forwards the strategy channel', () => {
-	it.each(['', 'all', 'direct_only', 'headhunter_only'])(
-		'packages channel_preference %s into the task payload',
-		(channel) => {
-			const search: SearchLaunchInput = {
-				id: 's_channel',
-				name: '直招专注',
-				keyword: 'AI Agent',
-				filter: { education: '硕士', channel_preference: channel }
-			};
-
-			const launch = buildSearchLaunch(search, { source: 'manual' });
-
-			// Opaque forwarding is the contract: the worker, not this builder, decides what
-			// an empty value means. What must survive is the value the operator chose.
-			expect(launch.payload.filter).toEqual({ education: '硕士', channel_preference: channel });
-		}
-	);
-
-	it('keeps the channel when a task is rebuilt for a rerun', () => {
-		const original = {
-			task_type: 'AUTO_APPLY',
-			payload: {
-				saved_search_id: 's_channel',
-				search_name: '直招专注',
-				keyword: 'AI Agent',
-				target_action: 'auto_apply',
-				max_jobs: 30,
-				filter: { education: '硕士', channel_preference: 'direct_only' }
-			}
-		};
-
-		const rerun = rebuildRerunPayload(original, 'task_prior');
-
-		// A rerun that dropped the channel would silently widen a direct-only strategy
-		// back to whatever the global setting says — the strategy's whole point lost.
-		expect(rerun.payload.filter).toEqual({
-			education: '硕士',
-			channel_preference: 'direct_only'
-		});
-		expect(rerun.task_type).toBe('AUTO_APPLY');
 	});
 });
 

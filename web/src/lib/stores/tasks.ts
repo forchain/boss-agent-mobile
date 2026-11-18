@@ -7,9 +7,10 @@
  */
 
 import { apiDelete, apiGet, apiPatch, apiPost } from '$lib/apiClient';
-import type { LaunchSource } from '$lib/taskLaunch';
 import { buildTaskQueryString, clampTaskLimit, clampTaskPage } from '$lib/taskQuery';
 import type { AutomationTask } from '$lib/types';
+
+export type LaunchSource = 'manual' | 'test' | 'scheduler';
 
 export interface TaskPage {
 	items: AutomationTask[];
