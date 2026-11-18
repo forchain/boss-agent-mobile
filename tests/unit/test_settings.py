@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from boss_agent.broker.pocketbase_adapter import PocketBaseTaskBroker
-from boss_agent.rejection import ChatAcknowledgmentSettings
+from boss_agent.core.chat.domain.rejection import ChatAcknowledgmentSettings
 from boss_agent.settings import (
     load_settings,
     resolve_chat_acknowledgment_settings,

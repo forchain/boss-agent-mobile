@@ -178,7 +178,7 @@ async def test_scheduler_dispatches_check_chat_task_for_inbox_cleanup_strategy()
     """#208: a CHECK_CHAT SavedSearch dispatches a rejection-acknowledgment task."""
     from unittest.mock import patch
 
-    from boss_agent.rejection import ChatAcknowledgmentSettings
+    from boss_agent.core.chat.domain.rejection import ChatAcknowledgmentSettings
 
     broker = InMemoryTaskBroker()
     await broker.saved_searches.save_saved_search(
@@ -226,7 +226,7 @@ async def test_scheduled_chat_cleanup_honours_the_configured_drill_mode():
     """A drill configured in settings must not be overridden into a live run."""
     from unittest.mock import patch
 
-    from boss_agent.rejection import ChatAcknowledgmentSettings
+    from boss_agent.core.chat.domain.rejection import ChatAcknowledgmentSettings
 
     broker = InMemoryTaskBroker()
     await broker.saved_searches.save_saved_search(

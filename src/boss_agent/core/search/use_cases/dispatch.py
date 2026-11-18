@@ -25,7 +25,7 @@ from boss_agent.core.search.domain.models import SavedSearch
 from boss_agent.core.search.use_cases.cron import is_cron_match
 
 if TYPE_CHECKING:
-    from boss_agent.rejection import ChatAcknowledgmentSettings
+    from boss_agent.core.chat.domain.rejection import ChatAcknowledgmentSettings
 
 
 def last_run_is_current_minute(raw: str | None, now: datetime) -> bool:

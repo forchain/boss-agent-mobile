@@ -19,7 +19,8 @@ from typing import Any
 
 from droid_agent_core.gestures import Point
 
-from ..rejection import DISINTEREST_REASON
+from ..core.chat.domain.rejection import DISINTEREST_REASON
+from ..core.chat.domain.triage import OUTBOUND_STATUS_MARKERS
 from .base import BACK_INTERVAL_SEC, BaseBossPage, ui_logger
 
 #: Separator in a communication card's `[Company] | [Position]` descriptor.
@@ -48,13 +49,6 @@ LIST_RECOVERY_MAX_STEPS: int = 6
 def _normalize_card_descriptors(text: str) -> str:
     """Collapse fullwidth vertical bars onto the ASCII card-descriptor separator."""
     return (text or "").replace(FULLWIDTH_CARD_DESCRIPTOR_SEPARATOR, CARD_DESCRIPTOR_SEPARATOR)
-
-
-#: Badge texts the platform renders in `iv_msg_status` for a thread whose last
-#: message is the candidate's own or an unsent draft (spec #205). Matched explicitly
-#: rather than keyed on the node's mere presence: a future badge with different wording
-#: would otherwise silently stop every rejection from being detected.
-OUTBOUND_STATUS_MARKERS: tuple[str, ...] = ("送达", "已读", "草稿")
 
 
 def _whitespace_digest(text: str) -> str:

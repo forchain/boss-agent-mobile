@@ -20,10 +20,10 @@ import logging
 from collections.abc import Sequence
 from typing import Any
 
+from boss_agent.core.chat.domain.rejection import ChatAcknowledgmentSettings
 from boss_agent.core.search.domain.launch import LaunchSource, build_chat_cleanup_launch
 from boss_agent.core.task.domain.models import AutomationTask, TaskStatus, TaskType
 from boss_agent.core.task.interfaces.broker import BaseTaskBroker
-from boss_agent.rejection import ChatAcknowledgmentSettings
 
 logger = logging.getLogger("boss_agent.startup_cleanup")
 

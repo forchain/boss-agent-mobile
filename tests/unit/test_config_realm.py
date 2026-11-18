@@ -50,7 +50,10 @@ def test_defaults_are_the_baseline_when_no_file_sets_a_key(tmp_path: Path) -> No
 
 def test_the_chat_block_defaults_are_declared_once() -> None:
     """The nested block's values come from the rejection module, not a second copy."""
-    from boss_agent.rejection import DEFAULT_MAX_SCAN_DEPTH, DEFAULT_REJECTION_REPLY_TEXT
+    from boss_agent.core.chat.domain.rejection import (
+        DEFAULT_MAX_SCAN_DEPTH,
+        DEFAULT_REJECTION_REPLY_TEXT,
+    )
 
     assert config_realm.CHAT_DEFAULTS["rejection_reply_text"] == DEFAULT_REJECTION_REPLY_TEXT
     assert config_realm.CHAT_DEFAULTS["max_scan_depth"] == DEFAULT_MAX_SCAN_DEPTH

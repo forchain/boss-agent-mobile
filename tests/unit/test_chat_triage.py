@@ -31,23 +31,21 @@ from _chat_triage_harness import (
     triage_run,
 )
 
-from boss_agent.chat_triage import (
-    LIST_RESET_FAILED_LOG,
-    LIST_RESET_LOG,
-    MAX_INSPECTED_CARDS,
-    ChatActor,
-    ChatActorAdapter,
-    ChatListReader,
-    CommunicationListAdapter,
-    StopReason,
-)
-from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
-from boss_agent.rejection import (
+from boss_agent.core.chat.domain.rejection import (
     DEFAULT_REJECTION_REPLY_TEXT,
     DISINTEREST_REASON,
     ChatAcknowledgmentSettings,
     RejectionVerdict,
 )
+from boss_agent.core.chat.domain.triage import StopReason
+from boss_agent.core.chat.interfaces.device import ChatActor, ChatListReader
+from boss_agent.core.chat.use_cases.triage import (
+    LIST_RESET_FAILED_LOG,
+    LIST_RESET_LOG,
+    MAX_INSPECTED_CARDS,
+)
+from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
+from boss_agent.pages.chat_adapters import ChatActorAdapter, CommunicationListAdapter
 from boss_agent.screening_config import load_screening_policy
 
 
@@ -73,6 +71,66 @@ def test_the_production_adapters_present_exactly_the_ports_triage_depends_on():
 
     assert isinstance(CommunicationListAdapter(page), ChatListReader)
     assert isinstance(ChatActorAdapter(page), ChatActor)
+
+
+class RecordingBlacklistSink:
+    """A BlacklistSink double: records the call and writes nothing."""
+
+    def __init__(self, written: Path | None = None) -> None:
+        self.written = written
+        self.calls: list[tuple[ScreeningPolicy, str]] = []
+
+    def persist_company_blacklist(self, policy: ScreeningPolicy, company_name: str) -> Path | None:
+        self.calls.append((policy, company_name))
+        return self.written
+
+
+@pytest.mark.asyncio
+async def test_triage_persists_through_the_injected_blacklist_sink_without_file_io(
+    policy, config_path
+):
+    """Blacklist persistence is the sink's job: the run itself must touch no file."""
+    before = config_path.read_text(encoding="utf-8")
+    sink = RecordingBlacklistSink(written=config_path)
+    harness = Harness([card(REJECTION_TEXT, sender="严胜", descriptor=DESCRIPTOR)])
+
+    report = await triage_run(
+        harness,
+        classifier=FakeClassifier({REJECTION_TEXT: True}),
+        policy=policy,
+        blacklist_sink=sink,
+    ).scan()
+
+    assert sink.calls == [(policy, COMPANY)]
+    assert report.blacklisted_companies == (COMPANY,)
+    # The in-memory policy is still the first write; persistence is delegated.
+    assert policy.company_blacklist == [COMPANY]
+    assert config_path.read_text(encoding="utf-8") == before
+
+
+@pytest.mark.asyncio
+async def test_scan_runs_against_injected_ports_without_constructing_pages(policy, monkeypatch):
+    """The engine drives the ports it was handed; it never reaches for a page object."""
+    import boss_agent.pages.communication as communication_pages
+    import boss_agent.pages.system as system_pages
+
+    def explode(*_args, **_kwargs):
+        raise AssertionError("ChatTriage constructed a device page")
+
+    monkeypatch.setattr(communication_pages, "CommunicationListPage", explode)
+    monkeypatch.setattr(communication_pages, "ChatPage", explode)
+    monkeypatch.setattr(system_pages, "StartupDialogPage", explode)
+    harness = Harness([card(REJECTION_TEXT, sender="严胜", descriptor=DESCRIPTOR)])
+
+    report = await triage_run(
+        harness,
+        classifier=FakeClassifier({REJECTION_TEXT: True}),
+        policy=policy,
+        blacklist_sink=RecordingBlacklistSink(),
+    ).scan()
+
+    assert report.blacklisted_companies == (COMPANY,)
+    assert report.acknowledged == 1
 
 
 # ---------------------------------------------------------------------------

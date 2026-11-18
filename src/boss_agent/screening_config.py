@@ -291,6 +291,13 @@ def persist_company_blacklist(policy: ScreeningPolicy, company_name: str) -> Pat
     return target if written else None
 
 
+class ScreeningConfigBlacklistSink:
+    """Production BlacklistSink: the Configuration Realm writer above (#458 moves it)."""
+
+    def persist_company_blacklist(self, policy: ScreeningPolicy, company_name: str) -> Path | None:
+        return persist_company_blacklist(policy, company_name)
+
+
 def save_policy(policy: ScreeningPolicy, config_path: str | Path | None = None) -> Path:
     """Save a ScreeningPolicy to the declarative local YAML configuration file."""
     if config_path:

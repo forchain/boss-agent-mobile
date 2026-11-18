@@ -10,6 +10,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from boss_agent.core.chat.domain.rejection import ChatAcknowledgmentSettings
 from boss_agent.core.search.domain.launch import LaunchSource, build_chat_cleanup_launch
 from boss_agent.core.search.domain.models import (
     FilterConfig,
@@ -23,7 +24,6 @@ from boss_agent.core.search.use_cases.cron import (
 )
 from boss_agent.core.search.use_cases.dispatch import build_dispatch, should_dispatch
 from boss_agent.core.task.domain.models import TaskType
-from boss_agent.rejection import ChatAcknowledgmentSettings
 
 MONDAY_9AM = datetime(2026, 9, 7, 9, 0, 0, tzinfo=UTC)
 
