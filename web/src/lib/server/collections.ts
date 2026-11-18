@@ -105,11 +105,13 @@ function normalizeChannelPreference(raw: unknown): ChannelPreference {
 	return VALID_CHANNEL_PREFERENCES.has(value) ? (value as ChannelPreference) : '';
 }
 
+type SavedSearchFilterKey = (typeof SAVED_SEARCH_FILTER_KEYS)[number];
+
 function normalizeSearchFilter(
 	rawFilter: Record<string, unknown>,
 	enableFilter: boolean
 ): SavedSearchFilter & { enable_filter: boolean } {
-	return {
+	const normalized = {
 		education: (rawFilter.education as string | undefined) ?? undefined,
 		salary: (rawFilter.salary as string | undefined) ?? undefined,
 		experience: (rawFilter.experience as string | undefined) ?? undefined,
@@ -122,7 +124,10 @@ function normalizeSearchFilter(
 			: [],
 		enable_filter: enableFilter,
 		channel_preference: normalizeChannelPreference(rawFilter.channel_preference)
-	};
+		// The declared key set is the one owner of the persisted shape: a key added to
+		// `SAVED_SEARCH_FILTER_KEYS` without a normalizer here fails to compile.
+	} satisfies Record<SavedSearchFilterKey, unknown>;
+	return normalized;
 }
 
 function normalizeSearchTargets(

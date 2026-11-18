@@ -6,7 +6,8 @@ Executes a verification run against a live Virtual Device Session or physical de
 
 The run is one ``JobFeedPipeline`` pass — the same engine the Automation Worker's handlers
 drive, reached through the entry point it publishes (issue #391). This script used to hand
-itself to ``SmokeHarness`` and thereby walk a second, bespoke implementation of a job feed
+itself to the retired verification adapter and thereby walk a second, bespoke implementation
+of a job feed
 that no device run ever exercised twice; two implementations of one feed drift, and this
 was the one nobody tested on a device. Which card was chosen, whether its JD was usable,
 what was screened and why: that is now answered in one place, and this runner reports it.
@@ -16,7 +17,7 @@ how, the device session it opens and closes, the two screenshots it captures for
 to look at afterwards, and the flags. The composition *around* the engine — the config
 translation, the log sink, activation, the profile load, the refusal to report a run that
 read nothing — is ``boss_agent.adapters.inbound.verification.feed_verification``'s,
-because ``SmokeHarness`` composes the
+because the retired verification adapter composed the
 same run and #391 left two copies of that block free to drift.
 
 Two things stay here because the pipeline cannot answer them for itself — it assumes a

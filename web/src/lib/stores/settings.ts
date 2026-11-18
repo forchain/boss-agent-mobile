@@ -121,28 +121,31 @@ export async function loadAllSettings(): Promise<void> {
 		const conf = await apiGet<any>('/api/settings');
 		if (conf) {
 			const resolvedChat = normalizeChatAcknowledgment(conf.chat);
+			// `/api/settings` is the Configuration Realm's resolved output, defaults
+			// included, so it is taken verbatim. A second fallback table here was a
+			// stale copy of the realm's baselines that could outlive a default change.
 			settingsStore.set({
-				device: conf.device || DEFAULT_SETTINGS.device,
-				avd_name: conf.avd_name || DEFAULT_SETTINGS.avd_name,
-				server_url: conf.server_url || DEFAULT_SETTINGS.server_url,
-				pocketbase_url: conf.pocketbase_url || DEFAULT_SETTINGS.pocketbase_url,
+				device: conf.device,
+				avd_name: conf.avd_name,
+				server_url: conf.server_url,
+				pocketbase_url: conf.pocketbase_url,
 				// A saved legacy vendor value (minimax/deepseek) predates the protocol
 				// switch; it must still land on a selectable protocol (issue #418).
-				provider: conf.provider ? normalizeLlmProvider(conf.provider) : DEFAULT_SETTINGS.provider,
-				model: conf.model || DEFAULT_SETTINGS.model,
-				base_url: conf.base_url || DEFAULT_SETTINGS.base_url,
+				provider: normalizeLlmProvider(conf.provider),
+				model: conf.model,
+				base_url: conf.base_url,
 				api_key: conf.api_key || '',
-				temperature: conf.temperature ?? DEFAULT_SETTINGS.temperature,
-				timeout_sec: conf.timeout_sec ?? DEFAULT_SETTINGS.timeout_sec,
-				max_tokens: conf.max_tokens ?? DEFAULT_SETTINGS.max_tokens,
+				temperature: conf.temperature,
+				timeout_sec: conf.timeout_sec,
+				max_tokens: conf.max_tokens,
 				langsmith_tracing: Boolean(conf.langsmith_tracing),
 				langsmith_api_key: conf.langsmith_api_key || '',
-				langsmith_project: conf.langsmith_project || DEFAULT_SETTINGS.langsmith_project,
-				daily_greeting_limit: conf.daily_greeting_limit ?? DEFAULT_SETTINGS.daily_greeting_limit,
-				preview_timeout_sec: conf.preview_timeout_sec ?? DEFAULT_SETTINGS.preview_timeout_sec,
+				langsmith_project: conf.langsmith_project,
+				daily_greeting_limit: conf.daily_greeting_limit,
+				preview_timeout_sec: conf.preview_timeout_sec,
 				enable_greeting: conf.enable_greeting !== false,
 				chat: resolvedChat,
-				communication_cooldown_days: conf.communication_cooldown_days ?? DEFAULT_SETTINGS.communication_cooldown_days
+				communication_cooldown_days: conf.communication_cooldown_days
 			});
 			chatAckStore.set({ ...resolvedChat });
 

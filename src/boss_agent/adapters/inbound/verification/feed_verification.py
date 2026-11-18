@@ -3,8 +3,8 @@ boss_agent.adapters.inbound.verification.feed_verification
 ===========================================================
 One composition of a verification feed run, for both of the callers that verify on a device.
 
-Issues #389-#391 removed the second *implementation* of a job feed: ``SmokeHarness``
-became an adapter over ``JobFeedPipeline`` (#390), and ``scripts/run_live_test.py`` stopped
+Issues #389-#391 removed the second *implementation* of a job feed: the legacy verification
+adapter became an adapter over ``JobFeedPipeline`` (#390), and ``scripts/run_live_test.py`` stopped
 going through the harness and drove the engine itself (#391). What neither ticket removed
 was the composition *around* the engine — translating what an operator asked for into one
 ``FeedStreamConfig``, wiring the run's log to a console a person is watching, raising the

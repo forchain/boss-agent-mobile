@@ -18,7 +18,7 @@ import json
 import logging
 import sys
 from collections.abc import Coroutine
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -412,7 +412,12 @@ def build_resume_memory_manager(
     candidate_memory: CandidateMemoryStore | None = None,
     memory_file_path: str | Path | None = None,
 ) -> ResumeMemoryManager:
-    client = llm_client or create_llm_client()
+    # Resume structuring keeps its pre-refactor output ceiling at the composition root:
+    # the token budget is a wire concern, so the core Use Case no longer names it while
+    # ``scripts/parse_resume.py`` and the verification refresh stay on the same budget.
+    client = llm_client or create_llm_client(
+        config=replace(load_llm_config(), max_tokens=RESUME_PARSE_DEFAULT_MAX_TOKENS)
+    )
     store = candidate_memory or resolve_candidate_memory_store()
     return ResumeMemoryManager(
         llm_client=client,

@@ -110,18 +110,15 @@ class FilterConfig:
 
     def to_wire_dict(self) -> dict[str, Any]:
         """Serialize the full declared filter key set for SavedSearch persistence."""
-        return {
-            "education": self.education,
-            "salary": self.salary,
-            "experience": self.experience,
-            "activity": self.activity,
-            "company_scales": list(self.company_scales) if self.company_scales else [],
-            "industries": list(self.industries) if self.industries else [],
-            "enable_filter": self.enable_filter,
+        values = {
+            **self.to_dict(),
             # '' is a real value, not a missing key: it is how a strategy says
             # "inherit the global channel" and it must survive a round-trip unchanged.
             "channel_preference": self.channel_preference,
         }
+        # The declared key set is the one owner: a key added to it cannot be silently
+        # omitted from the persisted shape, and a stray key cannot ride along.
+        return {key: values[key] for key in SAVED_SEARCH_FILTER_KEYS}
 
 
 #: Declared filter keys persisted inside ``saved_searches.filter``, shared across
