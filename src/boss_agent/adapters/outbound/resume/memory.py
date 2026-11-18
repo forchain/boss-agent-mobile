@@ -14,6 +14,7 @@ from rich.console import Console
 from boss_agent.core.candidate.domain.candidate_profile import (
     CandidateProfile,
     StructuredCandidateProfile,
+    stored_profile_is_substantive,
 )
 from boss_agent.core.candidate.domain.profile_normalizer import ProfileNormalizer
 from boss_agent.core.candidate.interfaces.candidate_memory_store import CandidateMemoryStore
@@ -197,13 +198,7 @@ class ResumeMemoryManager:
 
         data = run_sync(self.candidate_memory.get_candidate_profile(), timeout=5.0)
 
-        if data and (
-            data.get("name")
-            or data.get("core_skills")
-            or data.get("work_experiences")
-            or data.get("projects")
-            or data.get("profile_document")
-        ):
+        if stored_profile_is_substantive(data):
             return CandidateProfile.from_dict(data)
         return None
 

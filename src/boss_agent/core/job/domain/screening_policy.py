@@ -454,7 +454,7 @@ def resolve_screening_policy(
 
     One rule, two callers, because a strategy's recruitment channel has to mean the same
     thing no matter who runs it: the worker feed pipeline
-    (``FeedStreamConfig.from_payload``) and the interactive ``SmokeHarness`` both start
+    (``FeedStreamConfig.from_payload``) and the local Feed Verification run both start
     from a preset's policy and then apply whatever the strategy itself stated. Resolved
     separately, the same preset screened one channel under a cron run and another under
     the local runner — the "same SavedSearch, two meanings" divergence this codebase has

@@ -69,9 +69,9 @@ _Avoid_: Install script, setup helper, env checker
 The managed lifecycle of an Android Virtual Device (AVD) instance, its hardware profile, headless/GUI runtime states, and ADB port bindings.
 _Avoid_: Emulator runner, VM instance
 
-**Smoke Harness**:
-The verification adapter over the Mobile Job Feed Pipeline: it translates an operator's SearchConfig, FilterConfig and ScreeningPolicy into one feed run, gates that run on an authenticated session, and returns the JobPosting the run extracted. It owns no navigation of its own — activation and the auth challenge are the only two things it keeps, because the pipeline assumes a usable session and cannot answer either — so a verification run exercises the same engine the Automation Worker runs rather than a second implementation of a feed.
-_Avoid_: E2E test script, sanity check, launch test, second feed implementation
+**Feed Verification**:
+The composition around one verification feed run over the Mobile Job Feed Pipeline: it translates an operator's SearchConfig, FilterConfig and ScreeningPolicy into one feed run, gates that run on an authenticated session, wires the run's log to the operator's console, and returns the JobPosting the run extracted. It owns no navigation of its own — so a verification run exercises the same engine the Automation Worker runs rather than a second implementation of a feed.
+_Avoid_: Smoke Harness, E2E test script, sanity check, launch test, second feed implementation
 
 **Session Persistence**:
 The mechanism that detects user authentication status and preserves the logged-in app state across virtual device restarts to prevent repeated manual logins.

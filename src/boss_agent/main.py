@@ -75,7 +75,10 @@ from boss_agent.adapters.outbound.pocketbase.saved_search_store import (
 from boss_agent.adapters.outbound.resume.graph import run_resume_lifecycle_graph
 from boss_agent.adapters.outbound.resume.memory import ResumeMemoryManager, ResumeTextExtractor
 from boss_agent.adapters.shared.prompts import load_prompt_or_default
-from boss_agent.core.candidate.domain.candidate_profile import CandidateProfile
+from boss_agent.core.candidate.domain.candidate_profile import (
+    CandidateProfile,
+    stored_profile_is_substantive,
+)
 from boss_agent.core.candidate.interfaces.candidate_memory_store import CandidateMemoryStore
 from boss_agent.core.chat.use_cases.rejection_classifier import RejectionClassifier
 from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
@@ -425,13 +428,7 @@ def load_cached_candidate_profile(
     """Read the persisted CandidateProfile without constructing an LLM client or task broker."""
     store = candidate_memory or resolve_candidate_memory_store()
     data = run_sync(store.get_candidate_profile(), timeout=5.0)
-    if data and (
-        data.get("name")
-        or data.get("core_skills")
-        or data.get("work_experiences")
-        or data.get("projects")
-        or data.get("profile_document")
-    ):
+    if stored_profile_is_substantive(data):
         return CandidateProfile.from_dict(data)
     return None
 

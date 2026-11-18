@@ -314,7 +314,7 @@ class FeedStreamConfig:
             )
         # A strategy may pin its own recruitment channel; saying nothing means inherit the
         # policy resolved above (issue #368). The rule itself belongs to
-        # ``resolve_screening_policy``, which the interactive SmokeHarness also goes
+        # ``resolve_screening_policy``, which the local Feed Verification run also goes
         # through — two callers, one answer.
         screening_policy = resolve_screening_policy(
             base_policy,

@@ -136,6 +136,24 @@ def _coerce_years(value: Any) -> int:
         return 0
 
 
+def stored_profile_is_substantive(data: dict[str, Any] | None) -> bool:
+    """Whether a persisted profile record carries anything beyond an empty shell.
+
+    One predicate for every reader of the stored record: a Candidate Profile that holds
+    only ``{}``, nulls or an empty profile document must be treated as "no cached memory"
+    identically by the consolidated cache read and by the evaluation CLI's fallback.
+    """
+    if not data:
+        return False
+    return bool(
+        data.get("name")
+        or data.get("core_skills")
+        or data.get("work_experiences")
+        or data.get("projects")
+        or data.get("profile_document")
+    )
+
+
 @dataclass
 class CandidateProfile:
     """Structured memory profile representing candidate background and key strengths."""
