@@ -66,9 +66,10 @@ def test_page_and_workflow_settling_pauses_do_not_cost_wall_clock(pages_pacing_m
     pause rather than one module — a submodule that kept its own `import time` would otherwise
     pay real seconds while this test still reported success.
     """
-    from boss_agent import workflows
+    from boss_agent.adapters.inbound.verification import feed_verification
+    from boss_agent.adapters.outbound.device import takeover
 
-    for module in (*pages_pacing_modules, workflows):
+    for module in (*pages_pacing_modules, takeover, feed_verification):
         started_at = time.monotonic()
 
         module.time.sleep(2.0)
@@ -83,9 +84,10 @@ def test_dropping_the_pause_leaves_the_rest_of_the_clock_real(pages_pacing_modul
     A wait loop that exits on `time.time() - started < timeout_sec` only behaves the same if
     the rest of the module still hands back the real clock, so that is the half worth pinning.
     """
-    from boss_agent import workflows
+    from boss_agent.adapters.inbound.verification import feed_verification
+    from boss_agent.adapters.outbound.device import takeover
 
-    for module in (*pages_pacing_modules, workflows):
+    for module in (*pages_pacing_modules, takeover, feed_verification):
         assert abs(module.time.time() - time.time()) < 1.0, (
             f"{module.__name__} reads a clock that has drifted from the real one"
         )

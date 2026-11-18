@@ -61,11 +61,13 @@ async def test_auto_apply_rescued_headhunter_job_persists_relaxation_audit():
     )
 
     with (
-        patch("boss_agent.pages.feed_bundle.StartupDialogPage") as startup_cls,
-        patch("boss_agent.pages.feed_bundle.JobListPage"),
-        patch("boss_agent.pages.feed_bundle.SearchPage") as search_cls,
-        patch("boss_agent.pages.feed_bundle.JobDetailPage") as detail_cls,
-        patch("boss_agent.pages.feed_bundle.ChatPage"),
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.StartupDialogPage"
+        ) as startup_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobListPage"),
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.SearchPage") as search_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobDetailPage") as detail_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.ChatPage"),
     ):
         startup_cls.return_value.is_dialog_present.return_value = False
         search_cls.return_value.is_search_page.return_value = True
@@ -116,11 +118,13 @@ async def test_auto_apply_app_rule_rejection_persists_ignored_record():
     )
 
     with (
-        patch("boss_agent.pages.feed_bundle.StartupDialogPage") as startup_cls,
-        patch("boss_agent.pages.feed_bundle.JobListPage"),
-        patch("boss_agent.pages.feed_bundle.SearchPage") as search_cls,
-        patch("boss_agent.pages.feed_bundle.JobDetailPage") as detail_cls,
-        patch("boss_agent.pages.feed_bundle.ChatPage"),
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.StartupDialogPage"
+        ) as startup_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobListPage"),
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.SearchPage") as search_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobDetailPage") as detail_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.ChatPage"),
     ):
         startup_cls.return_value.is_dialog_present.return_value = False
         search_cls.return_value.is_search_page.return_value = True
@@ -222,10 +226,12 @@ async def test_scrape_jobs_relaxed_headhunter_card_persists_audit_fields():
     )
 
     with (
-        patch("boss_agent.pages.feed_bundle.StartupDialogPage") as startup_cls,
-        patch("boss_agent.pages.feed_bundle.JobListPage") as list_cls,
-        patch("boss_agent.pages.feed_bundle.SearchPage") as search_cls,
-        patch("boss_agent.pages.feed_bundle.JobDetailPage") as detail_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.StartupDialogPage"
+        ) as startup_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobListPage") as list_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.SearchPage") as search_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobDetailPage") as detail_cls,
     ):
         startup_cls.return_value.is_dialog_present.return_value = False
         list_cls.return_value.extract_visible_job_cards.return_value = [located(card, card_elem)]
@@ -284,10 +290,12 @@ async def test_scrape_jobs_app_rule_violation_without_rescue_is_ignored():
     )
 
     with (
-        patch("boss_agent.pages.feed_bundle.StartupDialogPage") as startup_cls,
-        patch("boss_agent.pages.feed_bundle.JobListPage") as list_cls,
-        patch("boss_agent.pages.feed_bundle.SearchPage") as search_cls,
-        patch("boss_agent.pages.feed_bundle.JobDetailPage") as detail_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.StartupDialogPage"
+        ) as startup_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobListPage") as list_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.SearchPage") as search_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobDetailPage") as detail_cls,
     ):
         startup_cls.return_value.is_dialog_present.return_value = False
         list_cls.return_value.extract_visible_job_cards.return_value = [located(card, card_elem)]
@@ -348,11 +356,13 @@ async def test_auto_apply_distant_job_is_ignored_before_chat_entry():
     )
 
     with (
-        patch("boss_agent.pages.feed_bundle.StartupDialogPage") as startup_cls,
-        patch("boss_agent.pages.feed_bundle.JobListPage"),
-        patch("boss_agent.pages.feed_bundle.SearchPage") as search_cls,
-        patch("boss_agent.pages.feed_bundle.JobDetailPage") as detail_cls,
-        patch("boss_agent.pages.feed_bundle.ChatPage") as chat_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.StartupDialogPage"
+        ) as startup_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobListPage"),
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.SearchPage") as search_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobDetailPage") as detail_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.ChatPage") as chat_cls,
     ):
         startup_cls.return_value.is_dialog_present.return_value = False
         search_cls.return_value.is_search_page.return_value = True
@@ -401,11 +411,13 @@ async def test_auto_apply_distant_job_is_never_rescued_by_whitelist():
     )
 
     with (
-        patch("boss_agent.pages.feed_bundle.StartupDialogPage") as startup_cls,
-        patch("boss_agent.pages.feed_bundle.JobListPage"),
-        patch("boss_agent.pages.feed_bundle.SearchPage") as search_cls,
-        patch("boss_agent.pages.feed_bundle.JobDetailPage") as detail_cls,
-        patch("boss_agent.pages.feed_bundle.ChatPage") as chat_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.StartupDialogPage"
+        ) as startup_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobListPage"),
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.SearchPage") as search_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobDetailPage") as detail_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.ChatPage") as chat_cls,
     ):
         startup_cls.return_value.is_dialog_present.return_value = False
         search_cls.return_value.is_search_page.return_value = True
@@ -460,11 +472,13 @@ async def test_auto_apply_nearby_job_proceeds_and_probes_distance():
     )
 
     with (
-        patch("boss_agent.pages.feed_bundle.StartupDialogPage") as startup_cls,
-        patch("boss_agent.pages.feed_bundle.JobListPage") as list_cls,
-        patch("boss_agent.pages.feed_bundle.SearchPage") as search_cls,
-        patch("boss_agent.pages.feed_bundle.JobDetailPage") as detail_cls,
-        patch("boss_agent.pages.feed_bundle.ChatPage"),
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.StartupDialogPage"
+        ) as startup_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobListPage") as list_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.SearchPage") as search_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobDetailPage") as detail_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.ChatPage"),
     ):
         startup_cls.return_value.is_dialog_present.return_value = False
         listed_card, card_elem = _scrape_card(title="大模型 Agent 平台架构师")
@@ -520,11 +534,13 @@ async def test_auto_apply_in_an_unlisted_district_skips_the_probe_and_defaults_s
     )
 
     with (
-        patch("boss_agent.pages.feed_bundle.StartupDialogPage") as startup_cls,
-        patch("boss_agent.pages.feed_bundle.JobListPage") as list_cls,
-        patch("boss_agent.pages.feed_bundle.SearchPage") as search_cls,
-        patch("boss_agent.pages.feed_bundle.JobDetailPage") as detail_cls,
-        patch("boss_agent.pages.feed_bundle.ChatPage"),
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.StartupDialogPage"
+        ) as startup_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobListPage") as list_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.SearchPage") as search_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobDetailPage") as detail_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.ChatPage"),
     ):
         startup_cls.return_value.is_dialog_present.return_value = False
         card, card_elem = _scrape_card(
@@ -565,11 +581,13 @@ async def test_auto_apply_skips_distance_probe_when_filter_disabled():
     )
 
     with (
-        patch("boss_agent.pages.feed_bundle.StartupDialogPage") as startup_cls,
-        patch("boss_agent.pages.feed_bundle.JobListPage"),
-        patch("boss_agent.pages.feed_bundle.SearchPage") as search_cls,
-        patch("boss_agent.pages.feed_bundle.JobDetailPage") as detail_cls,
-        patch("boss_agent.pages.feed_bundle.ChatPage"),
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.StartupDialogPage"
+        ) as startup_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobListPage"),
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.SearchPage") as search_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobDetailPage") as detail_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.ChatPage"),
     ):
         startup_cls.return_value.is_dialog_present.return_value = False
         search_cls.return_value.is_search_page.return_value = True
@@ -605,11 +623,13 @@ async def test_auto_apply_headhunter_target_skips_distance_probe_and_proceeds():
     )
 
     with (
-        patch("boss_agent.pages.feed_bundle.StartupDialogPage") as startup_cls,
-        patch("boss_agent.pages.feed_bundle.JobListPage"),
-        patch("boss_agent.pages.feed_bundle.SearchPage") as search_cls,
-        patch("boss_agent.pages.feed_bundle.JobDetailPage") as detail_cls,
-        patch("boss_agent.pages.feed_bundle.ChatPage"),
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.StartupDialogPage"
+        ) as startup_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobListPage"),
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.SearchPage") as search_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobDetailPage") as detail_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.ChatPage"),
     ):
         startup_cls.return_value.is_dialog_present.return_value = False
         search_cls.return_value.is_search_page.return_value = True
@@ -656,10 +676,12 @@ async def test_scrape_jobs_headhunter_card_skips_distance_probe_and_fails_open()
     )
 
     with (
-        patch("boss_agent.pages.feed_bundle.StartupDialogPage") as startup_cls,
-        patch("boss_agent.pages.feed_bundle.JobListPage") as list_cls,
-        patch("boss_agent.pages.feed_bundle.SearchPage") as search_cls,
-        patch("boss_agent.pages.feed_bundle.JobDetailPage") as detail_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.StartupDialogPage"
+        ) as startup_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobListPage") as list_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.SearchPage") as search_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobDetailPage") as detail_cls,
     ):
         startup_cls.return_value.is_dialog_present.return_value = False
         list_cls.return_value.extract_visible_job_cards.return_value = [located(card, _card_elem)]
@@ -711,10 +733,12 @@ async def test_scrape_jobs_distant_job_is_ingested_as_ignored():
     )
 
     with (
-        patch("boss_agent.pages.feed_bundle.StartupDialogPage") as startup_cls,
-        patch("boss_agent.pages.feed_bundle.JobListPage") as list_cls,
-        patch("boss_agent.pages.feed_bundle.SearchPage") as search_cls,
-        patch("boss_agent.pages.feed_bundle.JobDetailPage") as detail_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.StartupDialogPage"
+        ) as startup_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobListPage") as list_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.SearchPage") as search_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobDetailPage") as detail_cls,
     ):
         startup_cls.return_value.is_dialog_present.return_value = False
         list_cls.return_value.extract_visible_job_cards.return_value = [located(card, _card_elem)]
@@ -767,10 +791,12 @@ async def test_scrape_jobs_distant_job_is_never_rescued_by_whitelist():
     )
 
     with (
-        patch("boss_agent.pages.feed_bundle.StartupDialogPage") as startup_cls,
-        patch("boss_agent.pages.feed_bundle.JobListPage") as list_cls,
-        patch("boss_agent.pages.feed_bundle.SearchPage") as search_cls,
-        patch("boss_agent.pages.feed_bundle.JobDetailPage") as detail_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.StartupDialogPage"
+        ) as startup_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobListPage") as list_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.SearchPage") as search_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobDetailPage") as detail_cls,
     ):
         startup_cls.return_value.is_dialog_present.return_value = False
         list_cls.return_value.extract_visible_job_cards.return_value = [located(card, _card_elem)]
@@ -828,10 +854,12 @@ async def test_scrape_jobs_enriched_title_cannot_rescue_a_distant_job():
     )
 
     with (
-        patch("boss_agent.pages.feed_bundle.StartupDialogPage") as startup_cls,
-        patch("boss_agent.pages.feed_bundle.JobListPage") as list_cls,
-        patch("boss_agent.pages.feed_bundle.SearchPage") as search_cls,
-        patch("boss_agent.pages.feed_bundle.JobDetailPage") as detail_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.StartupDialogPage"
+        ) as startup_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobListPage") as list_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.SearchPage") as search_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobDetailPage") as detail_cls,
     ):
         startup_cls.return_value.is_dialog_present.return_value = False
         list_cls.return_value.extract_visible_job_cards.return_value = [located(card, _card_elem)]
@@ -875,10 +903,12 @@ async def test_scrape_jobs_skips_distance_probe_when_filter_disabled():
     )
 
     with (
-        patch("boss_agent.pages.feed_bundle.StartupDialogPage") as startup_cls,
-        patch("boss_agent.pages.feed_bundle.JobListPage") as list_cls,
-        patch("boss_agent.pages.feed_bundle.SearchPage") as search_cls,
-        patch("boss_agent.pages.feed_bundle.JobDetailPage") as detail_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.StartupDialogPage"
+        ) as startup_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobListPage") as list_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.SearchPage") as search_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobDetailPage") as detail_cls,
     ):
         startup_cls.return_value.is_dialog_present.return_value = False
         list_cls.return_value.extract_visible_job_cards.return_value = [located(card, _card_elem)]
@@ -932,10 +962,12 @@ async def test_scrape_jobs_channel_relaxation_does_not_rescue_a_distant_job():
     )
 
     with (
-        patch("boss_agent.pages.feed_bundle.StartupDialogPage") as startup_cls,
-        patch("boss_agent.pages.feed_bundle.JobListPage") as list_cls,
-        patch("boss_agent.pages.feed_bundle.SearchPage") as search_cls,
-        patch("boss_agent.pages.feed_bundle.JobDetailPage") as detail_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.StartupDialogPage"
+        ) as startup_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobListPage") as list_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.SearchPage") as search_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobDetailPage") as detail_cls,
     ):
         startup_cls.return_value.is_dialog_present.return_value = False
         list_cls.return_value.extract_visible_job_cards.return_value = [located(card, _card_elem)]

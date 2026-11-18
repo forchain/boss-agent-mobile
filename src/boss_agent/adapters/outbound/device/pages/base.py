@@ -1,6 +1,6 @@
 """
-pages.base
-==========
+boss_agent.adapters.outbound.device.pages.base
+===============================================
 The one shared seam every Boss page object sits on (spec #395, ticket #398).
 
 `BaseBossPage` is the only genuinely common code in the old monolith: driver lifecycle, key-based
@@ -10,8 +10,8 @@ still be reported through exactly the channels callers watch:
 
 * `logger` stays named ``boss_agent.pages``. That string is a public observability contract -- it
   predates the package split, and log greps, dashboards, and string-targeted patches
-  (`patch("boss_agent.pages.logger.error")`) all depend on it. Moving the definition here must not
-  silently re-home the channel to ``boss_agent.pages.base``.
+  (`patch("boss_agent.adapters.outbound.device.pages.logger.error")`) all depend on it. Moving the definition here must not
+  silently re-home the channel to the adapter module's own name.
 * `ui_logger` is the shared ``droid_agent_core.ui`` channel every selector query reports to.
 * `console` is one `Console` instance, created once here and re-exported by the facade, so rendered
   output keeps its formatting no matter which submodule prints.
@@ -24,6 +24,7 @@ from typing import Any
 
 from rich.console import Console
 
+from boss_agent.core.shared.keyword_constants import PLATFORM_BADGE_MARKERS
 from droid_agent_core.gestures import HumanizedGestureExecutor
 from droid_agent_core.locators import (
     LocatorRegistry,
@@ -31,8 +32,6 @@ from droid_agent_core.locators import (
     get_global_locator_registry,
     wait_until,
 )
-
-from ..core.shared.keyword_constants import PLATFORM_BADGE_MARKERS
 
 logger = logging.getLogger("boss_agent.pages")
 ui_logger = logging.getLogger("droid_agent_core.ui")

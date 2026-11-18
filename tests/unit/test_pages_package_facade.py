@@ -27,7 +27,7 @@ import logging
 import pytest
 from rich.console import Console
 
-from boss_agent import pages
+from boss_agent.adapters.outbound.device import pages
 from boss_agent.core.job.domain.job_entities import JobCardBrief
 
 #: Every public name the monolith *defined*, mapped to the submodule that now owns it. The
@@ -134,8 +134,10 @@ def _submodule(name: str):
 
 @pytest.mark.parametrize("name", sorted(LEGACY_PUBLIC_SURFACE))
 def test_facade_still_exports_every_legacy_symbol(name: str):
-    """`from boss_agent.pages import X` must keep working for every X the monolith exported."""
-    assert hasattr(pages, name), f"`from boss_agent.pages import {name}` no longer resolves"
+    """`from boss_agent.adapters.outbound.device.pages import X` must keep working for every X the monolith exported."""
+    assert hasattr(pages, name), (
+        f"`from boss_agent.adapters.outbound.device.pages import {name}` no longer resolves"
+    )
     assert name in pages.__all__, f"{name} is exported by attribute but missing from __all__"
 
 
@@ -148,8 +150,8 @@ def test_facade_reexports_the_owning_submodules_object(name: str, owner: str):
 @pytest.mark.parametrize("name", FEATURE_SUBMODULES)
 def test_each_feature_submodule_imports_on_its_own(name: str):
     """A consumer must be able to load one feature's adapters without the rest of the package."""
-    module = importlib.import_module(f"boss_agent.pages.{name}")
-    assert module.__name__ == f"boss_agent.pages.{name}"
+    module = importlib.import_module(f"boss_agent.adapters.outbound.device.pages.{name}")
+    assert module.__name__ == f"boss_agent.adapters.outbound.device.pages.{name}"
 
 
 def test_facade_reuses_one_logger_per_channel_and_one_console():
@@ -171,17 +173,17 @@ def test_facade_reuses_one_logger_per_channel_and_one_console():
 
 
 def test_patching_the_facade_logger_still_intercepts_module_logging():
-    """`patch("boss_agent.pages.logger.error")` must reach the log call the submodules make."""
+    """`patch("boss_agent.adapters.outbound.device.pages.logger.error")` must reach the log call the submodules make."""
     from unittest.mock import patch
 
-    with patch("boss_agent.pages.logger.error") as mock_err_log:
+    with patch("boss_agent.adapters.outbound.device.pages.logger.error") as mock_err_log:
         pages.base._log_error("probe")
 
     mock_err_log.assert_called_once_with("probe")
 
 
 def test_job_card_brief_reaches_callers_through_the_facade():
-    """`from boss_agent.pages import JobCardBrief` is live in three test modules today."""
+    """`from boss_agent.adapters.outbound.device.pages import JobCardBrief` is live in three test modules today."""
     assert pages.JobCardBrief is JobCardBrief
 
 

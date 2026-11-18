@@ -75,10 +75,16 @@ async def test_scrape_jobs_handler_skips_existing_and_scrapes_new():
     )
 
     with (
-        patch("boss_agent.pages.feed_bundle.StartupDialogPage") as mock_startup_cls,
-        patch("boss_agent.pages.feed_bundle.JobListPage") as mock_list_cls,
-        patch("boss_agent.pages.feed_bundle.SearchPage") as mock_search_cls,
-        patch("boss_agent.pages.feed_bundle.JobDetailPage") as mock_detail_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.StartupDialogPage"
+        ) as mock_startup_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobListPage") as mock_list_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.SearchPage"
+        ) as mock_search_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.JobDetailPage"
+        ) as mock_detail_cls,
     ):
         mock_startup = mock_startup_cls.return_value
         mock_startup.is_dialog_present.return_value = False
@@ -146,10 +152,16 @@ async def test_scrape_jobs_handler_direct_ingestion_even_when_detail_fails():
     )
 
     with (
-        patch("boss_agent.pages.feed_bundle.StartupDialogPage") as mock_startup_cls,
-        patch("boss_agent.pages.feed_bundle.JobListPage") as mock_list_cls,
-        patch("boss_agent.pages.feed_bundle.SearchPage") as mock_search_cls,
-        patch("boss_agent.pages.feed_bundle.JobDetailPage") as mock_detail_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.StartupDialogPage"
+        ) as mock_startup_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobListPage") as mock_list_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.SearchPage"
+        ) as mock_search_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.JobDetailPage"
+        ) as mock_detail_cls,
     ):
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_list = mock_list_cls.return_value
@@ -183,7 +195,7 @@ async def test_scrape_jobs_handler_direct_ingestion_even_when_detail_fails():
 
 def test_extract_visible_job_cards_parser():
     """extract_visible_job_cards accurately parses cards with salary, location, recruiter, tags, and snippet."""
-    from boss_agent.pages.job_feed import JobListPage
+    from boss_agent.adapters.outbound.device.pages.job_feed import JobListPage
 
     mock_driver = MagicMock()
     mock_card = MagicMock()
@@ -281,10 +293,16 @@ async def test_scrape_jobs_handler_preliminary_card_screening_and_enrichment():
     )
 
     with (
-        patch("boss_agent.pages.feed_bundle.StartupDialogPage") as mock_startup_cls,
-        patch("boss_agent.pages.feed_bundle.JobListPage") as mock_list_cls,
-        patch("boss_agent.pages.feed_bundle.SearchPage") as mock_search_cls,
-        patch("boss_agent.pages.feed_bundle.JobDetailPage") as mock_detail_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.StartupDialogPage"
+        ) as mock_startup_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobListPage") as mock_list_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.SearchPage"
+        ) as mock_search_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.JobDetailPage"
+        ) as mock_detail_cls,
     ):
         mock_startup = mock_startup_cls.return_value
         mock_startup.is_dialog_present.return_value = False
@@ -376,10 +394,16 @@ async def test_scrape_jobs_handler_facet_persistence_and_recruitment_type_teleme
     )
 
     with (
-        patch("boss_agent.pages.feed_bundle.StartupDialogPage") as mock_startup_cls,
-        patch("boss_agent.pages.feed_bundle.JobListPage") as mock_list_cls,
-        patch("boss_agent.pages.feed_bundle.SearchPage") as mock_search_cls,
-        patch("boss_agent.pages.feed_bundle.JobDetailPage") as mock_detail_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.StartupDialogPage"
+        ) as mock_startup_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobListPage") as mock_list_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.SearchPage"
+        ) as mock_search_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.JobDetailPage"
+        ) as mock_detail_cls,
     ):
         mock_startup = mock_startup_cls.return_value
         mock_startup.is_dialog_present.return_value = False
@@ -474,10 +498,16 @@ async def test_scrape_jobs_handler_logs_error_when_jd_contains_view_more():
     )
 
     with (
-        patch("boss_agent.pages.feed_bundle.StartupDialogPage") as mock_startup_cls,
-        patch("boss_agent.pages.feed_bundle.JobListPage") as mock_list_cls,
-        patch("boss_agent.pages.feed_bundle.SearchPage") as mock_search_cls,
-        patch("boss_agent.pages.feed_bundle.JobDetailPage") as mock_detail_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.StartupDialogPage"
+        ) as mock_startup_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobListPage") as mock_list_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.SearchPage"
+        ) as mock_search_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.JobDetailPage"
+        ) as mock_detail_cls,
     ):
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_list_cls.return_value.extract_visible_job_cards.return_value = [
@@ -523,8 +553,10 @@ async def test_scrape_jobs_cancelled_task_does_not_execute_fallback():
     await broker.update_task_status(task.id, status=TaskStatus.CANCELLED)
 
     with (
-        patch("boss_agent.pages.feed_bundle.JobListPage") as mock_list_cls,
-        patch("boss_agent.pages.feed_bundle.JobDetailPage") as mock_detail_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobListPage") as mock_list_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.JobDetailPage"
+        ) as mock_detail_cls,
     ):
         mock_list_cls.return_value.get_feed_bottom_boundary.return_value = None
         mock_detail = mock_detail_cls.return_value
@@ -559,8 +591,10 @@ async def test_scrape_jobs_fallback_ignores_unspecified_title():
     )
 
     with (
-        patch("boss_agent.pages.feed_bundle.JobListPage") as mock_list_cls,
-        patch("boss_agent.pages.feed_bundle.JobDetailPage") as mock_detail_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobListPage") as mock_list_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.JobDetailPage"
+        ) as mock_detail_cls,
     ):
         mock_list_cls.return_value.extract_visible_job_cards.return_value = []
         mock_list_cls.return_value.get_feed_bottom_boundary.return_value = MagicMock()
@@ -602,8 +636,10 @@ async def test_scrape_jobs_detail_enrichment_does_not_overwrite_title_with_unspe
     )
 
     with (
-        patch("boss_agent.pages.feed_bundle.JobListPage") as mock_list_cls,
-        patch("boss_agent.pages.feed_bundle.JobDetailPage") as mock_detail_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobListPage") as mock_list_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.JobDetailPage"
+        ) as mock_detail_cls,
     ):
         mock_list_cls.return_value.extract_visible_job_cards.return_value = [
             located(card, card_elem)

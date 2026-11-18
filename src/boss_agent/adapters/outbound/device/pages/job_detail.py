@@ -1,5 +1,5 @@
 """
-pages.job_detail
+boss_agent.adapters.outbound.device.pages.job_detail
 ================
 The job detail page and its commute-distance probe (spec #395, ticket #398).
 
@@ -13,12 +13,12 @@ import time
 from collections.abc import Callable
 from typing import Any
 
+from boss_agent.core.job.domain.job_entities import JobLocationLine, JobPosting
+from boss_agent.core.shared.enums import ChatButtonState
+from boss_agent.core.shared.identifier_helpers import classify_chat_button, jd_is_truncated
 from droid_agent_core.gestures import Point, calculate_probe_coordinate
 from droid_agent_core.locators import LocatorRegistry
 
-from ..core.job.domain.job_entities import JobLocationLine, JobPosting
-from ..core.shared.enums import ChatButtonState
-from ..core.shared.identifier_helpers import classify_chat_button, jd_is_truncated
 from .base import BaseBossPage, _log_error, _log_info, _log_warn
 
 # Commute distance widget on the job detail page (spec #209): "距离家庭住址19.5千米",

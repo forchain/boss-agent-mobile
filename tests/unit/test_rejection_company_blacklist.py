@@ -12,9 +12,9 @@ from pathlib import Path
 
 import yaml
 
+from boss_agent.adapters.outbound.device.pages.communication import parse_company_from_descriptor
 from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
 from boss_agent.core.shared.identifier_helpers import is_headhunter_agency_name
-from boss_agent.pages.communication import parse_company_from_descriptor
 from boss_agent.screening_config import (
     append_company_blacklist_entry,
     is_writable_screening_path,

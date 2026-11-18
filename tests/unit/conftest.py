@@ -92,9 +92,10 @@ def any_job_store(request) -> Any:
 @pytest.fixture(autouse=True)
 def instant_ui_pacing(monkeypatch: pytest.MonkeyPatch) -> None:
     """Let UI wait loops exhaust their budget, and gestures play out, without waiting."""
-    from boss_agent import workflows
+    from boss_agent.adapters.inbound.verification import feed_verification
+    from boss_agent.adapters.outbound.device import takeover
 
-    for module in (locators, gestures, workflows, *_pages_pacing_modules()):
+    for module in (locators, gestures, takeover, feed_verification, *_pages_pacing_modules()):
         monkeypatch.setattr(module, "time", _InstantPacingTime(time))
 
 
@@ -107,7 +108,7 @@ def _pages_pacing_modules() -> tuple[Any, ...]:
     from seconds into minutes with no failure to explain it. Walking the package keeps this fixture
     correct as submodules are added, rather than pinning today's file list by hand.
     """
-    from boss_agent import pages
+    from boss_agent.adapters.outbound.device import pages
 
     modules = []
     for info in pkgutil.iter_modules(pages.__path__):

@@ -19,8 +19,8 @@ from unittest.mock import MagicMock
 import pytest
 from _feed_harness import ScriptedFeed, _card, _detail_page, _pipeline, _posting
 
+from boss_agent.adapters.outbound.device.pages.job_feed import JobListPage
 from boss_agent.core.job.use_cases.feed_pipeline import FeedStreamConfig
-from boss_agent.pages.job_feed import JobListPage
 
 
 def test_is_on_home_page_detection():
@@ -149,7 +149,7 @@ async def test_a_run_with_no_keyword_resets_to_home_before_browsing_recommendati
 
 
 def test_chat_screen_does_not_collide_with_search_or_home():
-    from boss_agent.pages.job_feed import SearchPage
+    from boss_agent.adapters.outbound.device.pages.job_feed import SearchPage
 
     mock_driver = MagicMock()
     mock_chat_input = MagicMock()

@@ -15,12 +15,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 from _card_fixtures import located
 
+from boss_agent.adapters.outbound.device.pages.job_detail import JobDetailPage
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
 from boss_agent.core.job.domain.job_entities import JobCardBrief
 from boss_agent.core.shared.enums import ChatButtonState
 from boss_agent.core.shared.identifier_helpers import classify_chat_button
 from boss_agent.core.task.domain.models import TaskStatus, TaskType
-from boss_agent.pages.job_detail import JobDetailPage
 from boss_agent.worker.config import WorkerConfig
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.daemon import AutomationWorker
@@ -133,10 +133,16 @@ async def test_scrape_records_platform_historical_contact_and_backs_out(broker):
     )
 
     with (
-        patch("boss_agent.pages.feed_bundle.StartupDialogPage") as mock_startup_cls,
-        patch("boss_agent.pages.feed_bundle.JobListPage") as mock_list_cls,
-        patch("boss_agent.pages.feed_bundle.SearchPage") as mock_search_cls,
-        patch("boss_agent.pages.feed_bundle.JobDetailPage") as mock_detail_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.StartupDialogPage"
+        ) as mock_startup_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobListPage") as mock_list_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.SearchPage"
+        ) as mock_search_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.JobDetailPage"
+        ) as mock_detail_cls,
     ):
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_list = mock_list_cls.return_value
@@ -195,10 +201,16 @@ async def test_scrape_marks_expired_posting_as_ignored_and_backs_out(broker):
     )
 
     with (
-        patch("boss_agent.pages.feed_bundle.StartupDialogPage") as mock_startup_cls,
-        patch("boss_agent.pages.feed_bundle.JobListPage") as mock_list_cls,
-        patch("boss_agent.pages.feed_bundle.SearchPage") as mock_search_cls,
-        patch("boss_agent.pages.feed_bundle.JobDetailPage") as mock_detail_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.StartupDialogPage"
+        ) as mock_startup_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobListPage") as mock_list_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.SearchPage"
+        ) as mock_search_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.JobDetailPage"
+        ) as mock_detail_cls,
     ):
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_list = mock_list_cls.return_value
@@ -270,10 +282,14 @@ async def test_auto_apply_aborts_without_llm_waste_on_communicated_job(broker):
     )
 
     with (
-        patch("boss_agent.pages.feed_bundle.StartupDialogPage") as mock_startup_cls,
-        patch("boss_agent.pages.feed_bundle.JobListPage"),
-        patch("boss_agent.pages.feed_bundle.SearchPage"),
-        patch("boss_agent.pages.feed_bundle.JobDetailPage") as mock_detail_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.StartupDialogPage"
+        ) as mock_startup_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobListPage"),
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.SearchPage"),
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.JobDetailPage"
+        ) as mock_detail_cls,
     ):
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_detail = mock_detail_cls.return_value

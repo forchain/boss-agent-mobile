@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock, patch
 
-from boss_agent.pages.job_detail import JobDetailPage
+from boss_agent.adapters.outbound.device.pages.job_detail import JobDetailPage
 from droid_agent_core.gestures import (
     HumanizedGestureExecutor,
     calculate_probe_coordinate,
@@ -259,7 +259,7 @@ def test_expand_description_logs_error_when_expansion_fails(monkeypatch):
     page.find_by_key = MagicMock(side_effect=custom_find)
     page.gestures.human_click_at_point = MagicMock()
 
-    with patch("boss_agent.pages.logger.error") as mock_err_log:
+    with patch("boss_agent.adapters.outbound.device.pages.logger.error") as mock_err_log:
         success = page.expand_description_if_collapsed()
         assert success is False
         assert mock_err_log.called
@@ -302,7 +302,7 @@ def test_extract_job_posting_logs_error_if_desc_still_contains_expand_text(monke
     page.find_by_key = MagicMock(side_effect=custom_find)
     page.gestures.human_click_at_point = MagicMock()
 
-    with patch("boss_agent.pages.logger.error") as mock_err_log:
+    with patch("boss_agent.adapters.outbound.device.pages.logger.error") as mock_err_log:
         posting = page.extract_job_posting(timeout_sec=2.0)
         assert posting.title == "AI Agent应用开发师"
         assert mock_err_log.called

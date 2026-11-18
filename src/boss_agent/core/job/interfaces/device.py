@@ -7,7 +7,8 @@ The feed engine's device world, expressed structurally (ADR 0013, ADR 0016).
 import of the engine drag Appium into the core import graph and made a scripted device
 impossible to inject without patching constructors. This module inverts that dependency:
 the pipeline names exactly the operations it uses, and the production bundle in
-``boss_agent.pages.feed_bundle`` composes the concrete page objects that satisfy them.
+``boss_agent.adapters.outbound.device.pages.feed_bundle`` composes the concrete page
+objects that satisfy them.
 
 Structural typing, not wrappers (the Chat Triage precedent): the real page classes
 already speak this vocabulary, so they satisfy these Protocols as they are.
@@ -103,7 +104,8 @@ class IndustryFilterDialogPageProtocol(Protocol):
 class FeedDeviceWorld:
     """The composed device surface one feed run drives.
 
-    Production composition lives in ``boss_agent.pages.feed_bundle``. Tests compose the
+    Production composition lives in
+    ``boss_agent.adapters.outbound.device.pages.feed_bundle``. Tests compose the
     same shape from scripted stand-ins, which is the seam that keeps the engine out of
     Appium's import graph.
     """

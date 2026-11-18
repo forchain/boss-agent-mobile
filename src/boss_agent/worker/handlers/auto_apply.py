@@ -13,6 +13,7 @@ configures the run with ``target_action=auto_apply``.
 import logging
 from typing import Any
 
+from boss_agent.adapters.outbound.device.pages.feed_bundle import build_feed_device_world
 from boss_agent.core.candidate.domain.candidate_profile import CandidateProfile
 from boss_agent.core.job.domain.feed_stream import FeedStreamConfig
 from boss_agent.core.job.use_cases.feed_pipeline import JobFeedPipeline
@@ -23,7 +24,6 @@ from boss_agent.core.task.domain.models import AutomationTask, TaskType
 from boss_agent.core.task.interfaces.broker import BaseTaskBroker
 from boss_agent.greeting_prompt import load_greeting_prompt
 from boss_agent.llm_config import create_llm_client
-from boss_agent.pages.feed_bundle import build_feed_device_world
 from boss_agent.screening_prompt import load_screening_prompt
 from boss_agent.settings import load_feed_config_defaults
 from boss_agent.worker.context import WorkerContext
