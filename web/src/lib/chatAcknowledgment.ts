@@ -29,8 +29,11 @@ export const DEFAULT_LAUNCH_CHAT_DRY_RUN = true;
  * unbounded — the Python side coerces the same way (`coerce_positive_int`).
  */
 function positiveInt(raw: unknown, fallback: number): number {
+	if (typeof raw === 'boolean' || raw === null || raw === undefined) return fallback;
 	const parsed = Number(raw);
-	return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+	if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+	const floored = Math.floor(parsed);
+	return floored > 0 ? floored : fallback;
 }
 
 /**

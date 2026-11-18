@@ -37,8 +37,17 @@ export interface CommunicationSummary {
 }
 
 function parseTimestamp(raw: unknown): number | null {
-	if (typeof raw !== 'string' || !raw.trim()) return null;
-	const parsed = Date.parse(raw);
+	if (typeof raw !== 'string') return null;
+	const text = raw.trim();
+	if (!text) return null;
+	// PocketBase stores SQLite timestamps like "2026-09-01 12:00:00.000" (naive UTC).
+	// JS Date.parse treats naive strings as local time unless a UTC suffix is attached,
+	// diverging from Python's parse_utc_timestamp.
+	let normalized = text.replace(' ', 'T');
+	if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(normalized)) {
+		normalized += 'Z';
+	}
+	const parsed = Date.parse(normalized);
 	return Number.isNaN(parsed) ? null : parsed;
 }
 

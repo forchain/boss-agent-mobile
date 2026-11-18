@@ -6,6 +6,7 @@ Rejection triage domain: classifying explicit recruiter rejections found in the
 politely closed (Issues #205-#208).
 """
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
@@ -114,10 +115,15 @@ def coerce_positive_int(value: Any, default: int) -> int:
     Single clamp shared by the config resolver and the per-task payload overrides,
     so a corrupt or partial setting can never disable a scan bound.
     """
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
+    if isinstance(value, bool):
         return default
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+    if not math.isfinite(numeric) or numeric <= 0:
+        return default
+    parsed = math.floor(numeric)
     return parsed if parsed > 0 else default
 
 

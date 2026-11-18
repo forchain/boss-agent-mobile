@@ -444,7 +444,7 @@ def greeting_is_human(record: dict | None) -> bool:
     if not record:
         return False
     text = (record.get("greeting_message") or "").strip()
-    return bool(text) and str(record.get("greeting_source") or "") == GREETING_SOURCE_HUMAN
+    return bool(text) and str(record.get("greeting_source") or "").strip() == GREETING_SOURCE_HUMAN
 
 
 def is_headhunter_agency_name(name: str | None) -> bool:

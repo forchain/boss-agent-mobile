@@ -49,49 +49,34 @@ export function serializeScreeningPolicyYaml(policy: ScreeningPolicy): string {
 export function readScreeningPolicy(): ScreeningPolicy {
 	const settings = loadMergedSettings();
 
-	// Check if screening settings exist in unified settings
+	// Legacy fallback: check config/screening.local.yaml if unified settings lack screening keys
 	if (
-		settings.title_blacklist ||
-		settings.title_whitelist ||
-		settings.company_blacklist ||
-		settings.jd_blacklist ||
-		settings.business_district_blacklist ||
-		settings.business_district_inspect_list ||
-		settings.enable_screening !== undefined
+		settings.title_blacklist === undefined &&
+		settings.title_whitelist === undefined &&
+		settings.company_blacklist === undefined &&
+		settings.jd_blacklist === undefined
 	) {
-		return {
-			enable_screening: settings.enable_screening !== false,
-			title_whitelist: settings.title_whitelist || [],
-			title_blacklist: settings.title_blacklist || [],
-			company_blacklist: settings.company_blacklist || [],
-			jd_blacklist: settings.jd_blacklist || [],
-			business_district_blacklist: settings.business_district_blacklist || [],
-			business_district_inspect_list: settings.business_district_inspect_list || [],
-			max_commute_distance_km: normalizeCommuteLimit(settings.max_commute_distance_km)
-		};
-	}
-
-	// Legacy fallback: check config/screening.local.yaml if exists
-	const root = getProjectRoot();
-	const legacyPath = path.join(root, 'config', 'screening.local.yaml');
-	if (fs.existsSync(legacyPath)) {
-		try {
-			const content = fs.readFileSync(legacyPath, 'utf-8');
-			return parseScreeningPolicyYaml(content);
-		} catch (e) {
-			console.warn('[ScreeningConfig] Failed to parse legacy screening.local.yaml:', e);
+		const root = getProjectRoot();
+		const legacyPath = path.join(root, 'config', 'screening.local.yaml');
+		if (fs.existsSync(legacyPath)) {
+			try {
+				const content = fs.readFileSync(legacyPath, 'utf-8');
+				return parseScreeningPolicyYaml(content);
+			} catch (e) {
+				console.warn('[ScreeningConfig] Failed to parse legacy screening.local.yaml:', e);
+			}
 		}
 	}
 
 	return {
-		enable_screening: true,
-		title_whitelist: [],
-		title_blacklist: ['销售', '电话销售', '电销', '管培生', '实习', '助理', '讲师', '课程顾问', '客服'],
-		company_blacklist: [],
-		jd_blacklist: ['驻场', '外包', '电销', '无底薪', '纯提成'],
-		business_district_blacklist: [],
-		business_district_inspect_list: [],
-		max_commute_distance_km: 40.0
+		enable_screening: settings.enable_screening !== false,
+		title_whitelist: settings.title_whitelist || [],
+		title_blacklist: settings.title_blacklist || [],
+		company_blacklist: settings.company_blacklist || [],
+		jd_blacklist: settings.jd_blacklist || [],
+		business_district_blacklist: settings.business_district_blacklist || [],
+		business_district_inspect_list: settings.business_district_inspect_list || [],
+		max_commute_distance_km: normalizeCommuteLimit(settings.max_commute_distance_km)
 	};
 }
 

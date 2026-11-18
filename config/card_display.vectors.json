@@ -1,0 +1,87 @@
+{
+  "_comment": "Cross-language Card Display parity (Job Digest extraction + tag sanitization), shared by pytest (tests/unit/test_card_display_vectors.py) and vitest (web/src/tests/cardDisplayVectors.test.ts).",
+  "digest_vectors": [
+    {
+      "case": "cn-headers-and-bullets",
+      "jd": "岗位职责\n1. 负责公司后端与前端系统的设计与开发\n2. 负责大模型 Agent 编排与线上稳定性保障\n任职要求（必须）\n扎实的 Python 经验",
+      "max_chars": 100,
+      "expected": "负责公司后端与前端系统的设计与开发；负责大模型 Agent 编排与线上稳定性保障"
+    },
+    {
+      "case": "en-bracketed-headers-and-word-boundary",
+      "jd": "【 Role Summary 】；\nWe are seeking a passionate and experienced Senior Engineer to join our team to build the architecture of our shared coding agent platform used in your daily workflow.\n\n【 Key Responsibilities 】；\nDesign and ship tooling.",
+      "max_chars": 100,
+      "expected": "We are seeking a passionate and experienced Senior Engineer to join our team to build the..."
+    },
+    {
+      "case": "inline-cn-prefix-header",
+      "jd": "【岗位职责】：主导多智能体调度引擎研发与线上稳定性保障",
+      "max_chars": 100,
+      "expected": "主导多智能体调度引擎研发与线上稳定性保障"
+    },
+    {
+      "case": "empty-jd",
+      "jd": "   ",
+      "max_chars": 100,
+      "expected": ""
+    }
+  ],
+  "tag_vectors": [
+    {
+      "case": "strips-recruiter-badges-location-scale-and-keeps-25-char-cap",
+      "job": {
+        "title": "智能体开发工程师",
+        "company_name": "智元科技",
+        "recruiter_name": "王琳",
+        "recruiter_title": "猎头顾问",
+        "location": "上海"
+      },
+      "raw_tags": [
+        "猎",
+        "新",
+        "3-5年",
+        "硕士",
+        "王琳 · 猎头顾问",
+        "上海",
+        "浦东新区",
+        "100-499人",
+        "智能体开发工程师",
+        "智元科技",
+        "负责核心平台研发",
+        "1234567890123456789012345",
+        "12345678901234567890123456",
+        "LLM Agent"
+      ],
+      "expected": [
+        "3-5年",
+        "硕士",
+        "1234567890123456789012345",
+        "LLM Agent"
+      ]
+    },
+    {
+      "case": "dedupes-and-filters-generic-recruiter-tokens",
+      "job": {
+        "title": "全栈架构师",
+        "company_name": "未来网络",
+        "recruiter_name": "张瑞娟",
+        "recruiter_title": "HR",
+        "location": "北京"
+      },
+      "raw_tags": [
+        "经验不限",
+        "本科",
+        "全栈侧重前端",
+        "全栈侧重前端",
+        "HRBP",
+        "张瑞娟·招聘专员",
+        "北京"
+      ],
+      "expected": [
+        "经验不限",
+        "本科",
+        "全栈侧重前端"
+      ]
+    }
+  ]
+}

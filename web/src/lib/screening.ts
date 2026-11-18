@@ -148,21 +148,31 @@ export function cleanJobTitle(rawTitle: string | null | undefined): string {
 	return t;
 }
 
+const CN_JD_HEADER_WORDS =
+	'岗位职责|工作职责|职位描述|任职要求|任职资格|加分项|基本要求|必须要求|关于我们|公司介绍|加分条件|薪酬福利';
+const EN_JD_HEADER_WORDS =
+	'role summary|role overview|job summary|job description|responsibilit(?:y|ies)|requirement(?:s)?|qualification(?:s)?|preferred (?:qualifications|requirements)|skills|about (?:us|the (?:company|team|role|job))|benefits|compensation|perks';
+const JD_HEADER_ANNOTATION = '(?:\\s*[【\\[(（][^】\\]）]*[】\\]）])?';
+const JD_HEADER_STANDALONE_RE = new RegExp(
+	`^\\s*[【\\[(（]?\\s*(?:${CN_JD_HEADER_WORDS}|${EN_JD_HEADER_WORDS})\\s*[】\\]）]?${JD_HEADER_ANNOTATION}\\s*[:：]?\\s*[；;，,。.]?\\s*$`,
+	'i'
+);
+const JD_HEADER_PREFIX_RE = new RegExp(
+	`^[【\\[(（]\\s*(?:${CN_JD_HEADER_WORDS}|${EN_JD_HEADER_WORDS})\\s*[】\\]）]${JD_HEADER_ANNOTATION}?\\s*[:：]?\\s*[；;，,。.]?\\s*`,
+	'i'
+);
+
 export function extractDigestFromJd(jd: string | null | undefined, maxChars = 100): string {
-	if (!jd || typeof jd !== 'string') {
+	if (!jd || typeof jd !== 'string' || !jd.trim()) {
 		return '';
 	}
 	const lines = jd.split('\n').map((l) => l.trim()).filter(Boolean);
 	const substantive: string[] = [];
 	for (const line of lines) {
-		const stripped = line.replace(/^[0-9一二三四五六七八九十、.·•*-\s]+/, '').trim();
+		let stripped = line.replace(/^[0-9一二三四五六七八九十、.·•*\s\-]+/, '').trim();
+		stripped = stripped.replace(JD_HEADER_PREFIX_RE, '').trim();
 		// Skip section headers
-		if (
-			!stripped ||
-			stripped.length < 5 ||
-			/^(?:岗位职责|工作职责|职位描述|任职要求|任职资格|加分项|基本要求|必须要求|关于我们|公司介绍|加分条件|薪酬福利)[:：]?$/.test(stripped) ||
-			/^【(?:岗位职责|工作职责|职位描述|任职要求|任职资格|加分项|关于我们)】$/.test(stripped)
-		) {
+		if (!stripped || stripped.length < 5 || JD_HEADER_STANDALONE_RE.test(stripped)) {
 			continue;
 		}
 		substantive.push(stripped);
@@ -170,9 +180,17 @@ export function extractDigestFromJd(jd: string | null | undefined, maxChars = 10
 			break;
 		}
 	}
-	let res = substantive.join('；') || (lines.length > 0 ? lines[0] : '');
+	let res = substantive.length > 0 ? substantive.join('；') : (lines[0] || '');
 	if (res.length > maxChars) {
-		res = res.slice(0, maxChars).replace(/[，；、\s]+$/, '') + '...';
+		let cut = res.slice(0, maxChars);
+		const lastChar = cut.slice(-1);
+		if (/[a-zA-Z]/.test(lastChar)) {
+			const boundary = cut.lastIndexOf(' ');
+			if (boundary > Math.floor(maxChars / 2)) {
+				cut = cut.slice(0, boundary);
+			}
+		}
+		res = cut.replace(/[，；、\s.]+$/, '') + '...';
 	}
 	return res;
 }
@@ -220,15 +238,9 @@ export function getJobTags(job: JobRecord): string[] {
 		'顾问',
 		'HR',
 		'人事',
-		'招聘',
-		'专员',
-		'主管',
-		'经理',
-		'总监',
-		'合伙人',
+		'招聘专员',
 		'招聘者',
-		'Recruiter',
-		'Leader'
+		'Recruiter'
 	];
 	const knownCities = [
 		'上海',
@@ -258,7 +270,7 @@ export function getJobTags(job: JobRecord): string[] {
 		const cleaned: string[] = [];
 		for (const raw of tagList) {
 			const t = (raw || '').trim();
-			if (!t || t.length > 20) continue;
+			if (!t || t.length > 25) continue;
 			if (['猎', '新', '急', '热', '置顶'].includes(t)) continue;
 
 			// Recruiter filtering
@@ -272,8 +284,8 @@ export function getJobTags(job: JobRecord): string[] {
 			if (knownCities.includes(t) || t.endsWith('市') || t.endsWith('区') || t.endsWith('县')) continue;
 
 			// Company / Scale / Industry / Title filtering
-			if (compName && t === compName) continue;
-			if (title && t === title) continue;
+			if (compName && compName.length >= 2 && t === compName) continue;
+			if (title && title.length >= 2 && t === title) continue;
 			if (industry && t === industry) continue;
 			if (compScale && t === compScale) continue;
 			if (t.includes('人') && /\d+人/.test(t)) continue;

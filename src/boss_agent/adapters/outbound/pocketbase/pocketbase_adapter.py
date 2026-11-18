@@ -18,6 +18,7 @@ import requests
 
 from boss_agent.adapters.outbound.config.settings import resolve_pocketbase_url
 from boss_agent.core.shared.errors import ConflictError, ValidationError
+from boss_agent.core.shared.identifier_helpers import parse_utc_timestamp
 from boss_agent.core.task.domain.models import AutomationTask, TaskStatus, TaskType
 from boss_agent.core.task.interfaces.broker import BaseTaskBroker
 
@@ -475,10 +476,7 @@ class PocketBaseTaskBroker(BaseTaskBroker):
             return None
         if isinstance(val, datetime):
             return val
-        try:
-            return datetime.fromisoformat(str(val).replace("Z", "+00:00"))
-        except (ValueError, TypeError):  # persistence-guard: allow
-            return None
+        return parse_utc_timestamp(str(val))
 
 
 PocketBaseBroker = PocketBaseTaskBroker

@@ -34,6 +34,7 @@ import contextlib
 import copy
 import json
 import logging
+import math
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -482,7 +483,7 @@ def _coerce_scalar_types(merged: dict[str, Any]) -> None:
         else:
             try:
                 num = float(val)
-                merged["max_commute_distance_km"] = num if num > 0 else None
+                merged["max_commute_distance_km"] = num if math.isfinite(num) and num > 0 else None
             except (ValueError, TypeError):
                 merged["max_commute_distance_km"] = None
 

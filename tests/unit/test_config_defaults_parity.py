@@ -37,6 +37,14 @@ def test_realm_baseline_matches_the_shared_fixture(key: str) -> None:
     )
 
 
+def test_fixture_covers_every_realm_default_key() -> None:
+    fx = _fixture()
+    covered = set(fx["shared_defaults"]) | set(fx.get("nullable_defaults", {}))
+    assert set(config_realm.DEFAULTS.keys()) == covered
+    for key, val in fx.get("nullable_defaults", {}).items():
+        assert config_realm.DEFAULTS[key] == val
+
+
 @pytest.mark.parametrize("key", sorted(_fixture()["chat_defaults"]))
 def test_chat_defaults_match_the_shared_fixture(key: str) -> None:
     assert config_realm.CHAT_DEFAULTS[key] == _fixture()["chat_defaults"][key]

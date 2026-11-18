@@ -10,6 +10,7 @@ Loading, saving and blacklist persistence live with the Configuration Realm adap
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -95,20 +96,22 @@ class ScreeningPolicy:
         Blank strings, ``null`` sentinels and unparseable values all mean "no ceiling":
         a corrupt config must widen the filter, never silently impose an unexpected one.
         """
-        if value is None:
+        if value is None or isinstance(value, bool):
             return None
         if isinstance(value, str):
             text = value.strip()
             if not text or text.lower() in ("null", "none", "~"):
                 return None
             try:
-                return float(text)
+                parsed = float(text)
             except ValueError:
                 return None
+            return parsed if math.isfinite(parsed) else None
         try:
-            return float(value)
+            parsed = float(value)
         except (TypeError, ValueError):
             return None
+        return parsed if math.isfinite(parsed) else None
 
     @staticmethod
     def _match_location_token(tokens: list[str], location: str) -> str | None:

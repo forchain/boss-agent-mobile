@@ -96,7 +96,7 @@
 						title={job.location_line || `近${job.metro_station}`}
 					>🚇 近{job.metro_station}</span>
 				{/if}
-				{#if formatCommuteDistance(job)}
+				{#if formatCommuteDistance(job.commute_distance_km)}
 					<span class="text-slate-600">·</span>
 					<span
 						class="px-1.5 py-0.5 rounded bg-slate-800/80 text-slate-300 border border-slate-700/60"
