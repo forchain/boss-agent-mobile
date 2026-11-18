@@ -16,7 +16,6 @@ root_dir = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(root_dir))
 sys.path.insert(0, str(root_dir / "src"))
 
-from boss_agent.core.job.domain.job_entities import JobPosting  # noqa: E402
 from boss_agent.core.job.domain.screening_policy import ScreeningPolicy  # noqa: E402
 from boss_agent.main import (  # noqa: E402
     build_default_screening_policy,
@@ -24,6 +23,7 @@ from boss_agent.main import (  # noqa: E402
     build_screener,
     resolve_screening_prompt,
 )
+from scripts._eval_cli import parse_job_posting_json  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -70,15 +70,7 @@ def main() -> None:
     args = parse_args()
 
     try:
-        job_dict = json.loads(args.job)
-        job = JobPosting(
-            title=job_dict.get("job_title") or job_dict.get("title") or "目标岗位",
-            company_name=job_dict.get("company_name") or job_dict.get("company") or "招聘公司",
-            salary_range=job_dict.get("salary_range") or job_dict.get("salary") or "面议",
-            job_description=job_dict.get("job_description") or job_dict.get("description") or "",
-            recruiter_name=job_dict.get("recruiter_name") or job_dict.get("recruiter") or None,
-            recruiter_title=job_dict.get("recruiter_title") or None,
-        )
+        job = parse_job_posting_json(args.job)
     except Exception as e:
         sys.stdout.write(json.dumps({"error": f"Invalid job JSON: {e}"}, ensure_ascii=False) + "\n")
         sys.exit(1)
@@ -170,7 +162,7 @@ def main() -> None:
             )
     elif args.action in ("evaluate", "screen"):
         try:
-            verdict = screener._evaluate_jd(
+            verdict = screener.evaluate_jd(
                 job=job,
                 current_prompt=args.screening_prompt,
                 policy=policy,

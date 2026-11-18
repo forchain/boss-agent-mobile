@@ -420,6 +420,24 @@ def build_resume_memory_manager(
     )
 
 
+def load_cached_candidate_profile(
+    *,
+    candidate_memory: CandidateMemoryStore | None = None,
+) -> CandidateProfile | None:
+    """Read the persisted CandidateProfile without constructing an LLM client or task broker."""
+    store = candidate_memory or resolve_candidate_memory_store()
+    data = run_sync(store.get_candidate_profile(), timeout=5.0)
+    if data and (
+        data.get("name")
+        or data.get("core_skills")
+        or data.get("work_experiences")
+        or data.get("projects")
+        or data.get("profile_document")
+    ):
+        return CandidateProfile.from_dict(data)
+    return None
+
+
 def build_saved_search_store(*, prefer_database: bool = True) -> Any:
     return resolve_saved_search_store(prefer_database=prefer_database)
 
@@ -563,6 +581,7 @@ __all__ = [
     "build_worker",
     "default_preview_timeout_sec",
     "format_missing_saved_search_message",
+    "load_cached_candidate_profile",
     "load_runner_settings",
     "resolve_screening_prompt",
     "run_async",
