@@ -62,7 +62,6 @@ from boss_agent.main import (
     build_saved_search_store,
     build_takeover_handler,
     build_verification_pipeline,
-    default_preview_timeout_sec,
     format_missing_saved_search_message,
     run_async,
 )
@@ -228,7 +227,7 @@ def run_live_test(
         )
         active_filter = filter_config or saved_search.filter
         console.print(
-            f"\n[bold cyan]🚀 Starting Smoke Harness using Saved Search:[/bold cyan] [bold yellow]'{search_id}'[/bold yellow] ({saved_search.name})"
+            f"\n[bold cyan]🚀 Starting Feed Verification using Saved Search:[/bold cyan] [bold yellow]'{search_id}'[/bold yellow] ({saved_search.name})"
         )
     else:
         search_config = SearchConfig(keyword=keyword)
@@ -416,17 +415,6 @@ def main():
         help="Force re-generation of candidate memory profile from resume using LLM",
     )
     parser.add_argument(
-        "--preview-timeout",
-        type=float,
-        default=None,
-        help=(
-            "Accepted for backward compatibility and ignored. It paced the pause before "
-            "navigating back out of a greeting typed into a live chat box; a verification "
-            "run drafts a greeting and sends nothing, so there is no pause left to time "
-            "(issue #390). Passing it prints a notice rather than waiting silently."
-        ),
-    )
-    parser.add_argument(
         "--no-greeting",
         action="store_true",
         default=None,
@@ -487,30 +475,6 @@ def main():
         True if args.force_refresh_memory else bool(cfg.get("force_refresh_memory", False))
     )
     enable_greeting = False if args.no_greeting else bool(cfg.get("enable_greeting", True))
-
-    # Say it out loud, on both routes in. The flag stayed because invocations are in muscle
-    # memory and in runbooks, and the key stayed because it is in DEFAULTS and therefore in
-    # every operator's settings file — an operator who set `preview_timeout_sec: 10` and now
-    # waits for nothing deserves the same notice as one who typed the flag. Only a *changed*
-    # value is announced: DEFAULTS carries 3.0, so an untouched key would otherwise put the
-    # warning in front of every run in the world (issue #391).
-    configured_preview_timeout = cfg.get("preview_timeout_sec")
-    if args.preview_timeout is not None:
-        console.print(
-            f"[yellow]⚠️  --preview-timeout ({args.preview_timeout}s) is inert:[/yellow] "
-            f"[dim]a verification run types no greeting into a chat box, so there is no "
-            f"preview pause to time (issue #390).[/dim]"
-        )
-    elif (
-        configured_preview_timeout is not None
-        and float(configured_preview_timeout) != default_preview_timeout_sec()
-    ):
-        console.print(
-            f"[yellow]⚠️  preview_timeout_sec ({configured_preview_timeout}s) in your settings "
-            f"is inert:[/yellow] "
-            f"[dim]a verification run types no greeting into a chat box, so there is no "
-            f"preview pause to time (issue #390).[/dim]"
-        )
 
     target_keyword = keyword if enable_search else None
     target_search_id = search_id if enable_search else None

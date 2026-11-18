@@ -25,7 +25,6 @@ from typing import Any, TypeVar
 from boss_agent.adapters.inbound.verification.feed_verification import (
     build_verification_pipeline as _build_verification_pipeline,
 )
-from boss_agent.adapters.inbound.verification.smoke_harness import SmokeHarness
 from boss_agent.adapters.inbound.worker.config import WorkerConfig
 from boss_agent.adapters.inbound.worker.context import WorkerContext
 from boss_agent.adapters.inbound.worker.daemon import AutomationWorker
@@ -39,7 +38,6 @@ from boss_agent.adapters.inbound.worker.scheduler import AutomationScheduler
 from boss_agent.adapters.memory.job_store import InMemoryJobRecordStore
 from boss_agent.adapters.outbound.config import settings as _config_settings
 from boss_agent.adapters.outbound.config.config_realm import (
-    DEFAULTS,
     PLACEHOLDER_API_KEY,
     is_mask_placeholder,
 )
@@ -452,11 +450,6 @@ def run_async(coro: Coroutine[Any, Any, _T], *, timeout: float | None = None) ->
     return run_sync(coro, timeout=timeout)
 
 
-def default_preview_timeout_sec() -> float:
-    """The inert default preview_timeout_sec declared by Configuration Realm."""
-    return float(DEFAULTS["preview_timeout_sec"])
-
-
 def format_missing_saved_search_message(search_id: str, available: list[str]) -> str:
     """Format the diagnostic message when a named SavedSearch preset is absent."""
     return missing_saved_search_message(search_id, available)
@@ -488,33 +481,6 @@ def build_verification_pipeline(
         store=store or InMemoryJobRecordStore(),
         **kwargs,
     )
-
-
-def build_smoke_harness(driver: Any, **kwargs: Any) -> SmokeHarness:
-    """The interactive runner's harness, with its adapter dependencies wired here."""
-    takeover = kwargs.pop("takeover_handler", None) or build_takeover_handler(
-        driver, auto_confirm_for_test=True
-    )
-    matching_service = kwargs.setdefault("matching_service", build_matching_service())
-    kwargs.setdefault(
-        "screener",
-        build_screener(
-            llm_client=matching_service.llm_client,
-            matching_service=matching_service,
-            screening_prompt=load_prompt_or_default(load_screening_prompt) or "",
-        ),
-    )
-    kwargs.setdefault("world", build_feed_device_world(driver))
-    kwargs.setdefault("store", InMemoryJobRecordStore())
-    if kwargs.get("enable_greeting_draft", True):
-        kwargs.setdefault("memory_manager", build_resume_memory_manager())
-    if kwargs.get("saved_search_id") and "saved_search_store" not in kwargs:
-        kwargs["saved_search_store"] = build_saved_search_store()
-    if (kwargs.get("saved_search") or kwargs.get("saved_search_id")) and (
-        "default_screening_policy" not in kwargs
-    ):
-        kwargs["default_screening_policy"] = load_screening_policy()
-    return SmokeHarness(driver, takeover_handler=takeover, **kwargs)
 
 
 # ----------------------------------------------------------------------- resume
@@ -574,12 +540,10 @@ __all__ = [
     "build_saved_search_store",
     "build_scheduler",
     "build_screener",
-    "build_smoke_harness",
     "build_supervised_services",
     "build_takeover_handler",
     "build_verification_pipeline",
     "build_worker",
-    "default_preview_timeout_sec",
     "format_missing_saved_search_message",
     "load_cached_candidate_profile",
     "load_runner_settings",

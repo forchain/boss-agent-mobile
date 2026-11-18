@@ -122,7 +122,6 @@ def test_handlers_verification_and_resume_memory_do_not_compose_llm_or_broker() 
     guarded_paths = [
         *sorted((ADAPTERS_ROOT / "inbound" / "worker" / "handlers").rglob("*.py")),
         ADAPTERS_ROOT / "inbound" / "verification" / "feed_verification.py",
-        ADAPTERS_ROOT / "inbound" / "verification" / "smoke_harness.py",
         ADAPTERS_ROOT / "outbound" / "resume" / "memory.py",
         ADAPTERS_ROOT / "outbound" / "resume" / "graph.py",
     ]
