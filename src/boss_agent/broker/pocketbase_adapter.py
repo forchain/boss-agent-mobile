@@ -24,6 +24,7 @@ from boss_agent.candidate_memory_store import (
     InMemoryCandidateMemoryStore,
     PocketBaseCandidateMemoryStore,
 )
+from boss_agent.config_realm import resolve_pocketbase_url
 from boss_agent.errors import ConflictError, ValidationError
 from boss_agent.job_store import (
     InMemoryJobRecordStore,
@@ -36,7 +37,6 @@ from boss_agent.saved_search_store import (
     PocketBaseSavedSearchStore,
     SavedSearchStore,
 )
-from boss_agent.settings import resolve_pocketbase_url
 
 logger = logging.getLogger("boss_agent.broker")
 

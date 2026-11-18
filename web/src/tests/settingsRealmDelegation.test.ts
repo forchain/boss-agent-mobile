@@ -49,7 +49,7 @@ describe('Web delegates the Configuration Realm to Python (ticket #446)', () => 
 
 		const written = fs.readFileSync(sandbox.file, 'utf-8');
 		expect(written).toContain('max_scan_depth: 30');
-		expect(loadMergedSettings().chat.dry_run).toBe(true);
+		expect(loadMergedSettings().chat?.dry_run).toBe(true);
 	});
 
 	it('no hardcoded settings YAML template remains in the Web layer', () => {

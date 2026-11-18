@@ -441,21 +441,21 @@ class ScreeningPolicy:
     @classmethod
     def load_default(cls, config_path: str | Path | None = None) -> ScreeningPolicy:
         """Load ScreeningPolicy through the Configuration Realm chain."""
-        from boss_agent.screening_config import load_screening_policy
+        from boss_agent import config_realm
 
-        return load_screening_policy(config_path=config_path)
+        return config_realm.load_screening_policy(config_path=config_path)
 
     def persist_company_blacklist(self, company_name: str) -> Path | None:
         """Write one blacklisted company back to this policy's active config file."""
-        from boss_agent import screening_config
+        from boss_agent import config_realm
 
-        return screening_config.persist_company_blacklist(self, company_name)
+        return config_realm.persist_company_blacklist(self, company_name)
 
     def save_default(self, config_path: str | Path | None = None) -> Path:
-        """Persist this policy to the declarative local YAML configuration file."""
-        from boss_agent import screening_config
+        """Persist this policy through the realm's round-trip patch engine."""
+        from boss_agent import config_realm
 
-        return screening_config.save_policy(self, config_path=config_path)
+        return config_realm.save_screening_policy(self, config_path=config_path)
 
 
 def resolve_screening_policy(

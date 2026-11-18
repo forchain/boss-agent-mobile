@@ -40,11 +40,8 @@ function positiveInt(raw: unknown, fallback: number): number {
  * leaves dry-run off, so a malformed value can never silently stop the worker
  * from blacklisting the employers it identifies.
  *
- * Every key the worker reads is returned, because a save writes this object back
- * over the on-disk `chat:` block: a knob the worker supports but this function
- * drops would be silently deleted from `local.yaml` on the next dashboard save.
- * That is what the realm fixture pins (`config/defaults.fixture.json`), and why
- * adding a chat setting means adding it here too.
+ * Every key the worker reads is returned, because the dashboard keeps the shape it
+ * displays in step with the realm, and adding a chat setting means adding it here too.
  */
 export function normalizeChatAcknowledgment(raw: any): ChatAcknowledgmentConfig {
 	const candidate = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};

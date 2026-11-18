@@ -42,7 +42,7 @@ from rich.markup import escape
 from rich.table import Table
 
 from boss_agent.async_bridge import run_sync
-from boss_agent.config_realm import DEFAULTS
+from boss_agent.config_realm import DEFAULTS, load_settings
 from boss_agent.enums import AuthStatus
 from boss_agent.errors import BrokerError
 from boss_agent.feed_pipeline import FeedStreamResult
@@ -64,7 +64,6 @@ from boss_agent.saved_search_store import (
 from boss_agent.screening import JobVerdictStage
 from boss_agent.screening_policy import ScreeningPolicy
 from boss_agent.search_entities import FilterConfig, SavedSearch, SearchConfig
-from boss_agent.settings import load_settings
 from boss_agent.workflows import TakeoverHandler
 from droid_agent_core.driver import AppiumSession, DriverConfig
 

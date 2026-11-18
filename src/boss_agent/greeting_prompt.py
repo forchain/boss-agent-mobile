@@ -12,7 +12,7 @@ first save. Missing documents fail loudly — nothing is ever fabricated.
 
 from pathlib import Path
 
-from .settings import resolve_git_common_root
+from .config_realm import resolve_git_common_root
 
 LOCAL_FILENAME = "greeting_prompt.local.md"
 SEED_FILENAME = "greeting_prompt.example.md"

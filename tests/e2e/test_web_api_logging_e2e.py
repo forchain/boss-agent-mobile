@@ -50,7 +50,7 @@ def _is_dashboard_alive(base_url: str) -> bool:
 
 def _is_broker_alive() -> bool:
     try:
-        from boss_agent.settings import resolve_pocketbase_url
+        from boss_agent.config_realm import resolve_pocketbase_url
 
         url = resolve_pocketbase_url()
         return httpx.get(f"{url.rstrip('/')}/api/health", timeout=1.0).status_code == 200

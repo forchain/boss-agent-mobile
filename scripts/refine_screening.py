@@ -123,7 +123,7 @@ def main() -> None:
 
     if policy is None:
         try:
-            from boss_agent.settings import load_settings
+            from boss_agent.config_realm import load_settings
 
             app_settings = load_settings()
             # load_settings() returns the merged Configuration Realm dict with the

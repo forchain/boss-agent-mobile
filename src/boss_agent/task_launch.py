@@ -56,9 +56,9 @@ from typing import Any
 
 from .broker.collection_schema import SAVED_SEARCH_MAX_JOBS
 from .broker.models import TaskType
+from .config_realm import resolve_chat_acknowledgment_settings
 from .enums import TargetAction, TargetTaskType
 from .search_entities import SavedSearch
-from .settings import resolve_chat_acknowledgment_settings
 
 #: The baseline relevance threshold. One value, so a manual launch and a scheduled run
 #: of the same SavedSearch cannot disagree about which jobs qualify.

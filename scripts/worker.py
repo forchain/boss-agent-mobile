@@ -15,7 +15,7 @@ from typing import Any
 
 from boss_agent.broker.pocketbase_adapter import BaseTaskBroker, PocketBaseTaskBroker
 from boss_agent.broker.sweeper import TaskLeaseSweeper
-from boss_agent.settings import (
+from boss_agent.config_realm import (
     resolve_enable_scheduler,
     resolve_pocketbase_url,
     resolve_server_url,

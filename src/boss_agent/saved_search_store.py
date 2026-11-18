@@ -26,9 +26,9 @@ from typing import Any
 import requests
 
 from .async_bridge import execute_broker_request
+from .config_realm import resolve_pocketbase_url
 from .pocketbase_auth import pocketbase_headers
 from .search_entities import SavedSearch
-from .settings import resolve_pocketbase_url
 
 logger = logging.getLogger("boss_agent.saved_search_store")
 

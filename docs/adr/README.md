@@ -29,6 +29,8 @@ We follow the decision record format to capture the context, options considered,
 | [0019](0019-decomposed-domain-entity-modules.md) | Decomposed Domain Entity Modules and Retired Monolith | `ACCEPTED` | 2026-10-01 | Retired monolithic `boss_agent.models` into eight focused, single-responsibility modules (`enums`, `keyword_constants`, `identifier_helpers`, `job_entities`, `candidate_entities`, `search_entities`, `screening_policy`, `screening_config`). |
 | [0020](0020-list-feed-reset-owns-its-own-outcome.md) | The 仅沟通 Feed Reset Is a Step of Its Own, and Narrates Only What It Did | `ACCEPTED` | 2026-10-07 | Moved the 仅沟通 scroll-to-top reset out of `open_list()` into the triage run, so its outcome reaches the narration and a declined reset is reported instead of claimed. Amends ADR 0016. |
 
+| [0021](0021-single-owner-configuration-realm.md) | Single-Owner Configuration Realm and the Web-Delegates-to-Python Contract | `ACCEPTED` | 2026-11-18 | Made `boss_agent.config_realm` the only reader/writer of the Configuration Realm, added the round-trip patch engine and JSON CLI, deleted the Python wrappers and the TypeScript settings template, and retired the cross-language defaults fixture. |
+
 ## Contributing New Decisions
 
 When proposing a new architectural decision:

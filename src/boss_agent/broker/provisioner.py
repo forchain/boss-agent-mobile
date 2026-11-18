@@ -44,8 +44,8 @@ from boss_agent.broker.collection_schema import (  # noqa: E402
     validate_identifier,
     wire_payload,
 )
+from boss_agent.config_realm import resolve_pocketbase_db_path  # noqa: E402
 from boss_agent.errors import TransportError, ValidationError  # noqa: E402
-from boss_agent.settings import resolve_pocketbase_db_path  # noqa: E402
 
 # requests and urllib3 are lazily imported in provision_remote_pocketbase
 

@@ -47,6 +47,11 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - import-time work for static type checkers only
     from .candidate_entities import CandidateProfile
+    from .config_realm import (
+        append_company_blacklist_entry,
+        is_writable_screening_path,
+        resolve_writable_screening_config_path,
+    )
     from .enums import AuthStatus, ChannelPreference
     from .greeting_prompt import load_greeting_prompt
     from .identifier_helpers import (
@@ -62,11 +67,6 @@ if TYPE_CHECKING:  # pragma: no cover - import-time work for static type checker
         CardVerdictStage,
         JobEvaluationResult,
         JobVerdictStage,
-    )
-    from .screening_config import (
-        append_company_blacklist_entry,
-        is_writable_screening_path,
-        resolve_writable_screening_config_path,
     )
     from .screening_policy import ScreeningPolicy
     from .search_entities import FilterConfig, SavedSearch, SearchConfig
@@ -113,22 +113,22 @@ _LAZY_EXPORTS: dict[str, str] = {
     "StartupDialogPage": ".pages",
     "StructuredCandidateProfile": ".candidate_entities",
     "TakeoverHandler": ".workflows",
-    "append_company_blacklist_entry": ".screening_config",
+    "append_company_blacklist_entry": ".config_realm",
     "build_resume_lifecycle_graph": ".graph",
     "ensure_greeting_prefix": ".matching",
     "format_recruiter_greeting_prefix": ".identifier_helpers",
     "is_headhunter_agency_name": ".identifier_helpers",
     "is_masked_company_name": ".identifier_helpers",
-    "is_writable_screening_path": ".screening_config",
+    "is_writable_screening_path": ".config_realm",
     "load_greeting_prompt": ".greeting_prompt",
-    "load_settings": ".settings",
+    "load_settings": ".config_realm",
     "parse_recruiter_title": ".identifier_helpers",
-    "resolve_git_common_root": ".settings",
-    "resolve_pocketbase_data_dir": ".settings",
-    "resolve_pocketbase_db_path": ".settings",
-    "resolve_pocketbase_url": ".settings",
+    "resolve_git_common_root": ".config_realm",
+    "resolve_pocketbase_data_dir": ".config_realm",
+    "resolve_pocketbase_db_path": ".config_realm",
+    "resolve_pocketbase_url": ".config_realm",
     "resolve_saved_search_store": ".saved_search_store",
-    "resolve_writable_screening_config_path": ".screening_config",
+    "resolve_writable_screening_config_path": ".config_realm",
     "run_resume_lifecycle_graph": ".graph",
 }
 

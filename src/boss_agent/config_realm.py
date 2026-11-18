@@ -35,12 +35,18 @@ import copy
 import json
 import logging
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap, CommentedSeq
+
+try:
+    import yaml
+except ImportError:  # pragma: no cover - the flat fallback parser covers this
+    yaml = None  # type: ignore[assignment]
 
 logger = logging.getLogger("boss_agent.config_realm")
 
@@ -62,6 +68,10 @@ CONFIG_CHAIN: tuple[Path, ...] = (
     Path("config/settings.yaml"),
     Path("config/settings.example.yaml"),
 )
+
+#: The historical test/embedder seam. Kept as a module attribute so a rebinding is
+#: honoured late by :func:`_compat_attr`; the values themselves live in CONFIG_CHAIN.
+DEFAULT_CONFIG_SEARCH_PATHS: list[Path] = list(CONFIG_CHAIN)
 
 #: Legacy file, consulted only when the chain produced no usable API key. It predates
 #: the realm and is kept as an explicit chain entry rather than as a hidden second pass.
@@ -92,9 +102,8 @@ def normalize_provider(provider: Any) -> str:
     return resolved if resolved in LLM_PROTOCOLS else DEFAULT_LLM_PROTOCOL
 
 
-#: The one defaults table. Every Python loader resolves its baseline from here, and
-#: `config/defaults.fixture.json` is generated from it so the TypeScript mirror can be
-#: asserted against the same values instead of against a comment.
+#: The one defaults table. Every reader resolves its baseline from here; the Web layer
+#: consumes the merged view, so there is no second table to drift.
 DEFAULTS: dict[str, Any] = {
     "device": "emulator-5554",
     "avd_name": "boss_avd_arm64",
@@ -116,9 +125,7 @@ DEFAULTS: dict[str, Any] = {
     "preview_timeout_sec": 3.0,
     "enable_greeting": True,
     "communication_cooldown_days": 30,
-    # Screening switches. Declared here so the Python baseline and the Web baseline are
-    # the same table; `config/defaults.fixture.json` is generated from it and asserted
-    # by both suites.
+    # Screening switches live in the same table as every other realm default.
     "enable_screening": True,
     "channel_preference": "all",
     "run_cleanup_on_startup": True,
@@ -193,19 +200,15 @@ def is_mask_placeholder(value: Any) -> bool:
 
 
 def _compat_attr(name: str, fallback: Any) -> Any:
-    """Read a compatibility knob from `boss_agent.settings`, late.
+    """Read a compatibility knob late.
 
     `DEFAULT_CONFIG_SEARCH_PATHS` and `yaml` are rebound by tests and embedders; the
     lookup has to happen at call time or rebinding them would silently stop working.
     """
-    from . import settings
-
-    return getattr(settings, name, fallback)
+    return getattr(sys.modules[__name__], name, fallback)
 
 
 def resolve_config_root() -> Path:
-    from .settings import resolve_git_common_root
-
     return resolve_git_common_root()
 
 
@@ -753,7 +756,7 @@ def append_company_blacklist_entry(
     if not cleaned:
         return False
 
-    target = Path(path) if path else resolve_writable_settings_path()
+    target = Path(path) if path else resolve_writable_screening_config_path()
     if target.suffix == ".json":
         # The realm's writable store is YAML; a JSON layer has no comment-preserving
         # round-trip and sits above the YAML target, so writing here would be inert.
@@ -785,6 +788,334 @@ def append_company_blacklist_entry(
 def save_screening_policy(policy: Any, config_path: str | Path | None = None) -> Path:
     """Persist a ScreeningPolicy through the one patch engine."""
     return patch_settings(policy.to_dict(), config_path=config_path)
+
+
+# --------------------------------------------------------------------------- #
+# Path, cooldown and acknowledgment resolvers
+# --------------------------------------------------------------------------- #
+
+
+def resolve_git_common_root(cwd: str | Path | None = None) -> Path:
+    """The canonical repository root, accounting for Git worktrees."""
+    env_root = os.getenv("BOSS_CONFIG_ROOT")
+    if env_root and env_root.strip():
+        return Path(env_root.strip()).resolve()
+
+    import subprocess
+
+    try:
+        res = subprocess.run(
+            ["git", "rev-parse", "--git-common-dir"],
+            cwd=str(cwd) if cwd else None,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        common_git = Path(res.stdout.strip())
+        if not common_git.is_absolute():
+            base = Path(cwd) if cwd else Path.cwd()
+            common_git = (base / common_git).resolve()
+        return common_git.parent
+    except Exception:
+        return Path(cwd).resolve() if cwd else Path.cwd()
+
+
+def resolve_pocketbase_url(
+    explicit_url: str | None = None,
+    config_path: str | Path | None = None,
+) -> str:
+    """PocketBase URL: explicit arg, then environment, then files, then default."""
+    if explicit_url and explicit_url.strip():
+        return normalize_url(explicit_url)
+
+    env_url = os.getenv("POCKETBASE_URL")
+    if env_url and env_url.strip():
+        return normalize_url(env_url)
+
+    return load_settings(config_path=config_path).get("pocketbase_url", DEFAULT_POCKETBASE_URL)
+
+
+def resolve_server_url(
+    explicit_url: str | None = None,
+    config_path: str | Path | None = None,
+) -> str:
+    """Appium Server URL: explicit arg, then environment, then files, then default."""
+    if explicit_url and explicit_url.strip():
+        return normalize_url(explicit_url)
+
+    env_url = os.getenv("APPIUM_SERVER_URL") or os.getenv("APPIUM_URL")
+    if env_url and env_url.strip():
+        return normalize_url(env_url)
+
+    return load_settings(config_path=config_path).get("server_url", DEFAULT_SERVER_URL)
+
+
+def resolve_pocketbase_db_path(
+    explicit_path: str | Path | None = None,
+    config_path: str | Path | None = None,
+    resolve_common_root: bool = False,
+) -> Path:
+    """Resolve the PocketBase SQLite ``data.db`` path."""
+    if explicit_path:
+        p = Path(explicit_path)
+        if p.is_dir() or (not p.suffix and p.name != "data.db"):
+            return p / "data.db"
+        return p
+
+    env_db = os.getenv("PB_DB_PATH") or os.getenv("POCKETBASE_DB_PATH")
+    if env_db and env_db.strip():
+        p = Path(env_db.strip())
+        return p / "data.db" if (p.is_dir() or not p.suffix) else p
+
+    env_data_dir = os.getenv("PB_DATA_DIR") or os.getenv("POCKETBASE_DATA_DIR")
+    if env_data_dir and env_data_dir.strip():
+        return Path(env_data_dir.strip()) / "data.db"
+
+    settings = load_settings(config_path=config_path)
+    if settings.get("pocketbase_db_path"):
+        p = Path(settings["pocketbase_db_path"])
+        p = p / "data.db" if (p.is_dir() or not p.suffix) else p
+        if resolve_common_root and not p.is_absolute():
+            return resolve_git_common_root() / p
+        return p
+
+    if settings.get("pocketbase_data_dir"):
+        p = Path(settings["pocketbase_data_dir"]) / "data.db"
+        if resolve_common_root and not p.is_absolute():
+            return resolve_git_common_root() / p
+        return p
+
+    fallback = Path(DEFAULT_POCKETBASE_DB_PATH)
+    if resolve_common_root:
+        return resolve_git_common_root() / fallback
+    return fallback
+
+
+def resolve_pocketbase_data_dir(
+    explicit_dir: str | Path | None = None,
+    config_path: str | Path | None = None,
+    resolve_common_root: bool = False,
+) -> Path:
+    """Resolve the PocketBase data directory."""
+    if explicit_dir:
+        return Path(explicit_dir)
+
+    env_data_dir = os.getenv("PB_DATA_DIR") or os.getenv("POCKETBASE_DATA_DIR")
+    if env_data_dir and env_data_dir.strip():
+        return Path(env_data_dir.strip())
+
+    settings = load_settings(config_path=config_path)
+    if settings.get("pocketbase_data_dir"):
+        p = Path(settings["pocketbase_data_dir"])
+        if resolve_common_root and not p.is_absolute():
+            return resolve_git_common_root() / p
+        return p
+
+    if settings.get("pocketbase_db_path"):
+        p = Path(settings["pocketbase_db_path"]).parent
+        if resolve_common_root and not p.is_absolute():
+            return resolve_git_common_root() / p
+        return p
+
+    fallback = Path(DEFAULT_POCKETBASE_DATA_DIR)
+    if resolve_common_root:
+        return resolve_git_common_root() / fallback
+    return fallback
+
+
+def resolve_communication_cooldown_days(overrides: dict[str, Any] | None = None) -> int:
+    """The re-application cool-down window in days; 0 means permanent suppression."""
+    from .keyword_constants import DEFAULT_COMMUNICATION_COOLDOWN_DAYS
+
+    raw = (overrides or {}).get("communication_cooldown_days")
+    if raw is None:
+        raw = load_settings().get("communication_cooldown_days")
+    if raw is None:
+        return DEFAULT_COMMUNICATION_COOLDOWN_DAYS
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "Invalid communication_cooldown_days value %r; falling back to default %d",
+            raw,
+            DEFAULT_COMMUNICATION_COOLDOWN_DAYS,
+        )
+        return DEFAULT_COMMUNICATION_COOLDOWN_DAYS
+
+
+def resolve_chat_acknowledgment_settings(
+    settings: dict[str, Any] | None = None,
+    config_path: str | Path | None = None,
+):
+    """Resolve the rejection triage settings (env, then nested ``chat``, then defaults)."""
+    from .rejection import (
+        DEFAULT_MAX_SCAN_DEPTH,
+        DEFAULT_MAX_SCROLL_SWIPES,
+        DEFAULT_REJECTION_REPLY_TEXT,
+        ChatAcknowledgmentSettings,
+        coerce_bool,
+        coerce_positive_int,
+    )
+
+    merged = settings if settings is not None else load_settings(config_path=config_path)
+    chat_block = merged.get("chat")
+    chat: dict[str, Any] = chat_block if isinstance(chat_block, dict) else {}
+
+    reply_text = chat.get("rejection_reply_text")
+    scan_depth = chat.get("max_scan_depth")
+    scroll_swipes = chat.get("max_scroll_swipes")
+    dry_run = chat.get("dry_run")
+
+    env_reply = os.getenv("CHAT_REJECTION_REPLY_TEXT")
+    if env_reply and env_reply.strip():
+        reply_text = env_reply.strip()
+    env_depth = os.getenv("CHAT_MAX_SCAN_DEPTH")
+    if env_depth and env_depth.strip():
+        scan_depth = env_depth.strip()
+    env_swipes = os.getenv("CHAT_MAX_SCROLL_SWIPES")
+    if env_swipes and env_swipes.strip():
+        scroll_swipes = env_swipes.strip()
+    env_dry_run = os.getenv("CHAT_DRY_RUN")
+    if env_dry_run and env_dry_run.strip():
+        dry_run = env_dry_run.strip()
+
+    reply_str = str(reply_text).strip() if reply_text is not None else ""
+    return ChatAcknowledgmentSettings(
+        rejection_reply_text=reply_str or DEFAULT_REJECTION_REPLY_TEXT,
+        max_scan_depth=coerce_positive_int(scan_depth, DEFAULT_MAX_SCAN_DEPTH),
+        max_scroll_swipes=coerce_positive_int(scroll_swipes, DEFAULT_MAX_SCROLL_SWIPES),
+        dry_run=coerce_bool(dry_run, default=False),
+    )
+
+
+def resolve_run_cleanup_on_startup(
+    settings: dict[str, Any] | None = None,
+    config_path: str | Path | None = None,
+) -> bool:
+    """Whether a starting service queues a rejection sweep before searching."""
+    from .rejection import coerce_bool
+
+    merged = settings if settings is not None else load_settings(config_path=config_path)
+    raw: Any = merged.get("run_cleanup_on_startup")
+
+    env_value = os.getenv("RUN_CLEANUP_ON_STARTUP")
+    if env_value and env_value.strip():
+        raw = env_value.strip()
+
+    return coerce_bool(raw, default=True)
+
+
+def resolve_enable_scheduler(
+    explicit: bool | None = None,
+    config_path: str | Path | None = None,
+    settings: dict[str, Any] | None = None,
+) -> bool:
+    """Whether the integrated Cron scheduler daemon is enabled."""
+    from .rejection import coerce_bool
+
+    if explicit is not None:
+        return bool(explicit)
+
+    merged = settings if settings is not None else load_settings(config_path=config_path)
+    raw: Any = merged.get("enable_scheduler")
+
+    env_value = os.getenv("ENABLE_SCHEDULER")
+    if env_value and env_value.strip():
+        raw = env_value.strip()
+
+    return coerce_bool(raw, default=True)
+
+
+# --------------------------------------------------------------------------- #
+# Screening policy loading and writable-store resolution
+# --------------------------------------------------------------------------- #
+
+
+def load_screening_policy(config_path: str | Path | None = None):
+    """Load the Screening Policy through this realm's chain."""
+    from .screening_policy import ScreeningPolicy
+
+    if config_path:
+        target = Path(config_path)
+        if target.is_file():
+            data = _parse_file(target) or {}
+            policy = ScreeningPolicy.from_dict(data)
+            policy.source_path = str(target)
+            return policy
+        return ScreeningPolicy()
+
+    chain = resolve_chain()
+    screening_keys = (
+        "enable_screening",
+        "title_blacklist",
+        "title_whitelist",
+        "jd_blacklist",
+        "company_blacklist",
+        "channel_preference",
+        "max_commute_distance_km",
+    )
+    source_path = None
+    for p in chain:
+        if p.is_file():
+            data = _parse_file(p)
+            if data and any(k in data for k in screening_keys):
+                source_path = str(p)
+                break
+
+    # If no file in chain had screening keys, check legacy screening files as fallback.
+    if source_path is None:
+        root = resolve_git_common_root()
+        for candidate_rel in (
+            Path("config/screening.local.yaml"),
+            Path("config/screening.local.yml"),
+            Path("config/screening.local.json"),
+            Path("config/screening.yaml"),
+            Path("config/screening.example.yaml"),
+        ):
+            cand = root / candidate_rel
+            if cand.is_file():
+                data = _parse_file(cand)
+                if data and any(k in data for k in screening_keys):
+                    policy = ScreeningPolicy.from_dict(data)
+                    policy.source_path = str(cand)
+                    return policy
+
+    merged = load_settings()
+    policy = ScreeningPolicy.from_dict(merged)
+    if source_path:
+        policy.source_path = source_path
+    return policy
+
+
+def is_writable_screening_path(path: str | Path) -> bool:
+    """Whether ``path`` may be written to: YAML, and never a tracked example."""
+    candidate = Path(path)
+    return candidate.suffix in (".yaml", ".yml") and ".example." not in candidate.name
+
+
+def resolve_writable_screening_config_path(root: str | Path | None = None) -> Path:
+    """The unified local settings file: the only screening store that takes effect."""
+    base = Path(root) if root is not None else resolve_git_common_root()
+    for name in ("settings.local.yaml", "settings.local.yml"):
+        candidate = base / "config" / name
+        if candidate.is_file():
+            return candidate
+    return base / "config" / "settings.local.yaml"
+
+
+def persist_company_blacklist(policy: Any, company_name: str) -> Path | None:
+    """Write one blacklisted company back to the policy's active config file."""
+    if not policy.source_path:
+        target = resolve_writable_screening_config_path()
+    else:
+        target = Path(policy.source_path)
+        if ".example." in target.name:
+            target = resolve_writable_screening_config_path()
+        elif not is_writable_screening_path(target):
+            return None
+
+    written = append_company_blacklist_entry(company_name, path=target, policy=policy)
+    return target if written else None
 
 
 # --------------------------------------------------------------------------- #
@@ -940,15 +1271,28 @@ __all__ = [
     "format_resolved_values",
     "invalidate_cache",
     "is_mask_placeholder",
+    "is_writable_screening_path",
     "llm_settings",
     "load_chain",
+    "load_screening_policy",
     "load_settings",
     "normalize_provider",
     "normalize_url",
     "patch_settings",
+    "persist_company_blacklist",
     "pocketbase_settings",
     "read_config",
     "resolve_chain",
+    "resolve_chat_acknowledgment_settings",
+    "resolve_communication_cooldown_days",
+    "resolve_enable_scheduler",
+    "resolve_git_common_root",
+    "resolve_pocketbase_data_dir",
+    "resolve_pocketbase_db_path",
+    "resolve_pocketbase_url",
+    "resolve_run_cleanup_on_startup",
+    "resolve_server_url",
+    "resolve_writable_screening_config_path",
     "resolve_writable_settings_path",
     "save_screening_policy",
     "worker_settings",

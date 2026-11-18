@@ -22,6 +22,7 @@ from typing import Any
 
 from .broker.models import TaskType
 from .candidate_entities import CandidateProfile
+from .config_realm import resolve_communication_cooldown_days
 from .enums import (
     DEPTH_DECLARED,
     DEPTH_LEGACY_HALF_PAIR,
@@ -78,7 +79,6 @@ from .screening import (
 )
 from .screening_policy import ScreeningPolicy, resolve_screening_policy
 from .search_entities import FilterConfig
-from .settings import resolve_communication_cooldown_days
 
 logger = logging.getLogger(__name__)
 
@@ -217,7 +217,7 @@ class FeedStreamConfig:
         answers to one question" shape #302 removes from the wire, reintroduced as mutable
         state one layer up.
         """
-        from .settings import load_settings
+        from .config_realm import load_settings
 
         data = payload or {}
         target_action_val = data.get("target_action") or data.get("action")
