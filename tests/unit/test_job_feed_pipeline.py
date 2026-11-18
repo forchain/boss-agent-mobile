@@ -434,8 +434,12 @@ async def test_filtering_disabled_clears_conditions_instead_of_applying_them():
     assert config.filter_config.enable_filter is False
 
     with (
-        patch("boss_agent.pages.feed_bundle.FilterDialogPage") as filter_cls,
-        patch("boss_agent.pages.feed_bundle.IndustryFilterDialogPage") as industry_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.FilterDialogPage"
+        ) as filter_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.IndustryFilterDialogPage"
+        ) as industry_cls,
     ):
         pipeline = _pipeline(store, feed=ScriptedFeed([[_card("AI Agent 一号", "甲公司")]]))
         await pipeline.stream_jobs(config)
@@ -885,8 +889,8 @@ def test_for_task_wires_the_brokers_job_ledger():
     handle had no ledger, letting any broker-shaped object silently satisfy
     store-typed code — so the type story no longer said which object was passed.
     """
+    from boss_agent.adapters.outbound.device.pages.feed_bundle import build_feed_device_world
     from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
-    from boss_agent.pages.feed_bundle import build_feed_device_world
 
     broker = InMemoryTaskBroker()
     pipeline = JobFeedPipeline.for_task(

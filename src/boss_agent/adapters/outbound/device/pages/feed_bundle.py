@@ -1,5 +1,5 @@
 """
-boss_agent.pages.feed_bundle
+boss_agent.adapters.outbound.device.pages.feed_bundle
 ============================
 Production composition of the feed engine's device world (ADR 0016).
 

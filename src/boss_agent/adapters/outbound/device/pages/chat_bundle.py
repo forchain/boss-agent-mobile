@@ -1,5 +1,5 @@
 """
-boss_agent.pages.chat_bundle
+boss_agent.adapters.outbound.device.pages.chat_bundle
 ============================
 Production composition of the chat triage device world (ADR 0016).
 

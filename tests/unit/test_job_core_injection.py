@@ -38,7 +38,6 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 CORE_JOB_ROOT = REPO_ROOT / "src" / "boss_agent" / "core" / "job"
 
 FORBIDDEN_CORE_ROOTS = (
-    "boss_agent.pages",
     "boss_agent.adapters",
     "boss_agent.job_store",
     "boss_agent.worker",
@@ -80,11 +79,13 @@ def test_constructing_the_pipeline_never_builds_a_page_object() -> None:
     """The engine composes from the bundle it is handed, not from a driver."""
     world = _world()
     with (
-        patch("boss_agent.pages.feed_bundle.StartupDialogPage") as startup_cls,
-        patch("boss_agent.pages.feed_bundle.JobListPage") as list_cls,
-        patch("boss_agent.pages.feed_bundle.SearchPage") as search_cls,
-        patch("boss_agent.pages.feed_bundle.JobDetailPage") as detail_cls,
-        patch("boss_agent.pages.feed_bundle.ChatPage") as chat_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.StartupDialogPage"
+        ) as startup_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobListPage") as list_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.SearchPage") as search_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobDetailPage") as detail_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.ChatPage") as chat_cls,
     ):
         pipeline = JobFeedPipeline(world=world, store=InMemoryJobRecordStore())
 

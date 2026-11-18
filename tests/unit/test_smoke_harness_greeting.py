@@ -21,14 +21,15 @@ import pytest
 from _feed_harness import ScriptedFeed, _card, _detail_page, _posting, script_pages
 from rich.console import Console
 
+from boss_agent.adapters.inbound.verification.smoke_harness import SmokeHarness
+from boss_agent.adapters.outbound.device.pages import ChatPage
+from boss_agent.adapters.outbound.device.takeover import TakeoverHandler
 from boss_agent.core.candidate.domain.candidate_profile import CandidateProfile
 from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
 from boss_agent.core.job.use_cases.matching import MatchGreetingResult
 from boss_agent.core.job.use_cases.screening import CardScreeningVerdict
 from boss_agent.core.search.domain.models import FilterConfig
 from boss_agent.core.shared.enums import ChatButtonState
-from boss_agent.pages import ChatPage
-from boss_agent.workflows import SmokeHarness, TakeoverHandler
 
 _HEADHUNTER_JD = (
     "主导企业级大模型应用与Agent工作流平台建设，负责推理链编排、"
@@ -174,7 +175,8 @@ def _record_console():
     """
     buffer = io.StringIO()
     return buffer, patch(
-        "boss_agent.feed_verification.console", Console(file=buffer, width=200, no_color=True)
+        "boss_agent.adapters.inbound.verification.feed_verification.console",
+        Console(file=buffer, width=200, no_color=True),
     )
 
 

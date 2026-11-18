@@ -23,6 +23,7 @@ from boss_agent.adapters.outbound.config.screening_config import (
     load_screening_policy,
 )
 from boss_agent.adapters.outbound.config.settings import resolve_chat_acknowledgment_settings
+from boss_agent.adapters.outbound.device.pages.chat_bundle import build_triage_world
 from boss_agent.adapters.outbound.llm.llm_config import create_llm_client
 from boss_agent.core.chat.domain.rejection import ChatAcknowledgmentSettings
 from boss_agent.core.chat.domain.triage import StopReason
@@ -32,7 +33,6 @@ from boss_agent.core.chat.use_cases.triage import ChatTriage
 from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
 from boss_agent.core.task.domain.models import AutomationTask, TaskType
 from boss_agent.core.task.interfaces.broker import BaseTaskBroker
-from boss_agent.pages.chat_bundle import build_triage_world
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.handlers.base import BaseTaskHandler, HandlerResult
 

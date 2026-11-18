@@ -4,11 +4,11 @@ src/boss_agent/worker/handlers/check_login.py
 Handler for CHECK_LOGIN task: verifies session persistence and dismisses startup popups.
 """
 
+from boss_agent.adapters.outbound.device.pages.job_feed import JobListPage
+from boss_agent.adapters.outbound.device.pages.system import LoginPage, StartupDialogPage
 from boss_agent.core.shared.enums import AuthStatus
 from boss_agent.core.task.domain.models import AutomationTask, TaskType
 from boss_agent.core.task.interfaces.broker import BaseTaskBroker
-from boss_agent.pages.job_feed import JobListPage
-from boss_agent.pages.system import LoginPage, StartupDialogPage
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.handlers.base import BaseTaskHandler, HandlerResult
 

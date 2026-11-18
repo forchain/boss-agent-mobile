@@ -1,5 +1,5 @@
 """
-pages.system
+boss_agent.adapters.outbound.device.pages.system
 ============
 Startup and authentication readiness (spec #395, ticket #398).
 
@@ -8,7 +8,8 @@ usable; `LoginPage` reports whether a run is authenticated, logged out, or facin
 `check_login` handler needs both, and neither knows anything about job feeds or chats.
 """
 
-from ..core.shared.enums import AuthStatus
+from boss_agent.core.shared.enums import AuthStatus
+
 from .base import BaseBossPage
 
 

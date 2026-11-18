@@ -22,7 +22,7 @@ fast tier never reaches an endpoint.
 Where the seams are: the runner resolves its own preset and device session, so it still
 constructs its own ``ResumeMemoryManager`` and ``JobMatchGreetingService`` and the tests
 still patch those on the script module. The engine composition — ``JobFeedPipeline`` plus the
-screener that carries this run's matching service — moved to ``boss_agent.feed_verification``
+screener that carries this run's matching service — moved to ``boss_agent.adapters.inbound.verification.feed_verification``
 in the #391 review, so those two patches moved with it. That is the point of the move: the
 runner and ``SmokeHarness`` now build one pipeline in one place, and a test that watched the
 runner build it watches the shared composition instead.
@@ -129,8 +129,13 @@ def _run(
         patch.object(runner, "AppiumSession", return_value=session),
         patch.object(runner, "TakeoverHandler", return_value=takeover),
         patch.object(runner, "ResumeMemoryManager", return_value=memory),
-        patch("boss_agent.feed_verification.JobFeedPipeline", side_effect=_compose_pipeline),
-        patch("boss_agent.feed_verification.TracedCandidateScreener") as screener_cls,
+        patch(
+            "boss_agent.adapters.inbound.verification.feed_verification.JobFeedPipeline",
+            side_effect=_compose_pipeline,
+        ),
+        patch(
+            "boss_agent.adapters.inbound.verification.feed_verification.TracedCandidateScreener"
+        ) as screener_cls,
         patch.object(runner, "TracedJobMatchGreetingService") as greeting_cls,
     ):
         screener_cls.side_effect = lambda **kw: _REAL_SCREENER(**{**kw, "llm_client": verdict})

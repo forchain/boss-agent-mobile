@@ -19,9 +19,9 @@ from boss_agent.adapters.outbound.config.screening_config import (
     persist_company_blacklist,
     resolve_writable_screening_config_path,
 )
+from boss_agent.adapters.outbound.device.pages.communication import parse_company_from_descriptor
 from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
 from boss_agent.core.shared.identifier_helpers import is_headhunter_agency_name
-from boss_agent.pages.communication import parse_company_from_descriptor
 
 # ---------------------------------------------------------------------------
 # `[Company] | [Position]` card descriptor
