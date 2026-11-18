@@ -368,7 +368,15 @@ def test_interactive_runner_agrees_with_the_worker_on_the_same_strategy():
 
     # The harness only needs a driver-shaped object to construct its page objects; the
     # channel resolution happens in __init__ and never touches the device.
-    harness = SmokeHarness(driver=MagicMock(), saved_search=strategy)
+    harness = SmokeHarness(
+        driver=MagicMock(),
+        takeover_handler=MagicMock(),
+        screener=MagicMock(),
+        world=MagicMock(),
+        store=MagicMock(),
+        saved_search=strategy,
+        enable_greeting_draft=False,
+    )
     worker_policy = FeedStreamConfig.from_payload(
         build_search_launch(strategy, source=LaunchSource.SCHEDULER).payload
     ).screening_policy
@@ -415,7 +423,16 @@ async def test_stored_policy_survives_a_strategy_run():
     store = InMemorySavedSearchStore()
     await store.save_saved_search(strategy)
 
-    SmokeHarness(driver=MagicMock(), saved_search_id=strategy.id, saved_search_store=store)
+    SmokeHarness(
+        driver=MagicMock(),
+        takeover_handler=MagicMock(),
+        screener=MagicMock(),
+        world=MagicMock(),
+        store=MagicMock(),
+        saved_search_id=strategy.id,
+        saved_search_store=store,
+        enable_greeting_draft=False,
+    )
 
     stored = await store.get_saved_search(strategy.id)
     assert stored is not None

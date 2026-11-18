@@ -339,6 +339,14 @@ def test_the_store_payload_rejects_keys_the_schema_does_not_declare() -> None:
     assert set(fields) == set(JOB_RECORDS.field_names) - {"id"}
 
 
+def test_shared_job_record_wire_defaults_match_collection_schema() -> None:
+    """``adapters/shared/records.py`` stays in lockstep with ``JOB_RECORDS`` without importing it."""
+    from boss_agent.adapters.outbound.pocketbase.collection_schema import wire_defaults
+    from boss_agent.adapters.shared.records import JOB_RECORD_WIRE_DEFAULTS
+
+    assert wire_defaults(JOB_RECORDS) == JOB_RECORD_WIRE_DEFAULTS
+
+
 def test_reading_an_older_record_degrades_to_the_declared_default() -> None:
     """A collection provisioned before a column existed reads predictably."""
     normalized = normalize_record(JOB_RECORDS, {"fingerprint": "fp", "title": "工程师"})

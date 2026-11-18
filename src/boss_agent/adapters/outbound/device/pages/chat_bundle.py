@@ -1,14 +1,13 @@
 """
 boss_agent.adapters.outbound.device.pages.chat_bundle
-============================
+=====================================================
 Production composition of the chat triage device world (ADR 0016).
 
 ``ChatTriage`` no longer constructs page objects; it receives a
 :class:`~boss_agent.core.chat.interfaces.device.TriagePages` bundle of already-adapted
 ports. This module is the one place that knows which concrete page classes fill that
 bundle, so the engine's import graph stays free of Appium and a test can compose the
-same shape from scripted stand-ins. ``#460`` relocates this module into the device
-adapter package.
+same shape from scripted stand-ins.
 """
 
 from __future__ import annotations

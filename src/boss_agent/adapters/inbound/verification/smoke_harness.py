@@ -41,21 +41,18 @@ from boss_agent.adapters.inbound.verification.feed_verification import (
     render_greeting_match_card,
     run_verification_feed,
 )
-from boss_agent.adapters.outbound.config.greeting_prompt import load_greeting_prompt
-from boss_agent.adapters.outbound.config.screening_config import load_screening_policy
 from boss_agent.adapters.outbound.device.takeover import TakeoverHandler
-from boss_agent.adapters.outbound.llm.llm_config import create_llm_client
-from boss_agent.adapters.outbound.llm.tracing import TracedJobMatchGreetingService
 from boss_agent.adapters.outbound.pocketbase.async_bridge import run_sync
-from boss_agent.adapters.outbound.pocketbase.saved_search_store import (
-    missing_saved_search_message,
-    resolve_saved_search_store,
-)
+from boss_agent.adapters.outbound.pocketbase.saved_search_store import missing_saved_search_message
 from boss_agent.adapters.outbound.resume.memory import ResumeMemoryManager
 from boss_agent.core.candidate.domain.candidate_profile import CandidateProfile
 from boss_agent.core.job.domain.job_entities import JobPosting
 from boss_agent.core.job.domain.screening_policy import ScreeningPolicy, resolve_screening_policy
+from boss_agent.core.job.interfaces.device import FeedDeviceWorld
+from boss_agent.core.job.interfaces.store import JobRecordStore
+from boss_agent.core.job.use_cases.feed_pipeline import JobFeedPipeline
 from boss_agent.core.job.use_cases.matching import JobMatchGreetingService
+from boss_agent.core.job.use_cases.screening import CandidateScreener
 from boss_agent.core.search.domain.models import FilterConfig, SavedSearch, SearchConfig
 from boss_agent.core.search.interfaces.store import SavedSearchStore
 from boss_agent.core.shared.enums import AuthStatus
@@ -92,12 +89,18 @@ class SmokeHarness:
     def __init__(
         self,
         driver: Any,
-        takeover_handler: TakeoverHandler | None = None,
+        takeover_handler: TakeoverHandler,
+        *,
+        screener: CandidateScreener | None = None,
+        world: FeedDeviceWorld | None = None,
+        store: JobRecordStore | None = None,
+        pipeline: JobFeedPipeline | None = None,
         search_config: SearchConfig | None = None,
         filter_config: FilterConfig | None = None,
         saved_search: SavedSearch | None = None,
         saved_search_id: str | None = None,
         screening_policy: ScreeningPolicy | None = None,
+        default_screening_policy: ScreeningPolicy | None = None,
         resume_file: str | Path | None = None,
         force_refresh_memory: bool = False,
         preview_timeout_sec: float = 3.0,
@@ -107,16 +110,13 @@ class SmokeHarness:
         saved_search_store: SavedSearchStore | None = None,
     ):
         self.driver = driver
-        self.takeover = takeover_handler or TakeoverHandler(driver, auto_confirm_for_test=True)
+        self.takeover = takeover_handler
 
         self.resume_file = resume_file
         self.force_refresh_memory = force_refresh_memory
         self.enable_greeting_draft = enable_greeting_draft
-        self.memory_manager = memory_manager or ResumeMemoryManager()
-        self.matching_service = matching_service or TracedJobMatchGreetingService(
-            llm_client=create_llm_client(),
-            greeting_prompt=load_greeting_prompt(),
-        )
+        self.memory_manager = memory_manager
+        self.matching_service = matching_service
         # Kept on the constructor because it is part of the adapter's published signature —
         # callers still pass it (``tests/unit/test_smoke_harness_greeting.py`` sets it to a
         # tenth of a second) and ticket #394 migrates this constructor against it, so
@@ -125,11 +125,14 @@ class SmokeHarness:
         # typed into a live chat box, and a verification run types nothing into one. The
         # comment it used to carry claimed ``scripts/run_live_test.py`` passed it; #391
         # dropped that argument, so the reason it names now is the only one left.
-        self.preview_timeout_sec = (
-            preview_timeout_sec
-            if preview_timeout_sec is not None
-            else float(self.memory_manager.candidate_config.get("preview_timeout_sec", 3.0))
-        )
+        if preview_timeout_sec is not None:
+            self.preview_timeout_sec = preview_timeout_sec
+        elif self.memory_manager is not None:
+            self.preview_timeout_sec = float(
+                self.memory_manager.candidate_config.get("preview_timeout_sec", 3.0)
+            )
+        else:
+            self.preview_timeout_sec = 3.0
 
         # Pre-flight upfront candidate memory initialization. Loading is the expensive half of
         # drafting a greeting — with ``force_refresh_memory`` it regenerates the profile from
@@ -137,6 +140,10 @@ class SmokeHarness:
         # for an answer the run will not use.
         self.candidate_profile: CandidateProfile | None = None
         if self.enable_greeting_draft:
+            if self.memory_manager is None:
+                raise ValueError(
+                    "memory_manager must be injected when enable_greeting_draft is True"
+                )
             self.candidate_profile = load_candidate_profile(
                 memory_manager=self.memory_manager,
                 resume_file=self.resume_file,
@@ -144,6 +151,7 @@ class SmokeHarness:
                 matching_service=self.matching_service,
             )
 
+        fallback_policy = default_screening_policy or ScreeningPolicy()
         if saved_search:
             self.search_config = saved_search.search
             self.filter_config = saved_search.filter
@@ -152,21 +160,17 @@ class SmokeHarness:
             # (issue #368). Resolving it only on the task path would make one preset mean
             # two things: direct-only under a cron run, unrestricted under this runner.
             self.screening_policy = resolve_screening_policy(
-                saved_search.screening_policy or load_screening_policy(),
+                saved_search.screening_policy or fallback_policy,
                 channel_preference=saved_search.filter.channel_preference,
             )
         elif saved_search_id:
-            # A named preset is resolved through the store seam, so the harness reaches
-            # PocketBase with the broker's credentials instead of the registry's
-            # unauthenticated side-channel read. Left to resolve its own store only
-            # when a caller injects none, because that resolution builds an authenticated
-            # database client the caller may not have wanted.
-            store = saved_search_store or resolve_saved_search_store()
-            loaded_search = _require_saved_search(store, saved_search_id)
+            if saved_search_store is None:
+                raise ValueError("saved_search_store must be injected when saved_search_id is set")
+            loaded_search = _require_saved_search(saved_search_store, saved_search_id)
             self.search_config = loaded_search.search
             self.filter_config = loaded_search.filter
             self.screening_policy = resolve_screening_policy(
-                loaded_search.screening_policy or load_screening_policy(),
+                loaded_search.screening_policy or fallback_policy,
                 channel_preference=loaded_search.filter.channel_preference,
             )
         else:
@@ -175,10 +179,17 @@ class SmokeHarness:
             self.screening_policy = screening_policy or ScreeningPolicy()
 
         # One engine, wired for the interactive runner. The composition itself — pipeline,
-        # screener, console log sink — is ``feed_verification``'s, because the CLI that an
-        # operator runs on a device composes the same run and the two drifting apart is
-        # what #390 and #391 existed to end (issue #391).
-        self.pipeline = build_verification_pipeline(driver, matching_service=self.matching_service)
+        # screener, console log sink — is injected by the composition root.
+        if pipeline is not None:
+            self.pipeline = pipeline
+        else:
+            if screener is None or world is None or store is None:
+                raise ValueError(
+                    "pipeline or (screener, world, store) must be injected into SmokeHarness"
+                )
+            self.pipeline = build_verification_pipeline(
+                driver, screener=screener, world=world, store=store
+            )
 
     def ensure_app_active(
         self, package_name: str = "com.hpbr.bosszhipin", timeout_sec: float = 5.0

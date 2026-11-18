@@ -70,6 +70,8 @@ from boss_agent.core.shared.keyword_constants import (
     INVALID_JOB_TITLES,
     NOT_INSPECTED_DISTRICT_SKIP_REASON,
 )
+from boss_agent.core.task.interfaces.broker import BaseTaskBroker
+from boss_agent.core.task.use_cases.cancellation import is_task_cancelled
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +83,6 @@ __all__ = [
     "FeedStreamConfig",
     "FeedStreamResult",
     "card_rejection_stage",
-    "is_task_cancelled",
     "station_probe_upgrade",
 ]
 
@@ -194,14 +195,6 @@ def station_probe_upgrade(
     return _should_probe_with_station
 
 
-async def is_task_cancelled(broker: Any, task_id: str) -> bool:
-    """Whether the user cancelled the task this run belongs to."""
-    from boss_agent.core.task.domain.models import TaskStatus
-
-    task = await broker.get_task(task_id)
-    return task is not None and task.status == TaskStatus.CANCELLED
-
-
 class JobFeedPipeline:
     """Streams screened job postings out of a mobile search feed.
 
@@ -248,21 +241,21 @@ class JobFeedPipeline:
     @classmethod
     def for_task(
         cls,
-        broker: Any,
+        broker: BaseTaskBroker,
         task_id: str,
         world: FeedDeviceWorld,
+        *,
+        store: JobRecordStore,
         screener: CandidateScreener | None = None,
     ) -> "JobFeedPipeline":
         """Wire a pipeline to a worker task: its job ledger, log sink and cancel probe.
 
-        Both worker handlers compose their run this way, so task plumbing lives in one
-        place instead of being re-derived per handler. The broker's job ledger is
-        resolved here, at composition time, rather than by a duck-typing fallback that
-        let any broker-shaped object silently satisfy store-typed code.
+        The job ledger is passed explicitly rather than pulled off the broker port,
+        keeping ``BaseTaskBroker`` confined to task-stream lifecycle verbs (ADR 0013).
         """
         return cls(
             world=world,
-            store=broker.job_store,
+            store=store,
             screener=screener,
             log=lambda line: broker.append_log(task_id, line),
             is_cancelled=lambda: is_task_cancelled(broker, task_id),

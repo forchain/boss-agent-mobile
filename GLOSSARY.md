@@ -42,15 +42,15 @@ _Avoid_: Main module, bootstrap, wiring file
 
 **Decomposed Entity Modules**:
 The focused, independently importable domain entity modules replacing the retired monolithic `models.py`:
-- `boss_agent.enums`: Pure enumerations and rank mappings (`JobRecordStatus`, `TargetAction`, etc.).
-- `boss_agent.keyword_constants`: Keyword lists, company blacklist regexes, and domain constants.
-- `boss_agent.identifier_helpers`: Pure string parsing, recruiter name normalization, and job fingerprint calculations with zero entity imports.
-- `boss_agent.job_entities`: Job data models (`JobCardBrief`, `JobRecord`, `JobPosting`).
-- `boss_agent.candidate_entities`: Candidate profile data models (`CandidateProfile`).
-- `boss_agent.search_entities`: Search and filter configuration models (`SearchConfig`, `FilterConfig`, `SavedSearch`).
-- `boss_agent.screening_policy`: Deterministic card and posting screening policies (`ScreeningPolicy`).
-- `boss_agent.screening_config`: Configuration Realm file persistence and loader for screening policies.
-- `boss_agent.entities`: Facade re-exporting the seven core domain entities.
+- `boss_agent.core.shared.enums`: Pure enumerations and rank mappings (`JobRecordStatus`, `TargetAction`, etc.).
+- `boss_agent.core.shared.keyword_constants`: Keyword lists, company blacklist regexes, and domain constants.
+- `boss_agent.core.shared.identifier_helpers`: Pure string parsing, recruiter name normalization, and job fingerprint calculations with zero entity imports.
+- `boss_agent.core.job.domain.job_entities`: Job data models (`JobCardBrief`, `JobRecord`, `JobPosting`).
+- `boss_agent.core.candidate.domain.candidate_profile`: Candidate profile data models (`CandidateProfile`).
+- `boss_agent.core.search.domain.models`: Search and filter configuration models (`SearchConfig`, `FilterConfig`, `SavedSearch`).
+- `boss_agent.core.job.domain.screening_policy`: Deterministic card and posting screening policies (`ScreeningPolicy`).
+- `boss_agent.adapters.outbound.config.screening_config`: Configuration Realm file persistence and loader for screening policies.
+- `boss_agent.entities`: Facade re-exporting the core domain entities.
 _Avoid_: `boss_agent.models`, monolithic models module, God model
 
 **Environment Provisioner**:
@@ -134,7 +134,7 @@ The wire format a client speaks to a model host — exactly one of `openai` (Cha
 _Avoid_: provider brand, vendor type, model house, service type
 
 **Model Factory**:
-The single seam (`boss_agent.llm_config.create_llm_client`) that turns a configured Protocol into a concrete `LLMDecisionClient`, so every caller — the Automation Worker, the Mobile Job Feed Pipeline, and the CLI evaluation scripts — holds the decision interface rather than a protocol-specific class. It is the one place that knows what a provider name means; clients know only their own wire format.
+The single seam (`boss_agent.adapters.outbound.llm.llm_config.create_llm_client`, exposed to CLI scripts via `boss_agent.main.build_llm_client`) that turns a configured Protocol into a concrete `LLMDecisionClient`, so every caller — the Automation Worker, the Mobile Job Feed Pipeline, and the CLI evaluation scripts — holds the decision interface rather than a protocol-specific class. It is the one place that knows what a provider name means; clients know only their own wire format.
 _Avoid_: client builder, LLM helper, provider switch
 
 **Anthropic Messages Client**:

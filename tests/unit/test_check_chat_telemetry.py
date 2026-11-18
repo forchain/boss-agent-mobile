@@ -29,7 +29,10 @@ from boss_agent.adapters.inbound.worker.context import WorkerContext
 from boss_agent.adapters.inbound.worker.handlers import check_chat as check_chat_module
 from boss_agent.adapters.inbound.worker.handlers.check_chat import CheckChatHandler
 from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
-from boss_agent.adapters.outbound.config.screening_config import load_screening_policy
+from boss_agent.adapters.outbound.config.screening_config import (
+    ScreeningConfigBlacklistSink,
+    load_screening_policy,
+)
 from boss_agent.core.chat.domain.rejection import ChatAcknowledgmentSettings
 from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
 from boss_agent.core.task.domain.models import TaskType
@@ -76,6 +79,7 @@ def context() -> WorkerContext:
 def make_handler(harness: Harness, policy: ScreeningPolicy, settings=None) -> CheckChatHandler:
     return CheckChatHandler(
         classifier=FakeClassifier({REJECTION_TEXT: True, OTHER_REJECTION_TEXT: True}),
+        blacklist_sink=ScreeningConfigBlacklistSink(),
         settings=settings or ChatAcknowledgmentSettings(),
         policy=policy,
         pages=scripted_pages(harness),

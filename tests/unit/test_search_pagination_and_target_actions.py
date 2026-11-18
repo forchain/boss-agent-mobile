@@ -19,7 +19,10 @@ from boss_agent.adapters.inbound.worker.daemon import AutomationWorker
 from boss_agent.adapters.inbound.worker.handlers.auto_apply import AutoApplyHandler
 from boss_agent.adapters.inbound.worker.handlers.scrape_jobs import ScrapeJobsHandler
 from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
+from boss_agent.adapters.outbound.config.settings import load_feed_config_defaults
+from boss_agent.adapters.outbound.device.pages.feed_bundle import build_feed_device_world
 from boss_agent.adapters.outbound.device.pages.job_feed import JobListPage
+from boss_agent.core.job.use_cases.screening import CandidateScreener
 from boss_agent.core.search.domain.models import (
     SavedSearch,
     SearchConfig,
@@ -31,6 +34,23 @@ from boss_agent.core.shared.enums import (
     TargetAction,
 )
 from boss_agent.core.task.domain.models import TaskStatus, TaskType
+
+
+def _scrape_handler(llm_client=None) -> ScrapeJobsHandler:
+    return ScrapeJobsHandler(
+        screener=CandidateScreener(llm_client=llm_client or MagicMock()),
+        pages=build_feed_device_world,
+        feed_config_defaults_loader=load_feed_config_defaults,
+    )
+
+
+def _apply_handler(llm_client=None) -> AutoApplyHandler:
+    return AutoApplyHandler(
+        screener=CandidateScreener(llm_client=llm_client or MagicMock()),
+        pages=build_feed_device_world,
+        feed_config_defaults_loader=load_feed_config_defaults,
+    )
+
 
 # ---------------------------------------------------------------------------
 # Ticket 1 (Issue #135): Feed Bottom Boundary & Pagination Tests
@@ -284,7 +304,7 @@ async def test_scrape_jobs_handler_save_jd_enriches_full_jd():
         config=config,
         broker=broker,
         context=context,
-        handlers=[ScrapeJobsHandler(llm_client=MagicMock())],
+        handlers=[_scrape_handler()],
     )
 
     task = await broker.create_task(
@@ -353,7 +373,7 @@ async def test_scrape_jobs_handler_detail_missing_company_falls_back_to_card_com
         config=config,
         broker=broker,
         context=context,
-        handlers=[ScrapeJobsHandler(llm_client=MagicMock())],
+        handlers=[_scrape_handler()],
     )
 
     task = await broker.create_task(
@@ -407,7 +427,7 @@ async def test_scrape_jobs_handler_terminates_on_feed_bottom_boundary():
         config=config,
         broker=broker,
         context=context,
-        handlers=[ScrapeJobsHandler(llm_client=MagicMock())],
+        handlers=[_scrape_handler()],
     )
 
     task = await broker.create_task(
@@ -494,7 +514,7 @@ async def test_scrape_jobs_handler_filters_recommended_cards_below_boundary():
         config=config,
         broker=broker,
         context=context,
-        handlers=[ScrapeJobsHandler(llm_client=MagicMock())],
+        handlers=[_scrape_handler()],
     )
 
     task = await broker.create_task(
@@ -581,7 +601,7 @@ async def test_auto_apply_handler_quota_exhausted_degrades_to_matched():
         config=config,
         broker=broker,
         context=context,
-        handlers=[AutoApplyHandler(llm_client=mock_llm)],
+        handlers=[_apply_handler(llm_client=mock_llm)],
     )
 
     task = await broker.create_task(

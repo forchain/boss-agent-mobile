@@ -30,11 +30,15 @@ from boss_agent.adapters.inbound.worker.config import WorkerConfig
 from boss_agent.adapters.inbound.worker.context import WorkerContext
 from boss_agent.adapters.inbound.worker.handlers.check_chat import CheckChatHandler
 from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
-from boss_agent.adapters.outbound.config.screening_config import load_screening_policy
+from boss_agent.adapters.outbound.config.screening_config import (
+    ScreeningConfigBlacklistSink,
+    load_screening_policy,
+)
 from boss_agent.adapters.outbound.device.pages.chat_adapters import (
     ChatActorAdapter,
     CommunicationListAdapter,
 )
+from boss_agent.adapters.outbound.device.pages.chat_bundle import build_triage_world
 from boss_agent.adapters.outbound.device.pages.communication import CommunicationListPage
 from boss_agent.core.chat.domain.rejection import (
     DEFAULT_REJECTION_REPLY_TEXT,
@@ -72,10 +76,11 @@ def context() -> WorkerContext:
 def make_handler(pages=None, classifier=None, policy=None, settings=None) -> CheckChatHandler:
     """Handler pinned to explicit settings/policy so no test reads or writes local config."""
     return CheckChatHandler(
-        classifier=classifier,
+        classifier=classifier or FakeClassifier(),
+        blacklist_sink=ScreeningConfigBlacklistSink(),
         settings=settings or ChatAcknowledgmentSettings(),
         policy=policy or ScreeningPolicy(),
-        pages=pages,
+        pages=pages or build_triage_world,
     )
 
 
@@ -195,7 +200,9 @@ def test_handler_declares_check_chat_task_type():
 
 @pytest.mark.asyncio
 async def test_the_classifier_client_is_resolved_at_the_edge(broker, context, policy, monkeypatch):
-    """The classifier no longer reaches for the realm itself; the handler hands it a client."""
+    """The classifier no longer reaches for the realm itself; the composition root hands it a client."""
+    from boss_agent import main as composition
+
     harness = Harness([card("方便约个时间聊聊吗？", sender="张先生", descriptor="深至科技 | 后端")])
     llm_client = MagicMock()
     llm_client.chat_completion_json.return_value = {
@@ -203,15 +210,14 @@ async def test_the_classifier_client_is_resolved_at_the_edge(broker, context, po
         "confidence": 0.9,
         "rationale": "面试邀约",
     }
+    monkeypatch.setattr(composition, "create_llm_client", lambda: llm_client)
+    monkeypatch.setattr(composition, "PocketBaseTaskBroker", MagicMock())
+    monkeypatch.setattr(composition, "build_triage_world", scripted_pages(harness))
     monkeypatch.setattr(
-        "boss_agent.adapters.inbound.worker.handlers.check_chat.create_llm_client",
-        lambda: llm_client,
+        composition, "resolve_chat_acknowledgment_settings", ChatAcknowledgmentSettings
     )
-    handler = CheckChatHandler(
-        settings=ChatAcknowledgmentSettings(),
-        policy=policy,
-        pages=scripted_pages(harness),
-    )
+    monkeypatch.setattr(composition, "load_screening_policy", lambda: policy)
+    handler = composition.build_worker()._handlers[TaskType.CHECK_CHAT]
 
     task = await broker.create_task(task_type=TaskType.CHECK_CHAT, payload={})
     result = await handler.handle(task, broker, context)

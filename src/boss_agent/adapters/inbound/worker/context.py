@@ -1,6 +1,6 @@
 """
-src/boss_agent/worker/context.py
-================================
+src/boss_agent/adapters/inbound/worker/context.py
+=================================================
 Runtime execution context holding device driver and configurations for handlers.
 """
 

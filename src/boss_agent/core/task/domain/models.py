@@ -12,7 +12,7 @@ datetimes) so broker rows and test fixtures build it the same way they always di
 from __future__ import annotations
 
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
@@ -81,10 +81,6 @@ class AutomationTask:
         self.last_heartbeat_at = _coerce_datetime(self.last_heartbeat_at)
         self.created = _coerce_datetime(self.created)  # type: ignore[assignment]
         self.updated = _coerce_datetime(self.updated)  # type: ignore[assignment]
-
-    def model_dump(self) -> dict[str, Any]:
-        """The persisted key/value view the pydantic model exposed to callers."""
-        return asdict(self)
 
 
 __all__ = ["AutomationTask", "TaskStatus", "TaskType"]

@@ -44,18 +44,17 @@ from typing import Any
 from rich.console import Console
 from rich.panel import Panel
 
-from boss_agent.adapters.memory.job_store import InMemoryJobRecordStore
-from boss_agent.adapters.outbound.config.screening_prompt import load_screening_prompt
-from boss_agent.adapters.outbound.device.pages.feed_bundle import build_feed_device_world
-from boss_agent.adapters.outbound.llm.tracing import TracedCandidateScreener
 from boss_agent.adapters.outbound.pocketbase.async_bridge import run_sync
 from boss_agent.adapters.outbound.resume.memory import ResumeMemoryManager
 from boss_agent.core.candidate.domain.candidate_profile import StructuredCandidateProfile
 from boss_agent.core.job.domain.feed_stream import FeedStreamConfig, FeedStreamResult
 from boss_agent.core.job.domain.job_entities import JobPosting
 from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
+from boss_agent.core.job.interfaces.device import FeedDeviceWorld
+from boss_agent.core.job.interfaces.store import JobRecordStore
 from boss_agent.core.job.use_cases.feed_pipeline import JobFeedPipeline
 from boss_agent.core.job.use_cases.matching import JobMatchGreetingService, MatchGreetingResult
+from boss_agent.core.job.use_cases.screening import CandidateScreener
 from boss_agent.core.search.domain.models import FilterConfig, SearchConfig
 from boss_agent.core.shared.enums import TargetAction
 
@@ -196,34 +195,23 @@ def load_candidate_profile(
 
 
 def build_verification_pipeline(
-    driver: Any,
+    driver: Any,  # noqa: ARG001 - signature kept consistent for verification callers
     *,
-    matching_service: JobMatchGreetingService,
+    screener: CandidateScreener,
+    world: FeedDeviceWorld,
+    store: JobRecordStore,
     log: Any = console_log_sink,
 ) -> JobFeedPipeline:
-    """Compose the engine for one verification run: no store, nothing persisted.
+    """Assemble the engine for one verification run from injected edge dependencies.
 
     The worker builds its pipeline through ``for_task()`` with a store behind it; a
-    verification run has no broker and wants no writes, so it composes the volatile
-    in-memory store explicitly (issue #389) and every record the run makes dies with it.
-
-    The screener carries *this* run's matching service rather than one the pipeline builds
-    for itself, so the greeting is drafted by the object the caller configured and can assert
-    on. The Screening Prompt is loaded here, at the edge, and injected as a string.
+    verification run has no broker and wants no writes, so the composition root injects
+    the volatile in-memory store, device world, and traced screener explicitly (issue #389).
     """
-    try:
-        screening_prompt = load_screening_prompt()
-    except FileNotFoundError:
-        screening_prompt = ""
-
     return JobFeedPipeline(
-        world=build_feed_device_world(driver),
-        store=InMemoryJobRecordStore(),
-        screener=TracedCandidateScreener(
-            llm_client=matching_service.llm_client,
-            matching_service=matching_service,
-            screening_prompt=screening_prompt,
-        ),
+        world=world,
+        store=store,
+        screener=screener,
         log=log,
     )
 

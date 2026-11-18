@@ -1,6 +1,6 @@
 """
 boss_agent.adapters.outbound.device.pages.feed_bundle
-============================
+=====================================================
 Production composition of the feed engine's device world (ADR 0016).
 
 ``JobFeedPipeline`` no longer constructs page objects; it receives a
@@ -9,8 +9,7 @@ operations it declares. This module is the one place that knows which concrete p
 classes fill that bundle, so the engine's import graph stays free of Appium and a test
 can compose the same shape from scripted stand-ins.
 
-The page classes are imported from the submodule that owns each one (never the facade);
-#460 relocates this module into the device adapter package.
+The page classes are imported from the submodule that owns each one (never the facade).
 """
 
 from __future__ import annotations

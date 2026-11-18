@@ -11,12 +11,12 @@ from typing import Any
 from langsmith import traceable
 from rich.console import Console
 
-from boss_agent.adapters.outbound.llm.llm_config import create_llm_client
 from boss_agent.core.candidate.domain.candidate_profile import (
     CandidateProfile,
     StructuredCandidateProfile,
 )
 from boss_agent.core.candidate.domain.profile_normalizer import ProfileNormalizer
+from boss_agent.core.candidate.interfaces.candidate_memory_store import CandidateMemoryStore
 from boss_agent.core.candidate.interfaces.resume_text_source import ResumeTextSource
 from droid_agent_core.llm import LLMDecisionClient
 
@@ -108,11 +108,15 @@ class ResumeMemoryManager:
 
     def __init__(
         self,
-        llm_client: LLMDecisionClient | None = None,
+        llm_client: LLMDecisionClient,
+        candidate_memory: CandidateMemoryStore | None = None,
         memory_file_path: str | Path | None = None,
         candidate_config_path: str | Path | None = None,
     ):
-        self.llm_client = llm_client or create_llm_client()
+        if llm_client is None:
+            raise ValueError("llm_client must be injected into ResumeMemoryManager")
+        self.llm_client = llm_client
+        self.candidate_memory = candidate_memory
         self.extractor = ResumeTextExtractor()
 
         # Load candidate config if available
@@ -182,12 +186,12 @@ class ResumeMemoryManager:
                     f"[yellow]⚠️  Failed to read explicit memory from {self.memory_path}: {e}[/yellow]"
                 )
 
-        # 1. Primary and single source of truth: load from database broker
+        # 1. Primary and single source of truth: load from injected candidate memory store
+        if self.candidate_memory is None:
+            raise ValueError("candidate_memory store must be injected into ResumeMemoryManager")
         from boss_agent.adapters.outbound.pocketbase.async_bridge import run_sync
-        from boss_agent.broker import PocketBaseBroker
 
-        broker = PocketBaseBroker()
-        data = run_sync(broker.candidate_memory.get_candidate_profile(), timeout=5.0)
+        data = run_sync(self.candidate_memory.get_candidate_profile(), timeout=5.0)
 
         if data and (
             data.get("name")
@@ -296,14 +300,14 @@ class ResumeMemoryManager:
         if sync_to_db is None:
             sync_to_db = not self.explicit_memory_file
 
-        # 1. Primary: Save to PocketBase database (HTTP or SQLite fallback)
+        # 1. Primary: Save to injected candidate memory store
         if sync_to_db:
+            if self.candidate_memory is None:
+                raise ValueError("candidate_memory store must be injected into ResumeMemoryManager")
             from boss_agent.adapters.outbound.pocketbase.async_bridge import run_sync
-            from boss_agent.broker import PocketBaseBroker
 
-            broker = PocketBaseBroker()
             run_sync(
-                broker.candidate_memory.save_candidate_profile(profile.to_dict()),
+                self.candidate_memory.save_candidate_profile(profile.to_dict()),
                 timeout=5.0,
             )
             console.print(

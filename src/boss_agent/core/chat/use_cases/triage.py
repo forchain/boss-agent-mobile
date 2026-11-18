@@ -47,7 +47,6 @@ import logging
 from collections import Counter
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
-from typing import Any
 
 from boss_agent.core.chat.domain.rejection import (
     DEFAULT_MAX_SCROLL_SWIPES,
@@ -69,7 +68,8 @@ from boss_agent.core.chat.interfaces.device import (
     TriagePages,
 )
 from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
-from boss_agent.core.job.use_cases.feed_pipeline import is_task_cancelled
+from boss_agent.core.task.interfaces.broker import BaseTaskBroker
+from boss_agent.core.task.use_cases.cancellation import is_task_cancelled
 
 logger = logging.getLogger(__name__)
 
@@ -159,7 +159,7 @@ class ChatTriage:
     @classmethod
     def for_task(
         cls,
-        broker: Any,
+        broker: BaseTaskBroker,
         task_id: str,
         pages: TriagePages,
         *,

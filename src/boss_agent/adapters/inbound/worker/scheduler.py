@@ -1,6 +1,6 @@
 """
-src/boss_agent/scheduler.py
-===========================
+src/boss_agent/adapters/inbound/worker/scheduler.py
+===================================================
 Lightweight Cron scheduler engine for periodic triggering of SavedSearch strategies.
 """
 

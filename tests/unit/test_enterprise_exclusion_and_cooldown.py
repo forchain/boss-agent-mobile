@@ -21,11 +21,30 @@ from boss_agent.adapters.inbound.worker.daemon import AutomationWorker
 from boss_agent.adapters.inbound.worker.handlers.auto_apply import AutoApplyHandler
 from boss_agent.adapters.inbound.worker.handlers.scrape_jobs import ScrapeJobsHandler
 from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
+from boss_agent.adapters.outbound.config.settings import load_feed_config_defaults
+from boss_agent.adapters.outbound.device.pages.feed_bundle import build_feed_device_world
 from boss_agent.adapters.outbound.pocketbase.pocketbase_adapter import PocketBaseTaskBroker
 from boss_agent.core.job.domain.job_entities import JobCardBrief
+from boss_agent.core.job.use_cases.screening import CandidateScreener
 from boss_agent.core.shared.enums import ChatButtonState
 from boss_agent.core.shared.identifier_helpers import is_communication_expired
 from boss_agent.core.task.domain.models import TaskType
+
+
+def _scrape_handler(llm_client=None) -> ScrapeJobsHandler:
+    return ScrapeJobsHandler(
+        screener=CandidateScreener(llm_client=llm_client or MagicMock()),
+        pages=build_feed_device_world,
+        feed_config_defaults_loader=load_feed_config_defaults,
+    )
+
+
+def _apply_handler(llm_client=None) -> AutoApplyHandler:
+    return AutoApplyHandler(
+        screener=CandidateScreener(llm_client=llm_client or MagicMock()),
+        pages=build_feed_device_world,
+        feed_config_defaults_loader=load_feed_config_defaults,
+    )
 
 
 def _iso_days_ago(days: int) -> str:
@@ -204,7 +223,7 @@ async def test_scrape_skips_card_already_recorded_as_applied(broker, mock_driver
         config=config,
         broker=broker,
         context=context,
-        handlers=[ScrapeJobsHandler(llm_client=MagicMock())],
+        handlers=[_scrape_handler()],
     )
 
     task = await broker.create_task(
@@ -263,7 +282,7 @@ async def test_scrape_skips_other_roles_from_communicated_direct_hire_company(br
         config=config,
         broker=broker,
         context=context,
-        handlers=[ScrapeJobsHandler(llm_client=MagicMock())],
+        handlers=[_scrape_handler()],
     )
 
     task = await broker.create_task(
@@ -321,7 +340,7 @@ async def test_scrape_admits_headhunter_roles_from_same_company_name(broker, moc
         config=config,
         broker=broker,
         context=context,
-        handlers=[ScrapeJobsHandler(llm_client=MagicMock())],
+        handlers=[_scrape_handler()],
     )
 
     task = await broker.create_task(
@@ -380,7 +399,7 @@ async def test_masked_company_names_never_join_the_exclusion_pool(broker, mock_d
         config=config,
         broker=broker,
         context=context,
-        handlers=[ScrapeJobsHandler(llm_client=MagicMock())],
+        handlers=[_scrape_handler()],
     )
 
     await broker.create_task(
@@ -425,7 +444,7 @@ async def test_newly_communicated_company_is_cached_within_the_same_run(broker, 
         config=config,
         broker=broker,
         context=context,
-        handlers=[ScrapeJobsHandler(llm_client=MagicMock())],
+        handlers=[_scrape_handler()],
     )
 
     task = await broker.create_task(
@@ -488,7 +507,7 @@ async def test_expired_communication_releases_card_for_reevaluation(broker, mock
         config=config,
         broker=broker,
         context=context,
-        handlers=[ScrapeJobsHandler(llm_client=MagicMock())],
+        handlers=[_scrape_handler()],
     )
 
     await broker.create_task(
@@ -572,7 +591,7 @@ async def test_expired_communication_releases_record_back_to_candidate_pool(brok
         config=config,
         broker=broker,
         context=context,
-        handlers=[ScrapeJobsHandler(llm_client=MagicMock())],
+        handlers=[_scrape_handler()],
     )
 
     await broker.create_task(
@@ -647,7 +666,7 @@ async def test_auto_apply_refuses_other_role_from_communicated_direct_hire_compa
         config=config,
         broker=broker,
         context=context,
-        handlers=[AutoApplyHandler(llm_client=mock_llm)],
+        handlers=[_apply_handler(llm_client=mock_llm)],
     )
 
     task = await broker.create_task(
@@ -723,7 +742,7 @@ async def test_auto_apply_permits_headhunter_target_from_communicated_company(br
         config=config,
         broker=broker,
         context=context,
-        handlers=[AutoApplyHandler(llm_client=MagicMock())],
+        handlers=[_apply_handler()],
     )
 
     await broker.create_task(
@@ -780,7 +799,7 @@ async def test_permanent_cooldown_keeps_excluding_old_communications(broker, moc
         config=config,
         broker=broker,
         context=context,
-        handlers=[ScrapeJobsHandler(llm_client=MagicMock())],
+        handlers=[_scrape_handler()],
     )
 
     await broker.create_task(

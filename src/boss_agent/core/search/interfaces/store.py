@@ -10,8 +10,9 @@ and an unowned side-channel. This store is the seam both of those now pass throu
 read path, one owner, and a caller that names the seam it needs instead of reaching
 around the broker for it.
 
-The port lives in core; its PocketBase and InMemory implementations stay in the adapter
-module until the adapters ticket moves them.
+The port lives in core; its PocketBase and InMemory implementations live in
+:mod:`boss_agent.adapters.outbound.pocketbase.saved_search_store` and
+:mod:`boss_agent.adapters.memory.saved_search_store`.
 """
 
 from __future__ import annotations

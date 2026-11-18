@@ -48,12 +48,6 @@ from boss_agent.adapters.inbound.verification.feed_verification import (
     render_greeting_match_card,
     run_verification_feed,
 )
-from boss_agent.adapters.outbound.config.config_realm import DEFAULTS
-from boss_agent.adapters.outbound.config.settings import load_settings
-from boss_agent.adapters.outbound.pocketbase.async_bridge import run_sync
-from boss_agent.adapters.outbound.pocketbase.saved_search_store import (
-    missing_saved_search_message,
-)
 from boss_agent.core.job.domain.feed_stream import FeedStreamResult
 from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
 from boss_agent.core.job.use_cases.screening import JobVerdictStage
@@ -68,6 +62,12 @@ from boss_agent.main import (
     build_saved_search_store,
     build_takeover_handler,
     build_verification_pipeline,
+    default_preview_timeout_sec,
+    format_missing_saved_search_message,
+    run_async,
+)
+from boss_agent.main import (
+    load_runner_settings as _load_runner_settings,
 )
 
 # The store resolution stays a module-level name so a caller can substitute it; the
@@ -103,16 +103,16 @@ def _read_presets(
     operator did not name.
     """
     if store is not None:
-        return run_sync(read(store))
+        return run_async(read(store))
 
     try:
-        return run_sync(read(resolve_saved_search_store()))
+        return run_async(read(resolve_saved_search_store()))
     except BrokerError as e:
         console.print(
             f"[yellow]⚠️  PocketBase saved searches unavailable ({e}). "
             f"Continuing with the built-in default presets.[/yellow]"
         )
-        return run_sync(read(resolve_saved_search_store(prefer_database=False)))
+        return run_async(read(resolve_saved_search_store(prefer_database=False)))
 
 
 def read_saved_search(search_id: str, store: SavedSearchStore | None = None) -> SavedSearch | None:
@@ -220,7 +220,7 @@ def run_live_test(
             available = [s.id for s in read_saved_searches(saved_search_store)]
             # The message is escaped because Rich reads ``[alpha_preset]`` as a markup tag
             # and swallows it — the one line that tells the operator what to type instead.
-            message = escape(missing_saved_search_message(search_id, available))
+            message = escape(format_missing_saved_search_message(search_id, available))
             console.print(f"[bold red]❌ {message}[/bold red]")
             return False
         search_config = (
@@ -319,7 +319,7 @@ def run_live_test(
             search_config=search_config,
             filter_config=active_filter,
             # Deliberately the engine's own default, not the preset's stored policy:
-            # resolving it would call ``ScreeningPolicy.load_default()``, read the
+            # resolving it would call ``load_screening_policy()``, read the
             # operator's global screening configuration, and change which cards this live
             # run accepts. This script's job is to report what the engine does, not to
             # re-decide what the engine should accept (issue #391).
@@ -361,7 +361,7 @@ def run_live_test(
 
 def load_runner_settings(config_path: str | Path | None = None) -> dict[str, Any]:
     """Load settings from configuration files with priority: local overrides -> configs -> defaults."""
-    return load_settings(config_path=config_path)
+    return _load_runner_settings(config_path=config_path)
 
 
 def main():
@@ -501,8 +501,9 @@ def main():
             f"[dim]a verification run types no greeting into a chat box, so there is no "
             f"preview pause to time (issue #390).[/dim]"
         )
-    elif configured_preview_timeout is not None and float(configured_preview_timeout) != float(
-        DEFAULTS["preview_timeout_sec"]
+    elif (
+        configured_preview_timeout is not None
+        and float(configured_preview_timeout) != default_preview_timeout_sec()
     ):
         console.print(
             f"[yellow]⚠️  preview_timeout_sec ({configured_preview_timeout}s) in your settings "

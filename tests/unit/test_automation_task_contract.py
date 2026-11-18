@@ -5,17 +5,19 @@ Contract tests for the Automation Task entity (issue #449).
 
 The entity moves from a pydantic model to a plain dataclass. These tests lock the
 behavior callers actually rely on — field set, defaults, mapping construction, Task
-Provenance defaulting, datetime coercion and the serialized key set — so the move is
-provably behavior-preserving. They resolve the entity through the package facade
-(``boss_agent.broker``), which is the stable import seam before and after the move.
+Provenance defaulting, datetime coercion, dataclass field contract, and extra-key
+policy — so the move is provably behavior-preserving.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import re
 from datetime import UTC, datetime
 
-from boss_agent.broker import AutomationTask, TaskStatus, TaskType
+import pytest
+
+from boss_agent.core.task.domain.models import AutomationTask, TaskStatus, TaskType
 
 #: The persisted shape of an automation task. Dashboard types and the PocketBase
 #: collection schema mirror these keys, so a field must not appear or vanish silently.
@@ -102,11 +104,21 @@ def test_iso_datetimes_are_coerced() -> None:
     assert task.updated == expected
 
 
-def test_model_dump_exposes_exactly_the_persisted_key_set() -> None:
+def test_dataclass_fields_match_the_persisted_key_set() -> None:
     task = AutomationTask(task_type=TaskType.SCRAPE_JOBS)
 
-    assert set(task.model_dump()) == set(EXPECTED_FIELDS)
-    assert task.model_dump()["task_type"] is TaskType.SCRAPE_JOBS
+    assert tuple(f.name for f in dataclasses.fields(AutomationTask)) == EXPECTED_FIELDS
+    assert dataclasses.asdict(task)["task_type"] is TaskType.SCRAPE_JOBS
+
+
+def test_unknown_keyword_arguments_are_rejected() -> None:
+    """Unlike pydantic (extra='ignore'), the plain dataclass refuses unknown keys.
+
+    PocketBase adapters map declared columns explicitly into ``AutomationTask`` so a
+    future server column never breaks row deserialization (ADR 0021).
+    """
+    with pytest.raises(TypeError):
+        AutomationTask(task_type=TaskType.CHECK_LOGIN, unknown_column="extra")
 
 
 def test_terminal_status_language_is_stable() -> None:

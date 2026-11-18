@@ -23,12 +23,14 @@ from rich.console import Console
 
 from boss_agent.adapters.inbound.verification import feed_verification
 from boss_agent.adapters.inbound.verification.smoke_harness import SmokeHarness
+from boss_agent.adapters.memory.job_store import InMemoryJobRecordStore
 from boss_agent.adapters.outbound.device.pages import ChatPage
+from boss_agent.adapters.outbound.device.pages.feed_bundle import build_feed_device_world
 from boss_agent.adapters.outbound.device.takeover import TakeoverHandler
 from boss_agent.core.candidate.domain.candidate_profile import CandidateProfile
 from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
 from boss_agent.core.job.use_cases.matching import MatchGreetingResult
-from boss_agent.core.job.use_cases.screening import CardScreeningVerdict
+from boss_agent.core.job.use_cases.screening import CandidateScreener, CardScreeningVerdict
 from boss_agent.core.search.domain.models import FilterConfig
 from boss_agent.core.shared.enums import ChatButtonState
 
@@ -49,6 +51,9 @@ def _harness(driver, matching_service, **kwargs) -> SmokeHarness:
     return SmokeHarness(
         driver=driver,
         takeover_handler=TakeoverHandler(driver, auto_confirm_for_test=True),
+        screener=CandidateScreener(llm_client=MagicMock(), matching_service=matching_service),
+        world=build_feed_device_world(driver),
+        store=InMemoryJobRecordStore(),
         memory_manager=memory_manager,
         matching_service=matching_service,
         filter_config=FilterConfig(

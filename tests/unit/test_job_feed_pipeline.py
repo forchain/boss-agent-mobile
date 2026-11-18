@@ -39,7 +39,6 @@ from boss_agent.core.job.use_cases.feed_pipeline import (
     JobAction,
     JobFeedPipeline,
     _element_y,
-    is_task_cancelled,
 )
 from boss_agent.core.job.use_cases.screening import CandidateScreener, JobVerdictStage
 from boss_agent.core.shared.enums import (
@@ -49,6 +48,7 @@ from boss_agent.core.shared.enums import (
     TargetAction,
 )
 from boss_agent.core.shared.keyword_constants import APPLIED_SOURCE_AGENT
+from boss_agent.core.task.use_cases.cancellation import is_task_cancelled
 
 
 class _StaleElement:
@@ -894,7 +894,7 @@ def test_for_task_wires_the_brokers_job_ledger():
 
     broker = InMemoryTaskBroker()
     pipeline = JobFeedPipeline.for_task(
-        broker, "task-1", world=build_feed_device_world(MagicMock())
+        broker, "task-1", world=build_feed_device_world(MagicMock()), store=broker.job_store
     )
     assert pipeline.store is broker.job_store
 

@@ -99,7 +99,7 @@ class TaskBroker(ABC):
         pass
 
 
-#: Compatibility name still advertised by the ``boss_agent.broker`` facade.
+#: Compatibility alias for :class:`TaskBroker`.
 BaseTaskBroker = TaskBroker
 
 __all__ = ["BaseTaskBroker", "TaskBroker"]

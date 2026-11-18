@@ -229,10 +229,17 @@ def test_feed_pipeline_config_accepts_a_candidate_profile() -> None:
 @pytest.mark.asyncio
 async def test_auto_apply_resolves_a_candidate_profile_from_the_payload() -> None:
     """The handler builds its profile from the entity when the payload carries one."""
+    from unittest.mock import MagicMock
+
     from boss_agent.adapters.inbound.worker.handlers.auto_apply import AutoApplyHandler
     from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
+    from boss_agent.adapters.outbound.device.pages.feed_bundle import build_feed_device_world
+    from boss_agent.core.job.use_cases.screening import CandidateScreener
 
-    handler = AutoApplyHandler()
+    handler = AutoApplyHandler(
+        screener=CandidateScreener(llm_client=MagicMock()),
+        pages=build_feed_device_world,
+    )
 
     resolved = await handler._resolve_profile(
         InMemoryTaskBroker(),
@@ -251,10 +258,17 @@ async def test_auto_apply_falls_back_to_a_zero_argument_profile() -> None:
     This is the branch that runs while the broker is already failing, so it has to keep
     producing a usable profile rather than raising.
     """
+    from unittest.mock import MagicMock
+
     from boss_agent.adapters.inbound.worker.handlers.auto_apply import AutoApplyHandler
     from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
+    from boss_agent.adapters.outbound.device.pages.feed_bundle import build_feed_device_world
+    from boss_agent.core.job.use_cases.screening import CandidateScreener
 
-    handler = AutoApplyHandler()
+    handler = AutoApplyHandler(
+        screener=CandidateScreener(llm_client=MagicMock()),
+        pages=build_feed_device_world,
+    )
 
     resolved = await handler._resolve_profile(InMemoryTaskBroker(), {})
 

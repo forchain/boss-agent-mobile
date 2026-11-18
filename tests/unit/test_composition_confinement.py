@@ -99,8 +99,9 @@ def test_concrete_adapters_are_built_only_in_adapters_and_main() -> None:
     )
 
 
-def test_scripts_do_not_construct_the_llm_client_itself() -> None:
-    """Only the composition root maps a configured protocol to a concrete client."""
+def test_scripts_do_not_construct_the_llm_client_or_bypass_main() -> None:
+    """Only the composition root resolves settings, bridges async, or maps an LLM client."""
+    forbidden_calls = {"create_llm_client", "load_settings", "run_sync"}
     offenders: list[str] = []
     for path in sorted(SCRIPTS_ROOT.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -108,17 +109,58 @@ def test_scripts_do_not_construct_the_llm_client_itself() -> None:
             if not isinstance(node, ast.Call):
                 continue
             func = node.func
-            called = (
-                func.id
-                if isinstance(func, ast.Name)
-                else func.attr
-                if isinstance(func, ast.Attribute)
-                else None
-            )
-            if called == "create_llm_client":
-                offenders.append(f"{path.relative_to(REPO_ROOT)}:{node.lineno}")
+            if isinstance(func, ast.Name) and func.id in forbidden_calls:
+                offenders.append(f"{path.relative_to(REPO_ROOT)}:{node.lineno} ({func.id})")
 
-    assert offenders == [], "scripts construct an LLM client themselves: " + ", ".join(offenders)
+    assert offenders == [], "scripts wire adapters directly instead of using main.py: " + ", ".join(
+        offenders
+    )
+
+
+def test_handlers_verification_and_resume_memory_do_not_compose_llm_or_broker() -> None:
+    """Handlers, verification adapters, and resume memory receive injected dependencies."""
+    guarded_paths = [
+        *sorted((ADAPTERS_ROOT / "inbound" / "worker" / "handlers").rglob("*.py")),
+        ADAPTERS_ROOT / "inbound" / "verification" / "feed_verification.py",
+        ADAPTERS_ROOT / "inbound" / "verification" / "smoke_harness.py",
+        ADAPTERS_ROOT / "outbound" / "resume" / "memory.py",
+        ADAPTERS_ROOT / "outbound" / "resume" / "graph.py",
+    ]
+    offenders: list[str] = []
+    for path in guarded_paths:
+        source = path.read_text(encoding="utf-8")
+        if "boss_agent.broker" in source:
+            offenders.append(f"{path.relative_to(REPO_ROOT)}: imports boss_agent.broker")
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                func = node.func
+                called = (
+                    func.id
+                    if isinstance(func, ast.Name)
+                    else func.attr
+                    if isinstance(func, ast.Attribute)
+                    else None
+                )
+                if called in {"create_llm_client", "build_feed_device_world", "build_triage_world"}:
+                    offenders.append(
+                        f"{path.relative_to(REPO_ROOT)}:{node.lineno} (calls {called})"
+                    )
+
+    assert offenders == [], "non-root adapters compose dependencies directly: " + "; ".join(
+        offenders
+    )
+
+
+def test_retired_broker_facade_fails_loudly() -> None:
+    """``boss_agent.broker`` is retired; importing it raises ``ModuleNotFoundError``."""
+    import importlib
+
+    import pytest
+
+    assert not (SRC_ROOT / "broker").exists()
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("boss_agent.broker")
 
 
 def test_the_guard_sees_an_adapter_class_constructed_by_import(tmp_path: Path) -> None:

@@ -20,8 +20,11 @@ from boss_agent.adapters.inbound.worker.context import WorkerContext
 from boss_agent.adapters.inbound.worker.daemon import AutomationWorker
 from boss_agent.adapters.inbound.worker.handlers.auto_apply import AutoApplyHandler
 from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
+from boss_agent.adapters.outbound.config.settings import load_feed_config_defaults
+from boss_agent.adapters.outbound.device.pages.feed_bundle import build_feed_device_world
 from boss_agent.adapters.outbound.pocketbase.collection_schema import JOB_RECORDS, pocketbase_fields
 from boss_agent.adapters.outbound.pocketbase.provisioner import provision_sqlite_database
+from boss_agent.core.job.use_cases.screening import CandidateScreener
 from boss_agent.core.task.domain.models import TaskStatus, TaskType
 from droid_agent_core.locators import get_global_locator_registry
 
@@ -250,7 +253,13 @@ async def test_auto_apply_records_applied_at_only_after_message_dispatch(broker,
         config=config,
         broker=broker,
         context=context,
-        handlers=[AutoApplyHandler(llm_client=_mock_llm_client())],
+        handlers=[
+            AutoApplyHandler(
+                screener=CandidateScreener(llm_client=_mock_llm_client()),
+                pages=build_feed_device_world,
+                feed_config_defaults_loader=load_feed_config_defaults,
+            )
+        ],
     )
 
     task = await broker.create_task(
@@ -293,7 +302,13 @@ async def test_auto_apply_draft_only_mode_leaves_applied_at_empty(broker, mock_d
         config=config,
         broker=broker,
         context=context,
-        handlers=[AutoApplyHandler(llm_client=_mock_llm_client())],
+        handlers=[
+            AutoApplyHandler(
+                screener=CandidateScreener(llm_client=_mock_llm_client()),
+                pages=build_feed_device_world,
+                feed_config_defaults_loader=load_feed_config_defaults,
+            )
+        ],
     )
 
     await broker.create_task(
@@ -350,7 +365,13 @@ async def test_auto_apply_does_not_record_applied_when_send_button_is_missing(br
         config=config,
         broker=broker,
         context=context,
-        handlers=[AutoApplyHandler(llm_client=_mock_llm_client())],
+        handlers=[
+            AutoApplyHandler(
+                screener=CandidateScreener(llm_client=_mock_llm_client()),
+                pages=build_feed_device_world,
+                feed_config_defaults_loader=load_feed_config_defaults,
+            )
+        ],
     )
 
     task = await broker.create_task(

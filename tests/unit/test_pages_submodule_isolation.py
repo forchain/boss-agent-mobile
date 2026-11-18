@@ -462,7 +462,7 @@ def test_page_submodule_discovery_still_covers_the_submodules_the_split_named() 
 SCREEN_DRIVERS = frozenset(
     {
         "boss_agent",
-        "boss_agent.adapters.inbound.verification.feed_verification",
+        "boss_agent.main",
         "boss_agent.adapters.outbound.device.takeover",
     }
 )

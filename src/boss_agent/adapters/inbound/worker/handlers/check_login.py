@@ -1,6 +1,6 @@
 """
-src/boss_agent/worker/handlers/check_login.py
-=============================================
+src/boss_agent/adapters/inbound/worker/handlers/check_login.py
+==============================================================
 Handler for CHECK_LOGIN task: verifies session persistence and dismisses startup popups.
 """
 

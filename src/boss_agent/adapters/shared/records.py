@@ -21,6 +21,47 @@ from boss_agent.core.shared.enums import STATE_RANK, JobRecordStatus
 #: Company names that mean "not a usable employer", as the stores see them.
 INVALID_COMPANY_NAMES: frozenset[str] = frozenset({"", "未注明公司", "未知公司"})
 
+#: Canonical non-primary-key wire defaults for ``job_records``, shared by both the
+#: in-memory and PocketBase adapters without importing ``collection_schema``.
+#: Keep in lockstep with ``JOB_RECORDS`` (enforced by ``test_collection_schema.py``).
+JOB_RECORD_WIRE_DEFAULTS: dict[str, Any] = {
+    "fingerprint": None,
+    "title": "",
+    "company_name": "",
+    "recruiter_name": "",
+    "recruiter_title": "",
+    "is_headhunter": False,
+    "company_scale": "",
+    "industry": "",
+    "tags": [],
+    "digest": "",
+    "salary_range": "",
+    "location": "",
+    "job_description": "",
+    "status": "unmatched",
+    "match_score": None,
+    "jd_key_requirements": [],
+    "greeting_message": "",
+    "greeting_source": "",
+    "search_keywords": [],
+    "screened_reason": "",
+    "screening_stage": "",
+    "relaxed_by_whitelist": False,
+    "screening_audit": "",
+    "applied_at": None,
+    "applied_source": "",
+    "commute_distance_km": None,
+    "commute_distance_text": "",
+    "location_line": "",
+    "metro_lines": "",
+    "metro_station": "",
+    "source_task_id": None,
+    "first_seen_at": None,
+    "last_seen_at": None,
+    "created": None,
+    "updated": None,
+}
+
 
 def _advanced_status(current: str | None, incoming: Any) -> str | None:
     """The status to write when a new observation meets a stored one, or None to keep it.
@@ -108,17 +149,16 @@ def _sticky_field_updates(existing: dict[str, Any], record_data: dict[str, Any])
 def _record_fields(record_data: dict[str, Any], fingerprint: str, now: str) -> dict[str, Any]:
     """The canonical field set of a brand-new job record, shared by both adapters.
 
-    The field list is the Collection Schema's, so a column added to ``job_records``
-    is written by the store the moment it is declared, and a key the schema does not
-    know about is dropped rather than smuggled onto the wire.
-
-    The schema is imported inside the function so this shared module's import graph
-    stays free of the outbound adapter package; only a caller that actually builds a
-    record reaches the collection schema.
+    The field list matches the ``job_records`` Collection Schema, so a key the schema
+    does not declare is dropped rather than smuggled onto the wire.
     """
-    from boss_agent.adapters.outbound.pocketbase.collection_schema import JOB_RECORDS, wire_payload
-
-    fields = wire_payload(JOB_RECORDS, record_data)
+    fields: dict[str, Any] = {
+        name: record_data.get(
+            name,
+            list(default) if isinstance(default, list) else default,
+        )
+        for name, default in JOB_RECORD_WIRE_DEFAULTS.items()
+    }
     fields["fingerprint"] = fingerprint
 
     status_val = fields.get("status") or JobRecordStatus.UNMATCHED
@@ -139,6 +179,7 @@ def _record_fields(record_data: dict[str, Any], fingerprint: str, now: str) -> d
 
 __all__ = [
     "INVALID_COMPANY_NAMES",
+    "JOB_RECORD_WIRE_DEFAULTS",
     "_advanced_status",
     "_placeholder_fill",
     "_record_fields",

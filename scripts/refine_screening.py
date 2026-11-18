@@ -18,7 +18,12 @@ sys.path.insert(0, str(root_dir / "src"))
 
 from boss_agent.core.job.domain.job_entities import JobPosting  # noqa: E402
 from boss_agent.core.job.domain.screening_policy import ScreeningPolicy  # noqa: E402
-from boss_agent.main import build_llm_client, build_screener  # noqa: E402
+from boss_agent.main import (  # noqa: E402
+    build_default_screening_policy,
+    build_llm_client,
+    build_screener,
+    resolve_screening_prompt,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -87,25 +92,9 @@ def main() -> None:
             sys.stderr.write(f"Warning: Failed to parse policy JSON ({e})\n")
 
     if policy is None:
-        try:
-            from boss_agent.adapters.outbound.config.settings import load_settings
+        policy = build_default_screening_policy()
 
-            app_settings = load_settings()
-            # load_settings() returns the merged Configuration Realm dict with the
-            # blacklist lists at top level; ScreeningPolicy.from_dict reads them there.
-            policy = ScreeningPolicy.from_dict(app_settings)
-        except Exception as e:
-            sys.stderr.write(f"Warning: Failed to load default screening policy ({e})\n")
-            policy = ScreeningPolicy()
-
-    screening_prompt = args.screening_prompt
-    if screening_prompt is None:
-        try:
-            from boss_agent.adapters.outbound.config.screening_prompt import load_screening_prompt
-
-            screening_prompt = load_screening_prompt()
-        except FileNotFoundError:
-            screening_prompt = None
+    screening_prompt = resolve_screening_prompt(args.screening_prompt)
 
     llm_client = build_llm_client(args.llm_config, treat_masked_key_as_missing=False)
     screener = build_screener(

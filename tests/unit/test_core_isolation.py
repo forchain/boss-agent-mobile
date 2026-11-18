@@ -46,15 +46,30 @@ FORBIDDEN_FRAMEWORKS = (
 )
 
 
-def _violations(source: str) -> list[str]:
-    """Every absolute import that breaks the allowlist, read from `source`."""
+def _resolve_import_targets(node: ast.ImportFrom, package: str) -> list[str]:
+    """Resolve an ``ast.ImportFrom`` (absolute or relative) to full module names."""
+    if node.level == 0:
+        return [node.module] if node.module is not None else []
+    pkg_parts = package.split(".")
+    up = node.level - 1
+    if up >= len(pkg_parts):
+        # Escapes the top-level package; report a sentinel outside the allowlist.
+        return [node.module or "__relative_escape__"]
+    base = pkg_parts[: len(pkg_parts) - up]
+    if node.module is not None:
+        return [".".join((*base, node.module))]
+    return [".".join((*base, alias.name)) for alias in node.names]
+
+
+def _violations(source: str, *, package: str = "boss_agent.core") -> list[str]:
+    """Every import (absolute or relative) that breaks the allowlist, read from `source`."""
     violations: list[str] = []
     tree = ast.parse(source)
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             modules = [alias.name for alias in node.names]
-        elif isinstance(node, ast.ImportFrom) and node.module is not None and node.level == 0:
-            modules = [node.module]
+        elif isinstance(node, ast.ImportFrom):
+            modules = _resolve_import_targets(node, package)
         else:
             continue
         for module in modules:
@@ -68,12 +83,18 @@ def _violations(source: str) -> list[str]:
     return violations
 
 
+def _package_for_file(path: Path) -> str:
+    """Containing Python package name for a file under ``boss_agent.core``."""
+    rel_parent = path.parent.relative_to(CORE_ROOT.parent)
+    return ".".join(("boss_agent", *rel_parent.parts))
+
+
 def test_core_imports_only_stdlib_core_and_the_framework() -> None:
     """The whole core package points inward; adapters and frameworks are out of reach."""
     offenders = [
         f"{path.relative_to(REPO_ROOT)}: {module}"
         for path in sorted(CORE_ROOT.rglob("*.py"))
-        for module in _violations(path.read_text(encoding="utf-8"))
+        for module in _violations(path.read_text(encoding="utf-8"), package=_package_for_file(path))
     ]
 
     assert offenders == [], "core imports an adapter or a forbidden framework: " + "; ".join(
@@ -105,4 +126,21 @@ def test_the_allowlist_accepts_stdlib_core_and_the_framework() -> None:
     """The guard must not reject the imports core is allowed to make."""
     assert _violations("import json") == []
     assert _violations("from boss_agent.core.shared import enums") == []
+    assert _violations("from ..shared import enums", package="boss_agent.core.job.domain") == []
     assert _violations("from droid_agent_core.llm import LLMDecisionClient") == []
+
+
+def test_the_allowlist_rejects_relative_imports_escaping_core() -> None:
+    """Relative imports up into adapters or main must be caught at any nesting depth."""
+    assert _violations(
+        "from ....adapters.outbound.pocketbase import PocketBaseTaskBroker",
+        package="boss_agent.core.job.use_cases",
+    ) == ["boss_agent.adapters.outbound.pocketbase"]
+    assert _violations(
+        "from .... import adapters",
+        package="boss_agent.core.job.use_cases",
+    ) == ["boss_agent.adapters"]
+    assert _violations(
+        "from ...main import build_worker",
+        package="boss_agent.core.task",
+    ) == ["boss_agent.main"]

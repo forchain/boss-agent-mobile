@@ -15,10 +15,12 @@ from langsmith import traceable
 
 from boss_agent.core.job.use_cases.matching import JobMatchGreetingService
 from boss_agent.core.job.use_cases.screening import CandidateScreener
+from droid_agent_core.llm import LLMDecisionClient
 
 __all__ = [
     "TracedCandidateScreener",
     "TracedJobMatchGreetingService",
+    "build_traced_screener",
 ]
 
 
@@ -74,3 +76,19 @@ class TracedCandidateScreener(CandidateScreener):
                 llm_client=self._llm_client(), greeting_prompt=self.greeting_prompt
             )
         return self._matching_service
+
+
+def build_traced_screener(
+    *,
+    llm_client: LLMDecisionClient,
+    matching_service: JobMatchGreetingService | None = None,
+    greeting_prompt: str | None = None,
+    screening_prompt: str | None = None,
+) -> TracedCandidateScreener:
+    """Build a traced candidate screener from already-resolved dependencies and prompts."""
+    return TracedCandidateScreener(
+        llm_client=llm_client,
+        matching_service=matching_service,
+        greeting_prompt=greeting_prompt,
+        screening_prompt=screening_prompt,
+    )

@@ -1,6 +1,6 @@
 """
-src/boss_agent/worker/handlers/auto_apply.py
-============================================
+src/boss_agent/adapters/inbound/worker/handlers/auto_apply.py
+=============================================================
 Handler for AUTO_APPLY: streams screened jobs out of the mobile feed and dispatches
 tailored greetings up to the daily quota.
 
@@ -11,22 +11,14 @@ configures the run with ``target_action=auto_apply``.
 """
 
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from boss_agent.adapters.inbound.worker.context import WorkerContext
-from boss_agent.adapters.inbound.worker.handlers.base import (
-    BaseTaskHandler,
-    HandlerResult,
-    load_prompt_or_default,
-)
-from boss_agent.adapters.outbound.config.greeting_prompt import load_greeting_prompt
-from boss_agent.adapters.outbound.config.screening_prompt import load_screening_prompt
-from boss_agent.adapters.outbound.config.settings import load_feed_config_defaults
-from boss_agent.adapters.outbound.device.pages.feed_bundle import build_feed_device_world
-from boss_agent.adapters.outbound.llm.llm_config import create_llm_client
-from boss_agent.adapters.outbound.llm.tracing import TracedCandidateScreener
+from boss_agent.adapters.inbound.worker.handlers.base import BaseTaskHandler, HandlerResult
 from boss_agent.core.candidate.domain.candidate_profile import CandidateProfile
 from boss_agent.core.job.domain.feed_stream import FeedStreamConfig
+from boss_agent.core.job.interfaces.device import FeedDeviceWorld
 from boss_agent.core.job.use_cases.feed_pipeline import JobFeedPipeline
 from boss_agent.core.job.use_cases.screening import CandidateScreener
 from boss_agent.core.shared.errors import BrokerError, TransportError
@@ -40,8 +32,18 @@ logger = logging.getLogger(__name__)
 class AutoApplyHandler(BaseTaskHandler):
     """Executes end-to-end matching and automated greeting application."""
 
-    def __init__(self, llm_client: Any | None = None) -> None:
-        self.llm_client = llm_client
+    def __init__(
+        self,
+        *,
+        screener: CandidateScreener,
+        pages: Callable[[Any], FeedDeviceWorld],
+        feed_config_defaults: dict[str, Any] | None = None,
+        feed_config_defaults_loader: Callable[[], dict[str, Any]] | None = None,
+    ) -> None:
+        self.screener = screener
+        self._pages = pages
+        self._feed_config_defaults = dict(feed_config_defaults or {})
+        self._feed_config_defaults_loader = feed_config_defaults_loader
 
     @property
     def task_type(self) -> TaskType:
@@ -59,12 +61,8 @@ class AutoApplyHandler(BaseTaskHandler):
             return HandlerResult(success=False, error_message="Driver session is unavailable")
 
         payload = task.payload or {}
-        store = broker.job_store
-        screener = TracedCandidateScreener(
-            llm_client=self.llm_client or create_llm_client(),
-            greeting_prompt=load_prompt_or_default(load_greeting_prompt),
-            screening_prompt=load_prompt_or_default(load_screening_prompt) or None,
-        )
+        store = broker.job_store  # type: ignore[attr-defined]
+        screener = self.screener
         try:
             profile = await self._resolve_profile(broker, payload, task_id=task.id)
         except TransportError as err:
@@ -77,9 +75,12 @@ class AutoApplyHandler(BaseTaskHandler):
         # afterwards: an AUTO_APPLY run streams outreach even when the payload omitted the
         # redundant target_action field, and depth must have exactly one answering site
         # (issue #302). A payload that *does* state a Target Action keeps it.
-        config = FeedStreamConfig.from_payload(
-            payload, task_type=TaskType.AUTO_APPLY, **load_feed_config_defaults()
+        defaults = (
+            self._feed_config_defaults_loader()
+            if self._feed_config_defaults_loader is not None
+            else self._feed_config_defaults
         )
+        config = FeedStreamConfig.from_payload(payload, task_type=TaskType.AUTO_APPLY, **defaults)
         config.source_task_id = task.id
         config.candidate_profile = profile
 
@@ -108,7 +109,8 @@ class AutoApplyHandler(BaseTaskHandler):
         pipeline = JobFeedPipeline.for_task(
             broker=broker,
             task_id=task.id,
-            world=build_feed_device_world(driver),
+            world=self._pages(driver),
+            store=store,
             screener=screener,
         )
         try:

@@ -6,8 +6,9 @@ The Job Record Store repository seam (ADR 0013, Spec #231).
 Job records carry domain rules the task stream knows nothing about: canonical
 deduplication fingerprints, the direct-hire company exclusion pool, the re-application
 cool-down window and the daily greeting quota. This port owns the verbs; the
-InMemory and PocketBase implementations live in the adapter module until #457 moves
-them.
+InMemory and PocketBase implementations live in
+:mod:`boss_agent.adapters.memory.job_store` and
+:mod:`boss_agent.adapters.outbound.pocketbase.job_store`.
 
 The cool-down and quota math is deliberately identical in both adapters: expiry is
 computed from ``applied_at`` (falling back to the ingestion date for platform

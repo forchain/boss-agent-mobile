@@ -1,6 +1,6 @@
 """
-src/boss_agent/worker/handlers
-==============================
+src/boss_agent/adapters/inbound/worker/handlers
+===============================================
 Polymorphic task handlers for automation workflows.
 """
 

@@ -16,7 +16,9 @@ import ast
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parents[2]
-MEMORY_ROOT = REPO_ROOT / "src" / "boss_agent" / "adapters" / "memory"
+SRC_ROOT = REPO_ROOT / "src" / "boss_agent"
+MEMORY_ROOT = SRC_ROOT / "adapters" / "memory"
+SHARED_ROOT = SRC_ROOT / "adapters" / "shared"
 
 #: HTTP, transport, and device stacks. A store that speaks none of them needs none of
 #: these in its import graph.
@@ -33,34 +35,104 @@ FORBIDDEN_TOP_LEVEL = frozenset(
     }
 )
 
-#: The peer outbound adapter the shared helpers were extracted from.
-FORBIDDEN_PREFIX = "boss_agent.adapters.outbound.pocketbase"
+#: Outbound adapters (PocketBase, device, LLM, config, resume) are out of reach for
+#: both in-memory doubles and shared adapter helpers.
+FORBIDDEN_OUTBOUND_PREFIX = "boss_agent.adapters.outbound"
 
 
-def _imported_modules(path: Path) -> list[str]:
-    """Every module named by an import in `path`, at any nesting depth."""
-    tree = ast.parse(path.read_text(encoding="utf-8"))
+def _package_for_file(path: Path) -> str:
+    """Containing Python package for a file under ``src/boss_agent``."""
+    rel_parent = path.parent.relative_to(SRC_ROOT)
+    return ".".join(("boss_agent", *rel_parent.parts))
+
+
+def _resolve_import_from(node: ast.ImportFrom, package: str) -> list[str]:
+    """Resolve an ``ast.ImportFrom`` (absolute or relative) to full module names."""
+    if node.level == 0:
+        return [node.module] if node.module is not None else []
+    pkg_parts = package.split(".")
+    up = node.level - 1
+    if up >= len(pkg_parts):
+        return [node.module or "__relative_escape__"]
+    base = pkg_parts[: len(pkg_parts) - up]
+    if node.module is not None:
+        return [".".join((*base, node.module))]
+    return [".".join((*base, alias.name)) for alias in node.names]
+
+
+def _imported_modules(source: str, *, package: str) -> list[str]:
+    """Every module named by an import in `source` (resolved if relative), at any depth."""
+    tree = ast.parse(source)
     modules: list[str] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             modules.extend(alias.name for alias in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.module is not None:
-            modules.append(node.module)
+        elif isinstance(node, ast.ImportFrom):
+            modules.extend(_resolve_import_from(node, package))
     return modules
+
+
+def _violations(source: str, *, package: str) -> list[str]:
+    """Forbidden transport or outbound-adapter imports in `source`."""
+    bad: list[str] = []
+    for module in _imported_modules(source, package=package):
+        top_level = module.split(".", 1)[0]
+        if (
+            top_level in FORBIDDEN_TOP_LEVEL
+            or module == FORBIDDEN_OUTBOUND_PREFIX
+            or module.startswith(f"{FORBIDDEN_OUTBOUND_PREFIX}.")
+        ):
+            bad.append(module)
+    return bad
 
 
 def test_memory_adapters_import_no_transport_or_peer_adapter() -> None:
     """The in-memory stores are dependency-free doubles, not a second PocketBase client."""
-    offenders: list[str] = []
-    for path in sorted(MEMORY_ROOT.rglob("*.py")):
-        for module in _imported_modules(path):
-            top_level = module.split(".", 1)[0]
-            if top_level in FORBIDDEN_TOP_LEVEL or module.startswith(FORBIDDEN_PREFIX):
-                offenders.append(f"{path.relative_to(REPO_ROOT)}: {module}")
+    offenders = [
+        f"{path.relative_to(REPO_ROOT)}: {module}"
+        for path in sorted(MEMORY_ROOT.rglob("*.py"))
+        for module in _violations(path.read_text(encoding="utf-8"), package=_package_for_file(path))
+    ]
 
     assert offenders == [], (
-        "the in-memory adapters import a transport or the PocketBase adapter: "
+        "the in-memory adapters import a transport or an outbound adapter: " + "; ".join(offenders)
+    )
+
+
+def test_shared_adapters_import_no_transport_or_outbound_adapter() -> None:
+    """Shared adapter helpers stay free of transport and outbound adapter dependencies."""
+    offenders = [
+        f"{path.relative_to(REPO_ROOT)}: {module}"
+        for path in sorted(SHARED_ROOT.rglob("*.py"))
+        for module in _violations(path.read_text(encoding="utf-8"), package=_package_for_file(path))
+    ]
+
+    assert offenders == [], (
+        "the shared adapter package imports a transport or an outbound adapter: "
         + "; ".join(offenders)
+    )
+
+
+def test_relative_outbound_imports_are_caught_in_memory_and_shared() -> None:
+    """Relative imports up into outbound adapters must fail the fence too."""
+    assert _violations(
+        "from ..outbound.pocketbase import collection_schema",
+        package="boss_agent.adapters.memory",
+    ) == ["boss_agent.adapters.outbound.pocketbase"]
+    assert _violations(
+        "from ..outbound import pocketbase",
+        package="boss_agent.adapters.shared",
+    ) == ["boss_agent.adapters.outbound"]
+    assert _violations(
+        "from .. import outbound",
+        package="boss_agent.adapters.shared",
+    ) == ["boss_agent.adapters.outbound"]
+    assert (
+        _violations(
+            "from ..shared.records import _record_fields",
+            package="boss_agent.adapters.memory",
+        )
+        == []
     )
 
 

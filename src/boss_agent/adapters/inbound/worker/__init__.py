@@ -1,6 +1,6 @@
 """
-src/boss_agent/worker
-=====================
+src/boss_agent/adapters/inbound/worker
+======================================
 Out-of-process Automation Worker package.
 """
 

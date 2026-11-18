@@ -1,6 +1,6 @@
 """
-src/boss_agent/worker/handlers/check_chat.py
-============================================
+src/boss_agent/adapters/inbound/worker/handlers/check_chat.py
+=============================================================
 Handler for CHECK_CHAT: dispatches one 仅沟通 rejection-triage run and reports it.
 
 The scan, the stop-reason taxonomy, the Outbound Message Indicator bypass, the
@@ -11,26 +11,21 @@ run, and maps the Triage Report into the task telemetry the Task Management
 Dashboard renders. It touches no page object, no card and no device.
 
 The device world a run drives is composed at this edge from the driver, through the
-``pages`` factory this handler hands in — overridable, so a test scripts the screen
-and the chat instead of patching this module's globals (#268).
+``pages`` factory handed in by the composition root — overridable, so a test scripts
+the screen and the chat instead of patching this module's globals (#268).
 """
 
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from boss_agent.adapters.inbound.worker.context import WorkerContext
 from boss_agent.adapters.inbound.worker.handlers.base import BaseTaskHandler, HandlerResult
-from boss_agent.adapters.outbound.config.screening_config import (
-    ScreeningConfigBlacklistSink,
-    load_screening_policy,
-)
-from boss_agent.adapters.outbound.config.settings import resolve_chat_acknowledgment_settings
-from boss_agent.adapters.outbound.device.pages.chat_bundle import build_triage_world
-from boss_agent.adapters.outbound.llm.llm_config import create_llm_client
 from boss_agent.core.chat.domain.rejection import ChatAcknowledgmentSettings
 from boss_agent.core.chat.domain.triage import StopReason
+from boss_agent.core.chat.interfaces.blacklist import BlacklistSink
 from boss_agent.core.chat.interfaces.classifier import RejectionClassifierPort
-from boss_agent.core.chat.use_cases.rejection_classifier import RejectionClassifier
+from boss_agent.core.chat.interfaces.device import TriagePages
 from boss_agent.core.chat.use_cases.triage import ChatTriage
 from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
 from boss_agent.core.task.domain.models import AutomationTask, TaskType
@@ -44,39 +39,40 @@ class CheckChatHandler(BaseTaskHandler):
 
     def __init__(
         self,
-        llm_client: Any | None = None,
-        classifier: RejectionClassifierPort | None = None,
-        settings: ChatAcknowledgmentSettings | None = None,
+        *,
+        classifier: RejectionClassifierPort,
+        blacklist_sink: BlacklistSink,
+        settings: ChatAcknowledgmentSettings,
+        pages: Callable[[Any], TriagePages],
         policy: ScreeningPolicy | None = None,
-        pages: Any | None = None,
+        policy_loader: Callable[[], ScreeningPolicy] | None = None,
     ) -> None:
-        self.llm_client = llm_client
         self.classifier = classifier
-        # Resolved lazily so constructing a handler never reads local config.
+        self.blacklist_sink = blacklist_sink
         self._settings = settings
         self._policy = policy
-        # A factory over the driver, because the driver only exists at dispatch time.
-        self._pages = pages or build_triage_world
+        self._policy_loader = policy_loader
+        self._pages = pages
 
     @property
     def task_type(self) -> TaskType:
         return TaskType.CHECK_CHAT
 
     def _resolve_settings(self, payload: dict[str, Any]) -> ChatAcknowledgmentSettings:
-        if self._settings is None:
-            self._settings = resolve_chat_acknowledgment_settings()
         return self._settings.with_overrides(payload)
 
     def _resolve_policy(self) -> ScreeningPolicy:
         """Resolve the screening policy the blacklist is ingested into.
 
-        The injected policy wins (tests and any caller that already holds one);
-        otherwise the active local configuration is loaded, and remembers the file
-        it came from so the blacklist is written back to the same place.
+        An explicitly injected policy wins (tests and any caller that already holds
+        one); otherwise the injected loader reads the active local configuration so edits
+        made while the worker is running are picked up on the next triage run.
         """
         if self._policy is not None:
             return self._policy
-        return load_screening_policy()
+        if self._policy_loader is not None:
+            return self._policy_loader()
+        return ScreeningPolicy()
 
     async def handle(
         self,
@@ -98,17 +94,14 @@ class CheckChatHandler(BaseTaskHandler):
             f"reply='{settings.rejection_reply_text}')",
         )
 
-        classifier = self.classifier or RejectionClassifier(
-            llm_client=self.llm_client or create_llm_client()
-        )
         report = await ChatTriage.for_task(
             broker,
             task.id,
             self._pages(driver),
-            classifier=classifier,
+            classifier=self.classifier,
             policy=self._resolve_policy(),
             settings=settings,
-            blacklist_sink=ScreeningConfigBlacklistSink(),
+            blacklist_sink=self.blacklist_sink,
         ).scan()
 
         if report.stop_reason is StopReason.LIST_UNREACHABLE:

@@ -1,6 +1,6 @@
 """
-src/boss_agent/worker/daemon.py
-===============================
+src/boss_agent/adapters/inbound/worker/daemon.py
+================================================
 Daemon loop for the out-of-process Automation Worker.
 """
 

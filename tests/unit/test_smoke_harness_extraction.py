@@ -13,9 +13,12 @@ import pytest
 from _feed_harness import GOOD_JD, ScriptedFeed, _card, _detail_page, script_pages
 
 from boss_agent.adapters.inbound.verification.smoke_harness import SmokeHarness
+from boss_agent.adapters.memory.job_store import InMemoryJobRecordStore
+from boss_agent.adapters.outbound.device.pages.feed_bundle import build_feed_device_world
 from boss_agent.adapters.outbound.device.takeover import TakeoverHandler
 from boss_agent.core.job.domain.job_entities import JobPosting
 from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
+from boss_agent.core.job.use_cases.screening import CandidateScreener
 from boss_agent.core.search.domain.models import FilterConfig, SearchConfig
 from boss_agent.core.shared.enums import AuthStatus
 
@@ -25,6 +28,9 @@ def _harness(driver, takeover_handler=None, **kwargs) -> SmokeHarness:
     return SmokeHarness(
         driver=driver,
         takeover_handler=takeover_handler or TakeoverHandler(driver, auto_confirm_for_test=True),
+        screener=kwargs.pop("screener", CandidateScreener(llm_client=MagicMock())),
+        world=kwargs.pop("world", build_feed_device_world(driver)),
+        store=kwargs.pop("store", InMemoryJobRecordStore()),
         **kwargs,
     )
 
@@ -217,8 +223,8 @@ def test_smoke_harness_end_to_end_job_detail_extraction():
     takeover = TakeoverHandler(mock_driver, auto_confirm_for_test=True)
     from boss_agent.core.search.domain.models import FilterConfig, SearchConfig
 
-    harness = SmokeHarness(
-        driver=mock_driver,
+    harness = _harness(
+        mock_driver,
         takeover_handler=takeover,
         search_config=SearchConfig(keyword=None),
         filter_config=FilterConfig(
@@ -280,8 +286,8 @@ def test_smoke_harness_with_search_enabled():
     mock_driver.find_elements.side_effect = mock_find_elements
 
     takeover = TakeoverHandler(mock_driver, auto_confirm_for_test=True)
-    harness = SmokeHarness(
-        driver=mock_driver,
+    harness = _harness(
+        mock_driver,
         takeover_handler=takeover,
         search_config=None,  # default is SearchConfig(keyword="agent")
         filter_config=None,
@@ -325,8 +331,8 @@ def test_smoke_harness_with_search_disabled():
     mock_driver.find_elements.side_effect = mock_find_elements
 
     takeover = TakeoverHandler(mock_driver, auto_confirm_for_test=True)
-    harness = SmokeHarness(
-        driver=mock_driver,
+    harness = _harness(
+        mock_driver,
         takeover_handler=takeover,
         search_config=SearchConfig(keyword=None),
         filter_config=FilterConfig(

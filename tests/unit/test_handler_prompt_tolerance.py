@@ -15,11 +15,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from boss_agent import main as composition
 from boss_agent.adapters.inbound.worker.config import WorkerConfig
 from boss_agent.adapters.inbound.worker.context import WorkerContext
 from boss_agent.adapters.inbound.worker.handlers import auto_apply, scrape_jobs
-from boss_agent.adapters.inbound.worker.handlers.auto_apply import AutoApplyHandler
-from boss_agent.adapters.inbound.worker.handlers.scrape_jobs import ScrapeJobsHandler
 from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
 from boss_agent.core.job.domain.feed_stream import FeedStreamResult
 from boss_agent.core.job.domain.job_entities import JobCardBrief
@@ -47,12 +46,19 @@ def _context() -> WorkerContext:
     return WorkerContext(config=WorkerConfig(worker_id="prompt-tolerance"), driver=MagicMock())
 
 
-def _capture_screener(monkeypatch, module, captured: dict) -> None:
+def _capture_screener(monkeypatch, captured: dict) -> None:
     def factory(**kwargs):
         captured.update(kwargs)
         return MagicMock()
 
-    monkeypatch.setattr(module, "TracedCandidateScreener", factory)
+    monkeypatch.setattr(composition, "create_llm_client", lambda: MagicMock())
+    monkeypatch.setattr(composition, "PocketBaseTaskBroker", MagicMock())
+    monkeypatch.setattr(composition, "build_screener", factory)
+
+
+def _worker_handler(task_type: TaskType):
+    worker = composition.build_worker()
+    return worker._handlers[task_type]
 
 
 @pytest.mark.asyncio
@@ -65,12 +71,12 @@ async def test_scrape_jobs_survives_a_missing_greeting_prompt_document(monkeypat
     def missing():
         raise FileNotFoundError("greeting_prompt.local.md not found")
 
-    monkeypatch.setattr(scrape_jobs, "load_greeting_prompt", missing)
-    monkeypatch.setattr(scrape_jobs, "load_screening_prompt", lambda: "# screening")
-    _capture_screener(monkeypatch, scrape_jobs, captured)
+    monkeypatch.setattr(composition, "load_greeting_prompt", missing)
+    monkeypatch.setattr(composition, "load_screening_prompt", lambda: "# screening")
+    _capture_screener(monkeypatch, captured)
     monkeypatch.setattr(scrape_jobs, "JobFeedPipeline", _FakePipeline)
 
-    result = await ScrapeJobsHandler(llm_client=MagicMock()).handle(task, broker, _context())
+    result = await _worker_handler(TaskType.SCRAPE_JOBS).handle(task, broker, _context())
 
     assert result.success is True
     assert captured["greeting_prompt"] == ""
@@ -93,12 +99,12 @@ async def test_save_only_auto_apply_survives_an_unreadable_greeting_prompt(monke
     def unreadable():
         raise PermissionError("greeting_prompt.local.md is unreadable")
 
-    monkeypatch.setattr(auto_apply, "load_greeting_prompt", unreadable)
-    monkeypatch.setattr(auto_apply, "load_screening_prompt", lambda: "# screening")
-    _capture_screener(monkeypatch, auto_apply, captured)
+    monkeypatch.setattr(composition, "load_greeting_prompt", unreadable)
+    monkeypatch.setattr(composition, "load_screening_prompt", lambda: "# screening")
+    _capture_screener(monkeypatch, captured)
     monkeypatch.setattr(auto_apply, "JobFeedPipeline", _FakePipeline)
 
-    result = await AutoApplyHandler(llm_client=MagicMock()).handle(task, broker, _context())
+    result = await _worker_handler(TaskType.AUTO_APPLY).handle(task, broker, _context())
 
     assert result.success is True
     assert captured["greeting_prompt"] == ""
@@ -115,12 +121,12 @@ async def test_a_missing_screening_prompt_falls_back_to_the_built_in_prompt(monk
     def missing():
         raise FileNotFoundError("screening_prompt.local.md not found")
 
-    monkeypatch.setattr(scrape_jobs, "load_greeting_prompt", lambda: "# greeting")
-    monkeypatch.setattr(scrape_jobs, "load_screening_prompt", missing)
-    _capture_screener(monkeypatch, scrape_jobs, captured)
+    monkeypatch.setattr(composition, "load_greeting_prompt", lambda: "# greeting")
+    monkeypatch.setattr(composition, "load_screening_prompt", missing)
+    _capture_screener(monkeypatch, captured)
     monkeypatch.setattr(scrape_jobs, "JobFeedPipeline", _FakePipeline)
 
-    result = await ScrapeJobsHandler(llm_client=MagicMock()).handle(task, broker, _context())
+    result = await _worker_handler(TaskType.SCRAPE_JOBS).handle(task, broker, _context())
 
     assert result.success is True
     assert not captured["screening_prompt"]

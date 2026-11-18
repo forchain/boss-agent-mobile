@@ -66,13 +66,10 @@ def make_resume_document_generator_node(llm_client: Any | None = None):
     """Factory creating LLM profile document generator node."""
 
     def resume_document_generator_node(state: ResumeLifecycleState) -> dict[str, Any]:
-        client = llm_client
-        if not client:
-            from boss_agent.adapters.outbound.llm.llm_config import create_llm_client
+        if not llm_client:
+            raise ValueError("llm_client must be injected into resume lifecycle graph")
 
-            client = create_llm_client()
-
-        return generate_profile_document(client, state.get("raw_resume_text", ""))
+        return generate_profile_document(llm_client, state.get("raw_resume_text", ""))
 
     return resume_document_generator_node
 
@@ -91,11 +88,8 @@ def make_resume_diff_analyzer_node(broker: Any | None = None):
 
     def resume_diff_analyzer_node(state: ResumeLifecycleState) -> dict[str, Any]:
         user_id = state.get("user_id") or "default"
-        nonlocal broker
         if not broker:
-            from boss_agent.broker import PocketBaseBroker
-
-            broker = PocketBaseBroker()
+            raise ValueError("broker must be injected into resume lifecycle graph")
 
         from boss_agent.adapters.outbound.pocketbase.async_bridge import run_sync
 
@@ -117,11 +111,8 @@ def make_resume_persister_node(broker: Any | None = None):
 
     def resume_persister_node(state: ResumeLifecycleState) -> dict[str, Any]:
         user_id = state.get("user_id") or "default"
-        nonlocal broker
         if not broker:
-            from boss_agent.broker import PocketBaseBroker
-
-            broker = PocketBaseBroker()
+            raise ValueError("broker must be injected into resume lifecycle graph")
 
         from boss_agent.adapters.outbound.pocketbase.async_bridge import run_sync
 

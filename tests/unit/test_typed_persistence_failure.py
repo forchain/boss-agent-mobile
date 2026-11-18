@@ -22,12 +22,15 @@ from _job_store_harness import FakePocketBaseSession, pocketbase_job_store
 from boss_agent.adapters.inbound.worker.context import WorkerContext
 from boss_agent.adapters.inbound.worker.handlers.auto_apply import AutoApplyHandler
 from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
+from boss_agent.adapters.outbound.config.settings import load_feed_config_defaults
+from boss_agent.adapters.outbound.device.pages.feed_bundle import build_feed_device_world
 from boss_agent.adapters.outbound.pocketbase.candidate_memory_store import (
     PocketBaseCandidateMemoryStore,
 )
 from boss_agent.adapters.outbound.pocketbase.job_store import PocketBaseJobRecordStore
 from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
 from boss_agent.core.job.use_cases.feed_pipeline import FeedStreamConfig, JobFeedPipeline
+from boss_agent.core.job.use_cases.screening import CandidateScreener
 from boss_agent.core.shared.errors import TransportError, ValidationError
 from boss_agent.core.task.domain.models import TaskType
 
@@ -229,7 +232,11 @@ async def test_auto_apply_handler_logs_degradation_on_profile_transport_error():
     from boss_agent.adapters.inbound.worker.config import WorkerConfig
 
     context = WorkerContext(config=WorkerConfig(), driver=MagicMock())
-    handler = AutoApplyHandler()
+    handler = AutoApplyHandler(
+        screener=CandidateScreener(llm_client=MagicMock()),
+        pages=build_feed_device_world,
+        feed_config_defaults_loader=load_feed_config_defaults,
+    )
 
     result = await handler.handle(task, broker, context)
     assert result.success is False
@@ -273,7 +280,11 @@ async def test_auto_apply_handler_logs_degradation_on_exclusion_pool_transport_e
     from boss_agent.adapters.inbound.worker.config import WorkerConfig
 
     context = WorkerContext(config=WorkerConfig(), driver=MagicMock())
-    handler = AutoApplyHandler()
+    handler = AutoApplyHandler(
+        screener=CandidateScreener(llm_client=MagicMock()),
+        pages=build_feed_device_world,
+        feed_config_defaults_loader=load_feed_config_defaults,
+    )
 
     result = await handler.handle(task, broker, context)
     assert result.success is False
@@ -303,6 +314,7 @@ async def test_feed_pipeline_logs_degradation_on_quota_transport_error():
         broker=broker,
         task_id=task.id,
         world=build_feed_device_world(MagicMock()),
+        store=broker.job_store,
         screener=MagicMock(),
     )
 

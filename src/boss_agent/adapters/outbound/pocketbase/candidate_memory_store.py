@@ -37,7 +37,8 @@ logger = logging.getLogger("boss_agent.adapters.outbound.pocketbase.candidate_me
 
 #: Cap for the legacy ``raw_summary`` mirror. PocketBase's default text field holds 5000
 #: characters, so the mirror is trimmed to fit; ``profile_document`` is the field that keeps
-#: the whole document (see ``LONG_TEXT_MAX_CHARS`` in ``broker.collection_schema``).
+#: the whole document (see ``LONG_TEXT_MAX_CHARS`` in
+#: :mod:`boss_agent.adapters.outbound.pocketbase.collection_schema`).
 RAW_SUMMARY_MAX_CHARS = 4990
 
 #: Columns the profile stores as JSON text and reads back as Python values.

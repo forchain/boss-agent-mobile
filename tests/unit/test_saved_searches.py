@@ -9,7 +9,9 @@ from _feed_harness import GOOD_JD, ScriptedFeed, _card, _detail_page, script_pag
 
 import boss_agent
 from boss_agent.adapters.inbound.verification.smoke_harness import SmokeHarness
+from boss_agent.adapters.memory.job_store import InMemoryJobRecordStore
 from boss_agent.adapters.memory.saved_search_store import InMemorySavedSearchStore
+from boss_agent.adapters.outbound.device.pages.feed_bundle import build_feed_device_world
 from boss_agent.adapters.outbound.device.takeover import TakeoverHandler
 from boss_agent.adapters.outbound.pocketbase import saved_search_store
 from boss_agent.adapters.outbound.pocketbase.saved_search_store import (
@@ -18,6 +20,7 @@ from boss_agent.adapters.outbound.pocketbase.saved_search_store import (
 )
 from boss_agent.core.job.domain.job_entities import JobPosting
 from boss_agent.core.job.use_cases.feed_pipeline import FeedStreamConfig
+from boss_agent.core.job.use_cases.screening import CandidateScreener
 from boss_agent.core.search.domain.models import FilterConfig, SavedSearch, SearchConfig
 from boss_agent.core.shared.errors import TransportError
 
@@ -237,6 +240,9 @@ def test_smoke_harness_with_saved_search_id():
     harness = SmokeHarness(
         driver=mock_driver,
         takeover_handler=TakeoverHandler(mock_driver, auto_confirm_for_test=True),
+        screener=CandidateScreener(llm_client=stub_llm()),
+        world=build_feed_device_world(mock_driver),
+        store=InMemoryJobRecordStore(),
         saved_search_id="default_agent_search",
         saved_search_store=resolve_saved_search_store(prefer_database=False),
         # No greeting. The subject here is what a preset id resolves to, and the greeting
@@ -301,6 +307,12 @@ async def test_smoke_harness_resolves_a_named_preset_from_inside_a_running_loop(
     """
     harness = SmokeHarness(
         driver=MagicMock(),
+        takeover_handler=MagicMock(),
+        screener=MagicMock(),
+        world=MagicMock(),
+        store=MagicMock(),
+        memory_manager=MagicMock(),
+        matching_service=MagicMock(),
         saved_search_id="default_agent_search",
         saved_search_store=resolve_saved_search_store(prefer_database=False),
     )
@@ -327,7 +339,16 @@ def test_smoke_harness_names_the_available_presets_when_the_id_is_unknown():
     )
 
     with pytest.raises(KeyError) as excinfo:
-        SmokeHarness(driver=MagicMock(), saved_search_id="missing", saved_search_store=store)
+        SmokeHarness(
+            driver=MagicMock(),
+            takeover_handler=MagicMock(),
+            screener=MagicMock(),
+            world=MagicMock(),
+            store=MagicMock(),
+            enable_greeting_draft=False,
+            saved_search_id="missing",
+            saved_search_store=store,
+        )
 
     assert "missing" in str(excinfo.value)
     assert "only_preset" in str(excinfo.value)
@@ -362,6 +383,11 @@ def test_smoke_harness_does_not_hide_an_unreachable_store():
     with pytest.raises(TransportError, match="connection refused"):
         SmokeHarness(
             driver=MagicMock(),
+            takeover_handler=MagicMock(),
+            screener=MagicMock(),
+            world=MagicMock(),
+            store=MagicMock(),
+            enable_greeting_draft=False,
             saved_search_id="default_agent_search",
             saved_search_store=_UnreachableStore(),
         )
@@ -383,6 +409,11 @@ def test_smoke_harness_prefers_a_supplied_preset_over_a_named_one():
 
     harness = SmokeHarness(
         driver=MagicMock(),
+        takeover_handler=MagicMock(),
+        screener=MagicMock(),
+        world=MagicMock(),
+        store=MagicMock(),
+        enable_greeting_draft=False,
         saved_search=preset,
         saved_search_id="default_agent_search",
         saved_search_store=_UnusableStore(),

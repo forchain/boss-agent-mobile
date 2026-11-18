@@ -5,7 +5,7 @@ Unit tests for resume extraction, structured candidate memory, and idempotent ca
 """
 
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from boss_agent.adapters.outbound.resume.memory import (
     ResumeMemoryManager,
@@ -152,8 +152,7 @@ def test_resume_memory_manager_save_memory_profile(tmp_path):
         years_of_experience=3,
         core_skills=["Go", "Python"],
     )
-    with patch("boss_agent.broker.PocketBaseBroker"):
-        manager.save_memory_profile(profile, sync_to_db=False)
+    manager.save_memory_profile(profile, sync_to_db=False)
 
     assert memory_file.is_file()
     saved = json.loads(memory_file.read_text(encoding="utf-8"))
@@ -244,8 +243,10 @@ def test_unabbreviated_work_and_project_experiences_serialization():
 
 
 def test_sqlite_single_source_roundtrip(tmp_path, monkeypatch):
+    from boss_agent.adapters.outbound.pocketbase.pocketbase_adapter import (
+        PocketBaseTaskBroker as PocketBaseBroker,
+    )
     from boss_agent.adapters.outbound.pocketbase.provisioner import provision_pocketbase_sqlite
-    from boss_agent.broker import PocketBaseBroker
 
     db_file = tmp_path / "data.db"
     monkeypatch.setenv("PB_DB_PATH", str(db_file))
@@ -401,8 +402,9 @@ def test_profile_normalizer_self_heals_empty_fields_and_extracts_target():
 
 
 def test_resume_memory_manager_default_client_uses_realm(monkeypatch):
-    """When no client is passed, ResumeMemoryManager uses create_llm_client with realm configuration."""
+    """The composition root builder wires create_llm_client with realm configuration."""
     from boss_agent.adapters.outbound.config import config_realm
+    from boss_agent.main import build_resume_memory_manager
 
     for _key, names in config_realm.ENV_OVERRIDES:
         for name in names:
@@ -410,7 +412,7 @@ def test_resume_memory_manager_default_client_uses_realm(monkeypatch):
     monkeypatch.setenv("LLM_MODEL", "memory-realm-model")
     config_realm.invalidate_cache()
 
-    manager = ResumeMemoryManager()
+    manager = build_resume_memory_manager()
     assert manager.llm_client is not None
     assert manager.llm_client.config.model == "memory-realm-model"
 

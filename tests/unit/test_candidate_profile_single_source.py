@@ -11,7 +11,7 @@ Unit tests verifying Candidate Profile as the single source of truth:
 """
 
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -134,17 +134,17 @@ def test_storage_failure_propagates_without_degrading():
     )
 
     # 1. ResumeMemoryManager load_cached_memory must raise TransportError
-    with patch("boss_agent.broker.PocketBaseBroker", return_value=faulty_broker):
-        manager = ResumeMemoryManager()
-        with pytest.raises(TransportError):
-            manager.load_cached_memory()
+    manager = ResumeMemoryManager(
+        llm_client=MagicMock(),
+        candidate_memory=faulty_broker.candidate_memory,
+    )
+    with pytest.raises(TransportError):
+        manager.load_cached_memory()
 
     # 2. ResumeMemoryManager save_memory_profile must raise BrokerError
-    with patch("boss_agent.broker.PocketBaseBroker", return_value=faulty_broker):
-        manager = ResumeMemoryManager()
-        sample_profile = StructuredCandidateProfile(name="王五", years_of_experience=5)
-        with pytest.raises(BrokerError):
-            manager.save_memory_profile(sample_profile)
+    sample_profile = StructuredCandidateProfile(name="王五", years_of_experience=5)
+    with pytest.raises(BrokerError):
+        manager.save_memory_profile(sample_profile)
 
     # 3. Resume lifecycle graph must raise when storage fails during diff analyzer
     # A stub client, not the real one: without it the graph builds a live LLM client and the

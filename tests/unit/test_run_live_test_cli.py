@@ -134,9 +134,7 @@ def _run(
             "boss_agent.adapters.inbound.verification.feed_verification.JobFeedPipeline",
             side_effect=_compose_pipeline,
         ),
-        patch(
-            "boss_agent.adapters.inbound.verification.feed_verification.TracedCandidateScreener"
-        ) as screener_cls,
+        patch.object(composition, "build_traced_screener") as screener_cls,
         patch.object(composition, "TracedJobMatchGreetingService") as greeting_cls,
     ):
         screener_cls.side_effect = lambda **kw: _REAL_SCREENER(**{**kw, "llm_client": verdict})

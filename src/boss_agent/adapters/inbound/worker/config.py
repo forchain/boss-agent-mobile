@@ -1,6 +1,6 @@
 """
-src/boss_agent/worker/config.py
-===============================
+src/boss_agent/adapters/inbound/worker/config.py
+================================================
 Configuration settings for the out-of-process Automation Worker daemon.
 """
 

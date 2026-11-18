@@ -20,7 +20,7 @@ import sys
 from collections.abc import Coroutine
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 from boss_agent.adapters.inbound.verification.feed_verification import (
     build_verification_pipeline as _build_verification_pipeline,
@@ -36,37 +36,66 @@ from boss_agent.adapters.inbound.worker.handlers import (
     ScrapeJobsHandler,
 )
 from boss_agent.adapters.inbound.worker.scheduler import AutomationScheduler
+from boss_agent.adapters.memory.job_store import InMemoryJobRecordStore
+from boss_agent.adapters.outbound.config import settings as _config_settings
 from boss_agent.adapters.outbound.config.config_realm import (
+    DEFAULTS,
     PLACEHOLDER_API_KEY,
     is_mask_placeholder,
 )
 from boss_agent.adapters.outbound.config.greeting_prompt import load_greeting_prompt
+from boss_agent.adapters.outbound.config.screening_config import (
+    ScreeningConfigBlacklistSink,
+    load_screening_policy,
+)
+from boss_agent.adapters.outbound.config.screening_prompt import load_screening_prompt
 from boss_agent.adapters.outbound.config.settings import (
+    load_feed_config_defaults,
     resolve_chat_acknowledgment_settings,
     resolve_enable_scheduler,
     resolve_pocketbase_url,
     resolve_server_url,
 )
+from boss_agent.adapters.outbound.device.pages.chat_bundle import build_triage_world
+from boss_agent.adapters.outbound.device.pages.feed_bundle import build_feed_device_world
 from boss_agent.adapters.outbound.device.takeover import TakeoverHandler
 from boss_agent.adapters.outbound.llm.llm_config import create_llm_client, load_llm_config
 from boss_agent.adapters.outbound.llm.tracing import (
     TracedCandidateScreener,
     TracedJobMatchGreetingService,
+    build_traced_screener,
 )
+from boss_agent.adapters.outbound.pocketbase.async_bridge import run_sync
 from boss_agent.adapters.outbound.pocketbase.pocketbase_adapter import PocketBaseTaskBroker
-from boss_agent.adapters.outbound.pocketbase.saved_search_store import resolve_saved_search_store
+from boss_agent.adapters.outbound.pocketbase.saved_search_store import (
+    missing_saved_search_message,
+    resolve_saved_search_store,
+)
 from boss_agent.adapters.outbound.resume.graph import run_resume_lifecycle_graph
 from boss_agent.adapters.outbound.resume.memory import ResumeMemoryManager, ResumeTextExtractor
+from boss_agent.adapters.shared.prompts import load_prompt_or_default
 from boss_agent.core.candidate.domain.candidate_profile import CandidateProfile
+from boss_agent.core.candidate.interfaces.candidate_memory_store import CandidateMemoryStore
+from boss_agent.core.chat.use_cases.rejection_classifier import RejectionClassifier
+from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
+from boss_agent.core.job.interfaces.device import FeedDeviceWorld
+from boss_agent.core.job.interfaces.store import JobRecordStore
 from boss_agent.core.job.use_cases.matching import JobMatchGreetingService
+from boss_agent.core.job.use_cases.screening import CandidateScreener
 from boss_agent.core.task.interfaces.broker import BaseTaskBroker
 from boss_agent.core.task.use_cases.startup_cleanup import StartupCleanupGate
 from boss_agent.core.task.use_cases.sweeper import TaskLeaseSweeper
 from droid_agent_core.driver import AppiumSession, DriverConfig
 from droid_agent_core.llm import LLMConfig, LLMDecisionClient
 
+_T = TypeVar("_T")
+
 #: Device capabilities shared by the worker's lazy session and the live verification runner.
 BOSS_APP_PACKAGE = "com.hpbr.bosszhipin"
+
+#: Pre-refactor LLM budget defaults preserved for ``scripts/parse_resume.py``.
+RESUME_PARSE_DEFAULT_TIMEOUT_SEC = 300.0
+RESUME_PARSE_DEFAULT_MAX_TOKENS = 16384
 
 
 # --------------------------------------------------------------------------- LLM
@@ -131,13 +160,13 @@ def build_llm_client(
                 elif config_data.get("timeout_sec") is not None:
                     overrides["timeout_sec"] = float(config_data["timeout_sec"])
                 elif allow_config_path:
-                    overrides["timeout_sec"] = 300.0
+                    overrides["timeout_sec"] = RESUME_PARSE_DEFAULT_TIMEOUT_SEC
                 if max_tokens is not None:
                     overrides["max_tokens"] = max_tokens
                 elif config_data.get("max_tokens") is not None:
                     overrides["max_tokens"] = int(config_data["max_tokens"])
                 elif allow_config_path:
-                    overrides["max_tokens"] = 16384
+                    overrides["max_tokens"] = RESUME_PARSE_DEFAULT_MAX_TOKENS
                 llm_cfg = LLMConfig(
                     provider=config_data.get("provider", default_cfg.provider),
                     base_url=base_url.rstrip("/"),
@@ -162,12 +191,15 @@ def build_matching_service(
     greeting_prompt: str | None = None,
 ) -> TracedJobMatchGreetingService:
     """The traced greeting service, with the settled Greeting Prompt injected verbatim."""
+    resolved_greeting = (
+        greeting_prompt
+        if greeting_prompt is not None
+        else load_prompt_or_default(load_greeting_prompt)
+    )
     return TracedJobMatchGreetingService(
         llm_client=llm_client or create_llm_client(),
         candidate_profile=candidate_profile,
-        greeting_prompt=(
-            greeting_prompt if greeting_prompt is not None else load_greeting_prompt()
-        ),
+        greeting_prompt=resolved_greeting,
     )
 
 
@@ -179,12 +211,28 @@ def build_screener(
     screening_prompt: str | None = None,
 ) -> TracedCandidateScreener:
     """The traced screener; prompt documents are injected, never read by core."""
-    return TracedCandidateScreener(
-        llm_client=llm_client,
+    return build_traced_screener(
+        llm_client=llm_client or create_llm_client(),
         matching_service=matching_service,
         greeting_prompt=greeting_prompt,
         screening_prompt=screening_prompt,
     )
+
+
+def build_default_screening_policy() -> ScreeningPolicy:
+    """Load the active ScreeningPolicy from resolved settings, degrading to defaults."""
+    try:
+        return ScreeningPolicy.from_dict(_config_settings.load_settings())
+    except Exception as e:
+        sys.stderr.write(f"Warning: Failed to load default screening policy ({e})\n")
+        return ScreeningPolicy()
+
+
+def resolve_screening_prompt(explicit_prompt: str | None = None) -> str | None:
+    """Return an explicit screening prompt or load the realm document, degrading to None."""
+    if explicit_prompt is not None:
+        return explicit_prompt
+    return load_prompt_or_default(load_screening_prompt, default=None)
 
 
 # ------------------------------------------------------------------- worker daemon
@@ -229,12 +277,19 @@ def build_worker(
     broker = PocketBaseTaskBroker(base_url=resolved_pb_url)
     context = WorkerContext(config=config, driver_factory=_driver_factory(config))
 
+    chat_acknowledgment = resolve_chat_acknowledgment_settings()
     # One gate shared by both services in this process, so the integrated scheduler
     # queues the startup 拒信清扫 exactly once (#230).
     startup_gate = StartupCleanupGate(
         broker,
         enabled=config.run_cleanup_on_startup,
-        acknowledgment=resolve_chat_acknowledgment_settings(),
+        acknowledgment=chat_acknowledgment,
+    )
+    llm_client = create_llm_client()
+    screener = build_screener(
+        llm_client=llm_client,
+        greeting_prompt=load_prompt_or_default(load_greeting_prompt),
+        screening_prompt=load_prompt_or_default(load_screening_prompt) or None,
     )
     return AutomationWorker(
         config=config,
@@ -242,9 +297,23 @@ def build_worker(
         context=context,
         handlers=[
             CheckLoginHandler(),
-            ScrapeJobsHandler(),
-            AutoApplyHandler(),
-            CheckChatHandler(),
+            ScrapeJobsHandler(
+                screener=screener,
+                pages=build_feed_device_world,
+                feed_config_defaults_loader=load_feed_config_defaults,
+            ),
+            AutoApplyHandler(
+                screener=screener,
+                pages=build_feed_device_world,
+                feed_config_defaults_loader=load_feed_config_defaults,
+            ),
+            CheckChatHandler(
+                classifier=RejectionClassifier(llm_client=llm_client),
+                blacklist_sink=ScreeningConfigBlacklistSink(),
+                settings=chat_acknowledgment,
+                pages=build_triage_world,
+                policy_loader=load_screening_policy,
+            ),
         ],
         startup_gate=startup_gate,
     )
@@ -322,13 +391,40 @@ def build_takeover_handler(driver: Any, *, auto_confirm_for_test: bool = False) 
 def build_resume_memory_manager(
     *,
     llm_client: LLMDecisionClient | None = None,
+    candidate_memory: CandidateMemoryStore | None = None,
     memory_file_path: str | Path | None = None,
 ) -> ResumeMemoryManager:
-    return ResumeMemoryManager(llm_client=llm_client, memory_file_path=memory_file_path)
+    client = llm_client or create_llm_client()
+    store = candidate_memory or PocketBaseTaskBroker().candidate_memory
+    return ResumeMemoryManager(
+        llm_client=client,
+        candidate_memory=store,
+        memory_file_path=memory_file_path,
+    )
 
 
 def build_saved_search_store(*, prefer_database: bool = True) -> Any:
     return resolve_saved_search_store(prefer_database=prefer_database)
+
+
+def load_runner_settings(config_path: str | Path | None = None) -> dict[str, Any]:
+    """Load merged Configuration Realm settings for CLI runners."""
+    return _config_settings.load_settings(config_path=config_path)
+
+
+def run_async(coro: Coroutine[Any, Any, _T], *, timeout: float | None = None) -> _T:
+    """Bridge an async port call for synchronous CLI callers."""
+    return run_sync(coro, timeout=timeout)
+
+
+def default_preview_timeout_sec() -> float:
+    """The inert default preview_timeout_sec declared by Configuration Realm."""
+    return float(DEFAULTS["preview_timeout_sec"])
+
+
+def format_missing_saved_search_message(search_id: str, available: list[str]) -> str:
+    """Format the diagnostic message when a named SavedSearch preset is absent."""
+    return missing_saved_search_message(search_id, available)
 
 
 # ------------------------------------------------------------------- verification
@@ -338,24 +434,52 @@ def build_verification_pipeline(
     driver: Any,
     *,
     matching_service: JobMatchGreetingService | None = None,
+    screener: CandidateScreener | None = None,
+    world: FeedDeviceWorld | None = None,
+    store: JobRecordStore | None = None,
     **kwargs: Any,
 ) -> Any:
     """One verification feed run, composing the traced screener and prompt at this edge."""
+    resolved_matching = matching_service or build_matching_service()
+    resolved_screener = screener or build_screener(
+        llm_client=resolved_matching.llm_client,
+        matching_service=resolved_matching,
+        screening_prompt=load_prompt_or_default(load_screening_prompt) or "",
+    )
     return _build_verification_pipeline(
         driver,
-        matching_service=matching_service or build_matching_service(),
+        screener=resolved_screener,
+        world=world or build_feed_device_world(driver),
+        store=store or InMemoryJobRecordStore(),
         **kwargs,
     )
 
 
 def build_smoke_harness(driver: Any, **kwargs: Any) -> SmokeHarness:
     """The interactive runner's harness, with its adapter dependencies wired here."""
-    kwargs.setdefault(
-        "takeover_handler", build_takeover_handler(driver, auto_confirm_for_test=True)
+    takeover = kwargs.pop("takeover_handler", None) or build_takeover_handler(
+        driver, auto_confirm_for_test=True
     )
-    kwargs.setdefault("matching_service", build_matching_service())
-    kwargs.setdefault("memory_manager", build_resume_memory_manager())
-    return SmokeHarness(driver, **kwargs)
+    matching_service = kwargs.setdefault("matching_service", build_matching_service())
+    kwargs.setdefault(
+        "screener",
+        build_screener(
+            llm_client=matching_service.llm_client,
+            matching_service=matching_service,
+            screening_prompt=load_prompt_or_default(load_screening_prompt) or "",
+        ),
+    )
+    kwargs.setdefault("world", build_feed_device_world(driver))
+    kwargs.setdefault("store", InMemoryJobRecordStore())
+    if kwargs.get("enable_greeting_draft", True):
+        kwargs.setdefault("memory_manager", build_resume_memory_manager())
+    if kwargs.get("saved_search_id") and "saved_search_store" not in kwargs:
+        kwargs["saved_search_store"] = build_saved_search_store()
+    if (kwargs.get("saved_search") or kwargs.get("saved_search_id")) and (
+        "default_screening_policy" not in kwargs
+    ):
+        kwargs["default_screening_policy"] = load_screening_policy()
+    return SmokeHarness(driver, takeover_handler=takeover, **kwargs)
 
 
 # ----------------------------------------------------------------------- resume
@@ -367,10 +491,12 @@ class ResumePipeline:
 
     extractor: ResumeTextExtractor
     memory_manager: ResumeMemoryManager
+    broker: Any = None
 
     def run(self, **kwargs: Any) -> Any:
         return run_resume_lifecycle_graph(
             llm_client=self.memory_manager.llm_client,
+            broker=self.broker,
             **kwargs,
         )
 
@@ -384,13 +510,26 @@ def build_resume_pipeline(
     *,
     llm_client: LLMDecisionClient | None = None,
     memory_file_path: str | Path | None = None,
+    broker: Any | None = None,
 ) -> ResumePipeline:
-    manager = ResumeMemoryManager(llm_client=llm_client, memory_file_path=memory_file_path)
-    return ResumePipeline(extractor=manager.extractor, memory_manager=manager)
+    resolved_broker = broker or PocketBaseTaskBroker()
+    manager = build_resume_memory_manager(
+        llm_client=llm_client,
+        candidate_memory=resolved_broker.candidate_memory,
+        memory_file_path=memory_file_path,
+    )
+    return ResumePipeline(
+        extractor=manager.extractor,
+        memory_manager=manager,
+        broker=resolved_broker,
+    )
 
 
 __all__ = [
+    "RESUME_PARSE_DEFAULT_MAX_TOKENS",
+    "RESUME_PARSE_DEFAULT_TIMEOUT_SEC",
     "ResumePipeline",
+    "build_default_screening_policy",
     "build_device_session",
     "build_llm_client",
     "build_matching_service",
@@ -405,4 +544,9 @@ __all__ = [
     "build_takeover_handler",
     "build_verification_pipeline",
     "build_worker",
+    "default_preview_timeout_sec",
+    "format_missing_saved_search_message",
+    "load_runner_settings",
+    "resolve_screening_prompt",
+    "run_async",
 ]
