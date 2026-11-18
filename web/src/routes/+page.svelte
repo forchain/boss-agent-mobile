@@ -2,7 +2,7 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { resolveTargetAction, type AutomationTask, type SavedSearch, type TaskStatus } from '$lib/types';
 	import {
-		createAutomationTask,
+		launchAutomationTask,
 		listAutomationTasks,
 		getAutomationTask,
 		rerunTask,
@@ -15,7 +15,6 @@
 		formatLogLine,
 		formatTimeOnly
 	} from '$lib/pocketbase';
-	import { buildSearchLaunch, DEFAULT_MAX_JOBS } from '$lib/taskLaunch';
 	import { dashboardRealtime } from '$lib/dashboardRealtime';
 	import {
 		activeTaskFilter,
@@ -296,8 +295,7 @@
 		// clicking an 自动沟通 strategy here drafted greetings and never sent one. It now
 		// states no depth at all — issue #298 took that choice away from every entry, and
 		// "run the scheduled strategy" means the strategy's own Target Action.
-		const launch = buildSearchLaunch({ ...search, max_jobs: search.max_jobs || DEFAULT_MAX_JOBS }, { source: 'manual' });
-		const task = await createAutomationTask(launch.task_type, launch.payload, launch.source);
+		const task = await launchAutomationTask({ kind: 'search', source: 'manual', search });
 		// Queued, not adopted: see `onRerunTask` (issue #357).
 		consoleNotices.set(
 			task.id,

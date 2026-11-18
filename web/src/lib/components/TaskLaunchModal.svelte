@@ -3,10 +3,9 @@
 	import { resolveTargetAction } from '$lib/types';
 	import type { AutomationTask, SavedSearch, TaskType, TargetAction } from '$lib/types.generated';
 	import { listSavedSearches } from '$lib/stores/savedSearches';
-	import { createAutomationTask } from '$lib/stores/tasks';
+	import { launchAutomationTask } from '$lib/stores/tasks';
 	import { getCandidateProfile } from '$lib/stores/candidateMemory';
 	import { DEFAULT_CHAT_ACKNOWLEDGMENT, DEFAULT_LAUNCH_CHAT_DRY_RUN, normalizeChatAcknowledgment } from '$lib/chatAcknowledgment';
-	import { buildChatCleanupLaunch, buildLoginDiagnosticLaunch, buildSearchLaunch } from '$lib/taskLaunch';
 	import { apiGet } from '$lib/apiClient';
 
 	let {
@@ -94,24 +93,19 @@
 		errorMessage = '';
 		try {
 			const profile = await getCandidateProfile();
-			// One builder, not three inline payloads. `min_score` stays a UI *choice*
-			// passed through the builder rather than a competing default, and the depth is
-			// the Target Action selected above — the builder derives the send/no-send pair
-			// from it, so nothing here restates it.
-			const launch = buildSearchLaunch(
-				{
+			// The server's Python contract builds the payload; this call site only states
+			// the intent and the operator's choices (ticket #456).
+			const task = await launchAutomationTask({
+				kind: 'search',
+				source: 'manual',
+				min_score: minScore,
+				candidate_profile: profile || {},
+				search: {
 					...target,
 					target_action: targetAction,
 					max_jobs: Number(maxJobs) > 0 ? Number(maxJobs) : target.max_jobs
-				},
-				{
-					source: 'manual',
-					minScore,
-					candidateProfile: profile || {}
 				}
-			);
-
-			const task = await createAutomationTask(launch.task_type, launch.payload);
+			});
 			onTaskCreated(task);
 			onClose();
 		} catch (e: any) {
@@ -127,8 +121,7 @@
 		try {
 			// No `mode`/`triggered_at` keys: the handler reads no payload, and provenance
 			// is what the diagnostic intent actually was.
-			const launch = buildLoginDiagnosticLaunch({ source: 'manual' });
-			const task = await createAutomationTask(type, launch.payload);
+			const task = await launchAutomationTask({ kind: 'login_diagnostic', source: 'manual' });
 			onTaskCreated(task);
 			onClose();
 		} catch (e: any) {
@@ -143,12 +136,15 @@
 		isSubmitting = true;
 		errorMessage = '';
 		try {
-			const launch = buildChatCleanupLaunch({
+			const normalized = normalizeChatAcknowledgment(chat);
+			const task = await launchAutomationTask({
+				kind: 'chat_cleanup',
 				source: 'manual',
-				chat: { ...normalizeChatAcknowledgment(chat), dry_run: chatDryRun },
-				mode: chatDryRun ? 'draft' : 'live'
+				mode: chatDryRun ? 'draft' : 'live',
+				rejection_reply_text: normalized.rejection_reply_text,
+				max_scan_depth: normalized.max_scan_depth,
+				max_scroll_swipes: normalized.max_scroll_swipes
 			});
-			const task = await createAutomationTask(launch.task_type, launch.payload);
 			onTaskCreated(task);
 			onClose();
 		} catch (e: any) {

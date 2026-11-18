@@ -47,6 +47,7 @@ export {
 	createAutomationTask,
 	deleteTask,
 	getAutomationTask,
+	launchAutomationTask,
 	listAutomationTasks,
 	rerunTask,
 	resumeTask

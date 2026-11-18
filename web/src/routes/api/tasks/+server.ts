@@ -2,6 +2,7 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { createTask, listTasks } from '$lib/server/collections';
 import { BrokerError } from '$lib/server/broker';
+import { buildLaunch, LaunchIntentError } from '$lib/server/launchContract';
 import { TASK_TYPES, type TaskType } from '$lib/types';
 
 export const GET: RequestHandler = async ({ url }) => {
@@ -35,6 +36,16 @@ export const GET: RequestHandler = async ({ url }) => {
 export const POST: RequestHandler = async ({ request }) => {
 	try {
 		const body = await request.json();
+		// Launch intent: the contract owner builds and validates the payload server-side.
+		if (body && typeof body.kind === 'string' && !body.task_type) {
+			const built = await buildLaunch(body);
+			const task = await createTask({
+				task_type: built.task_type,
+				payload: built.payload,
+				source: built.source
+			});
+			return json({ success: true, task, fields: built.fields });
+		}
 		// An absent task_type is a missing field, not an invitation to guess: defaulting
 		// to AUTO_APPLY meant a UI bug silently started a greeting run.
 		const taskType = body.task_type;
@@ -56,7 +67,7 @@ export const POST: RequestHandler = async ({ request }) => {
 	} catch (e: any) {
 		return json(
 			{ success: false, message: e?.message || 'Failed to create automation task' },
-			{ status: e instanceof BrokerError ? e.status : 500 }
+			{ status: e instanceof LaunchIntentError ? 400 : e instanceof BrokerError ? e.status : 500 }
 		);
 	}
 };

@@ -12,10 +12,9 @@
 		createSavedSearch,
 		updateSavedSearch,
 		deleteSavedSearch,
-		createAutomationTask
+		launchAutomationTask
 	} from '$lib/pocketbase';
 	import { dashboardRealtime } from '$lib/dashboardRealtime';
-	import { buildSearchLaunch } from '$lib/taskLaunch';
 	import { alertAction } from '$lib/stores/confirm';
 
 	let { data }: { data: any } = $props();
@@ -475,10 +474,10 @@
 				// to configured `chat.dry_run`, so an operator who turned drill mode on
 				// is not overridden by this one-click trigger. Passing `false` would win
 				// over the configured default and send real messages.
-				const task = await createAutomationTask('CHECK_CHAT', {
-					saved_search_id: search.id,
-					search_id: search.id,
-					search_name: search.name
+				const task = await launchAutomationTask({
+					kind: 'chat_cleanup',
+					source: 'manual',
+					search: { id: search.id, name: search.name }
 				});
 				triggerStatus[search.id] = `✅ 已派发 [收件箱清理]: ${task.id}`;
 				triggerTaskIds[search.id] = task.id;
@@ -498,9 +497,12 @@
 		// contract's rather than this page's fourth copy of them. And a search takes no mode
 		// at all since issue #298: the action the operator just clicked *is* the depth they
 		// asked for, and 自动沟通 means the greeting goes out.
-		const launch = buildSearchLaunch({ ...search, target_action: action }, { source: 'manual' });
 		try {
-			const task = await createAutomationTask(launch.task_type, launch.payload);
+			const task = await launchAutomationTask({
+				kind: 'search',
+				source: 'manual',
+				search: { ...search, target_action: action }
+			});
 			triggerStatus[search.id] = `✅ 已派发 [${label}]: ${task.id}`;
 			triggerTaskIds[search.id] = task.id;
 			setTimeout(() => {

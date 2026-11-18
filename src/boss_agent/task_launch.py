@@ -324,6 +324,83 @@ def build_launch(
     raise LaunchContractError(f"unknown task kind {kind!r}")
 
 
+#: The payload keys a rerun carries over verbatim: the builder cannot derive them.
+RERUN_CARRIED_INPUTS: tuple[str, ...] = (
+    "job_title",
+    "company_name",
+    "candidate_profile",
+    "screening_policy",
+)
+
+
+def rebuild_rerun_launch(
+    original: dict[str, Any],
+    *,
+    source: LaunchSource = LaunchSource.MANUAL,
+    rerun_of: str | None = None,
+) -> TaskLaunch:
+    """Rebuild a rerun from a task's *inputs*, through the same contract owner.
+
+    The original payload is not spread forward: contract fields are re-derived, so an
+    old default or a retired builder's flag cannot resurrect itself. Only the fields the
+    builder cannot derive are carried by name, exactly like the retired TypeScript mirror
+    did before this moved server-side.
+    """
+    task_type = str(original.get("task_type") or "")
+    prior = original.get("payload") or {}
+    rerun_of = str(rerun_of or original.get("id") or "")
+
+    if task_type == TaskType.CHECK_CHAT.value:
+        search = (
+            SavedSearch(
+                id=str(prior.get("saved_search_id") or prior.get("search_id")),
+                name=str(prior.get("search_name") or ""),
+            )
+            if prior.get("saved_search_id") or prior.get("search_id")
+            else None
+        )
+        launch = build_chat_cleanup_launch(
+            source=source,
+            search=search,
+            rejection_reply_text=prior.get("rejection_reply_text"),
+            max_scan_depth=prior.get("max_scan_depth"),
+            max_scroll_swipes=prior.get("max_scroll_swipes"),
+        )
+        return TaskLaunch(
+            task_type=launch.task_type,
+            payload={**launch.payload, "rerun_of": rerun_of},
+            source=source,
+        )
+
+    if task_type == TaskType.CHECK_LOGIN.value:
+        launch = build_login_diagnostic_launch(source=source)
+        return TaskLaunch(
+            task_type=launch.task_type,
+            payload={**launch.payload, "rerun_of": rerun_of},
+            source=source,
+        )
+
+    search = SavedSearch.from_dict(
+        str(prior.get("saved_search_id") or prior.get("search_id") or ""),
+        {
+            "name": prior.get("search_name"),
+            "keyword": prior.get("keyword"),
+            "enable_search": prior.get("enable_search"),
+            "enable_filter": prior.get("enable_filter"),
+            "filter": prior.get("filter"),
+            "target_action": prior.get("target_action"),
+            "max_jobs": prior.get("max_jobs"),
+        },
+    )
+    launch = build_search_launch(search, source=source)
+    carried = {key: prior[key] for key in RERUN_CARRIED_INPUTS if prior.get(key) is not None}
+    return TaskLaunch(
+        task_type=launch.task_type,
+        payload={**launch.payload, **carried, "rerun_of": rerun_of},
+        source=source,
+    )
+
+
 def coerce_source(raw: Any) -> LaunchSource:
     """A task record's provenance, defaulting to ``manual`` for legacy tasks.
 

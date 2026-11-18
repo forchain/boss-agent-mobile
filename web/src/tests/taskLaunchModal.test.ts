@@ -8,19 +8,19 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/svelte';
 
 const mocks = vi.hoisted(() => ({
-	createAutomationTask: vi.fn(),
+	launchAutomationTask: vi.fn(),
 	listSavedSearches: vi.fn(),
 	getCandidateProfile: vi.fn()
 }));
 
 vi.mock('$lib/pocketbase', () => ({
-	createAutomationTask: mocks.createAutomationTask,
+	launchAutomationTask: mocks.launchAutomationTask,
 	listSavedSearches: mocks.listSavedSearches,
 	getCandidateProfile: mocks.getCandidateProfile
 }));
 
 vi.mock('$lib/stores/tasks', () => ({
-	createAutomationTask: mocks.createAutomationTask
+	launchAutomationTask: mocks.launchAutomationTask
 }));
 
 vi.mock('$lib/stores/savedSearches', () => ({
@@ -76,7 +76,7 @@ function openModal() {
 beforeEach(() => {
 	mocks.listSavedSearches.mockResolvedValue([AUTO_APPLY_SEARCH]);
 	mocks.getCandidateProfile.mockResolvedValue(null);
-	mocks.createAutomationTask.mockResolvedValue({ id: 'task_1', task_type: 'CHECK_CHAT' });
+	mocks.launchAutomationTask.mockResolvedValue({ id: 'task_1', task_type: 'CHECK_CHAT' });
 	vi.stubGlobal(
 		'fetch',
 		vi.fn(async () => jsonResponse({ chat: SERVED_CHAT }))
@@ -128,13 +128,13 @@ describe('Task launch modal category tabs (issue #229)', () => {
 
 		await fireEvent.click(screen.getByText('🧪 下发演练扫描'));
 
-		await waitFor(() => expect(mocks.createAutomationTask).toHaveBeenCalledTimes(1));
-		const [taskType, payload] = mocks.createAutomationTask.mock.calls[0];
-		expect(taskType).toBe('CHECK_CHAT');
-		expect(payload.rejection_reply_text).toBe(SERVED_CHAT.rejection_reply_text);
-		expect(payload.max_scan_depth).toBe(SERVED_CHAT.max_scan_depth);
-		expect(payload.max_scroll_swipes).toBe(SERVED_CHAT.max_scroll_swipes);
-		expect(payload.dry_run).toBe(true);
+		await waitFor(() => expect(mocks.launchAutomationTask).toHaveBeenCalledTimes(1));
+		const intent = mocks.launchAutomationTask.mock.calls[0][0];
+		expect(intent.kind).toBe('chat_cleanup');
+		expect(intent.rejection_reply_text).toBe(SERVED_CHAT.rejection_reply_text);
+		expect(intent.max_scan_depth).toBe(SERVED_CHAT.max_scan_depth);
+		expect(intent.max_scroll_swipes).toBe(SERVED_CHAT.max_scroll_swipes);
+		expect(intent.mode).toBe('draft');
 	});
 
 	it('keeps only diagnostic tasks on the 系统诊断 tab', async () => {
@@ -146,7 +146,7 @@ describe('Task launch modal category tabs (issue #229)', () => {
 		expect(screen.queryByLabelText('礼貌收尾文案')).toBeNull();
 
 		await fireEvent.click(screen.getByText(/检查登录状态/));
-		await waitFor(() => expect(mocks.createAutomationTask).toHaveBeenCalledWith('CHECK_LOGIN', expect.anything()));
+		await waitFor(() => expect(mocks.launchAutomationTask).toHaveBeenCalledWith({ kind: 'login_diagnostic', source: 'manual' }));
 	});
 });
 
@@ -168,14 +168,13 @@ describe('Task launch modal execution depth (issue #298)', () => {
 		await openStrategyForm();
 		await fireEvent.click(screen.getByText('🚀 按此策略发起任务'));
 
-		await waitFor(() => expect(mocks.createAutomationTask).toHaveBeenCalledTimes(1));
-		const [taskType, payload] = mocks.createAutomationTask.mock.calls[0];
-		expect(taskType).toBe('AUTO_APPLY');
+		await waitFor(() => expect(mocks.launchAutomationTask).toHaveBeenCalledTimes(1));
+		const intent = mocks.launchAutomationTask.mock.calls[0][0];
+		expect(intent.kind).toBe('search');
 		// Depth is one expression — the Target Action the form selected. No mode, and no
 		// legacy pair a caller could get half right (#298 then #302).
-		expect(payload.target_action).toBe('auto_apply');
-		expect(payload.auto_send).toBeUndefined();
-		expect(payload.preview_only).toBeUndefined();
+		expect(intent.search.target_action).toBe('auto_apply');
+		expect(intent.mode).toBeUndefined();
 	});
 
 	it('derives the depth from the chosen depth rather than a hidden mode', async () => {
@@ -183,12 +182,11 @@ describe('Task launch modal execution depth (issue #298)', () => {
 		await fireEvent.change(depth, { target: { value: 'save_jd' } });
 		await fireEvent.click(screen.getByText('🚀 按此策略发起任务'));
 
-		await waitFor(() => expect(mocks.createAutomationTask).toHaveBeenCalledTimes(1));
-		const [taskType, payload] = mocks.createAutomationTask.mock.calls[0];
-		expect(taskType).toBe('SCRAPE_JOBS');
-		expect(payload.target_action).toBe('save_jd');
-		expect(payload.auto_send).toBeUndefined();
-		expect(payload.preview_only).toBeUndefined();
+		await waitFor(() => expect(mocks.launchAutomationTask).toHaveBeenCalledTimes(1));
+		const intent = mocks.launchAutomationTask.mock.calls[0][0];
+		expect(intent.kind).toBe('search');
+		expect(intent.search.target_action).toBe('save_jd');
+		expect(intent.mode).toBeUndefined();
 	});
 
 	it('still lets the 拒信清扫 drill keep its own dry_run switch', async () => {
@@ -199,7 +197,7 @@ describe('Task launch modal execution depth (issue #298)', () => {
 		await fireEvent.click(screen.getByText('🧹 拒信清扫'));
 		await waitFor(() => expect(screen.getByText('🧪 下发演练扫描')).toBeTruthy());
 		await fireEvent.click(screen.getByText('🧪 下发演练扫描'));
-		await waitFor(() => expect(mocks.createAutomationTask).toHaveBeenCalledTimes(1));
-		expect(mocks.createAutomationTask.mock.calls[0][1].dry_run).toBe(true);
+		await waitFor(() => expect(mocks.launchAutomationTask).toHaveBeenCalledTimes(1));
+		expect(mocks.launchAutomationTask.mock.calls[0][0].mode).toBe('draft');
 	});
 });

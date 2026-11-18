@@ -7,7 +7,7 @@
  */
 
 import { apiDelete, apiGet, apiPatch, apiPost } from '$lib/apiClient';
-import { rebuildRerunPayload, type LaunchSource } from '$lib/taskLaunch';
+import type { LaunchSource } from '$lib/taskLaunch';
 import { buildTaskQueryString, clampTaskLimit, clampTaskPage } from '$lib/taskQuery';
 import type { AutomationTask } from '$lib/types';
 
@@ -68,6 +68,17 @@ export async function createAutomationTask(
 	return data.task;
 }
 
+/**
+ * Launch from an intent: the server's Python contract builds the payload (ticket #456).
+ * No call site constructs `task_type` or a payload any more.
+ */
+export async function launchAutomationTask(
+	intent: Record<string, any>
+): Promise<AutomationTask> {
+	const data = await apiPost<{ task: AutomationTask }>('/api/tasks', intent);
+	return data.task;
+}
+
 async function setTaskStatus(taskId: string, status: string): Promise<boolean> {
 	await apiPatch(`/api/tasks/${taskId}`, { status });
 	return true;
@@ -87,19 +98,14 @@ export async function deleteTask(taskId: string): Promise<boolean> {
 }
 
 /**
- * Re-run a task from the original's *inputs*, through the launch builder.
+ * Re-run a task from the original's *inputs*, through the server's contract owner.
  *
- * The original payload is not spread into the new one: a spread propagated whatever
- * divergences it carried, including keys no handler reads any more.
+ * The client sends only the id: the Python contract rebuilds the payload, so an old
+ * payload shape carried by the original cannot propagate (ticket #456).
  */
 export async function rerunTask(taskId: string): Promise<AutomationTask | null> {
 	const original = await getAutomationTask(taskId);
 	if (!original) return null;
-	const rebuilt = rebuildRerunPayload(
-		{ task_type: original.task_type, payload: original.payload || {} },
-		taskId
-	);
-	// The builder's task type, not the original's: the payload's Target Action and the
-	// handler it is routed to must say the same thing (#302).
-	return createAutomationTask(rebuilt.task_type, rebuilt.payload, rebuilt.source);
+	const data = await apiPost<{ task: AutomationTask }>(`/api/tasks/${taskId}/rerun`, {});
+	return data.task;
 }
