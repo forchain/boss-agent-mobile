@@ -44,109 +44,49 @@ WEB_URL="http://${WEB_HOST}:${WEB_PORT}"
 # listening socket to be handed back to the OS.
 WEB_STOP_TIMEOUT_SEC="${WEB_STOP_TIMEOUT_SEC:-10}"
 
-get_running_web_pid() {
-    if [[ -f "${PID_FILE}" ]]; then
-        local PID
-        PID="$(cat "${PID_FILE}" 2>/dev/null || true)"
-        if [[ -n "${PID}" ]] && runner_process_alive "${PID}"; then
-            if ! runner_process_cwd_alive "${PID}"; then
-                rm -f "${PID_FILE}"
-            else
-                echo "${PID}"
-                return 0
-            fi
-        fi
-    fi
-
-    # Fallback to the process listening on the port
-    local PORT_PID
-    PORT_PID="$(runner_port_listener_pid "${WEB_PORT}")"
-    if [[ -n "${PORT_PID}" ]]; then
-        if runner_process_cwd_alive "${PORT_PID}"; then
-            echo "${PORT_PID}" > "${PID_FILE}"
-            echo "${PORT_PID}"
-            return 0
-        fi
-    fi
-    echo ""
-}
+# The one description of the Web Dashboard, shared by every command below (ticket #476).
+#
+# The Dashboard was the one runner that did honour the Graceful Shutdown Protocol end to
+# end — its acknowledgment line is a cross-process contract the E2E Pre-Test Teardown Gate
+# greps for, so the shared stop preserves it verbatim rather than replacing it with the
+# generic wording. What it never did was record a restart, which is why the restart
+# telemetry below is new rather than moved.
+runner_service_reset
+RUNNER_SERVICE_LABEL="Web"
+RUNNER_SERVICE_NAME="SvelteKit Web Dashboard"
+RUNNER_SERVICE_PID_FILE="${PID_FILE}"
+RUNNER_SERVICE_LOG_FILE="${LOG_FILE}"
+RUNNER_SERVICE_PORT="${WEB_PORT}"
+RUNNER_SERVICE_HEALTH_URL="http://127.0.0.1:${WEB_PORT}"
+RUNNER_SERVICE_HEALTH_URLS="${WEB_URL}"
+RUNNER_SERVICE_ENDPOINT="${WEB_URL}"
+RUNNER_SERVICE_STOP_TIMEOUT_SEC="${WEB_STOP_TIMEOUT_SEC}"
+RUNNER_SERVICE_STOP_ACK_LABEL="Web"
+RUNNER_SERVICE_STOP_ACK_DETAIL="Web Dashboard"
+RUNNER_SERVICE_STOP_DETAIL="Web Dashboard"
+RUNNER_SERVICE_STOP_COMPLETE_DETAIL="Web Dashboard stopped; port ${WEB_PORT} released"
+RUNNER_SERVICE_RESTART_DETAIL="Web Dashboard"
+RUNNER_SERVICE_RESTART_COMPLETE_DETAIL="Web Dashboard back online"
+RUNNER_SERVICE_RESIDUAL_PATTERN="vite dev.*${WEB_PORT}"
+RUNNER_SERVICE_STOP_CHILDREN="1"
+RUNNER_SERVICE_STALE_CWD="1"
+RUNNER_SERVICE_RESTART_TOLERATES_STOP="1"
+RUNNER_SERVICE_RESTART_COMMAND="./dashboard.sh restart"
+RUNNER_SERVICE_STOP_BANNER="🛑 Stopping SvelteKit Web Dashboard..."
+RUNNER_SERVICE_IDLE_MESSAGE="No running Web Dashboard process found."
+RUNNER_SERVICE_STOPPED_MESSAGE="SvelteKit Web Dashboard stopped (port ${WEB_PORT} released)."
+RUNNER_SERVICE_STATUS_CHECKING="Checking SvelteKit Web Dashboard status..."
+RUNNER_SERVICE_STATUS_UP="🟢 SvelteKit Web Dashboard is RUNNING at ${WEB_URL}"
+RUNNER_SERVICE_STATUS_DOWN="🔴 SvelteKit Web Dashboard is NOT RUNNING at ${WEB_URL}"
+RUNNER_SERVICE_STATUS_PID_LINE="   Process PID : {pid}"
+RUNNER_SERVICE_STATUS_LOG_LINE="   Log file    : {log}"
 
 cmd_status() {
-    echo "🔍 Checking SvelteKit Web Dashboard status..."
-    local PID
-    PID="$(get_running_web_pid)"
-    local PORT_PID
-    PORT_PID="$(runner_port_listener_pid "${WEB_PORT}")"
-
-    if [[ -n "${PORT_PID}" ]] && ! runner_process_cwd_alive "${PORT_PID}"; then
-        local STALE_CWD
-        STALE_CWD="$(runner_process_cwd "${PORT_PID}")"
-        echo "🔴 SvelteKit Web Dashboard port ${WEB_PORT} is held by a STALE process (PID: ${PORT_PID})"
-        echo "   Deleted CWD: ${STALE_CWD:-unknown}"
-        echo "   Run './dashboard.sh restart' to reclaim port and start a fresh server."
-        return 1
-    fi
-
-    if curl -s -f "http://127.0.0.1:${WEB_PORT}" >/dev/null 2>&1 || curl -s -f "${WEB_URL}" >/dev/null 2>&1; then
-        echo "🟢 SvelteKit Web Dashboard is RUNNING at ${WEB_URL}"
-        if [[ -n "${PID}" ]]; then
-            echo "   Process PID : ${PID}"
-        fi
-        echo "   Log file    : ${LOG_FILE}"
-        return 0
-    else
-        echo "🔴 SvelteKit Web Dashboard is NOT RUNNING at ${WEB_URL}"
-        if [[ -n "${PID}" ]]; then
-            rm -f "${PID_FILE}"
-        fi
-        return 1
-    fi
+    runner_service_status
 }
 
 cmd_stop() {
-    echo "🛑 Stopping SvelteKit Web Dashboard..."
-    local STOPPED=0
-    local PID
-    PID="$(get_running_web_pid)"
-
-    if [[ -n "${PID}" ]]; then
-        runner_log_event "${LOG_FILE}" "🛑 [Web] ${RUNNER_WEB_SHUTDOWN_ACK}, shutting down Web Dashboard... (PID: ${PID}, port: ${WEB_PORT})"
-        echo "   Shutdown feedback appended to ${LOG_FILE}"
-        pkill -P "${PID}" 2>/dev/null || true
-
-        # SIGTERM first, the full budget to exit cooperatively (in-flight tasks release
-        # their leases), then SIGKILL. The escalation itself is the library's, so every
-        # service escalates identically — and it is recorded in this service's own log
-        # rather than checked off a return status the library cannot make meaningful.
-        runner_graceful_stop "${PID}" "${WEB_STOP_TIMEOUT_SEC}" "Web Dashboard" "${LOG_FILE}"
-        STOPPED=1
-    fi
-
-    # Reclaim the port from any process that outlived its parent (e.g. a detached vite dev server)
-    pkill -f "vite dev.*${WEB_PORT}" 2>/dev/null || true
-    if runner_port_in_use "${WEB_PORT}"; then
-        local PORT_PID
-        PORT_PID="$(runner_port_listener_pid "${WEB_PORT}")"
-        if [[ -n "${PORT_PID}" ]]; then
-            echo "⚠️ Port ${WEB_PORT} still held by PID ${PORT_PID}; reclaiming."
-            runner_graceful_stop "${PORT_PID}" "${WEB_STOP_TIMEOUT_SEC}" "port ${WEB_PORT} listener" "${LOG_FILE}"
-        fi
-    fi
-
-    rm -f "${PID_FILE}"
-
-    if ! runner_wait_until "${WEB_STOP_TIMEOUT_SEC}" runner_port_released "${WEB_PORT}"; then
-        echo "❌ Error: port ${WEB_PORT} is still occupied after shutdown." >&2
-        runner_log_event "${LOG_FILE}" "❌ [Web] Port ${WEB_PORT} is still occupied after shutdown."
-        return 1
-    fi
-
-    if [[ ${STOPPED} -eq 1 ]]; then
-        runner_log_event "${LOG_FILE}" "✅ [Web] Web Dashboard stopped; port ${WEB_PORT} released."
-        echo "✅ SvelteKit Web Dashboard stopped (port ${WEB_PORT} released)."
-    else
-        echo "ℹ️ No running Web Dashboard process found."
-    fi
+    runner_service_stop
 }
 
 resolve_version_env() {
@@ -209,8 +149,8 @@ cmd_start() {
 
     # Check if already running locally
     local RUNNING_PID
-    RUNNING_PID="$(get_running_web_pid)"
-    if curl -s -f "http://127.0.0.1:${WEB_PORT}" >/dev/null 2>&1 || curl -s -f "${WEB_URL}" >/dev/null 2>&1; then
+    RUNNING_PID="$(runner_service_resolve_pid)"
+    if runner_service_healthy "${RUNNING_PID}"; then
         if [[ "${IS_DAEMON}" -eq 1 || "${DAEMON:-0}" -eq 1 ]]; then
             echo "ℹ️ SvelteKit Web Dashboard is already running in background (PID: ${RUNNING_PID:-unknown}) at ${WEB_URL}"
             return 0
@@ -304,9 +244,7 @@ cmd_start() {
 
 cmd_restart() {
     echo "🔄 Restarting SvelteKit Web Dashboard..."
-    cmd_stop || true
-    sleep 0.5
-    cmd_start "$@"
+    runner_service_restart "$@"
 }
 
 ACTION="${1:-start}"

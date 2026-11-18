@@ -472,13 +472,22 @@ def test_the_shutdown_acknowledgment_has_one_definition_per_service() -> None:
 
 
 def test_the_dashboard_runner_no_longer_restates_the_ack_literal() -> None:
-    """dashboard.sh references the shared definition rather than carrying a copy."""
+    """dashboard.sh declares the acknowledgment; the shared stop emits it (#476).
+
+    The ack used to be written by dashboard.sh's own `cmd_stop`, which referenced
+    `RUNNER_WEB_SHUTDOWN_ACK` and the literal around it. The stop choreography now lives
+    in `runner_lib.sh`, so the dashboard describes *that it has* an acknowledgment and the
+    library's shared stop emits the one definition. The duplication guard is the same:
+    the literal must not reappear in the runner.
+    """
     from boss_agent.adapters.infra.teardown import WEB_SHUTDOWN_ACK
 
     web = (REPO_ROOT / "dashboard.sh").read_text(encoding="utf-8")
-    assert "RUNNER_WEB_SHUTDOWN_ACK" in web, "dashboard.sh must use the library's definition"
+    assert 'RUNNER_SERVICE_STOP_ACK_DETAIL="Web Dashboard"' in web, (
+        "dashboard.sh must declare its shutdown acknowledgment for the shared stop"
+    )
     assert f'"[Web] {WEB_SHUTDOWN_ACK}, shutting down' not in web, (
-        "dashboard.sh restates the ack literal again; reference the shared constant instead"
+        "dashboard.sh restates the ack literal again; the library owns the wording"
     )
 
 
@@ -521,12 +530,22 @@ def test_the_lifecycle_events_have_one_definition_per_service() -> None:
 
 
 def test_no_runner_restates_the_lifecycle_wording() -> None:
-    """A runner calls the seam; it does not carry its own copy of the sentence.
+    """A runner records its lifecycle through the shared seam, never a private copy.
 
     Naming the offender is what replaces the discipline: the constants are a cross-process
     contract (the E2E Pre-Test Teardown Gate greps these logs), so a runner that spells the
     same event differently is a silent fork of it, not a harmless local choice.
+
+    Since #476 the choreography itself — not just its wording — lives in `runner_lib.sh`,
+    so a runner may reach the seam either by calling it for a service the shared stop does
+    not fit (`emulator.sh`'s bridge, which needs its own argv-verified handle) or by using
+    the parameterized commands the library exposes. Both are one owner; only restating the
+    sentence is forbidden.
     """
+    shared_stop = ("runner_service_stop",)
+    shared_restart = ("runner_service_restart",)
+    direct_stop = ("runner_log_stop_request", "runner_log_stop_complete")
+    direct_restart = ("runner_log_restart_request", "runner_log_restart_complete")
     for runner in LIFECYCLE_RUNNERS:
         source = (REPO_ROOT / runner).read_text(encoding="utf-8")
         for literal in LIFECYCLE_LITERALS:
@@ -538,8 +557,12 @@ def test_no_runner_restates_the_lifecycle_wording() -> None:
             assert constant not in source, (
                 f"{runner} spells {constant} inline; the seam owns the wording"
             )
-        for seam in LIFECYCLE_SEAMS:
-            assert seam in source, f"{runner} never calls {seam}"
+        assert any(seam in source for seam in shared_stop + direct_stop), (
+            f"{runner} never records a stop through the shared lifecycle seam"
+        )
+        assert any(seam in source for seam in shared_restart + direct_restart), (
+            f"{runner} never records a restart through the shared lifecycle seam"
+        )
 
 
 def test_a_graceful_stop_that_escalates_says_so_in_the_service_log(fake_toolchain: Path) -> None:
