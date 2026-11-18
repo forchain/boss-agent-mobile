@@ -28,15 +28,15 @@ from boss_agent.candidate_memory_store import (
     InMemoryCandidateMemoryStore,
     PocketBaseCandidateMemoryStore,
 )
+from boss_agent.core.search.domain.models import FilterConfig, SavedSearch, SearchConfig
+from boss_agent.core.search.interfaces.store import SavedSearchStore
 from boss_agent.core.shared.enums import TargetTaskType
 from boss_agent.core.shared.errors import TransportError
 from boss_agent.saved_search_store import (
     InMemorySavedSearchStore,
     PocketBaseSavedSearchStore,
-    SavedSearchStore,
     resolve_saved_search_store,
 )
-from boss_agent.search_entities import FilterConfig, SavedSearch, SearchConfig
 
 
 class FakeResponse:

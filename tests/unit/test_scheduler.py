@@ -5,18 +5,18 @@ from datetime import UTC, datetime
 import pytest
 
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
+from boss_agent.core.search.domain.models import SavedSearch
+from boss_agent.core.search.use_cases.cron import (
+    get_next_cron_run,
+    is_cron_match,
+    parse_cron_field,
+)
 from boss_agent.core.task.domain.models import TaskType
 from boss_agent.core.task.use_cases.startup_cleanup import (
     STARTUP_CLEANUP_MARKER,
     StartupCleanupGate,
 )
-from boss_agent.scheduler import (
-    AutomationScheduler,
-    get_next_cron_run,
-    is_cron_match,
-    parse_cron_field,
-)
-from boss_agent.search_entities import SavedSearch
+from boss_agent.scheduler import AutomationScheduler
 
 
 def test_parse_cron_field():
@@ -105,7 +105,7 @@ async def test_scheduler_queues_nothing_when_the_startup_cleanup_is_disabled():
 async def test_scheduler_run_once():
     broker = InMemoryTaskBroker()
 
-    from boss_agent.search_entities import FilterConfig, SearchConfig
+    from boss_agent.core.search.domain.models import FilterConfig, SearchConfig
 
     # Search 1: Enabled and matches Monday 09:00
     search_active = SavedSearch(
@@ -196,7 +196,7 @@ async def test_scheduler_dispatches_check_chat_task_for_inbox_cleanup_strategy()
     now = datetime(2026, 9, 7, 21, 0, 0, tzinfo=UTC)
 
     with patch(
-        "boss_agent.task_launch.resolve_chat_acknowledgment_settings",
+        "boss_agent.scheduler.resolve_chat_acknowledgment_settings",
         return_value=ChatAcknowledgmentSettings(
             rejection_reply_text="谢谢，祝招聘顺利", max_scan_depth=7
         ),
@@ -244,7 +244,7 @@ async def test_scheduled_chat_cleanup_honours_the_configured_drill_mode():
     now = datetime(2026, 9, 7, 21, 0, 0, tzinfo=UTC)
 
     with patch(
-        "boss_agent.task_launch.resolve_chat_acknowledgment_settings",
+        "boss_agent.scheduler.resolve_chat_acknowledgment_settings",
         return_value=ChatAcknowledgmentSettings(dry_run=True),
     ):
         tasks = await scheduler.run_once(now=now)
@@ -285,7 +285,7 @@ def test_saved_search_search_targets_are_unchanged_by_chat_support():
 async def test_scheduler_respects_is_enabled_toggle_and_nested_authoritative_flags():
     """Verify disabled searches are never dispatched, and nested flags govern dispatched payload (Issue #321)."""
     broker = InMemoryTaskBroker()
-    from boss_agent.search_entities import SearchConfig
+    from boss_agent.core.search.domain.models import SearchConfig
 
     # 1. Disabled strategy -> Must NOT be dispatched
     disabled_search = SavedSearch(

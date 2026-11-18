@@ -43,6 +43,7 @@ from typing import Any
 from rich.console import Console
 
 from .async_bridge import run_sync
+from .core.search.domain.models import FilterConfig, SearchConfig
 from .core.shared.enums import TargetAction
 from .feed_pipeline import FeedStreamConfig, FeedStreamResult, JobFeedPipeline
 from .job_entities import JobPosting
@@ -50,7 +51,6 @@ from .matching import JobMatchGreetingService, MatchGreetingResult
 from .memory import ResumeMemoryManager, StructuredCandidateProfile
 from .screening import CandidateScreener
 from .screening_policy import ScreeningPolicy
-from .search_entities import FilterConfig, SearchConfig
 
 console = Console()
 

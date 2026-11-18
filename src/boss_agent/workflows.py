@@ -12,6 +12,8 @@ from rich.console import Console
 
 from .async_bridge import run_sync
 from .candidate_entities import CandidateProfile
+from .core.search.domain.models import FilterConfig, SavedSearch, SearchConfig
+from .core.search.interfaces.store import SavedSearchStore
 from .core.shared.enums import AuthStatus
 from .feed_verification import (
     activate_app,
@@ -25,12 +27,10 @@ from .matching import JobMatchGreetingService
 from .memory import ResumeMemoryManager
 from .pages.system import LoginPage
 from .saved_search_store import (
-    SavedSearchStore,
     missing_saved_search_message,
     resolve_saved_search_store,
 )
 from .screening_policy import ScreeningPolicy, resolve_screening_policy
-from .search_entities import FilterConfig, SavedSearch, SearchConfig
 
 console = Console()
 
