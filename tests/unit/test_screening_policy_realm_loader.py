@@ -181,7 +181,6 @@ def test_import_graph_independence():
 
     # screening_policy must not import entities
     assert "boss_agent.core.job.domain.job_entities" not in policy_imports
-    assert "boss_agent.candidate_entities" not in policy_imports
+    assert "boss_agent.core.candidate.domain.candidate_profile" not in policy_imports
     assert "boss_agent.core.search.domain.models" not in policy_imports
     assert "boss_agent.entities" not in policy_imports
-    assert "boss_agent.models" not in policy_imports

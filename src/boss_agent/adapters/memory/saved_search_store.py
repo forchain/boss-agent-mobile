@@ -7,13 +7,10 @@ Volatile SavedSearch store for tests and local development.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from boss_agent.core.search.domain.models import SavedSearch
-from boss_agent.core.search.interfaces.store import SavedSearchStore
-
-if TYPE_CHECKING:
-    from boss_agent.adapters.outbound.pocketbase.saved_search_store import ScheduleRevoker
+from boss_agent.core.search.interfaces.store import SavedSearchStore, ScheduleRevoker
 
 
 def _hydrate_fixture(

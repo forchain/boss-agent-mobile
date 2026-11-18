@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import logging
 import os
-from collections.abc import Awaitable, Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
 import requests
@@ -27,15 +27,12 @@ import requests
 from boss_agent.adapters.memory.saved_search_store import InMemorySavedSearchStore
 from boss_agent.adapters.outbound.config.settings import resolve_pocketbase_url
 from boss_agent.core.search.domain.models import SavedSearch
-from boss_agent.core.search.interfaces.store import SavedSearchStore
+from boss_agent.core.search.interfaces.store import SavedSearchStore, ScheduleRevoker
 
 from .async_bridge import execute_broker_request
 from .pocketbase_auth import pocketbase_headers
 
 logger = logging.getLogger("boss_agent.adapters.outbound.pocketbase.saved_search_store")
-
-#: Called with a deleted search id so a running scheduler can drop its schedule.
-ScheduleRevoker = Callable[[str], Awaitable[None]]
 
 #: Columns the domain interprets itself when they are absent, by falling back to a
 #: sibling key. The schema's storage default must not be substituted for these before
@@ -69,10 +66,9 @@ def record_to_saved_search(search_id: str, record: Mapping[str, Any]) -> SavedSe
     *declared* default rather than on whatever the reader happened to guess. The
     ``max_jobs`` 20-vs-30 drift was exactly that class of bug.
 
-    The schema is imported inside the function because ``boss_agent.broker``'s package
-    ``__init__`` imports the broker adapter, which imports this module — a module-scope
-    import would close that cycle. ``search_entities`` resolves its own schema default
-    the same way, for the same reason.
+    The schema is imported inside the function so this store module does not depend on
+    the collection schema at import time; the core domain model resolves its own schema
+    default the same way.
     """
     from .collection_schema import SAVED_SEARCHES, normalize_record
 

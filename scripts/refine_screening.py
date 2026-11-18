@@ -107,7 +107,7 @@ def main() -> None:
         except FileNotFoundError:
             screening_prompt = None
 
-    llm_client = build_llm_client(args.llm_config)
+    llm_client = build_llm_client(args.llm_config, treat_masked_key_as_missing=False)
     screener = build_screener(
         llm_client=llm_client,
         screening_prompt=screening_prompt,

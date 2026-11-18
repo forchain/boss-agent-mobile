@@ -22,8 +22,15 @@ from typing import Any
 
 import requests
 
+from boss_agent.adapters.shared.records import (
+    INVALID_COMPANY_NAMES,
+    _advanced_status,
+    _placeholder_fill,
+    _record_fields,
+    _sticky_field_updates,
+)
 from boss_agent.core.job.interfaces.store import JobRecordStore
-from boss_agent.core.shared.enums import STATE_RANK, JobRecordStatus
+from boss_agent.core.shared.enums import JobRecordStatus
 from boss_agent.core.shared.errors import (
     BrokerError,
     ConflictError,
@@ -44,8 +51,6 @@ from .async_bridge import execute_broker_request
 
 logger = logging.getLogger("boss_agent.adapters.outbound.pocketbase.job_store")
 
-INVALID_COMPANY_NAMES: frozenset[str] = frozenset({"", "未注明公司", "未知公司"})
-
 #: Page size when walking applied direct-hire records from PocketBase.
 #: The query is bounded by the cooldown time window rather than an arbitrary
 #: record count, and the walk continues until the relevant records are exhausted.
@@ -60,31 +65,6 @@ APPLIED_POOL_PAGE_SIZE = 200
 APPLIED_POOL_MAX_PAGES = 200
 
 
-def _advanced_status(current: str | None, incoming: Any) -> str | None:
-    """The status to write when a new observation meets a stored one, or None to keep it.
-
-    Status only ever moves forward, so a later save-only pass cannot silently demote an
-    already-applied job. The two documented exceptions both *lower* the rank on purpose:
-    an explicit rejection always wins, and a freshly extracted JD lifts a record out of
-    its pre-JD limbo.
-    """
-    status_val = incoming.value if hasattr(incoming, "value") else incoming
-    if not status_val:
-        return None
-    cur_rank = STATE_RANK.get(current or "", 0)
-    new_rank = STATE_RANK.get(status_val, 0)
-    if (
-        new_rank > cur_rank
-        or status_val == JobRecordStatus.IGNORED
-        or (
-            status_val == JobRecordStatus.JD_SAVED
-            and current in (JobRecordStatus.UNMATCHED, JobRecordStatus.DIGEST_ONLY)
-        )
-    ):
-        return status_val
-    return None
-
-
 def _quote_filter_value(value: Any) -> str:
     """Render a scraped value as a quoted PocketBase filter literal.
 
@@ -94,98 +74,6 @@ def _quote_filter_value(value: Any) -> str:
     """
     escaped = str(value).replace("\\", "\\\\").replace("'", "\\'")
     return f"'{escaped}'"
-
-
-def _placeholder_fill(existing: dict[str, Any], record_data: dict[str, Any]) -> dict[str, Any]:
-    """Fields that fill a gap in the stored record but never overwrite what is known."""
-    filled: dict[str, Any] = {}
-    for key in (
-        "company_scale",
-        "industry",
-        "recruiter_title",
-        "salary_range",
-        "location",
-        # The station is read from the detail page and a posting's office does not move,
-        # so a later observation that finds none must never erase one already recorded.
-        "location_line",
-        "metro_lines",
-        "metro_station",
-    ):
-        if record_data.get(key) and not existing.get(key):
-            filled[key] = record_data[key]
-    return filled
-
-
-def _sticky_field_updates(existing: dict[str, Any], record_data: dict[str, Any]) -> dict[str, Any]:
-    """Merge rules for the fields an observation may enrich but never erase.
-
-    One authority for both adapters, so a re-scrape cannot blank what the record already
-    holds. The two list fields differ on purpose: ``tags`` are card facets, so the first
-    non-empty read wins and a later empty one is ignored, while ``jd_key_requirements`` is
-    re-extracted from the JD text and may be refined by a later non-empty read.
-    ``is_headhunter`` may be discovered by a later observation but never downgraded — a
-    headhunter channel recorded as direct-hire would wrongly join the same-company pool.
-    ``greeting_message`` and ``greeting_source`` move together for the same reason: a
-    card-level pass that carries neither must leave a human's approved copy and its
-    provenance intact (issue #300).
-    """
-    updates: dict[str, Any] = {}
-    # The greeting and who wrote it travel together (issue #300): a pass that brings no
-    # greeting of its own must not erase a human's approved copy, and a pass that brings a
-    # new one must not leave the old provenance claim standing.
-    if record_data.get("greeting_message"):
-        updates["greeting_message"] = record_data["greeting_message"]
-    if record_data.get("greeting_source"):
-        updates["greeting_source"] = record_data["greeting_source"]
-    if record_data.get("tags") and not existing.get("tags"):
-        updates["tags"] = record_data["tags"]
-    if record_data.get("jd_key_requirements"):
-        updates["jd_key_requirements"] = record_data["jd_key_requirements"]
-    if "is_headhunter" in record_data and (
-        record_data["is_headhunter"] or existing.get("is_headhunter") is None
-    ):
-        updates["is_headhunter"] = record_data["is_headhunter"]
-    # Commute distance (spec #209): only overwrite with a known value so
-    # a later probe that fails open never erases a measured distance.
-    if record_data.get("commute_distance_km") is not None:
-        updates["commute_distance_km"] = record_data["commute_distance_km"]
-    if record_data.get("commute_distance_text"):
-        updates["commute_distance_text"] = record_data["commute_distance_text"]
-    return updates
-
-
-def _record_fields(record_data: dict[str, Any], fingerprint: str, now: str) -> dict[str, Any]:
-    """The canonical field set of a brand-new job record, shared by both adapters.
-
-    The field list is the Collection Schema's, so a column added to ``job_records``
-    is written by the store the moment it is declared, and a key the schema does not
-    know about is dropped rather than smuggled onto the wire.
-
-    The schema is imported inside the function for the same reason the saved-search
-    entities import theirs lazily: ``boss_agent.broker``'s package ``__init__`` imports
-    the broker adapter, which imports this module. A module-scope import here made
-    ``import boss_agent.job_store`` fail on its own, and the failure was survivable only
-    because some *other* module happened to re-enter the broker package afterwards.
-    """
-    from .collection_schema import JOB_RECORDS, wire_payload
-
-    fields = wire_payload(JOB_RECORDS, record_data)
-    fields["fingerprint"] = fingerprint
-
-    status_val = fields.get("status") or JobRecordStatus.UNMATCHED
-    if hasattr(status_val, "value"):
-        status_val = status_val.value
-    fields["status"] = status_val or JobRecordStatus.UNMATCHED.value
-
-    # Boolean and timestamp columns are coerced here because a caller may hand over a
-    # value that survived a JSON round-trip (``"false"``) or an ORM-ish truthy object.
-    fields["is_headhunter"] = bool(fields.get("is_headhunter", False))
-    fields["relaxed_by_whitelist"] = bool(fields.get("relaxed_by_whitelist", False))
-    fields["first_seen_at"] = now
-    fields["last_seen_at"] = now
-    fields["created"] = now
-    fields["updated"] = now
-    return fields
 
 
 class PocketBaseJobRecordStore(JobRecordStore):

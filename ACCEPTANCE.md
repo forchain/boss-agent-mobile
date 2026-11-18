@@ -121,7 +121,7 @@ Each acceptance criterion is defined with Gherkin semantics and an exact verific
 
 ### Criterion 3: App Lifecycle & Safety Takeover (`boss_agent`)
 - **Given**: A running AVD emulator instance with Boss 直聘 installed.
-- **When**: Launching the app via `scripts/run_live_test.py`, whose run is gated on `boss_agent.workflows.TakeoverHandler`.
+- **When**: Launching the app via `scripts/run_live_test.py`, whose run is gated on `boss_agent.adapters.outbound.device.takeover.TakeoverHandler`.
 - **Then**:
   1. App launch permissions and privacy agreements are automatically identified and dismissed.
   2. If the user is unauthenticated or a slider captcha appears, the system triggers `TakeoverHandler`, pauses automation, prints clear instructions for manual resolution in GUI, and resumes upon completion.

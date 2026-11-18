@@ -1,27 +1,17 @@
 """
 src/boss_agent/broker
 =====================
-State Stream Task Broker package.
+State Stream Task Broker package facade.
 
-Public symbols resolve lazily (PEP 562).
+Public symbols resolve lazily (PEP 562). The concrete broker and its stores live in
+``boss_agent.adapters``; this package keeps the symbol names callers have always
+imported and re-points them at their new homes, so a caller does not have to know
+which adapter currently provides the task stream.
 
-``pocketbase_adapter`` imports ``boss_agent.job_store`` for the shared
-``JobRecordStore`` seam, and ``job_store`` imports
-``boss_agent.adapters.outbound.pocketbase.collection_schema`` for the wire schema. Those two edges form a
-cycle, and this ``__init__`` closed it by importing both ends eagerly: whichever side
-was reached first lost, and the loser's names silently vanished.
-
-That was hidden because ``boss_agent/__init__.py`` wrapped its own ``job_store``
-import in ``contextlib.suppress(ImportError)``. Before Issue #386, seven names in
-``boss_agent.__all__`` (``JobRecordStore``, ``InMemoryJobRecordStore``,
-``PocketBaseJobRecordStore``, and the four ``feed_pipeline`` symbols that import from
-them) were advertised but could not actually be resolved -- a suppressed circular
-import, not a missing feature.
-
-Deferring the adapter breaks the cycle at its actual source: ``job_store`` can now
-reach ``boss_agent.adapters.outbound.pocketbase.collection_schema`` (a leaf with no first-party imports)
-without dragging ``pocketbase_adapter`` back into a half-initialized state. The names
-below resolve to the identical objects they did before.
+The lazy form is still load-bearing: the task models, the broker port, and the two
+broker implementations sit in different layers, and an eager import closes an import
+cycle through ``boss_agent.adapters.outbound.pocketbase``. These names resolve to the
+identical objects they did before the re-homing.
 """
 
 from __future__ import annotations

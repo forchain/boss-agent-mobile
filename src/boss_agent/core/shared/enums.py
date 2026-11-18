@@ -34,7 +34,7 @@ class ScreeningStage(StrEnum):
     ``ignored`` + ``screened_reason`` pair, so the dashboard showed all of them as
     初筛淘汰 — even the deep screener's, whose evidence lives in the full JD and never in
     the card digest the card stage sees. Values reuse the verdict-stage vocabularies in
-    :mod:`boss_agent.screening` where they overlap.
+    :mod:`boss_agent.core.job.domain.screening` where they overlap.
     """
 
     #: Card stage (no JD read): a keyword/company blacklist hit.

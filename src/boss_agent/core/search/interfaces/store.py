@@ -17,11 +17,16 @@ module until the adapters ticket moves them.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable
 
 from boss_agent.core.search.domain.models import SavedSearch
 
 #: The id the default-search resolver looks for, and the id it synthesizes.
 DEFAULT_SEARCH_ID = "default_agent_search"
+
+#: Called with a deleted search id so a running scheduler can drop its schedule. Declared
+#: here because both store adapters accept it, and neither owns the other's module.
+ScheduleRevoker = Callable[[str], Awaitable[None]]
 
 
 class SavedSearchStore(ABC):

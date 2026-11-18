@@ -21,6 +21,7 @@ import pytest
 from _feed_harness import ScriptedFeed, _card, _detail_page, _posting, script_pages
 from rich.console import Console
 
+from boss_agent.adapters.inbound.verification import feed_verification
 from boss_agent.adapters.inbound.verification.smoke_harness import SmokeHarness
 from boss_agent.adapters.outbound.device.pages import ChatPage
 from boss_agent.adapters.outbound.device.takeover import TakeoverHandler
@@ -89,14 +90,17 @@ def test_smoke_harness_drafts_and_renders_the_greeting_for_the_extracted_posting
         detail=_detail_page(posting=_posting("资深 Agent 研发工程师", "未来智能")),
     )
 
-    with patch("time.sleep", return_value=None):
+    with (
+        patch.object(feed_verification, "render_match_card") as render_match_card,
+        patch("time.sleep", return_value=None),
+    ):
         job = harness.run_smoke_test()
 
     assert job.title == "资深 Agent 研发工程师"
     harness.memory_manager.load_memory.assert_called_once()
     matching_service.evaluate_and_draft_greeting.assert_called_once()
-    matching_service.render_match_card.assert_called_once()
-    rendered_job, rendered_match = matching_service.render_match_card.call_args[0]
+    render_match_card.assert_called_once()
+    rendered_job, rendered_match = render_match_card.call_args[0]
     assert rendered_job is job
     assert rendered_match.match_score == 95
     assert (
@@ -146,11 +150,15 @@ def test_smoke_harness_app_rule_violation_short_circuits_greeting():
     """
     harness, matching_service, chat_page = _headhunter_smoke_harness("direct_only")
 
-    with patch("time.sleep", return_value=None), pytest.raises(RuntimeError):
+    with (
+        patch.object(feed_verification, "render_match_card") as render_match_card,
+        patch("time.sleep", return_value=None),
+        pytest.raises(RuntimeError),
+    ):
         harness.run_smoke_test()
 
     matching_service.evaluate_and_draft_greeting.assert_not_called()
-    matching_service.render_match_card.assert_not_called()
+    render_match_card.assert_not_called()
     harness.pipeline.detail_page.open_chat.assert_not_called()
     chat_page.type_greeting_message.assert_not_called()
 
@@ -192,7 +200,12 @@ def test_smoke_harness_keyword_rejection_never_spends_a_jd_evaluation():
 
     # No posting survived the card stage, so the run reports that it read nothing rather
     # than reporting a greeting for a card it rejected.
-    with console_patch, patch("time.sleep", return_value=None), pytest.raises(RuntimeError):
+    with (
+        console_patch,
+        patch.object(feed_verification, "render_match_card") as render_match_card,
+        patch("time.sleep", return_value=None),
+        pytest.raises(RuntimeError),
+    ):
         harness.run_smoke_test()
 
     output = buffer.getvalue()
@@ -200,7 +213,7 @@ def test_smoke_harness_keyword_rejection_never_spends_a_jd_evaluation():
     # The blacklist hit the policy itself reports, not a placeholder.
     assert "命中职位黑名单关键词: '平台负责人'" in output
     mock_matching_svc.evaluate_and_draft_greeting.assert_not_called()
-    mock_matching_svc.render_match_card.assert_not_called()
+    render_match_card.assert_not_called()
     harness.pipeline.detail_page.open_chat.assert_not_called()
 
 
@@ -229,12 +242,17 @@ def test_smoke_harness_spends_nothing_on_a_rejection_it_has_never_seen():
     harness.pipeline.screener = screener
 
     buffer, console_patch = _record_console()
-    with console_patch, patch("time.sleep", return_value=None), pytest.raises(RuntimeError):
+    with (
+        console_patch,
+        patch.object(feed_verification, "render_match_card") as render_match_card,
+        patch("time.sleep", return_value=None),
+        pytest.raises(RuntimeError),
+    ):
         harness.run_smoke_test()
 
     screener.evaluate_job.assert_not_called()
     mock_matching_svc.evaluate_and_draft_greeting.assert_not_called()
-    mock_matching_svc.render_match_card.assert_not_called()
+    render_match_card.assert_not_called()
     harness.pipeline.detail_page.open_chat.assert_not_called()
     # The rejection is still surfaced rather than silently swallowed: an unknown stage
     # reads as a keyword rejection, because every card-stage rejection is 初筛.

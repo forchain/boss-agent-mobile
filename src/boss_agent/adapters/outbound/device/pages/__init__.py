@@ -7,23 +7,26 @@ The monolith this package replaced held every screen in one 2,015-line file, so 
 loaded the job-feed and filter-dialog adapters with it and a job-feed change shared a file with
 rejection-descriptor parsing. The code is now partitioned by feature:
 
-* :mod:`boss_agent.pages.base` -- `BaseBossPage`, selector telemetry, logging helpers, and the
-  hardware-Back cadence constant every screen recovers with.
-* :mod:`boss_agent.pages.system` -- startup dialog clearance and login readiness.
-* :mod:`boss_agent.pages.job_feed` -- `JobListPage`, `SearchPage`, the two filter dialogs.
-* :mod:`boss_agent.pages.job_detail` -- `JobDetailPage` and the commute-distance probe.
-* :mod:`boss_agent.pages.communication` -- the 仅沟通 list, `ChatPage`, and `CommunicationCard`.
+* :mod:`boss_agent.adapters.outbound.device.pages.base` -- `BaseBossPage`, selector telemetry,
+  logging helpers, and the hardware-Back cadence constant every screen recovers with.
+* :mod:`boss_agent.adapters.outbound.device.pages.system` -- startup dialog clearance and login
+  readiness.
+* :mod:`boss_agent.adapters.outbound.device.pages.job_feed` -- `JobListPage`, `SearchPage`, the
+  two filter dialogs.
+* :mod:`boss_agent.adapters.outbound.device.pages.job_detail` -- `JobDetailPage` and the
+  commute-distance probe.
+* :mod:`boss_agent.adapters.outbound.device.pages.communication` -- the 仅沟通 list, `ChatPage`,
+  and `CommunicationCard`.
 
 This module re-exports every name the monolith *defined* (plus the one domain type callers reach
-through it), so every existing ``from boss_agent.pages import X`` -- in `feed_pipeline`,
-`chat_triage`, `workflows`, the worker handlers, and the unit suite -- keeps resolving, and the
-re-exported objects are the *same* objects the owning submodule holds rather than copies. The
-monolith's wider attribute namespace did not survive the split; see the narrowing note below.
+through it), so ``from boss_agent.adapters.outbound.device.pages import X`` keeps resolving for
+the unit suite and the facade's remaining callers, and the re-exported objects are the *same*
+objects the owning submodule holds rather than copies. The monolith's wider attribute namespace
+did not survive the split; see the narrowing note below.
 
-Consumers should migrate to the submodule they actually need: importing
-``boss_agent.pages.communication`` no longer pulls in job discovery or filter dialogs. That
-migration is tracked in the follow-up tickets of spec #395; until it completes, this facade is the
-supported entry point.
+Production consumers import the submodule they actually need: importing
+``boss_agent.adapters.outbound.device.pages.communication`` no longer pulls in job discovery or
+filter dialogs. The facade stays as the compatibility surface for the unit suite.
 
 **A deliberate narrowing, not an oversight.** The monolith bound 65 module-level names: 35 of its
 own definitions plus 30 it merely imported. This facade re-exports the 35 and ``JobCardBrief``, so
@@ -31,10 +34,10 @@ own definitions plus 30 it merely imported. This facade re-exports the 35 and ``
 reached by accident — ``parse_card``, ``wait_until``, ``classify_chat_button``, ``AuthStatus``,
 ``JobPosting``, ``FilterConfig`` and their like, plus the stdlib and typing that leaked through it
 (``time``, ``logging``, ``re``, ``hashlib``, ``dataclass``, ``Any``, ``Callable``, ``Point``,
-``Console``). Each has a real owner in the tree (``boss_agent.card_parser``,
-``boss_agent.core.shared.identifier_helpers``, ``boss_agent.core.shared.enums``, ``boss_agent.job_entities``,
-``boss_agent.search_entities``), and every caller in this repo reaches them there; none reaches them
-through the facade.
+``Console``). Each has a real owner in the tree (``boss_agent.core.job.domain.card_parser``,
+``boss_agent.core.shared.identifier_helpers``, ``boss_agent.core.shared.enums``,
+``boss_agent.core.job.domain.job_entities``, ``boss_agent.core.search.domain.models``), and every
+caller in this repo reaches them there; none reaches them through the facade.
 
 Do not "fix" the gap by re-adding the imports. An unused import on a facade is not inert — it
 executes the module it names, which is precisely the cost the split removed: a 仅沟通 chat-triage

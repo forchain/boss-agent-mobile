@@ -29,8 +29,9 @@ Two differences are deliberate and must survive any future "simplification":
   preset cannot mean two things depending on who ran it. The CLI resolves its own preset and
   hands over concrete configs.
 * **The screening policy itself.** The CLI keeps ``ScreeningPolicy()`` — the engine's own
-  default — because resolving it would call ``ScreeningPolicy.load_default()``, read the
-  operator's global screening configuration, and change which cards a live run accepts. A
+  default — because resolving it would call the Configuration Realm's screening-policy
+  loader, read the operator's global screening configuration, and change which cards a live
+  run accepts. A
   verification run's job is to report what the engine does, not to re-decide what the engine
   should accept. That decision, and its reason, stay at the CLI call site where they are
   made; this module only carries the policy it is handed.
@@ -41,6 +42,7 @@ from pathlib import Path
 from typing import Any
 
 from rich.console import Console
+from rich.panel import Panel
 
 from boss_agent.adapters.memory.job_store import InMemoryJobRecordStore
 from boss_agent.adapters.outbound.config.screening_prompt import load_screening_prompt
@@ -58,6 +60,59 @@ from boss_agent.core.search.domain.models import FilterConfig, SearchConfig
 from boss_agent.core.shared.enums import TargetAction
 
 console = Console()
+match_card_console = Console(stderr=True)
+
+
+def render_match_card(job: JobPosting, result: MatchGreetingResult) -> None:
+    """Render a formatted Rich card showing the match breakdown and greeting text.
+
+    Presentation lives with the verification inbound adapter: core returns data, and the
+    operator watching a device run reads this. The card is written to stderr so it never
+    intermixes with the pipeline's stdout run log.
+    """
+    if result.match_score >= 80:
+        score_color = "bold green"
+        score_badge = "🔥 高度匹配"
+    elif result.match_score >= 60:
+        score_color = "bold yellow"
+        score_badge = "⚖️ 较为匹配"
+    else:
+        score_color = "bold red"
+        score_badge = "⚠️ 匹配度一般"
+
+    lines = [
+        f"[bold]职位:[/bold] {job.title} | [bold]公司:[/bold] {job.company_name} | [bold]薪资:[/bold] {job.salary_range}",
+        f"[bold]匹配度评分:[/bold] [{score_color}]{result.match_score}分[/{score_color}] ({score_badge})",
+    ]
+
+    if result.jd_key_requirements:
+        lines.append("")
+        lines.append("[bold cyan]🔍 JD 核心诉求提炼:[/bold cyan]")
+        for req in result.jd_key_requirements:
+            lines.append(f"  • {req}")
+
+    lines.append("")
+    lines.append("[bold cyan]🎯 针对性匹配亮点:[/bold cyan]")
+    for reason in result.match_reasons:
+        lines.append(f"  • {reason}")
+
+    lines.extend(
+        [
+            "",
+            "[bold cyan]💬 AI 定制破冰招呼语 (结合 JD 痛点，未发送):[/bold cyan]",
+            f"[italic white]{result.greeting_message}[/italic white]",
+        ]
+    )
+
+    match_card_console.print(
+        Panel(
+            "\n".join(lines),
+            title="[bold magenta]🤖 AI Job Match & Greeting Analysis[/bold magenta]",
+            border_style="cyan",
+            expand=False,
+        )
+    )
+
 
 BOSS_PACKAGE = "com.hpbr.bosszhipin"
 
@@ -277,7 +332,6 @@ def run_verification_feed(
 
 def render_greeting_match_card(
     *,
-    matching_service: JobMatchGreetingService,
     posting: JobPosting,
     result: FeedStreamResult,
     candidate_profile: StructuredCandidateProfile | None,
@@ -305,7 +359,7 @@ def render_greeting_match_card(
     if not (enable_greeting_draft and candidate_profile is not None and result.greeting_message):
         return
 
-    matching_service.render_match_card(
+    render_match_card(
         posting,
         MatchGreetingResult(
             match_score=result.score,
