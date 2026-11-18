@@ -24,10 +24,10 @@ from boss_agent.broker.pocketbase_adapter import (
 )
 from boss_agent.broker.provisioner import DEFAULT_INITIAL_SEARCHES
 from boss_agent.candidate_memory_store import (
-    CandidateMemoryStore,
     InMemoryCandidateMemoryStore,
     PocketBaseCandidateMemoryStore,
 )
+from boss_agent.core.candidate.interfaces.candidate_memory_store import CandidateMemoryStore
 from boss_agent.core.shared.enums import TargetTaskType
 from boss_agent.core.shared.errors import TransportError
 from boss_agent.saved_search_store import (

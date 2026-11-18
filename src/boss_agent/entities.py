@@ -6,7 +6,10 @@ Canonical domain entities grouped by domain concern (Issue #311, Spec #303).
 
 from __future__ import annotations
 
-from boss_agent.candidate_entities import CandidateProfile, StructuredCandidateProfile
+from boss_agent.core.candidate.domain.candidate_profile import (
+    CandidateProfile,
+    StructuredCandidateProfile,
+)
 from boss_agent.job_entities import (
     JobCardBrief,
     JobLocationLine,

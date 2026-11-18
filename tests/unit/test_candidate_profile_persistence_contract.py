@@ -18,13 +18,13 @@ from typing import Any
 import pytest
 
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
-from boss_agent.candidate_entities import CandidateProfile
 from boss_agent.candidate_memory_store import (
     PROFILE_JSON_COLUMNS,
     InMemoryCandidateMemoryStore,
     PocketBaseCandidateMemoryStore,
     migrate_legacy_candidate_profile,
 )
+from boss_agent.core.candidate.domain.candidate_profile import CandidateProfile
 from boss_agent.graph import resume_normalizer_node, resume_text_extractor_node
 from boss_agent.memory import ResumeMemoryManager
 

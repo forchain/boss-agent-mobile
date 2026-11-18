@@ -61,7 +61,7 @@ FORBIDDEN_ROOTS = (
 
 #: Both spellings of the entity. The facade re-exports it, and the facade is reached
 #: through the same package ``__init__``, so both must be covered.
-ENTITY_MODULES = ("boss_agent.candidate_entities", "boss_agent.entities")
+ENTITY_MODULES = ("boss_agent.core.candidate.domain.candidate_profile", "boss_agent.entities")
 
 _MISSING = object()
 
@@ -202,7 +202,11 @@ def test_the_isolation_harness_restores_sys_modules() -> None:
     """The harness is itself code under test: it must leave no residue behind."""
     before = dict(sys.modules)
     spy = _ImportSpy(FORBIDDEN_ROOTS)
-    with _fresh_package_import(spy, "boss_agent.candidate_entities") as (_, _, _):
+    with _fresh_package_import(spy, "boss_agent.core.candidate.domain.candidate_profile") as (
+        _,
+        _,
+        _,
+    ):
         pass
 
     assert dict(sys.modules).keys() == before.keys()
@@ -247,7 +251,7 @@ def test_the_compatibility_alias_stays_on_the_light_module() -> None:
         assert failure is None, f"importing boss_agent failed: {failure}"
         assert boss_agent is not None
 
-        from boss_agent.candidate_entities import CandidateProfile as leaf
+        from boss_agent.core.candidate.domain.candidate_profile import CandidateProfile as leaf
 
         # Identity, not merely equivalence: ``screening.py`` dispatches on ``isinstance``.
         assert boss_agent.StructuredCandidateProfile is leaf

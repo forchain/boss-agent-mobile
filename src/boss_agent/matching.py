@@ -14,7 +14,7 @@ from rich.panel import Panel
 
 from droid_agent_core.llm import LLMDecisionClient
 
-from .candidate_entities import CandidateProfile
+from .core.candidate.domain.candidate_profile import CandidateProfile
 from .core.shared.identifier_helpers import (
     extract_tags_from_text,
     format_recruiter_greeting_prefix,
