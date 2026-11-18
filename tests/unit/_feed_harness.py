@@ -17,7 +17,7 @@ symptom of forgetting is latency and a token bill — which is what ``stub_llm()
 
 from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from boss_agent.candidate_entities import CandidateProfile
 from boss_agent.enums import ChatButtonState, TargetAction
@@ -133,6 +133,100 @@ class ScriptedFeed:
         return True
 
 
+class FakeFeedPagePort:
+    """In-memory FeedPagePort: scripted page verbs, no Appium, no page classes."""
+
+    def __init__(
+        self,
+        *,
+        feed: ScriptedFeed | None = None,
+        detail: MagicMock | None = None,
+        search: Any = None,
+        chat: MagicMock | None = None,
+        startup: Any = None,
+    ) -> None:
+        self.list_page = feed if feed is not None else ScriptedFeed([])
+        self.detail_page = detail if detail is not None else MagicMock()
+        self.search_page = search if search is not None else MagicMock()
+        self.chat_page = chat if chat is not None else MagicMock()
+        self.startup_page = startup if startup is not None else MagicMock()
+
+    def is_startup_dialog_present(self) -> bool:
+        return self.startup_page.is_dialog_present()
+
+    def dismiss_startup_dialog(self) -> None:
+        self.startup_page.dismiss_dialog()
+
+    def navigate_to_home(self) -> bool:
+        return self.list_page.navigate_to_home()
+
+    def open_search(self, timeout_sec: float) -> bool:
+        return self.list_page.open_search(timeout_sec=timeout_sec)
+
+    def is_search_page(self) -> bool:
+        return self.search_page.is_search_page()
+
+    def search(self, keyword: str, timeout_sec: float) -> bool:
+        return self.search_page.search(keyword, timeout_sec=timeout_sec)
+
+    def get_feed_bottom_boundary(self) -> Any | None:
+        return self.list_page.get_feed_bottom_boundary()
+
+    def is_feed_bottom_reached(self) -> bool | None:
+        return self.list_page.is_feed_bottom_reached()
+
+    def extract_visible_job_cards(self, max_cards: int) -> list[LocatedJobCard]:
+        return self.list_page.extract_visible_job_cards(max_cards=max_cards)
+
+    def scroll_job_list(self) -> None:
+        self.list_page.scroll_job_list()
+
+    def select_first_job(self, timeout_sec: float) -> bool:
+        return self.list_page.select_first_job(timeout_sec=timeout_sec)
+
+    def navigate_back(self) -> None:
+        self.detail_page.navigate_back()
+
+    def navigate_back_from_chat(self) -> None:
+        self.chat_page.navigate_back()
+
+    def extract_commute_distance(self) -> tuple[float | None, str]:
+        return self.detail_page.extract_commute_distance()
+
+    def get_chat_button_state(self) -> Any:
+        return self.detail_page.get_chat_button_state()
+
+    def extract_job_posting(self, **kwargs: Any) -> JobPosting:
+        return self.detail_page.extract_job_posting(**kwargs)
+
+    def open_chat(self, timeout_sec: float) -> bool:
+        return self.detail_page.open_chat(timeout_sec=timeout_sec)
+
+    def type_greeting_message(self, greeting: str, timeout_sec: float) -> Any:
+        return self.chat_page.type_greeting_message(greeting, timeout_sec=timeout_sec)
+
+    def click_send(self, timeout_sec: float) -> bool:
+        return self.chat_page.click_send(timeout_sec=timeout_sec)
+
+    def apply_industry_filters(self, industries: list[str], timeout_sec: float) -> None:
+        return None
+
+    def apply_filters(self, filter_config: Any, timeout_sec: float) -> None:
+        return None
+
+    def clear_filters(self, timeout_sec: float) -> None:
+        return None
+
+
+def _seat_port(pipeline: JobFeedPipeline, port: FakeFeedPagePort) -> None:
+    pipeline.page_port = port
+    pipeline.list_page = port.list_page
+    pipeline.detail_page = port.detail_page
+    pipeline.search_page = port.search_page
+    pipeline.chat_page = port.chat_page
+    pipeline.startup_page = port.startup_page
+
+
 def script_pages(
     pipeline: JobFeedPipeline,
     *,
@@ -149,14 +243,15 @@ def script_pages(
     same one ``_pipeline`` uses on the pipeline it builds, so a scripted feed cannot mean
     one thing here and another there.
     """
-    if feed is not None:
-        pipeline.list_page = feed
-    if detail is not None:
-        pipeline.detail_page = detail
-    if search is not None:
-        pipeline.search_page = search
-    if chat is not None:
-        pipeline.chat_page = chat
+    current = pipeline.page_port
+    port = FakeFeedPagePort(
+        feed=feed if feed is not None else getattr(current, "list_page", None),
+        detail=detail if detail is not None else getattr(current, "detail_page", None),
+        search=search if search is not None else getattr(current, "search_page", None),
+        chat=chat if chat is not None else getattr(current, "chat_page", None),
+        startup=getattr(current, "startup_page", None),
+    )
+    _seat_port(pipeline, port)
     return pipeline
 
 
@@ -173,28 +268,18 @@ def _pipeline(
     """Build a pipeline whose page objects are scripted stand-ins."""
     driver = MagicMock()
     driver.get_window_size.return_value = {"width": 1080, "height": 2400}
-
-    with (
-        patch("boss_agent.feed_pipeline.StartupDialogPage"),
-        patch("boss_agent.feed_pipeline.JobListPage", return_value=feed or ScriptedFeed([])),
-        patch("boss_agent.feed_pipeline.SearchPage") as search_cls,
-        patch("boss_agent.feed_pipeline.JobDetailPage", return_value=detail or MagicMock()),
-        patch("boss_agent.feed_pipeline.ChatPage", return_value=chat or MagicMock()),
-    ):
-        search_cls.return_value.is_search_page.return_value = True
-        search_cls.return_value.search.return_value = True
-        pipeline = JobFeedPipeline(
-            driver=driver,
-            store=store,
-            screener=screener,
-            log=log,
-            is_cancelled=is_cancelled,
-        )
-    # Rebind the scripted page objects: the patches above only applied during construction.
-    script_pages(pipeline, feed=feed, detail=detail, chat=chat)
-    pipeline.search_page.is_search_page.return_value = True
-    pipeline.search_page.search.return_value = True
-    return pipeline
+    search = MagicMock()
+    search.is_search_page.return_value = True
+    search.search.return_value = True
+    port = FakeFeedPagePort(feed=feed, detail=detail, chat=chat, search=search)
+    return JobFeedPipeline(
+        driver=driver,
+        store=store,
+        screener=screener,
+        log=log,
+        is_cancelled=is_cancelled,
+        page_port=port,
+    )
 
 
 def _detail_page(

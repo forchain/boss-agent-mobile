@@ -264,13 +264,13 @@ async def test_a_configured_filter_reaches_the_dialog_as_the_operator_wrote_it()
     """
     pipeline = _feed_pipeline()
 
-    with patch("boss_agent.feed_pipeline.FilterDialogPage") as filter_cls:
+    with patch.object(pipeline.page_port, "apply_filters") as apply_filters:
         result = await pipeline.stream_jobs(
             FeedStreamConfig(keyword="Agent", max_jobs=1, filter_config=CONFIGURED)
         )
 
-    filter_cls.return_value.apply_filters.assert_called_once()
-    applied = filter_cls.return_value.apply_filters.call_args.args[0]
+    apply_filters.assert_called_once()
+    applied = apply_filters.call_args.args[0]
     assert applied is CONFIGURED
     assert (applied.education, applied.salary) == ("硕士", "50K以上")
     # The run is still a verification run: filtering decides what the feed shows, not
@@ -292,10 +292,13 @@ async def test_a_run_with_nothing_to_apply_clears_the_conditions_a_previous_run_
     """
     pipeline = _feed_pipeline()
 
-    with patch("boss_agent.feed_pipeline.FilterDialogPage") as filter_cls:
+    with (
+        patch.object(pipeline.page_port, "clear_filters") as clear_filters,
+        patch.object(pipeline.page_port, "apply_filters") as apply_filters,
+    ):
         await pipeline.stream_jobs(
             FeedStreamConfig(keyword="Agent", max_jobs=1, filter_config=NOTHING_TO_APPLY)
         )
 
-    filter_cls.return_value.clear_filters.assert_called_once()
-    filter_cls.return_value.apply_filters.assert_not_called()
+    clear_filters.assert_called_once()
+    apply_filters.assert_not_called()

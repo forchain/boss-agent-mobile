@@ -23,6 +23,7 @@ import pytest
 REPO_ROOT = Path(__file__).parents[2]
 PAGES_ROOT = REPO_ROOT / "src" / "boss_agent" / "pages"
 FEED_PIPELINE = REPO_ROOT / "src" / "boss_agent" / "feed_pipeline.py"
+FEED_PAGE_PORT = REPO_ROOT / "src" / "boss_agent" / "feed_page_port.py"
 
 #: The page-layer submodules on disk, so an imported *name* can be read as the submodule it
 #: names rather than as a facade symbol: `from boss_agent.pages import job_feed` binds the
@@ -116,12 +117,27 @@ def test_the_guard_reads_every_spelling_that_reaches_the_page_layer(
     )
 
 
-def test_feed_pipeline_takes_each_page_model_from_the_submodule_that_owns_it() -> None:
-    sources = _page_import_sources(FEED_PIPELINE)
+def test_the_production_adapter_takes_each_page_model_from_its_submodule() -> None:
+    """Navigation moved behind FeedPagePort (spec #444, ticket #450): the adapter owns
+    the page imports the pipeline used to."""
+    sources = _page_import_sources(FEED_PAGE_PORT)
     assert {name: sources.get(name) for name in FEED_OWNED_PAGE_MODELS} == FEED_OWNED_PAGE_MODELS
+    assert sources.get(GREETING_DISPATCH_PAGE_MODEL) == "communication"
 
 
-def test_feed_pipeline_reaches_no_page_model_outside_its_own_submodules() -> None:
+def test_the_pipeline_imports_no_page_model_except_the_parsed_card() -> None:
+    """The engine still speaks ``LocatedJobCard`` (a parsed value, not a page object)."""
     sources = _page_import_sources(FEED_PIPELINE)
-    unexpected = set(sources) - set(FEED_OWNED_PAGE_MODELS) - {GREETING_DISPATCH_PAGE_MODEL}
-    assert unexpected == set(), f"feed_pipeline gained page imports it has no use for: {unexpected}"
+    assert sources == {"LocatedJobCard": "job_feed"}
+
+
+def test_no_feed_test_monkey_patches_a_page_class() -> None:
+    """The in-memory port is the one scripted seam; page-class patches are retired."""
+    offenders: list[str] = []
+    for path in (REPO_ROOT / "tests").rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        for name in (*FEED_OWNED_PAGE_MODELS, GREETING_DISPATCH_PAGE_MODEL):
+            needle = f'patch("boss_agent.feed_pipeline.{name}"'
+            if needle in text:
+                offenders.append(f"{path.name}:{name}")
+    assert offenders == [], f"feed tests still patch page classes: {offenders}"

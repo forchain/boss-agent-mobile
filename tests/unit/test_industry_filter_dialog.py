@@ -161,13 +161,13 @@ async def test_a_run_applies_the_operator_industry_list_to_the_industry_dialog()
         detail=_detail_page(posting=_posting()),
     )
 
-    with patch("boss_agent.feed_pipeline.IndustryFilterDialogPage") as industry_cls:
+    with patch.object(pipeline.page_port, "apply_industry_filters") as apply_industry_filters:
         result = await pipeline.stream_jobs(
             FeedStreamConfig(keyword="Agent", max_jobs=1, filter_config=WITH_INDUSTRIES)
         )
 
-    industry_cls.return_value.apply_industry_filters.assert_called_once()
-    industries = industry_cls.return_value.apply_industry_filters.call_args.args[0]
+    apply_industry_filters.assert_called_once()
+    industries = apply_industry_filters.call_args.args[0]
     assert industries == ["游戏", "人工智能"]
     # Filtering narrows what the feed shows; it is not what decides whether the run
     # produced anything, so the extraction is still reported.

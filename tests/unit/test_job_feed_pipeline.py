@@ -23,6 +23,7 @@ from _feed_harness import (
     _detail_page,
     _pipeline,
     _posting,
+    script_pages,
 )
 from selenium.common.exceptions import StaleElementReferenceException
 
@@ -435,14 +436,15 @@ async def test_filtering_disabled_clears_conditions_instead_of_applying_them():
     assert config.filter_config.enable_filter is False
 
     with (
-        patch("boss_agent.feed_pipeline.FilterDialogPage") as filter_cls,
-        patch("boss_agent.feed_pipeline.IndustryFilterDialogPage") as industry_cls,
+        patch.object(pipeline.page_port, "clear_filters") as clear_filters,
+        patch.object(pipeline.page_port, "apply_filters") as apply_filters,
+        patch.object(pipeline.page_port, "apply_industry_filters") as industry_filters,
     ):
         await pipeline.stream_jobs(config)
 
-    filter_cls.return_value.clear_filters.assert_called_once()
-    filter_cls.return_value.apply_filters.assert_not_called()
-    industry_cls.return_value.apply_industry_filters.assert_not_called()
+    clear_filters.assert_called_once()
+    apply_filters.assert_not_called()
+    industry_filters.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -1158,7 +1160,7 @@ async def test_a_resend_counts_the_daily_quota_only_once():
 
     # Second run over the same card: it is `applied` now, so it is skipped, not re-greeted.
     feed = ScriptedFeed([[card]])
-    pipeline.list_page = feed
+    script_pages(pipeline, feed=feed)
     await pipeline.stream_jobs(_apply_config(max_jobs=1))
     assert await store.count_today_applied_jobs() == 1
     assert chat.click_send.call_count == 1, "an applied record is not greeted twice in a day"

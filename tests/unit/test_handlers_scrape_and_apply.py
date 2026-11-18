@@ -123,10 +123,10 @@ async def test_scrape_enrichment_falls_back_to_jd_digest_when_card_has_no_snippe
     )
 
     with (
-        patch("boss_agent.feed_pipeline.StartupDialogPage") as mock_startup_cls,
-        patch("boss_agent.feed_pipeline.JobListPage") as mock_list_cls,
-        patch("boss_agent.feed_pipeline.SearchPage") as mock_search_cls,
-        patch("boss_agent.feed_pipeline.JobDetailPage") as mock_detail_cls,
+        patch("boss_agent.feed_page_port.StartupDialogPage") as mock_startup_cls,
+        patch("boss_agent.feed_page_port.JobListPage") as mock_list_cls,
+        patch("boss_agent.feed_page_port.SearchPage") as mock_search_cls,
+        patch("boss_agent.feed_page_port.JobDetailPage") as mock_detail_cls,
     ):
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_list = mock_list_cls.return_value
@@ -505,10 +505,10 @@ async def test_scrape_jobs_handler_eliminates_blacklisted_cards_and_persists_rea
     )
 
     with (
-        patch("boss_agent.feed_pipeline.StartupDialogPage") as mock_startup_cls,
-        patch("boss_agent.feed_pipeline.JobListPage") as mock_list_cls,
-        patch("boss_agent.feed_pipeline.SearchPage") as mock_search_cls,
-        patch("boss_agent.feed_pipeline.JobDetailPage") as mock_detail_cls,
+        patch("boss_agent.feed_page_port.StartupDialogPage") as mock_startup_cls,
+        patch("boss_agent.feed_page_port.JobListPage") as mock_list_cls,
+        patch("boss_agent.feed_page_port.SearchPage") as mock_search_cls,
+        patch("boss_agent.feed_page_port.JobDetailPage") as mock_detail_cls,
     ):
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_list = mock_list_cls.return_value
@@ -595,10 +595,10 @@ async def test_auto_apply_skips_an_already_ignored_posting_without_spending_quot
     )
 
     with (
-        patch("boss_agent.feed_pipeline.StartupDialogPage") as mock_startup_cls,
-        patch("boss_agent.feed_pipeline.JobListPage") as mock_list_cls,
-        patch("boss_agent.feed_pipeline.SearchPage") as mock_search_cls,
-        patch("boss_agent.feed_pipeline.JobDetailPage") as mock_detail_cls,
+        patch("boss_agent.feed_page_port.StartupDialogPage") as mock_startup_cls,
+        patch("boss_agent.feed_page_port.JobListPage") as mock_list_cls,
+        patch("boss_agent.feed_page_port.SearchPage") as mock_search_cls,
+        patch("boss_agent.feed_page_port.JobDetailPage") as mock_detail_cls,
     ):
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_list = mock_list_cls.return_value
@@ -771,7 +771,7 @@ async def test_scrape_jobs_handler_clears_filters_when_enable_filter_false(broke
         },
     )
 
-    with patch("boss_agent.feed_pipeline.FilterDialogPage") as mock_filter_cls:
+    with patch("boss_agent.feed_page_port.FilterDialogPage") as mock_filter_cls:
         mock_filter_inst = MagicMock()
         mock_filter_cls.return_value = mock_filter_inst
 
@@ -826,7 +826,7 @@ async def test_auto_apply_handler_clears_filters_when_no_filter(broker, mock_dri
         },
     )
 
-    with patch("boss_agent.feed_pipeline.FilterDialogPage") as mock_filter_cls:
+    with patch("boss_agent.feed_page_port.FilterDialogPage") as mock_filter_cls:
         mock_filter_inst = MagicMock()
         mock_filter_cls.return_value = mock_filter_inst
 

@@ -35,6 +35,7 @@ from .enums import (
     depth_already_reached,
 )
 from .errors import BrokerError, TransportError
+from .feed_page_port import AppiumFeedPagePort, FeedPagePort
 from .feed_records import (
     card_facets_record,
     card_record,
@@ -60,16 +61,7 @@ from .keyword_constants import (
     HEADHUNTER_COMMUTE_PROBE_SKIP_REASON,
     NOT_INSPECTED_DISTRICT_SKIP_REASON,
 )
-from .pages.communication import ChatPage
-from .pages.job_detail import JobDetailPage
-from .pages.job_feed import (
-    FilterDialogPage,
-    IndustryFilterDialogPage,
-    JobListPage,
-    LocatedJobCard,
-    SearchPage,
-)
-from .pages.system import StartupDialogPage
+from .pages.job_feed import LocatedJobCard
 from .screening import (
     CandidateScreener,
     CardScreeningVerdict,
@@ -542,6 +534,7 @@ class JobFeedPipeline:
         screener: CandidateScreener | None = None,
         log: Callable[[str], Awaitable[None]] | None = None,
         is_cancelled: Callable[[], Awaitable[bool]] | None = None,
+        page_port: FeedPagePort | None = None,
     ) -> None:
         self.driver = driver
         # A store is required for the run to mean anything, and until issue #389 the only
@@ -558,11 +551,16 @@ class JobFeedPipeline:
         self._log_sink = log
         self._cancel_probe = is_cancelled
 
-        self.startup_page = StartupDialogPage(driver) if driver else None
-        self.list_page = JobListPage(driver) if driver else None
-        self.search_page = SearchPage(driver) if driver else None
-        self.detail_page = JobDetailPage(driver) if driver else None
-        self.chat_page = ChatPage(driver) if driver else None
+        # Navigation lives behind a port: the pipeline never constructs a page object.
+        # A caller may inject a fake; the production adapter owns the five Appium pages.
+        self.page_port: FeedPagePort | None = (
+            page_port if page_port is not None else (AppiumFeedPagePort(driver) if driver else None)
+        )
+        self.startup_page = self.page_port.startup_page if self.page_port else None
+        self.list_page = self.page_port.list_page if self.page_port else None
+        self.search_page = self.page_port.search_page if self.page_port else None
+        self.detail_page = self.page_port.detail_page if self.page_port else None
+        self.chat_page = self.page_port.chat_page if self.page_port else None
 
         # Companies contacted during this run: a newly discovered communication must
         # suppress the company's other postings immediately, not on the next pass.
@@ -608,8 +606,8 @@ class JobFeedPipeline:
             result.error_message = "Driver session is unavailable"
             return result
 
-        if self.startup_page and self.startup_page.is_dialog_present():
-            self.startup_page.dismiss_dialog()
+        if self.startup_page and self.page_port.is_startup_dialog_present():
+            self.page_port.dismiss_startup_dialog()
 
         if config.screening_policy and config.screening_policy.is_commute_filter_active:
             await self._log(
@@ -641,7 +639,7 @@ class JobFeedPipeline:
                 return result
             await self._log(f"Executed search for keyword '{config.keyword}'")
         elif not config.enable_search:
-            self.list_page.navigate_to_home()
+            self.page_port.navigate_to_home()
             await self._log(
                 "enable_search is False; browsing home recommendations without search keyword"
             )
@@ -671,9 +669,9 @@ class JobFeedPipeline:
     async def _enter_search(self, keyword: str) -> bool:
         """Enter the search screen and submit ``keyword``, retrying once on failure."""
         for attempt in range(MAX_SEARCH_ATTEMPTS):
-            if not self.search_page.is_search_page():
-                self.list_page.open_search(timeout_sec=OPEN_SEARCH_TIMEOUT_SEC)
-            if self.search_page.search(keyword, timeout_sec=SEARCH_SUBMIT_TIMEOUT_SEC):
+            if not self.page_port.is_search_page():
+                self.page_port.open_search(timeout_sec=OPEN_SEARCH_TIMEOUT_SEC)
+            if self.page_port.search(keyword, timeout_sec=SEARCH_SUBMIT_TIMEOUT_SEC):
                 return True
             if attempt < MAX_SEARCH_ATTEMPTS - 1:
                 await self._log(
@@ -701,20 +699,17 @@ class JobFeedPipeline:
         if filter_cfg and filter_cfg.has_industry_filters:
             await self._log(f"Applying industry filter: {filter_cfg.industries}")
             try:
-                IndustryFilterDialogPage(self.driver).apply_industry_filters(
-                    filter_cfg.industries, timeout_sec=5.0
-                )
+                self.page_port.apply_industry_filters(filter_cfg.industries, timeout_sec=5.0)
             except Exception as ex:
                 await self._log(f"Notice applying industry filter: {ex}")
 
-        filter_page = FilterDialogPage(self.driver)
         if filter_cfg and filter_cfg.has_filters:
             await self._log(
                 f"Applying general filters: education={filter_cfg.education}, "
                 f"salary={filter_cfg.salary}, experience={filter_cfg.experience}"
             )
             try:
-                filter_page.apply_filters(filter_cfg, timeout_sec=5.0)
+                self.page_port.apply_filters(filter_cfg, timeout_sec=5.0)
             except Exception as ex:
                 await self._log(f"Notice applying general filters: {ex}")
         else:
@@ -722,7 +717,7 @@ class JobFeedPipeline:
                 "No active general filters configured; actively clearing filter dialog conditions"
             )
             try:
-                filter_page.clear_filters(timeout_sec=5.0)
+                self.page_port.clear_filters(timeout_sec=5.0)
             except Exception as ex:
                 await self._log(f"Notice clearing general filters: {ex}")
 
@@ -744,9 +739,9 @@ class JobFeedPipeline:
                 )
                 return
 
-            bottom_elem = self.list_page.get_feed_bottom_boundary()
+            bottom_elem = self.page_port.get_feed_bottom_boundary()
             boundary_y = _element_y(bottom_elem)
-            visible_cards = self.list_page.extract_visible_job_cards(max_cards=CARDS_PER_VIEWPORT)
+            visible_cards = self.page_port.extract_visible_job_cards(max_cards=CARDS_PER_VIEWPORT)
             if not visible_cards:
                 if bottom_elem is not None:
                     result.boundary_reached = True
@@ -808,12 +803,12 @@ class JobFeedPipeline:
             else:
                 consecutive_empty_scrolls = 0
 
-            if bottom_elem is not None or self.list_page.is_feed_bottom_reached() is True:
+            if bottom_elem is not None or self.page_port.is_feed_bottom_reached() is True:
                 result.boundary_reached = True
                 await self._log(BOUNDARY_LOG)
                 break
 
-            self.list_page.scroll_job_list()
+            self.page_port.scroll_job_list()
 
         if result.scanned == 0 and not result.cancelled:
             # No card was ever readable: the operator may be parked on a detail page
@@ -996,7 +991,7 @@ class JobFeedPipeline:
             run.postings_index = len(run.result.postings) - 1
             await self._evaluate_and_act(run, posting)
         finally:
-            self.detail_page.navigate_back()
+            self.page_port.navigate_back()
 
     async def _read_posting(
         self,
@@ -1070,7 +1065,7 @@ class JobFeedPipeline:
         try:
             # The page object owns its own swipe budget; this path only declines to re-read
             # the description around the probe.
-            distance_km, distance_text = self.detail_page.extract_commute_distance()
+            distance_km, distance_text = self.page_port.extract_commute_distance()
         except Exception as e:
             logger.warning("Commute probe failed for '%s': %s", card.title, e)
             return None, ""
@@ -1089,7 +1084,7 @@ class JobFeedPipeline:
                 return True
             except Exception:
                 pass
-        return self.list_page.select_first_job(timeout_sec=2.0)
+        return self.page_port.select_first_job(timeout_sec=2.0)
 
     async def _back_out_if_contacted(self, run: _CardRun, fingerprint: str) -> bool:
         """Zero-cost backout: consult the call-to-action button before reading any JD.
@@ -1098,7 +1093,7 @@ class JobFeedPipeline:
         nothing to evaluate — and a platform contact must still be recorded as `applied`
         so its company joins the same-company exclusion pool.
         """
-        chat_state = self.detail_page.get_chat_button_state()
+        chat_state = self.page_port.get_chat_button_state()
         if chat_state not in (ChatButtonState.COMMUNICATED, ChatButtonState.CLOSED):
             return False
 
@@ -1171,7 +1166,7 @@ class JobFeedPipeline:
             await self._log(f"📍 [App端强制过滤] '{card.title}' @ '{card.company_name}' {reason}")
 
         try:
-            posting = self.detail_page.extract_job_posting(
+            posting = self.page_port.extract_job_posting(
                 timeout_sec=4.0,
                 fallback_company=card.company_name,
                 fallback_title=card.title,
@@ -1503,9 +1498,9 @@ class JobFeedPipeline:
             return
 
         dispatched = False
-        if self.detail_page.open_chat(timeout_sec=5.0):
-            self.chat_page.type_greeting_message(greeting, timeout_sec=5.0)
-            dispatched = self.chat_page.click_send(timeout_sec=3.0)
+        if self.page_port.open_chat(timeout_sec=5.0):
+            self.page_port.type_greeting_message(greeting, timeout_sec=5.0)
+            dispatched = self.page_port.click_send(timeout_sec=3.0)
             if dispatched:
                 # The count read at the quota gate, plus the greeting just sent.
                 applied_today = run.applied_today + 1
@@ -1519,7 +1514,7 @@ class JobFeedPipeline:
                     "send control unavailable. Not counted as communicated; the record "
                     "stays re-sendable (status: matched)."
                 )
-            self.chat_page.navigate_back()
+            self.page_port.navigate_back_from_chat()
 
         # Only a message that actually left the app counts as applied; otherwise the
         # employer would become a same-company exclusion anchor without being contacted.
@@ -1701,7 +1696,7 @@ class JobFeedPipeline:
 
         run.result.scanned = max(run.result.scanned, 1)
 
-        chat_state = self.detail_page.get_chat_button_state()
+        chat_state = self.page_port.get_chat_button_state()
         if chat_state in (ChatButtonState.COMMUNICATED, ChatButtonState.CLOSED):
             is_historical = chat_state == ChatButtonState.COMMUNICATED
             if is_historical:
@@ -1712,7 +1707,7 @@ class JobFeedPipeline:
                 JobRecordStatus.APPLIED.value if is_historical else JobRecordStatus.IGNORED.value
             )
             run.result.skipped += 1
-            self.detail_page.navigate_back()
+            self.page_port.navigate_back()
             return
 
         policy = run.config.screening_policy or ScreeningPolicy()
@@ -1730,7 +1725,7 @@ class JobFeedPipeline:
             await self._log(f"📍 [App端强制过滤] '当前岗位' {reason}")
 
         try:
-            posting = self.detail_page.extract_job_posting(
+            posting = self.page_port.extract_job_posting(
                 timeout_sec=5.0,
                 probe_commute_distance=probe_commute_distance,
                 is_headhunter=target_is_headhunter,

@@ -29,8 +29,8 @@ The boundaries enforced here, one rule each:
    import cost -- see `SCREEN_DRIVERS` for the accepted exception.
 
 The accepted cross-feature exception, stated once so it is not mistaken for an oversight:
-`src/boss_agent/feed_pipeline.py` imports `ChatPage` from `boss_agent.pages.communication`.
-`JobFeedPipeline` opens the chat screen to send the greeting it just evaluated, so that is a
+`src/boss_agent/feed_page_port.py` imports `ChatPage` from `boss_agent.pages.communication`.
+The feed navigation adapter opens the chat screen to send the greeting it just evaluated, so that is a
 real runtime dependency and not a leftover import. Ticket #400's criterion was amended to
 "no broad facade import" rather than "zero communication imports" for exactly this edge.
 `feed_pipeline` is a screen driver, so rules 1-5 never see it -- and rule 6 permits the edge
@@ -352,11 +352,11 @@ def test_the_feed_engine_keeps_its_accepted_chat_screen_dependency() -> None:
     facade is still a violation of ticket #400, and a live greeting dispatch must keep
     working.
     """
-    path = BOSS_AGENT_ROOT / "feed_pipeline.py"
+    path = BOSS_AGENT_ROOT / "feed_page_port.py"
     chat_imports = [record for record in _page_imports(path) if record.symbol == "ChatPage"]
 
     assert chat_imports, (
-        "feed_pipeline no longer imports ChatPage. The greeting dispatch opened the chat "
+        "feed_page_port no longer imports ChatPage. The greeting dispatch opened the chat "
         "screen to send the draft it evaluated; if that moved, re-decide it deliberately."
     )
 
@@ -461,6 +461,7 @@ SCREEN_DRIVERS = frozenset(
     {
         "boss_agent",
         "boss_agent.chat_triage",
+        "boss_agent.feed_page_port",
         "boss_agent.feed_pipeline",
         "boss_agent.workflows",
     }
