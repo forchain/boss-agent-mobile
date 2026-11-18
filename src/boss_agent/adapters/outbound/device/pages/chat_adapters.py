@@ -1,5 +1,5 @@
 """
-boss_agent.pages.chat_adapters
+boss_agent.adapters.outbound.device.pages.chat_adapters
 ==============================
 The production device ports: the 仅沟通 list and chat page objects, behind triage's
 vocabulary. ``#460`` relocates this module into the device adapter package.

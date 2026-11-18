@@ -1,6 +1,6 @@
 """
-boss_agent.pages
-================
+boss_agent.adapters.outbound.device.pages
+=========================================
 Feature-centric page objects behind one backward-compatible facade (spec #395, ticket #398).
 
 The monolith this package replaced held every screen in one 2,015-line file, so a chat-triage run
@@ -43,12 +43,13 @@ should import it from the module that defines it, which is narrower than the fac
 
 ``logger`` is re-exported under its original name, ``boss_agent.pages``, because that string is a
 public observability contract: log greps and string-targeted patches such as
-``patch("boss_agent.pages.logger.error")`` address the channel by that name and must keep working.
+``patch("boss_agent.adapters.outbound.device.pages.logger.error")`` address the channel by that name and must keep working.
 """
 
 # Re-exported so callers that reach domain types *through* `pages` -- the three unit modules
 # importing `JobCardBrief` today -- keep working across the split.
-from ..core.job.domain.job_entities import JobCardBrief
+from boss_agent.core.job.domain.job_entities import JobCardBrief
+
 from .base import (
     BACK_INTERVAL_SEC,
     BaseBossPage,

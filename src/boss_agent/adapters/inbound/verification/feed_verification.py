@@ -1,6 +1,6 @@
 """
-boss_agent.feed_verification
-=============================
+boss_agent.adapters.inbound.verification.feed_verification
+===========================================================
 One composition of a verification feed run, for both of the callers that verify on a device.
 
 Issues #389-#391 removed the second *implementation* of a job feed: ``SmokeHarness``
@@ -42,20 +42,20 @@ from typing import Any
 
 from rich.console import Console
 
-from .async_bridge import run_sync
-from .core.candidate.domain.candidate_profile import StructuredCandidateProfile
-from .core.job.domain.feed_stream import FeedStreamConfig, FeedStreamResult
-from .core.job.domain.job_entities import JobPosting
-from .core.job.domain.screening_policy import ScreeningPolicy
-from .core.job.use_cases.feed_pipeline import JobFeedPipeline
-from .core.job.use_cases.matching import JobMatchGreetingService, MatchGreetingResult
-from .core.job.use_cases.screening import CandidateScreener
-from .core.search.domain.models import FilterConfig, SearchConfig
-from .core.shared.enums import TargetAction
-from .job_store import InMemoryJobRecordStore
-from .memory import ResumeMemoryManager
-from .pages.feed_bundle import build_feed_device_world
-from .screening_prompt import load_screening_prompt
+from boss_agent.adapters.outbound.device.pages.feed_bundle import build_feed_device_world
+from boss_agent.async_bridge import run_sync
+from boss_agent.core.candidate.domain.candidate_profile import StructuredCandidateProfile
+from boss_agent.core.job.domain.feed_stream import FeedStreamConfig, FeedStreamResult
+from boss_agent.core.job.domain.job_entities import JobPosting
+from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
+from boss_agent.core.job.use_cases.feed_pipeline import JobFeedPipeline
+from boss_agent.core.job.use_cases.matching import JobMatchGreetingService, MatchGreetingResult
+from boss_agent.core.job.use_cases.screening import CandidateScreener
+from boss_agent.core.search.domain.models import FilterConfig, SearchConfig
+from boss_agent.core.shared.enums import TargetAction
+from boss_agent.job_store import InMemoryJobRecordStore
+from boss_agent.memory import ResumeMemoryManager
+from boss_agent.screening_prompt import load_screening_prompt
 
 console = Console()
 

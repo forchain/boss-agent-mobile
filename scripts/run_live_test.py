@@ -15,7 +15,8 @@ What stays here is what is genuinely this script's: which saved search preset it
 how, the device session it opens and closes, the two screenshots it captures for an operator
 to look at afterwards, and the flags. The composition *around* the engine — the config
 translation, the log sink, activation, the profile load, the refusal to report a run that
-read nothing — is ``boss_agent.feed_verification``'s, because ``SmokeHarness`` composes the
+read nothing — is ``boss_agent.adapters.inbound.verification.feed_verification``'s,
+because ``SmokeHarness`` composes the
 same run and #391 left two copies of that block free to drift.
 
 Two things stay here because the pipeline cannot answer them for itself — it assumes a
@@ -41,6 +42,15 @@ from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
 
+from boss_agent.adapters.inbound.verification.feed_verification import (
+    BOSS_PACKAGE,
+    activate_app,
+    build_verification_pipeline,
+    load_candidate_profile,
+    render_greeting_match_card,
+    run_verification_feed,
+)
+from boss_agent.adapters.outbound.device.takeover import TakeoverHandler
 from boss_agent.async_bridge import run_sync
 from boss_agent.config_realm import DEFAULTS
 from boss_agent.core.job.domain.feed_stream import FeedStreamResult
@@ -51,14 +61,6 @@ from boss_agent.core.search.domain.models import FilterConfig, SavedSearch, Sear
 from boss_agent.core.search.interfaces.store import SavedSearchStore
 from boss_agent.core.shared.enums import AuthStatus
 from boss_agent.core.shared.errors import BrokerError
-from boss_agent.feed_verification import (
-    BOSS_PACKAGE,
-    activate_app,
-    build_verification_pipeline,
-    load_candidate_profile,
-    render_greeting_match_card,
-    run_verification_feed,
-)
 from boss_agent.greeting_prompt import load_greeting_prompt
 from boss_agent.llm_config import create_llm_client
 from boss_agent.memory import ResumeMemoryManager
@@ -67,7 +69,6 @@ from boss_agent.saved_search_store import (
     resolve_saved_search_store,
 )
 from boss_agent.settings import load_settings
-from boss_agent.workflows import TakeoverHandler
 from droid_agent_core.driver import AppiumSession, DriverConfig
 
 console = Console()

@@ -209,7 +209,8 @@ class JobFeedPipeline:
     a :class:`FeedDeviceWorld` for every screen interaction, a Job Record Store for every
     persistence decision, a Candidate Screener for every screening decision, a log sink
     and a cancellation probe. The concrete page objects are composed by the caller
-    (``boss_agent.pages.feed_bundle`` in production), which is what keeps Appium out of
+    (``boss_agent.adapters.outbound.device.pages.feed_bundle`` in production), which is
+    what keeps Appium out of
     this module's import graph.
     """
 

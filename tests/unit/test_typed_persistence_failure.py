@@ -295,7 +295,7 @@ async def test_feed_pipeline_logs_degradation_on_quota_transport_error():
         side_effect=TransportError("PocketBase 500 error")
     )
 
-    from boss_agent.pages.feed_bundle import build_feed_device_world
+    from boss_agent.adapters.outbound.device.pages.feed_bundle import build_feed_device_world
 
     pipeline = JobFeedPipeline.for_task(
         broker=broker,

@@ -31,6 +31,10 @@ from _chat_triage_harness import (
     triage_run,
 )
 
+from boss_agent.adapters.outbound.device.pages.chat_adapters import (
+    ChatActorAdapter,
+    CommunicationListAdapter,
+)
 from boss_agent.core.chat.domain.rejection import (
     DEFAULT_REJECTION_REPLY_TEXT,
     DISINTEREST_REASON,
@@ -45,7 +49,6 @@ from boss_agent.core.chat.use_cases.triage import (
     MAX_INSPECTED_CARDS,
 )
 from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
-from boss_agent.pages.chat_adapters import ChatActorAdapter, CommunicationListAdapter
 from boss_agent.screening_config import load_screening_policy
 
 
@@ -111,8 +114,8 @@ async def test_triage_persists_through_the_injected_blacklist_sink_without_file_
 @pytest.mark.asyncio
 async def test_scan_runs_against_injected_ports_without_constructing_pages(policy, monkeypatch):
     """The engine drives the ports it was handed; it never reaches for a page object."""
-    import boss_agent.pages.communication as communication_pages
-    import boss_agent.pages.system as system_pages
+    import boss_agent.adapters.outbound.device.pages.communication as communication_pages
+    import boss_agent.adapters.outbound.device.pages.system as system_pages
 
     def explode(*_args, **_kwargs):
         raise AssertionError("ChatTriage constructed a device page")
