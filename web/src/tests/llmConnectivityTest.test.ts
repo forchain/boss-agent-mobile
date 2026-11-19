@@ -242,7 +242,7 @@ describe('normalizeLlmProvider', () => {
 });
 // Cross-language endpoint parity — the probe must validate the URL the app calls.
 //
-// `AnthropicChatClient._messages_url` (src/droid_agent_core/llm.py) decides the real
+// `AnthropicChatClient._messages_url` (src/boss_agent/llm.py) decides the real
 // Messages URL; this route re-derives it to probe the endpoint. That is the same
 // contract the Python side and this side must agree on, and the drift this catches
 // was real: the TypeScript rule matched only `/v1`, so a base ending in `/v1beta`
@@ -255,7 +255,7 @@ describe('Anthropic endpoint parity with the Python client', () => {
 	const PY_SOURCE = path.join(
 		getProjectRoot(),
 		'src',
-		'droid_agent_core',
+		'boss_agent',
 		'llm.py'
 	);
 

@@ -23,7 +23,7 @@ import scripts.parse_resume as parse_resume
 import scripts.refine_greeting as refine_greeting
 import scripts.refine_screening as refine_screening
 
-from droid_agent_core.llm import (
+from boss_agent.llm import (
     AnthropicChatClient,
     LLMConfig,
     LLMDecisionClient,

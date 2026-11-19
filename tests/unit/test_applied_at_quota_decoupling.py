@@ -15,6 +15,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from boss_agent.automation.locators import get_global_locator_registry
 from boss_agent.broker.collection_schema import JOB_RECORDS, pocketbase_fields
 from boss_agent.broker.models import TaskStatus, TaskType
 from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
@@ -23,7 +24,6 @@ from boss_agent.worker.config import WorkerConfig
 from boss_agent.worker.context import WorkerContext
 from boss_agent.worker.daemon import AutomationWorker
 from boss_agent.worker.handlers.auto_apply import AutoApplyHandler
-from droid_agent_core.locators import get_global_locator_registry
 
 
 def test_job_records_schema_declares_applied_at():

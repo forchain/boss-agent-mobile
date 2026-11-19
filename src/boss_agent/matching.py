@@ -12,7 +12,7 @@ from langsmith import traceable
 from rich.console import Console
 from rich.panel import Panel
 
-from droid_agent_core.llm import LLMDecisionClient
+from boss_agent.llm import LLMDecisionClient
 
 from .candidate_entities import CandidateProfile
 from .greeting_prompt import load_greeting_prompt

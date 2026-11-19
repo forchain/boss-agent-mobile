@@ -55,8 +55,9 @@ import pytest
 
 REPO_ROOT = Path(__file__).parents[2]
 SOURCE_ROOT = REPO_ROOT / "src"
-#: This repo's own package. `src/` also holds `droid_agent_core`, the bundled Appium driver,
-#: whose modules are not this layer's business and are never scanned.
+#: This repo's own package. The neutral automation primitives and their Appium adapter live
+#: under `boss_agent.automation`; they are scanned by the domain sweep below like any other
+#: module, and import no page objects.
 BOSS_AGENT_ROOT = SOURCE_ROOT / "boss_agent"
 
 PAGES_PACKAGE = "boss_agent.pages"

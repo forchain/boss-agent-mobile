@@ -12,7 +12,7 @@ still be reported through exactly the channels callers watch:
   predates the package split, and log greps, dashboards, and string-targeted patches
   (`patch("boss_agent.pages.logger.error")`) all depend on it. Moving the definition here must not
   silently re-home the channel to ``boss_agent.pages.base``.
-* `ui_logger` is the shared ``droid_agent_core.ui`` channel every selector query reports to.
+* `ui_logger` is the shared ``boss_agent.automation.ui`` channel every selector query reports to.
 * `console` is one `Console` instance, created once here and re-exported by the facade, so rendered
   output keeps its formatting no matter which submodule prints.
 """
@@ -24,8 +24,8 @@ from typing import Any
 
 from rich.console import Console
 
-from droid_agent_core.gestures import HumanizedGestureExecutor
-from droid_agent_core.locators import (
+from boss_agent.automation.gestures import HumanizedGestureExecutor, ui_logger
+from boss_agent.automation.locators import (
     LocatorRegistry,
     UISelector,
     get_global_locator_registry,
@@ -35,7 +35,6 @@ from droid_agent_core.locators import (
 from ..keyword_constants import PLATFORM_BADGE_MARKERS
 
 logger = logging.getLogger("boss_agent.pages")
-ui_logger = logging.getLogger("droid_agent_core.ui")
 console = Console()
 
 

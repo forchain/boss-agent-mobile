@@ -19,13 +19,13 @@ sys.path.insert(0, str(root_dir / "src"))
 
 from boss_agent.candidate_entities import CandidateProfile  # noqa: E402
 from boss_agent.graph import run_resume_lifecycle_graph  # noqa: E402
+from boss_agent.llm import LLMConfig, LLMDecisionClient  # noqa: E402
 from boss_agent.llm_config import create_llm_client, load_llm_config  # noqa: E402
 from boss_agent.memory import (  # noqa: E402
     ProfileNormalizer,
     ResumeMemoryManager,
     ResumeTextExtractor,
 )
-from droid_agent_core.llm import LLMConfig, LLMDecisionClient  # noqa: E402
 
 log_dir = root_dir / ".boss_agent"
 log_dir.mkdir(parents=True, exist_ok=True)

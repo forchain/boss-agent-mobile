@@ -88,11 +88,11 @@ def test_create_llm_client_instantiates_with_realm_baseline(monkeypatch) -> None
 def test_the_framework_fallback_defaults_agree_with_the_realm() -> None:
     """The framework layer is app-agnostic, so its fallback table is a second one.
 
-    It exists only so `droid_agent_core` is usable standalone. Pinning it against the
+    It exists only so `boss_agent.llm` is usable standalone. Pinning it against the
     same fixture keeps that fallback from becoming a second opinion — which is exactly
     what the 16384-vs-262144 split was.
     """
-    from droid_agent_core.llm import FRAMEWORK_DEFAULTS, MASK_MARKERS, PLACEHOLDER_API_KEY
+    from boss_agent.llm import FRAMEWORK_DEFAULTS, MASK_MARKERS, PLACEHOLDER_API_KEY
 
     expected = _fixture()["shared_defaults"]
     for key, value in FRAMEWORK_DEFAULTS.items():

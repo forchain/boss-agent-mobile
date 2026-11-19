@@ -5,7 +5,7 @@ from pathlib import Path
 
 import yaml
 
-from droid_agent_core.locators import (
+from boss_agent.automation.locators import (
     By,
     LocatorRegistry,
     parse_selector,

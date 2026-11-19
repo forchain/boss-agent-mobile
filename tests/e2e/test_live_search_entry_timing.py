@@ -17,8 +17,8 @@ import time
 
 import pytest
 
+from boss_agent.automation.appium_adapter import AppiumSession, DriverConfig
 from boss_agent.pages import JobListPage, SearchPage, StartupDialogPage
-from droid_agent_core.driver import AppiumSession, DriverConfig
 
 # The 148s regression this pipeline replaced; anything near it means the cascading
 # selector scans are back. Generous enough to survive a cold accessibility tree.

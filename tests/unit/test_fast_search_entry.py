@@ -16,8 +16,8 @@ from unittest.mock import patch
 
 import pytest
 
+from boss_agent.automation.locators import By, LocatorRegistry
 from boss_agent.pages.job_feed import JobListPage, SearchPage
-from droid_agent_core.locators import By, LocatorRegistry
 
 EXACT_SEARCH_ICON_XPATH = (
     '//android.widget.LinearLayout[@resource-id="com.hpbr.bosszhipin:id/ly_menu"]'

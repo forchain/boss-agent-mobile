@@ -11,7 +11,7 @@ from typing import Any
 from langsmith import traceable
 from rich.console import Console
 
-from droid_agent_core.llm import LLMDecisionClient
+from boss_agent.llm import LLMDecisionClient
 
 from .candidate_entities import (
     CandidateProfile,

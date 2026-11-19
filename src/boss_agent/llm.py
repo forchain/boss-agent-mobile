@@ -1,7 +1,7 @@
 """
-droid_agent_core.llm
-====================
-Provider-agnostic LLM reasoning interface and OpenAI-compatible client.
+boss_agent.llm
+==============
+Provider-agnostic LLM reasoning interface, protocol clients, and configuration.
 """
 
 import json

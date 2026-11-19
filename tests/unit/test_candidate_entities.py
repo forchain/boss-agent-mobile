@@ -655,7 +655,7 @@ FORBIDDEN_IN_CLOSURE = {
     "requests",
     "httpx",
     "openai",
-    "droid_agent_core",
+    "boss_agent.automation",
     "boss_agent.memory",
     "boss_agent.llm_config",
     "boss_agent.graph",
@@ -686,7 +686,7 @@ def _direct_imports(path: Path, module_name: str) -> set[str]:
 
     Note this deliberately analyses ``entities.py`` rather than executing an import.
     Importing *any* submodule first executes ``boss_agent/__init__.py``, which eagerly
-    pulls in ``memory`` (and through it langsmith/rich/droid_agent_core) under
+    pulls in ``memory`` (and through it langsmith/rich/boss_agent.llm) under
     ``contextlib.suppress(ImportError)``. That is package-initialiser behaviour, outside
     this ticket's scope, and it is the reason the guarantee is proven per module.
     """

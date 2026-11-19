@@ -1,6 +1,6 @@
 # 0011. Two-Anchor Search Entry, Back-Only Recovery, and DEBUG UI Telemetry
 
-We decided to replace cascading locator probing with a two-anchor search-entry engine, to recover from unexpected screens by pressing the hardware Back key only, and to instrument every low-level UI action with `DEBUG` logs under the `droid_agent_core.ui` logger namespace.
+We decided to replace cascading locator probing with a two-anchor search-entry engine, to recover from unexpected screens by pressing the hardware Back key only, and to instrument every low-level UI action with `DEBUG` logs under the `boss_agent.automation.ui` logger namespace.
 
 ## Context
 Entering search from a subpage took 20-40 seconds per cold attempt, and a failed search run took 148 seconds before reporting failure.
@@ -21,7 +21,7 @@ Entering search from a subpage took 20-40 seconds per cold attempt, and a failed
 3. **Handlers delegate entry, they do not pre-navigate**:
    `ScrapeJobsHandler` / `AutoApplyHandler` call `open_search()` directly; `navigate_to_home()` remains only for the `enable_search=False` recommendation feed. Retry logs report `第 n/2 次` and mark exhaustion on the terminal attempt instead of promising a retry.
 4. **DEBUG telemetry inside the UI layer**:
-   `HumanizedGestureExecutor` (click/tap/type/swipe) and `BaseBossPage` (`_find_by_selectors`, `find_by_key`, `wait_for_key`, `press_back`) emit `logging.getLogger("droid_agent_core.ui").debug(...)` with element summaries, coordinates, text length (never raw text) and per-selector elapsed seconds. `scripts/worker.py --log-level DEBUG` switches the namespace on; at INFO it is silent and never reaches the PocketBase stream.
+   `HumanizedGestureExecutor` (click/tap/type/swipe) and `BaseBossPage` (`_find_by_selectors`, `find_by_key`, `wait_for_key`, `press_back`) emit `logging.getLogger("boss_agent.automation.ui").debug(...)` with element summaries, coordinates, text length (never raw text) and per-selector elapsed seconds. `scripts/worker.py --log-level DEBUG` switches the namespace on; at INFO it is silent and never reaches the PocketBase stream.
 
 ## Trade-offs
 - Blind Back presses can escape the app (to the launcher) instead of unwinding a screen; the bounded count plus the foreground re-activation guard keep that self-correcting rather than fatal.

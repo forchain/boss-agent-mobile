@@ -1,14 +1,13 @@
 """
 boss_agent.llm_config
 =====================
-The Configuration Realm's LLM section, assembled for the framework's client.
+The Configuration Realm's LLM section, assembled for :mod:`boss_agent.llm`.
 
-`droid_agent_core` is an app-agnostic framework layer: it must not read this
-application's configuration, and it must not contain this application's name. So the
-LLM realm is resolved *here* and handed over as data.
+The realm is resolved *here* and handed to the client as data, so the client never
+reads this application's configuration files itself.
 
-That inversion is what removed the last second defaults table. The framework's client
-used to start from the example *template* and ship `max_tokens=16384` /
+That inversion is what removed the last second defaults table. The client used to
+start from the example *template* and ship `max_tokens=16384` /
 `timeout_sec=300.0` while every other realm shipped `262144` / `120.0`, so a
 config-less run silently used a sixteenth of the documented token ceiling. Now there is
 one table (:mod:`boss_agent.config_realm`), one chain, and one place that joins them.
@@ -18,7 +17,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from droid_agent_core.llm import (
+from boss_agent.llm import (
     AnthropicChatClient,
     LLMConfig,
     LLMDecisionClient,

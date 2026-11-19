@@ -15,8 +15,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from droid_agent_core.gestures import Point
-from droid_agent_core.locators import wait_until
+from boss_agent.automation.gestures import Point
+from boss_agent.automation.locators import wait_until
 
 from ..card_parser import CardFacets, ParsedCard, needs_text_fallback, parse_card
 from ..job_entities import JobCardBrief

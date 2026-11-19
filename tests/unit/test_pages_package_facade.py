@@ -17,7 +17,7 @@ its own right, and these tests pin the things that would break it quietly:
 * each submodule imports on its own, so a chat-triage consumer can load `pages.communication`
   without reaching for job-feed or filter-dialog adapters;
 * the observability seam survives the move: `logger` keeps the name `boss_agent.pages` (tests patch
-  it by string), `ui_logger` stays the shared `droid_agent_core.ui` channel, and one `Console`
+  it by string), `ui_logger` stays the shared `boss_agent.automation.ui` channel, and one `Console`
   instance is shared, so console output formatting is byte-identical to the monolith's.
 """
 
@@ -165,7 +165,7 @@ def test_facade_reuses_one_logger_per_channel_and_one_console():
     assert pages.logger.name == "boss_agent.pages", (
         "the logger name is a public observability contract — tests patch it by string"
     )
-    assert pages.ui_logger.name == "droid_agent_core.ui"
+    assert pages.ui_logger.name == "boss_agent.automation.ui"
     assert isinstance(pages.logger, logging.Logger)
     assert isinstance(pages.console, Console)
 

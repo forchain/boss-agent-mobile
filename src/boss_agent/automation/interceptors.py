@@ -1,6 +1,6 @@
 """
-droid_agent_core.interceptors
-=============================
+boss_agent.automation.interceptors
+==================================
 Global dialog, popup, and system permission interceptors.
 """
 

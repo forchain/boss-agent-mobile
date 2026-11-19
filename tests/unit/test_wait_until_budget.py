@@ -11,7 +11,7 @@ device and hid the real cost from the caller.
 
 import pytest
 
-from droid_agent_core import locators
+from boss_agent.automation import locators
 
 
 @pytest.fixture

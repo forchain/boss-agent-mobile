@@ -15,14 +15,14 @@
 ### 1.2 Phase 1 Goal
 Phase 1 establishes the **production-grade foundation**:
 1. An idempotent, multi-tier **Environment Provisioner** (`scripts/bootstrap.py`) that fully automates emulator creation, dependency checks, and Boss APK installation.
-2. A decoupled, application-agnostic **Core Automation Framework** (`droid_agent_core`) designed for standalone extraction and reuse.
+2. An application-agnostic **Automation Layer** (`boss_agent.automation`) behind a platform-neutral driver port, so a Web-platform worker can supply its own adapter.
 3. A domain-specific **Boss Application Layer** (`boss_agent`) capable of handling launch dialogs, login detection/takeover, and an end-to-end job detail parsing smoke test.
 4. An **Agent Triad Protocol** ensuring zero context pollution between development, testing, and acceptance.
 
 ### 1.3 Scope Boundary
 - **In Scope (Phase 1)**:
   - Idempotent bootstrap CLI (`scripts/bootstrap.py`).
-  - `droid_agent_core` primitives (device session, element locator, Bézier touch synthesis, popup interceptor, LLM interface stubs).
+  - `boss_agent.automation` primitives (driver port, element locator, Bézier touch synthesis, popup interceptor) and `boss_agent.llm` interface clients.
   - `boss_agent` job feed pipeline (launch, permission bypass, auth status check, search entry, job listing scroll, job detail extraction) and the verification adapter that drives it on a device.
   - Unit tests and automated integration smoke tests.
 - **Out of Scope (Deferred to Phase 2)**:
@@ -54,13 +54,14 @@ boss-agent-mobile/
 ├── run.sh                        # Live test harness & worker CLI
 ├── web/                          # Full-Stack SvelteKit Web Management Dashboard
 ├── src/
-│   ├── droid_agent_core/         # 100% Agnostic Android Automation Engine
-│   │   ├── driver/               # ADB & Appium session management
-│   │   ├── gestures/             # Humanized Bézier curves & spatial jitter
-│   │   ├── locators/             # Declarative view/element selectors
-│   │   ├── interceptors/         # Global dialog/popup handlers
-│   │   └── llm/                  # Agnostic LLM reasoning contracts
 │   └── boss_agent/               # Boss 直聘 Application Domain Layer
+│       ├── automation/           # Platform-neutral device primitives + Appium adapter
+│       │   ├── port.py           # DriverPort / ElementHandle / By contract
+│       │   ├── appium_adapter.py # Sole Appium/Selenium importer
+│       │   ├── gestures.py       # Humanized Bézier curves & spatial jitter
+│       │   ├── locators.py       # Declarative view/element selectors
+│       │   └── interceptors.py   # Global dialog/popup handlers
+│       ├── llm.py                # Provider-agnostic LLM clients & configuration
 │       ├── broker/               # PocketBase persistence adapter & schema provisioner
 │       ├── worker/               # Dedicated out-of-process automation daemon & handlers
 │       ├── pages/                # Page Objects (JobListPage, JobDetailPage, etc.)
@@ -72,7 +73,7 @@ boss-agent-mobile/
     └── e2e/                      # Integration & live device verification tests
 ```
 
-**Strict Decoupling Rule**: `src/droid_agent_core/` MUST NOT import anything from `boss_agent` or contain any hardcoded "boss" strings, package IDs, or element identifiers.
+**Strict Decoupling Rule**: `src/boss_agent/automation/` MUST NOT import a Boss domain layer (`pages`, `worker`, `broker`, or `boss_agent.llm`), and only `appium_adapter.py` may import Appium/Selenium.
 
 ---
 
@@ -107,11 +108,11 @@ Each acceptance criterion is defined with Gherkin semantics and an exact verific
   python3 scripts/bootstrap.py --check
   ```
 
-### Criterion 2: Framework Independence (`droid_agent_core`)
-- **Given**: The codebase in `src/droid_agent_core/`.
+### Criterion 2: Framework Independence (`boss_agent.automation`)
+- **Given**: The codebase in `src/boss_agent/automation/`.
 - **When**: Inspecting imports and static analysis for domain leakages.
 - **Then**:
-  1. Zero references to `boss_agent`, `bosszhipin`, or `hpbr` exist within `src/droid_agent_core/`.
+  1. No direct `appium`/`selenium` import exists outside `appium_adapter.py`, and no neutral automation module imports a Boss domain layer.
   2. All gesture routines (`click`, `swipe`, `drag`) incorporate Bézier curves and randomized bounding-box jitter.
   3. Popup interceptor can register dynamic regex/selector rules without hardcoding app logic.
 - **Verification Command**:
@@ -165,7 +166,7 @@ Each acceptance criterion is defined with Gherkin semantics and an exact verific
 
 | Anomaly ID | Date | Component / Screen | Description & Observed Behavior | Workaround / Resolution Applied | Status |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| `ANOM-001` | 2026-08-17 | Startup / Permissions | System notification & location permission dialogs block Appium element detection if not dismissed. | Handled via `droid_agent_core.interceptors.SystemDialogInterceptor` (auto-click Allow/Agree). | `RESOLVED` |
+| `ANOM-001` | 2026-08-17 | Startup / Permissions | System notification & location permission dialogs block Appium element detection if not dismissed. | Handled via `boss_agent.automation.interceptors.SystemDialogInterceptor` (auto-click Allow/Agree). | `RESOLVED` |
 | `ANOM-002` | 2026-08-17 | Security / Captcha | Sliding puzzle captcha triggered on new device / IP. | `TakeoverHandler` pauses workflow, emits warning to user console, waits for user completion before continuing. | `RESOLVED` |
 | `ANOM-003` | 2026-08-17 | Layout / Job Detail | Job description text collapsed behind "查看全部" (Read More) button on long descriptions. | `JobDetailPage.get_description()` checks for expand button and clicks with humanized tap before extraction. | `RESOLVED` |
 | `ANOM-004` | 2026-09-21 | Search Entry / Home Navigation | Entering search from a subpage took 148s and reported failure only after two full retries. Cause: `job_list.search_icon` carried 7 candidate XPaths and `navigate_to_home` scanned filter/industry/chat/detail close buttons, so every "not on home" check cost 5-8s; `wait_until` also slept a full `poll_interval` after its budget was already blown. | Single verified anchor per state (`job_list.search_icon`, `search.search_input`); Back-only recovery bounded to 10 attempts; handlers delegate to `open_search()` with no pre-navigation; `wait_until` honours the remaining budget before sleeping. Live device: 148s -> 13.1s -> 7.3s. Low-level UI telemetry now available via `--log-level DEBUG`. | `RESOLVED` |
@@ -199,7 +200,7 @@ flowchart LR
 ### 6.1 Dev Agent Contract
 - **Context**: Reads `GLOSSARY.md`, `ADR/*`, and `ACCEPTANCE.md`.
 - **Duties**:
-  - Implements `scripts/bootstrap.py`, `src/droid_agent_core/`, `src/boss_agent/`.
+  - Implements `scripts/bootstrap.py`, `src/boss_agent/automation/`, `src/boss_agent/`.
   - Implements unit tests with mocks.
   - **Constraint**: Cannot mark acceptance items as `VERIFIED`.
 
@@ -213,7 +214,7 @@ flowchart LR
 ### 6.3 Acceptance Agent Contract
 - **Context**: 100% clean context (zero memory of previous iterations).
 - **Duties**:
-  - Validates architectural isolation (verifies no leaky abstractions in `droid_agent_core`).
+  - Validates architectural isolation (verifies no leaky abstractions in `boss_agent.automation`).
   - Runs all verification commands listed in Section 4.
   - Updates the **Sign-off Checklist (Section 7)** with timestamps, git commit SHA, and test outcomes.
 
@@ -224,6 +225,6 @@ flowchart LR
 | Criterion | Target Description | Verification Status | Verified By | Evidence / Logs |
 | :--- | :--- | :--- | :--- | :--- |
 | **AC-1** | Idempotent Environment Provisioner | `VERIFIED` | Test Suite & CLI | `tests/unit/test_bootstrap_provisioner.py`, `scripts/bootstrap.py --check` |
-| **AC-2** | Framework Independence (`droid_agent_core`) | `VERIFIED` | Test Suite & AST | `tests/unit/test_framework_isolation.py`, `tests/unit/test_gestures_and_locators.py` |
+| **AC-2** | Framework Independence (`boss_agent.automation`) | `VERIFIED` | Test Suite & AST | `tests/unit/test_framework_isolation.py`, `tests/unit/test_gestures_and_locators.py` |
 | **AC-3** | App Lifecycle & Safety Takeover | `VERIFIED` | Test Suite | `tests/unit/test_lifecycle_and_takeover.py` |
 | **AC-4** | End-to-End Job Detail Extraction Smoke Test | `VERIFIED` | Feed Pipeline & Verification Runner | `scripts/run_live_test.py` (device), `tests/unit/test_run_live_test_cli.py` (runner seam), `tests/unit/test_smoke_harness_extraction.py` (adapter contract) |

@@ -10,8 +10,8 @@ import time
 
 import pytest
 
+from boss_agent.automation.appium_adapter import AppiumSession, DriverConfig
 from boss_agent.pages import LoginPage, StartupDialogPage
-from droid_agent_core.driver import AppiumSession, DriverConfig
 
 
 @pytest.mark.live

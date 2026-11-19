@@ -17,10 +17,10 @@ sys.path.insert(0, str(root_dir))
 sys.path.insert(0, str(root_dir / "src"))
 
 from boss_agent.job_entities import JobPosting  # noqa: E402
+from boss_agent.llm import LLMConfig, LLMDecisionClient  # noqa: E402
 from boss_agent.llm_config import create_llm_client, load_llm_config  # noqa: E402
 from boss_agent.screening import CandidateScreener  # noqa: E402
 from boss_agent.screening_policy import ScreeningPolicy  # noqa: E402
-from droid_agent_core.llm import LLMConfig, LLMDecisionClient  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:

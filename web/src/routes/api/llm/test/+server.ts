@@ -34,7 +34,7 @@ export function buildProbe(
 		// A base already carrying a version segment (`/v1`, `/v2`, `/v1beta`) already
 		// has it, so appending another would produce the invalid `/v1/v1/messages`.
 		// This rule mirrors `AnthropicChatClient._messages_url` in
-		// `src/droid_agent_core/llm.py`; the two are pinned to each other by
+		// `src/boss_agent/llm.py`; the two are pinned to each other by
 		// `web/src/tests/llmConnectivityTest.test.ts`, because a probe that validates a
 		// URL the app never calls is worse than no probe.
 		const endpoint = /\/v\d+[a-zA-Z]*$/i.test(baseUrl)

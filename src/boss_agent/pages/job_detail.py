@@ -13,8 +13,8 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from droid_agent_core.gestures import Point, calculate_probe_coordinate
-from droid_agent_core.locators import LocatorRegistry
+from boss_agent.automation.gestures import Point, calculate_probe_coordinate
+from boss_agent.automation.locators import LocatorRegistry
 
 from ..enums import ChatButtonState
 from ..identifier_helpers import classify_chat_button, jd_is_truncated

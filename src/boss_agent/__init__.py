@@ -9,7 +9,7 @@ Importing *any* submodule of a package executes that package's ``__init__`` firs
 this module used to decide the import cost of ``boss_agent.candidate_entities`` — a
 leaf whose entire promise is that it is standard-library only. The eager
 ``from .memory import ...`` below dragged in ``memory``'s ``langsmith``, ``rich`` and
-``droid_agent_core.llm``, roughly 1300 modules, and made "the profile entity is pure"
+``boss_agent.llm``, roughly 1300 modules, and made "the profile entity is pure"
 true of the module and false of the import. The eager cost is paid by scripts that only
 wanted a dataclass.
 

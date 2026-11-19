@@ -1,7 +1,10 @@
 """
-droid_agent_core.gestures
-=========================
+boss_agent.automation.gestures
+==============================
 Humanized gesture synthesis, Bézier touch movements, and spatial jitter.
+
+This module depends only on ``port``; the platform-specific pointer batch lives in the
+driver adapter behind :meth:`DriverPort.double_tap`.
 """
 
 import contextlib
@@ -9,9 +12,8 @@ import logging
 import random
 import time
 from dataclasses import dataclass
-from typing import Any
 
-ui_logger = logging.getLogger("droid_agent_core.ui")
+ui_logger = logging.getLogger("boss_agent.automation.ui")
 
 # Android's system double-tap detector pairs a second tap with the first only when
 # it lands inside this window; past it the input stream is read as two single taps.
@@ -24,38 +26,6 @@ _DOUBLE_TAP_INTERVAL_CAP = DOUBLE_TAP_MAX_INTERVAL - 0.03
 #: Press duration range (ms) for a synthesized tap, shared by every tap gesture so
 #: the pacing of a double-tap is the same one a single tap already uses.
 TAP_DURATION_MS = (60, 120)
-
-#: Sentinel distinguishing "not resolved yet" from a resolved ``None``.
-_UNRESOLVED = object()
-
-# Resolved once at import, the way optional dependencies are resolved elsewhere in
-# this repo (the domain layer's package `__init__`): the import machinery is not
-# per-call work, and the answer cannot change while the process runs. The selenium
-# branch is the live one — Appium-Python-Client 6.0.0 ships no
-# `appium.webdriver.common.action_chains` — but the appium probe is kept first so a
-# client that does provide it is preferred.
-_w3c_action_chains: Any = _UNRESOLVED
-
-
-def _load_w3c_action_chains():
-    """Resolve the W3C ``ActionChains`` class once, or ``None`` when the client lacks it."""
-    global _w3c_action_chains
-    if _w3c_action_chains is _UNRESOLVED:
-        _w3c_action_chains = _resolve_w3c_action_chains()
-    return _w3c_action_chains
-
-
-def _resolve_w3c_action_chains():
-    """Probe the client for ``ActionChains``, appium's copy first, then selenium's."""
-    with contextlib.suppress(ImportError):
-        from appium.webdriver.common.action_chains import ActionChains
-
-        return ActionChains
-    with contextlib.suppress(ImportError):
-        from selenium.webdriver.common.action_chains import ActionChains
-
-        return ActionChains
-    return None
 
 
 def _describe_element(element) -> str:
@@ -190,7 +160,7 @@ class BézierTouchSynthesizer:
 
 
 class HumanizedGestureExecutor:
-    """Applies humanized delays and gesture actions on an Appium/WebDriver instance."""
+    """Applies humanized delays and gesture actions on a driver-port instance."""
 
     def __init__(self, driver=None):
         self.driver = driver
@@ -288,8 +258,8 @@ class HumanizedGestureExecutor:
         """Two sequential `driver.tap` calls at one point, ``interval`` apart.
 
         The host round trip between the two is what can push the second tap past
-        Android's double-tap window, so this is only reached when the W3C pointer
-        batch is unavailable.
+        Android's double-tap window, so this is only reached when the driver port
+        offers no pointer batch of its own.
         """
         dur = random.randint(duration_ms[0], duration_ms[1])
         self.driver.tap([(x, y)], duration=dur)
@@ -303,26 +273,17 @@ class HumanizedGestureExecutor:
         low = min(low, high)
         return random.uniform(low, high)
 
-    def _emit_w3c_double_tap(self, x: float, y: float, interval: float) -> bool:
-        """Emit both taps as one W3C pointer batch; ``False`` when unsupported."""
-        action_chains_cls = _load_w3c_action_chains()
-        if action_chains_cls is None:
-            return False
-        try:
-            actions = action_chains_cls(self.driver)
-            (
-                actions.w3c_actions.pointer_action.move_to_location(x, y)
-                .pointer_down()
-                .pointer_up()
-                .pause(interval)
-                .pointer_down()
-                .pointer_up()
-            )
-            actions.perform()
-        except Exception as exc:
-            ui_logger.debug("[UI] double_click W3C batch unavailable: %s", exc)
-            return False
-        return True
+    def _emit_double_tap(
+        self, x: float, y: float, interval: float, duration_ms: tuple[int, int]
+    ) -> str | None:
+        """Emit both taps through the driver port, or return ``None`` when it cannot."""
+        double_tap = getattr(self.driver, "double_tap", None)
+        if callable(double_tap) and double_tap(x, y, interval, duration_ms):
+            return "driver.double_tap"
+        if hasattr(self.driver, "tap"):
+            self._tap_twice_at(x, y, interval, duration_ms)
+            return "driver.tap"
+        return None
 
     def human_double_click(
         self,
@@ -369,12 +330,8 @@ class HumanizedGestureExecutor:
             height=float(rect["height"]),
         )
 
-        if self._emit_w3c_double_tap(x, y, interval):
-            via = "w3c.pointer_actions"
-        elif hasattr(self.driver, "tap"):
-            self._tap_twice_at(x, y, interval, duration_ms)
-            via = "driver.tap"
-        else:
+        via = self._emit_double_tap(x, y, interval, duration_ms)
+        if via is None:
             self._double_click_element(element, interval)
             via = "element.click"
 
@@ -406,13 +363,7 @@ class HumanizedGestureExecutor:
         target_y = round(float(y + offset_y), 1)
         interval = self._double_tap_interval(interval_range)
 
-        if self._emit_w3c_double_tap(target_x, target_y, interval):
-            via = "w3c.pointer_actions"
-        elif hasattr(self.driver, "tap"):
-            self._tap_twice_at(target_x, target_y, interval, duration_ms)
-            via = "driver.tap"
-        else:
-            via = "unavailable"
+        via = self._emit_double_tap(target_x, target_y, interval, duration_ms) or "unavailable"
 
         ui_logger.debug(
             "[UI] double_click target=(%.1f, %.1f) interval=%dms via=%s",

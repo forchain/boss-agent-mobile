@@ -5,7 +5,7 @@ Unit tests for DEBUG-level UI operation telemetry (Issue #194).
 
 Every concrete UI action (click, tap-at-point, type, swipe, back key, selector
 lookup) must emit a standard `logging` DEBUG record under the dedicated
-`droid_agent_core.ui` logger namespace, so developers can locate exactly which
+`boss_agent.automation.ui` logger namespace, so developers can locate exactly which
 UI call stalls by toggling the log level — without polluting business/broker logs.
 """
 
@@ -16,10 +16,10 @@ from unittest.mock import patch
 
 import pytest
 
+from boss_agent.automation.gestures import HumanizedGestureExecutor, Point
 from boss_agent.pages.job_feed import JobListPage, SearchPage
-from droid_agent_core.gestures import HumanizedGestureExecutor, Point
 
-UI_LOGGER = "droid_agent_core.ui"
+UI_LOGGER = "boss_agent.automation.ui"
 
 
 @pytest.fixture(autouse=True)

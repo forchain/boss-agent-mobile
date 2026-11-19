@@ -4,12 +4,16 @@ Mobile automation framework and intelligent job application agent for the Boss �
 
 ## Language
 
-**Core Automation Framework (`droid_agent_core`)**:
-The reusable, application-agnostic Android automation engine handling driver lifecycles, element resolution, humanized gesture synthesis, popup interception, and LLM reasoning interfaces.
+**Automation Layer (`boss_agent.automation`)**:
+The reusable, application-agnostic device automation primitives: a platform-neutral driver port, element resolution, humanized gesture synthesis, and popup interception. Appium lives only in `boss_agent.automation.appium_adapter`, which implements the port.
 _Avoid_: Boss automation engine, base scripts, appium helper
 
+**Driver Port (`boss_agent.automation.port.DriverPort`)**:
+The narrow `typing.Protocol` the automation layers depend on — element lookup, gesture execution, session lifecycle/liveness, and app activation. A future Web-platform worker supplies its own adapter rather than changing domain code.
+_Avoid_: driver wrapper, Appium interface
+
 **App Domain Layer (`boss_agent`)**:
-The Boss-specific application module implementing page objects, candidate profiles, matching rules, greeting templates, and application workflows on top of `droid_agent_core`.
+The Boss-specific application module implementing page objects, candidate profiles, matching rules, greeting templates, and application workflows on top of `boss_agent.automation`.
 _Avoid_: Core app, main module
 
 **Decomposed Entity Modules**:
@@ -42,7 +46,7 @@ The mechanism that detects user authentication status and preserves the logged-i
 _Avoid_: Login keeper, cookie store, auth cache
 
 **Humanized Interaction Engine**:
-The gesture and timing synthesizer within `droid_agent_core` that applies Bézier curves, randomized touch down/up durations, spatial jitter, and variable pauses to emulate real user touch behavior.
+The gesture and timing synthesizer within `boss_agent.automation` that applies Bézier curves, randomized touch down/up durations, spatial jitter, and variable pauses to emulate real user touch behavior.
 _Avoid_: Click helper, sleep wrapper, tap util
 
 **Takeover Handler**:
@@ -341,7 +345,7 @@ The engine that recognises exactly two states for entering search — the search
 _Avoid_: search flow, entry heuristic, navigation cascade
 
 **UI Operation Telemetry**:
-The DEBUG-level `droid_agent_core.ui` log stream recording every concrete UI action (click, tap, typed text length, swipe, key press) and selector lookup with its elapsed seconds; silenceable by log level and never written to the task broker stream.
+The DEBUG-level `boss_agent.automation.ui` log stream recording every concrete UI action (click, tap, typed text length, swipe, key press) and selector lookup with its elapsed seconds; silenceable by log level and never written to the task broker stream.
 _Avoid_: UI logging, debug prints, action trace
 
 **Daily Greeting Limit**:

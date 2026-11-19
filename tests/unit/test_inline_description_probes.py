@@ -2,11 +2,11 @@
 
 from unittest.mock import MagicMock, patch
 
-from boss_agent.pages.job_detail import JobDetailPage
-from droid_agent_core.gestures import (
+from boss_agent.automation.gestures import (
     HumanizedGestureExecutor,
     calculate_probe_coordinate,
 )
+from boss_agent.pages.job_detail import JobDetailPage
 
 
 def test_calculate_probe_coordinate_bottom_left_percentage_and_pixels():

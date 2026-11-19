@@ -1,6 +1,6 @@
 """
-droid_agent_core.locators
-=========================
+boss_agent.automation.locators
+==============================
 Declarative UI selectors, automatic locator strategy detection, and configuration management.
 """
 
@@ -8,22 +8,14 @@ import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from enum import StrEnum
 from pathlib import Path
 from typing import Any, TypeVar
 
 import yaml
 
+from .port import By
+
 T = TypeVar("T")
-
-
-class By(StrEnum):
-    ID = "id"
-    XPATH = "xpath"
-    ACCESSIBILITY_ID = "accessibility id"
-    CLASS_NAME = "class name"
-    ANDROID_UIAUTOMATOR = "-android uiautomator"
-    NAME = "name"
 
 
 @dataclass
@@ -38,7 +30,7 @@ def parse_selector(
     locator: str | dict[str, Any] | UISelector,
     description: str | None = None,
 ) -> UISelector:
-    """Automatically deduce the Appium locator strategy (By) based on format and prefixes.
+    """Automatically deduce the driver locator strategy (By) based on format and prefixes.
 
     Prefix rules:
       - 'xpath=...', '//...', '(//...', '//*...' -> By.XPATH
@@ -139,7 +131,7 @@ class LocatorRegistry:
         p = Path(default_path)
         if p.is_absolute() and p.exists():
             return p
-        repo_root = Path(__file__).resolve().parent.parent.parent
+        repo_root = Path(__file__).resolve().parents[3]
         candidate = repo_root / default_path
         if candidate.exists() or not p.exists():
             return candidate
@@ -228,7 +220,7 @@ def wait_until(
 ) -> T:
     """Poll a callable condition until it returns a truthy value or timeout expires.
 
-    A blocking condition call cannot be preempted (one Appium query can cost
+    A blocking condition call cannot be preempted (one driver query can cost
     seconds), so the budget is checked *between* calls: once it is spent the loop
     exits without adding a trailing poll sleep, which would otherwise make a
     short timeout overshoot by a fixed amount.

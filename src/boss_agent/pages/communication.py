@@ -17,7 +17,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from droid_agent_core.gestures import Point
+from boss_agent.automation.gestures import Point
 
 from ..rejection import DISINTEREST_REASON
 from .base import BACK_INTERVAL_SEC, BaseBossPage, ui_logger

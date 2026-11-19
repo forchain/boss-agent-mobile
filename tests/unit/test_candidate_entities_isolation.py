@@ -9,7 +9,7 @@ proves that by reading the module's own AST and walking its transitive first-par
 imports. That proof has a hole: it never executes the package ``__init__``. And
 importing *any* submodule of a package executes that ``__init__`` first, so
 ``import boss_agent.candidate_entities`` was enough to pull in ``memory`` ->
-``langsmith`` / ``rich`` / ``droid_agent_core.llm`` and roughly 1300 modules with
+``langsmith`` / ``rich`` / ``boss_agent.llm`` and roughly 1300 modules with
 it. The entity was pure; the act of importing it was not.
 
 So this module tests the *runtime import path*, which is the seam that actually
@@ -32,7 +32,7 @@ stand in for the real thing. Substituting empty stub modules was the obvious che
 route and it is wrong: ``matching.py`` calls ``Console(stderr=True)`` at module
 level, so a stub turns an honest finding into ``TypeError: 'module' object is not
 callable``. Eviction and restore are scoped to the keys the harness owns -- the
-``boss_agent`` tree and the forbidden roots -- and the ``droid_agent_core.llm`` parent
+``boss_agent`` tree and the forbidden roots -- and the ``boss_agent.llm`` parent
 binding is snapshotted, so the rest of the session keeps the exact objects it started
 with and an import made by another thread during the window is not thrown away.
 """
@@ -48,11 +48,11 @@ from types import ModuleType
 
 import pytest
 
-#: Third-party packages the candidate entity must never drag in. ``droid_agent_core.llm``
-#: is listed as a dotted root on purpose: the bare ``droid_agent_core`` package is a
-#: legitimate dependency of the UI tier, the LLM client inside it is not.
+#: Third-party packages the candidate entity must never drag in. ``boss_agent.llm``
+#: is listed as a dotted root on purpose: the bare ``boss_agent`` facade is legitimate,
+#: the LLM client behind it is not.
 FORBIDDEN_ROOTS = (
-    "droid_agent_core.llm",
+    "boss_agent.llm",
     "httpx",
     "langsmith",
     "requests",
@@ -268,7 +268,7 @@ def test_a_symbol_whose_module_cannot_import_raises_attribute_error() -> None:
     symbol, not as an ``ImportError`` that takes unrelated exports down with it.
 
     ``.matching`` is the blocked module because it genuinely imports langsmith, rich and
-    ``droid_agent_core.llm`` at module level -- a proxy for "the module for this symbol
+    ``boss_agent.llm`` at module level -- a proxy for "the module for this symbol
     could not be imported", which is what the contract is actually about.
     """
 

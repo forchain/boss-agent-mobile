@@ -13,6 +13,7 @@ import sys
 from collections.abc import Coroutine, Sequence
 from typing import Any
 
+from boss_agent.automation.appium_adapter import AppiumSession, DriverConfig
 from boss_agent.broker.pocketbase_adapter import BaseTaskBroker, PocketBaseTaskBroker
 from boss_agent.broker.sweeper import TaskLeaseSweeper
 from boss_agent.settings import (
@@ -28,7 +29,6 @@ from boss_agent.worker.handlers.auto_apply import AutoApplyHandler
 from boss_agent.worker.handlers.check_chat import CheckChatHandler
 from boss_agent.worker.handlers.check_login import CheckLoginHandler
 from boss_agent.worker.handlers.scrape_jobs import ScrapeJobsHandler
-from droid_agent_core.driver import AppiumSession, DriverConfig
 
 logger = logging.getLogger("worker_main")
 
@@ -172,7 +172,7 @@ def main() -> None:
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         help="Root logging level. DEBUG additionally enables low-level UI operation telemetry "
-        "(logger 'droid_agent_core.ui').",
+        "(logger 'boss_agent.automation.ui').",
     )
     args = parser.parse_args()
 

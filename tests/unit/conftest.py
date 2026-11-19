@@ -12,7 +12,7 @@ not there in a unit test.
 
 So this tier removes the waiting, not the logic behind it:
 
-* the sleep *between* polls of `droid_agent_core.locators.wait_until` — iteration count,
+* the sleep *between* polls of `boss_agent.automation.locators.wait_until` — iteration count,
   remaining-budget arithmetic, the `TimeoutError` a never-satisfied condition raises, and
   the value a satisfied one returns are all untouched;
 * the pause `HumanizedGestureExecutor` takes between gestures — jitter, tap duration, and
@@ -36,7 +36,7 @@ and the greeting drafter build a real client whenever a handler is handed none, 
 screener fails open, so the call shows up only as seconds of latency. Inject a stub client
 into the handler under test — and to audit the tier, run it against a poisoned endpoint
 (`LLM_BASE_URL=http://127.0.0.1:9 LLM_API_KEY=bogus pytest`) or with a plugin that replaces
-`droid_agent_core.llm.OpenAIChatClient`.
+`boss_agent.llm.OpenAIChatClient`.
 """
 
 import importlib
@@ -49,7 +49,7 @@ from typing import Any
 import pytest
 from _job_store_harness import FakePocketBaseSession
 
-from droid_agent_core import gestures, locators
+from boss_agent.automation import gestures, locators
 
 
 class _InstantPacingTime:

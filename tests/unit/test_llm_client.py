@@ -1,7 +1,7 @@
 """
 tests.unit.test_llm_client
 ==========================
-Unit tests for the LLM clients in droid_agent_core — both the OpenAI-compatible
+Unit tests for the LLM clients in boss_agent.llm — both the OpenAI-compatible
 protocol and the native Anthropic Messages protocol — plus the factory dispatch
 that selects between them.
 """
@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
-from droid_agent_core.llm import (
+from boss_agent.llm import (
     AnthropicChatClient,
     LLMAuthError,
     LLMConfig,
