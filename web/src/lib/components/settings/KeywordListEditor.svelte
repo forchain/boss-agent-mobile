@@ -1,4 +1,6 @@
 <script lang="ts">
+	import KeywordEditorModal from './KeywordEditorModal.svelte';
+
 	let {
 		title,
 		badgeText = '',
@@ -8,6 +10,7 @@
 		unit = '项',
 		emptyText = '（暂无关键词）',
 		placeholder = '输入关键词',
+		collapseThreshold = 8,
 		onValidate
 	}: {
 		title: string;
@@ -18,12 +21,21 @@
 		unit?: string;
 		emptyText?: string;
 		placeholder?: string;
+		/** 超过该数量后外层视图折叠，超出部分改由二级弹窗管理（Issue #441） */
+		collapseThreshold?: number;
 		onValidate?: (value: string) => { allowed: boolean; notice: string };
 	} = $props();
 
 	let inputVal = $state('');
 	let validationError = $state('');
+	let isExpanded = $state(false);
+	let isManagerOpen = $state(false);
 	let safeItems = $derived(Array.isArray(items) ? items : []);
+
+	// 折叠阈值以下保持既有紧凑视图；超出后只渲染前 N 项，其余交给二级弹窗。
+	let isCollapsible = $derived(safeItems.length > collapseThreshold);
+	let visibleItems = $derived(isExpanded ? safeItems : safeItems.slice(0, collapseThreshold));
+	let hiddenCount = $derived(Math.max(0, safeItems.length - collapseThreshold));
 
 	function handleAdd() {
 		const val = inputVal.trim();
@@ -65,7 +77,18 @@
 				</span>
 			{/if}
 		</div>
-		<span class="text-[11px] text-slate-500">{safeItems.length} {unit}</span>
+		<div class="flex items-center space-x-2 shrink-0">
+			<span class="text-[11px] text-slate-500">{safeItems.length} {unit}</span>
+			{#if isCollapsible}
+				<button
+					type="button"
+					onclick={() => (isManagerOpen = true)}
+					class="px-2 py-0.5 rounded text-[11px] font-medium border border-slate-700 bg-slate-800 hover:bg-slate-700 text-cyan-400 transition whitespace-nowrap"
+				>
+					管理全部
+				</button>
+			{/if}
+		</div>
 	</div>
 
 	{#if description}
@@ -85,8 +108,9 @@
 		{#if safeItems.length === 0}
 			<span class="text-[11px] text-slate-500 italic">{emptyText}</span>
 		{:else}
-			{#each safeItems as item, idx}
+			{#each visibleItems as item, idx}
 				<span
+					data-testid="keyword-chip"
 					class="inline-flex items-center space-x-1 text-xs px-2 py-0.5 rounded-md {badgeVariant === 'cyan'
 						? 'bg-cyan-950 text-cyan-300 border border-cyan-800/70'
 						: badgeVariant === 'amber'
@@ -104,6 +128,22 @@
 			{/each}
 		{/if}
 	</div>
+
+	<!-- 超限折叠入口：与 routes/profile 的 展开▼/收起▲ 折叠惯例一致 -->
+	{#if isCollapsible}
+		<div class="flex items-center justify-between gap-2 flex-wrap">
+			<button
+				type="button"
+				onclick={() => (isExpanded = !isExpanded)}
+				class="px-3 py-1.5 rounded-lg text-xs font-medium border border-slate-700 bg-slate-800 hover:bg-slate-700 text-cyan-400 transition"
+			>
+				{isExpanded ? `收起全部 {unit} ▲` : `+${hiddenCount} ${unit}折叠 ▼`}
+			</button>
+			<span class="text-[10px] text-slate-500">
+				数量较多时可展开，或点「管理全部」在弹窗中搜索与增删
+			</span>
+		</div>
+	{/if}
 
 	<!-- Add Input -->
 	<div class="flex items-center space-x-2">
@@ -126,3 +166,15 @@
 		>+ 添加</button>
 	</div>
 </div>
+
+<!-- 二级弹窗：全量管理（搜索 / 新增 / 单条移除 / 清空），Issue #441 -->
+<KeywordEditorModal
+	isOpen={isManagerOpen}
+	{title}
+	{unit}
+	bind:items
+	{placeholder}
+	{emptyText}
+	{onValidate}
+	onClose={() => (isManagerOpen = false)}
+/>
