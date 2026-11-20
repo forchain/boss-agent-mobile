@@ -9,6 +9,7 @@ import sqlite3
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from boss_agent.adapters.outbound.config.locator_registry import YamlLocatorRegistry
 from boss_agent.adapters.outbound.device.pages.job_feed import JobListPage
 from boss_agent.adapters.outbound.pocketbase.collection_schema import JOB_RECORDS, pocketbase_fields
 from boss_agent.adapters.outbound.pocketbase.provisioner import provision_sqlite_database
@@ -18,6 +19,8 @@ from boss_agent.core.job.domain.card_parser import (
 )
 from boss_agent.core.job.domain.job_entities import JobCardBrief, JobPosting, JobRecord
 from boss_agent.core.shared.identifier_helpers import clean_job_title
+
+_LOCATORS = YamlLocatorRegistry()
 
 
 def test_parse_recruiter_info_headhunter_detection():
@@ -221,7 +224,7 @@ def test_provision_sqlite_database_adds_all_new_facet_columns(tmp_path: Path):
 def test_job_list_page_extracts_rich_card_facets():
     """JobListPage.extract_visible_job_cards extracts scale, industry, tags, and classifies headhunter status."""
     mock_driver = MagicMock()
-    page = JobListPage(mock_driver)
+    page = JobListPage(mock_driver, _LOCATORS)
 
     # Create mock card element
     mock_card = MagicMock()
@@ -295,7 +298,7 @@ def test_job_list_page_rejects_title_as_company_and_recovers_from_card_text():
     """A recommendation-popup card rendering the job title inside tv_company_name must not
     poison company_name; the text-node fallback must recover the real employer."""
     mock_driver = MagicMock()
-    page = JobListPage(mock_driver)
+    page = JobListPage(mock_driver, _LOCATORS)
 
     title_text = "Senior AI Agent Engineer（英语口语）"
 
@@ -403,7 +406,7 @@ def test_parse_recruiter_info_with_dot_delimiter_and_trailing_characters():
 def test_job_list_page_guards_against_recruiter_title_in_location():
     """When location locator captures recruiter title (e.g. '猎头顾问'), it moves to recruiter_title and triggers is_headhunter."""
     mock_driver = MagicMock()
-    page = JobListPage(mock_driver)
+    page = JobListPage(mock_driver, _LOCATORS)
 
     mock_card = MagicMock()
     mock_title = MagicMock()
@@ -445,7 +448,7 @@ def test_job_list_page_guards_against_recruiter_title_in_location():
 def test_job_list_page_skips_cards_without_company_name_or_unknown_company():
     """JobListPage.extract_visible_job_cards must ignore partially visible cards without company name."""
     mock_driver = MagicMock()
-    page = JobListPage(mock_driver)
+    page = JobListPage(mock_driver, _LOCATORS)
 
     mock_card_valid = MagicMock()
     mock_card_no_company = MagicMock()

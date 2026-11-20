@@ -24,9 +24,9 @@ from typing import Any
 
 from rich.console import Console
 
-from boss_agent.adapters.outbound.config.locator_registry import YamlLocatorRegistry
 from boss_agent.core.automation.domain.locators import UISelector
 from boss_agent.core.automation.interfaces.locator_store import LocatorStorePort
+from boss_agent.core.automation.interfaces.ui_driver import UIDriverPort
 from boss_agent.core.automation.use_cases.gestures import HumanizedGestureExecutor
 from boss_agent.core.automation.use_cases.wait import wait_until
 from boss_agent.core.shared.keyword_constants import PLATFORM_BADGE_MARKERS
@@ -74,10 +74,16 @@ class BaseBossPage:
 
     BOSS_PACKAGE_NAME: str = "com.hpbr.bosszhipin"
 
-    def __init__(self, driver: Any, locator_registry: LocatorStorePort | None = None):
+    def __init__(
+        self,
+        driver: UIDriverPort,
+        locator_registry: LocatorStorePort,
+        *,
+        gestures: HumanizedGestureExecutor | None = None,
+    ):
         self.driver = driver
-        self.gestures = HumanizedGestureExecutor(driver)
-        self.locators = locator_registry or YamlLocatorRegistry()
+        self.gestures = gestures or HumanizedGestureExecutor(driver)
+        self.locators = locator_registry
 
     def activate_app(self, package_name: str = BOSS_PACKAGE_NAME) -> bool:
         """Ensure the Boss application is active and in foreground."""

@@ -22,10 +22,18 @@ symptom of forgetting is latency and a token bill — which is what ``stub_llm()
 """
 
 from datetime import UTC, datetime
+from functools import partial
 from typing import Any
 from unittest.mock import MagicMock
 
 from boss_agent.adapters.memory.job_store import InMemoryJobRecordStore, JobRecordStore
+from boss_agent.adapters.outbound.config.locator_registry import YamlLocatorRegistry
+from boss_agent.adapters.outbound.device.pages.chat_bundle import (
+    build_triage_world as _build_triage_world,
+)
+from boss_agent.adapters.outbound.device.pages.feed_bundle import (
+    build_feed_device_world as _build_feed_world,
+)
 from boss_agent.adapters.outbound.device.pages.job_feed import LocatedJobCard, element_y_position
 from boss_agent.core.candidate.domain.candidate_profile import CandidateProfile
 from boss_agent.core.job.domain.job_entities import JobCardBrief, JobPosting
@@ -33,6 +41,11 @@ from boss_agent.core.job.interfaces.device import FeedBoundary, FeedDeviceWorld
 from boss_agent.core.job.use_cases.feed_pipeline import FeedStreamConfig, JobFeedPipeline
 from boss_agent.core.job.use_cases.screening import CandidateScreener
 from boss_agent.core.shared.enums import ChatButtonState, TargetAction
+
+#: Page bundles are built with an injected locator store; suites that patch screens share one.
+LOCATORS = YamlLocatorRegistry()
+build_feed_device_world = partial(_build_feed_world, locator_store=LOCATORS)
+build_triage_world = partial(_build_triage_world, locator_store=LOCATORS)
 
 TODAY = datetime.now(UTC).isoformat()
 

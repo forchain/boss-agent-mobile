@@ -5,6 +5,7 @@ import time
 
 import pytest
 
+from boss_agent.adapters.memory.automation import FakeUIDriver, FakeUIElement
 from boss_agent.core.automation.domain.geometry import (
     DOUBLE_TAP_MAX_INTERVAL,
     BézierTouchSynthesizer,
@@ -78,44 +79,14 @@ def test_ui_selector_resolution():
 # ---------------------------------------------------------------------------
 
 
-class FakeElement:
-    """Mobile element stand-in exposing only the attributes the executor reads."""
-
-    def __init__(self, rect: dict | None = None) -> None:
-        self.rect = rect if rect is not None else {"x": 100, "y": 200, "width": 80, "height": 60}
-        self.class_name = "android.widget.LinearLayout"
-        self.click_count = 0
-        self.typed_text = ""
-        self.cleared = False
-
-    def click(self) -> None:
-        self.click_count += 1
-
-    def clear(self) -> None:
-        self.cleared = True
-
-    def send_keys(self, text: str) -> None:
-        self.typed_text += text
+ELEMENT_RECT = {"x": 100, "y": 200, "width": 80, "height": 60}
 
 
-class FakeDriver:
-    """Appium driver stand-in with the legacy `tap` endpoint only."""
+class FakeElement(FakeUIElement):
+    """``FakeUIElement`` with the bounds and class name this file's assertions expect."""
 
-    def __init__(self, *, double_tap_supported: bool = False) -> None:
-        self.taps: list = []
-        self.swipes: list = []
-        self.double_taps: list = []
-        self._double_tap_supported = double_tap_supported
-
-    def tap(self, positions, duration=0):
-        self.taps.append((list(positions), duration))
-
-    def swipe(self, x1, y1, x2, y2, duration=0):
-        self.swipes.append((x1, y1, x2, y2, duration))
-
-    def perform_double_tap(self, x, y, interval):
-        self.double_taps.append((x, y, interval))
-        return self._double_tap_supported
+    def __init__(self, rect: dict | None = ELEMENT_RECT) -> None:
+        super().__init__(rect=rect, class_name="android.widget.LinearLayout")
 
 
 class RecordingTime:
@@ -140,7 +111,7 @@ def recorded_sleeps(monkeypatch) -> RecordingTime:
 
 
 def test_human_double_click_prefers_the_driver_pointer_batch():
-    driver = FakeDriver(double_tap_supported=True)
+    driver = FakeUIDriver(double_tap_supported=True)
     HumanizedGestureExecutor(driver).human_double_click(FakeElement())
 
     assert len(driver.double_taps) == 1
@@ -148,7 +119,7 @@ def test_human_double_click_prefers_the_driver_pointer_batch():
 
 
 def test_human_double_click_falls_back_to_driver_tap_without_pointer_batch(recorded_sleeps):
-    driver = FakeDriver(double_tap_supported=False)
+    driver = FakeUIDriver(double_tap_supported=False)
     HumanizedGestureExecutor(driver).human_double_click(FakeElement())
 
     assert len(driver.taps) == 2, "fallback must emit exactly two taps"
@@ -160,12 +131,14 @@ def test_human_double_click_falls_back_to_driver_tap_without_pointer_batch(recor
 
 def test_human_double_click_falls_back_to_element_click_without_coordinates():
     element = FakeElement(rect=None)
-    HumanizedGestureExecutor(FakeDriver()).human_double_click(element, jitter=False)
+    HumanizedGestureExecutor(FakeUIDriver(double_tap_supported=False)).human_double_click(
+        element, jitter=False
+    )
     assert element.click_count == 2
 
 
 def test_human_double_click_at_point_prefers_the_driver_pointer_batch():
-    driver = FakeDriver(double_tap_supported=True)
+    driver = FakeUIDriver(double_tap_supported=True)
     HumanizedGestureExecutor(driver).human_double_click_at_point(540.0, 1200.0)
 
     assert len(driver.double_taps) == 1
@@ -173,7 +146,7 @@ def test_human_double_click_at_point_prefers_the_driver_pointer_batch():
 
 
 def test_human_double_click_at_point_falls_back_to_sequential_driver_tap(recorded_sleeps):
-    driver = FakeDriver(double_tap_supported=False)
+    driver = FakeUIDriver(double_tap_supported=False)
     HumanizedGestureExecutor(driver).human_double_click_at_point(540.0, 1200.0)
 
     assert len(driver.taps) == 2
@@ -184,7 +157,7 @@ def test_human_double_click_at_point_falls_back_to_sequential_driver_tap(recorde
 
 
 def test_human_double_click_keeps_inter_tap_interval_inside_android_window():
-    driver = FakeDriver(double_tap_supported=True)
+    driver = FakeUIDriver(double_tap_supported=True)
     HumanizedGestureExecutor(driver).human_double_click(FakeElement(), interval_range=(0.12, 0.18))
 
     (_x, _y, pause) = driver.double_taps[0]
@@ -193,7 +166,7 @@ def test_human_double_click_keeps_inter_tap_interval_inside_android_window():
 
 
 def test_human_double_click_fallback_interval_stays_inside_android_window(recorded_sleeps):
-    driver = FakeDriver()
+    driver = FakeUIDriver(double_tap_supported=False)
     HumanizedGestureExecutor(driver).human_double_click(FakeElement(), interval_range=(0.12, 0.18))
 
     inter_tap = recorded_sleeps.sleeps[0]
@@ -202,7 +175,7 @@ def test_human_double_click_fallback_interval_stays_inside_android_window(record
 
 
 def test_human_double_click_clamps_interval_above_android_double_tap_window(recorded_sleeps):
-    HumanizedGestureExecutor(FakeDriver()).human_double_click(
+    HumanizedGestureExecutor(FakeUIDriver(double_tap_supported=False)).human_double_click(
         FakeElement(), interval_range=(0.9, 1.4)
     )
 
@@ -211,7 +184,7 @@ def test_human_double_click_clamps_interval_above_android_double_tap_window(reco
 
 
 def test_human_double_click_jitter_stays_inside_element_bounds():
-    driver = FakeDriver()
+    driver = FakeUIDriver(double_tap_supported=False)
     for _ in range(25):
         HumanizedGestureExecutor(driver).human_double_click(FakeElement())
 
@@ -225,7 +198,7 @@ def test_human_double_click_jitter_stays_inside_element_bounds():
 
 
 def test_human_double_click_at_point_jitter_is_bounded():
-    driver = FakeDriver()
+    driver = FakeUIDriver(double_tap_supported=False)
     for _ in range(25):
         HumanizedGestureExecutor(driver).human_double_click_at_point(540.0, 1200.0, jitter_px=3.0)
 
@@ -238,7 +211,9 @@ def test_human_double_click_at_point_jitter_is_bounded():
 
 def test_human_double_click_emits_debug_telemetry(caplog):
     with caplog.at_level(logging.DEBUG, logger=UI_LOGGER):
-        HumanizedGestureExecutor(FakeDriver()).human_double_click(FakeElement())
+        HumanizedGestureExecutor(FakeUIDriver(double_tap_supported=False)).human_double_click(
+            FakeElement()
+        )
 
     records = [r for r in caplog.records if r.name == UI_LOGGER]
     assert records, "double-click must emit UI debug telemetry"
@@ -250,7 +225,7 @@ def test_human_double_click_emits_debug_telemetry(caplog):
 
 
 def test_human_double_click_is_a_noop_without_driver_or_element():
-    driver = FakeDriver()
+    driver = FakeUIDriver(double_tap_supported=False)
     HumanizedGestureExecutor(driver).human_double_click(None)
     HumanizedGestureExecutor(None).human_double_click(FakeElement())
     HumanizedGestureExecutor(None).human_double_click_at_point(540.0, 1200.0)
@@ -261,13 +236,15 @@ def test_human_double_click_is_a_noop_without_driver_or_element():
 
 def test_human_type_clears_and_types():
     element = FakeElement()
-    HumanizedGestureExecutor(FakeDriver()).human_type(element, "hello", clear_first=True)
+    HumanizedGestureExecutor(FakeUIDriver(double_tap_supported=False)).human_type(
+        element, "hello", clear_first=True
+    )
     assert element.cleared is True
     assert element.typed_text == "hello"
 
 
 def test_human_swipe_uses_bezier_endpoints():
-    driver = FakeDriver()
+    driver = FakeUIDriver(double_tap_supported=False)
     HumanizedGestureExecutor(driver).human_swipe(Point(100.0, 500.0), Point(100.0, 100.0))
     assert driver.swipes
     x1, y1, x2, y2, _duration = driver.swipes[0]

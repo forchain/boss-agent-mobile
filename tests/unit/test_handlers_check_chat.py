@@ -25,11 +25,13 @@ from _chat_triage_harness import (
     scripted_pages,
     throwaway_config,
 )
+from _feed_harness import build_triage_world
 
 from boss_agent.adapters.inbound.worker.config import WorkerConfig
 from boss_agent.adapters.inbound.worker.context import WorkerContext
 from boss_agent.adapters.inbound.worker.handlers.check_chat import CheckChatHandler
 from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
+from boss_agent.adapters.outbound.config.locator_registry import YamlLocatorRegistry
 from boss_agent.adapters.outbound.config.screening_config import (
     ScreeningConfigBlacklistSink,
     load_screening_policy,
@@ -38,7 +40,6 @@ from boss_agent.adapters.outbound.device.pages.chat_adapters import (
     ChatActorAdapter,
     CommunicationListAdapter,
 )
-from boss_agent.adapters.outbound.device.pages.chat_bundle import build_triage_world
 from boss_agent.adapters.outbound.device.pages.communication import CommunicationListPage
 from boss_agent.core.chat.domain.rejection import (
     DEFAULT_REJECTION_REPLY_TEXT,
@@ -47,6 +48,8 @@ from boss_agent.core.chat.domain.rejection import (
 from boss_agent.core.chat.interfaces.device import TriagePages
 from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
 from boss_agent.core.task.domain.models import TaskStatus, TaskType
+
+_LOCATORS = YamlLocatorRegistry()
 
 
 @pytest.fixture
@@ -210,7 +213,7 @@ async def test_the_classifier_client_is_resolved_at_the_edge(broker, context, po
         "confidence": 0.9,
         "rationale": "面试邀约",
     }
-    monkeypatch.setattr(composition, "create_llm_client", lambda: llm_client)
+    monkeypatch.setattr(composition, "create_llm_client", lambda **_kwargs: llm_client)
     monkeypatch.setattr(composition, "PocketBaseTaskBroker", MagicMock())
     monkeypatch.setattr(composition, "build_triage_world", scripted_pages(harness))
     monkeypatch.setattr(
@@ -276,7 +279,7 @@ async def test_handler_processes_single_card_through_the_real_page_object(broker
     # Only the chat is scripted: the 仅沟通 list stays the real page object reading
     # the mock hierarchy above.
     pages = lambda driver: TriagePages(  # noqa: E731 - a one-line injected seam
-        list_reader=CommunicationListAdapter(CommunicationListPage(driver)),
+        list_reader=CommunicationListAdapter(CommunicationListPage(driver, _LOCATORS)),
         chat_actor=ChatActorAdapter(chat_double),
     )
     handler = make_handler(

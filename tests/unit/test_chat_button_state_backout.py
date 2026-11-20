@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from _card_fixtures import located
+from _feed_harness import build_feed_device_world
 
 from boss_agent.adapters.inbound.worker.config import WorkerConfig
 from boss_agent.adapters.inbound.worker.context import WorkerContext
@@ -21,14 +22,16 @@ from boss_agent.adapters.inbound.worker.daemon import AutomationWorker
 from boss_agent.adapters.inbound.worker.handlers.auto_apply import AutoApplyHandler
 from boss_agent.adapters.inbound.worker.handlers.scrape_jobs import ScrapeJobsHandler
 from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
+from boss_agent.adapters.outbound.config.locator_registry import YamlLocatorRegistry
 from boss_agent.adapters.outbound.config.settings import load_feed_config_defaults
-from boss_agent.adapters.outbound.device.pages.feed_bundle import build_feed_device_world
 from boss_agent.adapters.outbound.device.pages.job_detail import JobDetailPage
 from boss_agent.core.job.domain.job_entities import JobCardBrief
 from boss_agent.core.job.use_cases.screening import CandidateScreener
 from boss_agent.core.shared.enums import ChatButtonState
 from boss_agent.core.shared.identifier_helpers import classify_chat_button
 from boss_agent.core.task.domain.models import TaskStatus, TaskType
+
+_LOCATORS = YamlLocatorRegistry()
 
 
 def _scrape_handler(broker, llm_client=None) -> ScrapeJobsHandler:
@@ -103,7 +106,7 @@ def _mock_driver_with_button(text: str, enabled: bool = True) -> MagicMock:
 
 def test_job_detail_page_reads_chat_button_state():
     """JobDetailPage.get_chat_button_state must read the btn_chat widget text."""
-    page = JobDetailPage(_mock_driver_with_button("继续沟通"))
+    page = JobDetailPage(_mock_driver_with_button("继续沟通"), _LOCATORS)
 
     assert page.get_chat_button_state() == ChatButtonState.COMMUNICATED
 
@@ -114,7 +117,7 @@ def test_job_detail_page_reports_unknown_without_button():
     driver.get_window_size.return_value = {"width": 1080, "height": 2400}
     driver.find_elements.return_value = []
 
-    assert JobDetailPage(driver).get_chat_button_state() == ChatButtonState.UNKNOWN
+    assert JobDetailPage(driver, _LOCATORS).get_chat_button_state() == ChatButtonState.UNKNOWN
 
 
 @pytest.fixture

@@ -85,6 +85,29 @@ def _package_for_file(path: Path) -> str:
     return ".".join(("boss_agent", *rel_parent.parts))
 
 
+def _imported_modules(source: str, package: str) -> list[str]:
+    """Every absolute module name imported by ``source``, relative imports resolved."""
+    modules: list[str] = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            modules.extend(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            modules.extend(_resolve_import_targets(node, package))
+    return modules
+
+
+def test_domain_layers_never_import_application_use_cases_or_ports() -> None:
+    """Domain depends on nothing in Application: no Use Case and no Port may be imported."""
+    offenders = [
+        f"{path.relative_to(REPO_ROOT)}: {module}"
+        for path in sorted(CORE_ROOT.glob("*/domain/*.py"))
+        for module in _imported_modules(path.read_text(encoding="utf-8"), _package_for_file(path))
+        if {"use_cases", "interfaces"} & set(module.split("."))
+    ]
+
+    assert offenders == [], "a domain module imports an application layer: " + "; ".join(offenders)
+
+
 def test_core_imports_only_stdlib_and_its_own_tree() -> None:
     """The whole core package points inward; adapters and frameworks are out of reach."""
     offenders = [

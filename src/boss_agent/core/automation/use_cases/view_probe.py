@@ -7,9 +7,9 @@ Presence checks for a declarative ``ViewDescriptor``, kept off the value object.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
 
 from ..domain.locators import ViewDescriptor
+from ..interfaces.ui_driver import UIDriverPort
 from .wait import wait_until
 
 
@@ -18,7 +18,7 @@ class ViewPresenceChecker:
 
     def __init__(
         self,
-        driver: Any,
+        driver: UIDriverPort | None,
         *,
         clock: Callable[[], float] | None = None,
         sleep: Callable[[float], None] | None = None,

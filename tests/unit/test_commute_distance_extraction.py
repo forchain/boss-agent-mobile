@@ -14,14 +14,17 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from boss_agent.adapters.memory.automation import InMemoryLocatorStore
 from boss_agent.adapters.outbound.device.pages.job_detail import JobDetailPage
 from boss_agent.core.job.domain.job_entities import JobPosting
+
+_LOCATORS = InMemoryLocatorStore()
 
 
 def _page(locator_for_distance=None, scroll_hits: int = 0) -> JobDetailPage:
     """Build a JobDetailPage whose distance widget appears after N scrolls."""
     mock_driver = MagicMock()
-    page = JobDetailPage(driver=mock_driver)
+    page = JobDetailPage(driver=mock_driver, locator_registry=_LOCATORS)
     page._get_window_size = MagicMock(return_value={"width": 1080, "height": 2400})
     page.gestures.human_swipe = MagicMock()
     page._scroll_page_up = MagicMock()
@@ -157,7 +160,7 @@ def _bottom_limited_page(bottom_after_swipes: int, freeze_offset: float = -20.0)
     Mirrors a device at the end of a long expanded JD: the description anchor keeps
     reporting the same screen position once the container is fully scrolled.
     """
-    page = JobDetailPage(driver=MagicMock())
+    page = JobDetailPage(driver=MagicMock(), locator_registry=_LOCATORS)
     page._get_window_size = MagicMock(return_value={"width": 1080, "height": 2400})
     page.gestures.human_swipe = MagicMock()
 
@@ -259,7 +262,7 @@ def test_extract_job_posting_populates_distance_fields_when_probing_enabled(monk
     monkeypatch.setattr(time, "sleep", lambda s: None)
 
     mock_driver = MagicMock()
-    page = JobDetailPage(driver=mock_driver)
+    page = JobDetailPage(driver=mock_driver, locator_registry=_LOCATORS)
     page.wait_for_key = MagicMock(return_value=True)
     page._get_window_size = MagicMock(return_value={"width": 1080, "height": 2400})
 
@@ -298,7 +301,7 @@ def test_extract_job_posting_skips_probing_when_disabled(monkeypatch):
     monkeypatch.setattr(time, "sleep", lambda s: None)
 
     mock_driver = MagicMock()
-    page = JobDetailPage(driver=mock_driver)
+    page = JobDetailPage(driver=mock_driver, locator_registry=_LOCATORS)
     page.wait_for_key = MagicMock(return_value=True)
     page._get_window_size = MagicMock(return_value={"width": 1080, "height": 2400})
     page._scroll_page_up = MagicMock()
@@ -333,7 +336,7 @@ def _probing_detail_page(distance_text: str | None = None) -> tuple[JobDetailPag
     ``distance_text`` puts the bottom commute widget on the screen; ``_scroll_page_up``
     stays a mock so a test can assert how much gesture budget the probe actually spent.
     """
-    page = JobDetailPage(driver=MagicMock())
+    page = JobDetailPage(driver=MagicMock(), locator_registry=_LOCATORS)
     page.wait_for_key = MagicMock(return_value=True)
     page._get_window_size = MagicMock(return_value={"width": 1080, "height": 2400})
     page._scroll_page_up = MagicMock()
@@ -364,7 +367,7 @@ def test_extract_job_posting_honours_relaxed_probe_budget(monkeypatch):
 
     monkeypatch.setattr(time, "sleep", lambda s: None)
 
-    page = JobDetailPage(driver=MagicMock())
+    page = JobDetailPage(driver=MagicMock(), locator_registry=_LOCATORS)
     page.wait_for_key = MagicMock(return_value=True)
     page._get_window_size = MagicMock(return_value={"width": 1080, "height": 2400})
 

@@ -42,6 +42,11 @@ class TracedLLMDecisionClient(LLMDecisionClient):
         self._traced_chat = traceable(name=f"{prefix}.chat_completion", run_type="llm")(
             self._chat_completion
         )
+        # The wrapped JSON call performs the model round-trip, so it nests the same
+        # ``llm`` span a direct ``chat_completion`` call would emit.
+        self._traced_inner_chat = traceable(name=f"{prefix}.chat_completion", run_type="llm")(
+            self._chat_completion_via_json
+        )
         self._traced_chat_json = traceable(name=f"{prefix}.chat_completion_json", run_type="chain")(
             self._chat_completion_json
         )
@@ -75,7 +80,7 @@ class TracedLLMDecisionClient(LLMDecisionClient):
         self._record_metadata()
         return result
 
-    def _chat_completion_json(
+    def _chat_completion_via_json(
         self,
         messages: list[dict[str, str]],
         temperature: float | None = None,
@@ -92,6 +97,18 @@ class TracedLLMDecisionClient(LLMDecisionClient):
         )
         self._record_metadata()
         return result
+
+    def _chat_completion_json(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        response_format: dict[str, Any] | None = None,
+        extra_payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return self._traced_inner_chat(
+            messages, temperature, max_tokens, response_format, extra_payload
+        )
 
     def chat_completion(
         self,

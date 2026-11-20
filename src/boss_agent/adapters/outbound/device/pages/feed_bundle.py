@@ -14,8 +14,8 @@ The page classes are imported from the submodule that owns each one (never the f
 
 from __future__ import annotations
 
-from typing import Any
-
+from boss_agent.core.automation.interfaces.locator_store import LocatorStorePort
+from boss_agent.core.automation.interfaces.ui_driver import UIDriverPort
 from boss_agent.core.job.interfaces.device import FeedDeviceWorld
 
 from .communication import ChatPage
@@ -24,7 +24,9 @@ from .job_feed import FilterDialogPage, IndustryFilterDialogPage, JobListPage, S
 from .system import StartupDialogPage
 
 
-def build_feed_device_world(driver: Any, locator_store: Any = None) -> FeedDeviceWorld:
+def build_feed_device_world(
+    driver: UIDriverPort, locator_store: LocatorStorePort
+) -> FeedDeviceWorld:
     """Compose the page bundle one feed run drives from a live driver session."""
     return FeedDeviceWorld(
         startup_page=StartupDialogPage(driver, locator_registry=locator_store),

@@ -6,9 +6,8 @@ Prioritized orchestration of screen interceptors.
 
 from __future__ import annotations
 
-from typing import Any
-
 from ..interfaces.interceptor import ScreenInterceptorPort
+from ..interfaces.ui_driver import UIDriverPort
 
 
 class InterceptorRegistry:
@@ -20,7 +19,7 @@ class InterceptorRegistry:
     def register(self, interceptor: ScreenInterceptorPort) -> None:
         self.interceptors.append(interceptor)
 
-    def process_all(self, driver: Any) -> bool:
+    def process_all(self, driver: UIDriverPort) -> bool:
         """Scan and trigger the first matching interceptor."""
         for interceptor in self.interceptors:
             if interceptor.can_handle(driver):

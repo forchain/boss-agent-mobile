@@ -12,6 +12,7 @@ current attempt and marks exhaustion instead of promising another retry.
 from unittest.mock import MagicMock, patch
 
 import pytest
+from _feed_harness import build_feed_device_world
 
 from boss_agent.adapters.inbound.worker.config import WorkerConfig
 from boss_agent.adapters.inbound.worker.context import WorkerContext
@@ -19,7 +20,6 @@ from boss_agent.adapters.inbound.worker.handlers.auto_apply import AutoApplyHand
 from boss_agent.adapters.inbound.worker.handlers.scrape_jobs import ScrapeJobsHandler
 from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
 from boss_agent.adapters.outbound.config.settings import load_feed_config_defaults
-from boss_agent.adapters.outbound.device.pages.feed_bundle import build_feed_device_world
 from boss_agent.adapters.outbound.device.pages.job_feed import JobListPage, SearchPage
 from boss_agent.core.job.use_cases.screening import CandidateScreener
 from boss_agent.core.task.domain.models import TaskType

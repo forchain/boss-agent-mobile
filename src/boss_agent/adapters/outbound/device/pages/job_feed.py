@@ -116,7 +116,7 @@ class JobListPage(BaseBossPage):
            up to ``max_back_attempts`` times, so a deep subpage unwinds quickly
            instead of scanning every dialog/detail/chat close button in the tree.
         """
-        search_page = SearchPage(self.driver)
+        search_page = SearchPage(self.driver, self.locators)
 
         def try_enter() -> bool:
             if search_page.is_search_page():

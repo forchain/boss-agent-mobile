@@ -20,6 +20,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from boss_agent.adapters.outbound.config.locator_registry import YamlLocatorRegistry
 from boss_agent.adapters.outbound.device.pages.job_detail import JobDetailPage
 from boss_agent.core.job.domain.job_entities import JobLocationLine
 from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
@@ -30,6 +31,9 @@ FULL_LINE = "上海·浦东新区·张江(近13/16号线华夏中路地铁站)"
 # --------------------------------------------------------------------------- #
 # Parsing the line
 # --------------------------------------------------------------------------- #
+_LOCATORS = YamlLocatorRegistry()
+
+
 def test_full_line_splits_into_city_district_quarter_lines_and_station():
     parsed = JobLocationLine.parse(FULL_LINE)
 
@@ -91,7 +95,7 @@ def test_locators_register_the_detail_page_location_line():
 
 def _page_with_line(line_text, probe_result=(22.0, "距离家庭住址22千米")) -> JobDetailPage:
     """A JobDetailPage whose header carries ``line_text`` and nothing else worth finding."""
-    page = JobDetailPage(driver=MagicMock())
+    page = JobDetailPage(driver=MagicMock(), locator_registry=_LOCATORS)
     page._get_window_size = MagicMock(return_value={"width": 1080, "height": 2400})
     page.gestures.human_swipe = MagicMock()
     page._scroll_page_up = MagicMock()

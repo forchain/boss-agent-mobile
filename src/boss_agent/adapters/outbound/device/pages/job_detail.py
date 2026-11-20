@@ -15,6 +15,8 @@ from typing import Any
 
 from boss_agent.core.automation.domain.geometry import Point, calculate_probe_coordinate
 from boss_agent.core.automation.interfaces.locator_store import LocatorStorePort
+from boss_agent.core.automation.interfaces.ui_driver import UIDriverPort
+from boss_agent.core.automation.use_cases.gestures import HumanizedGestureExecutor
 from boss_agent.core.job.domain.job_entities import JobLocationLine, JobPosting
 from boss_agent.core.shared.enums import ChatButtonState
 from boss_agent.core.shared.identifier_helpers import classify_chat_button, jd_is_truncated
@@ -54,8 +56,14 @@ COMMUTE_PROBE_STALLED_SWIPES = 2
 class JobDetailPage(BaseBossPage):
     """Extracts job posting details and interacts with the job detail screen."""
 
-    def __init__(self, driver: Any, locator_registry: LocatorStorePort | None = None):
-        super().__init__(driver, locator_registry)
+    def __init__(
+        self,
+        driver: UIDriverPort,
+        locator_registry: LocatorStorePort,
+        *,
+        gestures: HumanizedGestureExecutor | None = None,
+    ):
+        super().__init__(driver, locator_registry, gestures=gestures)
         self._current_description: str = ""
 
     def extract_commute_distance(

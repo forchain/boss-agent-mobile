@@ -8,6 +8,7 @@ from boss_agent.adapters.inbound.worker.context import WorkerContext
 from boss_agent.adapters.inbound.worker.handlers.base import BaseTaskHandler, HandlerResult
 from boss_agent.adapters.outbound.device.pages.job_feed import JobListPage
 from boss_agent.adapters.outbound.device.pages.system import LoginPage, StartupDialogPage
+from boss_agent.core.automation.interfaces.locator_store import LocatorStorePort
 from boss_agent.core.shared.enums import AuthStatus
 from boss_agent.core.task.domain.models import AutomationTask, TaskType
 from boss_agent.core.task.interfaces.broker import BaseTaskBroker
@@ -16,7 +17,7 @@ from boss_agent.core.task.interfaces.broker import BaseTaskBroker
 class CheckLoginHandler(BaseTaskHandler):
     """Executes login readiness and session persistence check."""
 
-    def __init__(self, locator_store: object | None = None) -> None:
+    def __init__(self, locator_store: LocatorStorePort) -> None:
         self._locator_store = locator_store
 
     @property

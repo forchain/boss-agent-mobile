@@ -61,7 +61,7 @@ from boss_agent.adapters.outbound.device.appium.interceptors import AndroidSyste
 from boss_agent.adapters.outbound.device.pages.chat_bundle import build_triage_world
 from boss_agent.adapters.outbound.device.pages.feed_bundle import build_feed_device_world
 from boss_agent.adapters.outbound.device.takeover import TakeoverHandler
-from boss_agent.adapters.outbound.llm.config import LLMConfig
+from boss_agent.adapters.outbound.llm.config import LLMConfig, configure_langsmith
 from boss_agent.adapters.outbound.llm.llm_config import create_llm_client, load_llm_config
 from boss_agent.adapters.outbound.llm.tracing import (
     TracedCandidateScreener,
@@ -80,7 +80,9 @@ from boss_agent.adapters.outbound.pocketbase.saved_search_store import (
 from boss_agent.adapters.outbound.resume.graph import run_resume_lifecycle_graph
 from boss_agent.adapters.outbound.resume.memory import ResumeMemoryManager, ResumeTextExtractor
 from boss_agent.adapters.shared.prompts import load_prompt_or_default
+from boss_agent.core.automation.interfaces.device_session import DeviceSessionPort
 from boss_agent.core.automation.interfaces.locator_store import LocatorStorePort
+from boss_agent.core.automation.interfaces.ui_driver import UIDriverPort
 from boss_agent.core.automation.use_cases.interceptors import InterceptorRegistry
 from boss_agent.core.candidate.domain.candidate_profile import (
     CandidateProfile,
@@ -123,6 +125,13 @@ def _is_masked_key(value: str | None) -> bool:
 def _is_missing_key(value: str | None) -> bool:
     """Whether a configured key is absent or blank, without judging a masked value."""
     return not value or not str(value).strip()
+
+
+def _configured_llm_client(config: LLMConfig | None = None) -> LLMDecisionClient:
+    """Configure tracing, then build the client: the environment write is a root concern."""
+    cfg = config if config is not None else load_llm_config()
+    configure_langsmith(cfg)
+    return create_llm_client(config=cfg)
 
 
 def build_llm_client(
@@ -186,13 +195,13 @@ def build_llm_client(
                     temperature=temperature,
                     **overrides,
                 )
-                return create_llm_client(config=llm_cfg)
+                return _configured_llm_client(llm_cfg)
             if allow_config_path:
-                return create_llm_client(config=load_llm_config(llm_config_arg))
+                return _configured_llm_client(load_llm_config(llm_config_arg))
         except Exception as e:
             sys.stderr.write(f"Warning: Failed to parse custom LLM config ({e}), falling back.\n")
 
-    return create_llm_client()
+    return _configured_llm_client()
 
 
 def build_matching_service(
@@ -208,7 +217,7 @@ def build_matching_service(
         else load_prompt_or_default(load_greeting_prompt)
     )
     return TracedJobMatchGreetingService(
-        llm_client=llm_client or create_llm_client(),
+        llm_client=llm_client or build_llm_client(),
         candidate_profile=candidate_profile,
         greeting_prompt=resolved_greeting,
     )
@@ -223,7 +232,7 @@ def build_screener(
 ) -> TracedCandidateScreener:
     """The traced screener; prompt documents are injected, never read by core."""
     return build_traced_screener(
-        llm_client=llm_client or create_llm_client(),
+        llm_client=llm_client or build_llm_client(),
         matching_service=matching_service,
         greeting_prompt=greeting_prompt,
         screening_prompt=screening_prompt,
@@ -249,17 +258,18 @@ def resolve_screening_prompt(explicit_prompt: str | None = None) -> str | None:
 # ------------------------------------------------------------------- worker daemon
 
 
-def _driver_factory(config: WorkerConfig) -> Any:
-    def create() -> Any:
+def _session_factory(config: WorkerConfig) -> Callable[[], DeviceSessionPort]:
+    def create() -> DeviceSessionPort:
         logging.getLogger("worker_main").info(
             "Initializing Appium driver session for device %s", config.device_id
         )
-        driver_cfg = DriverConfig(
-            server_url=config.appium_url,
-            app_package=BOSS_APP_PACKAGE,
-            extra_capabilities={"udid": config.device_id},
+        return AppiumSession(
+            DriverConfig(
+                server_url=config.appium_url,
+                app_package=BOSS_APP_PACKAGE,
+                extra_capabilities={"udid": config.device_id},
+            )
         )
-        return AppiumSession(driver_cfg).start()
 
     return create
 
@@ -290,7 +300,7 @@ def build_worker(
         enable_scheduler=resolve_enable_scheduler(explicit=enable_scheduler),
     )
     broker = PocketBaseTaskBroker(base_url=resolved_pb_url)
-    context = WorkerContext(config=config, driver_factory=_driver_factory(config))
+    context = WorkerContext(config=config, session_factory=_session_factory(config))
 
     chat_acknowledgment = resolve_chat_acknowledgment_settings()
     # One gate shared by both services in this process, so the integrated scheduler
@@ -300,7 +310,7 @@ def build_worker(
         enabled=config.run_cleanup_on_startup,
         acknowledgment=chat_acknowledgment,
     )
-    llm_client = create_llm_client()
+    llm_client = build_llm_client()
     screener = build_screener(
         llm_client=llm_client,
         greeting_prompt=load_prompt_or_default(load_greeting_prompt),
@@ -401,7 +411,7 @@ def build_interceptor_registry(locator_store: LocatorStorePort) -> InterceptorRe
     return InterceptorRegistry([AndroidSystemDialogInterceptor(locator_store)])
 
 
-def build_device_session(*, device_udid: str, server_url: str) -> AppiumSession:
+def build_device_session(*, device_udid: str, server_url: str) -> DeviceSessionPort:
     """A not-yet-started Appium session configured for the Boss 直聘 app."""
     return AppiumSession(
         DriverConfig(
@@ -426,7 +436,7 @@ def build_device_session(*, device_udid: str, server_url: str) -> AppiumSession:
 
 
 def build_takeover_handler(
-    driver: Any,
+    driver: UIDriverPort,
     *,
     auto_confirm_for_test: bool = False,
     locator_store: LocatorStorePort | None = None,
@@ -447,8 +457,8 @@ def build_resume_memory_manager(
     # Resume structuring keeps its pre-refactor output ceiling at the composition root:
     # the token budget is a wire concern, so the core Use Case no longer names it while
     # ``scripts/parse_resume.py`` and the verification refresh stay on the same budget.
-    client = llm_client or create_llm_client(
-        config=replace(load_llm_config(), max_tokens=RESUME_PARSE_DEFAULT_MAX_TOKENS)
+    client = llm_client or _configured_llm_client(
+        replace(load_llm_config(), max_tokens=RESUME_PARSE_DEFAULT_MAX_TOKENS)
     )
     store = candidate_memory or resolve_candidate_memory_store()
     return ResumeMemoryManager(

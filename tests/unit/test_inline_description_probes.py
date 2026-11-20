@@ -2,9 +2,12 @@
 
 from unittest.mock import MagicMock, patch
 
+from boss_agent.adapters.memory.automation import InMemoryLocatorStore
 from boss_agent.adapters.outbound.device.pages.job_detail import JobDetailPage
 from boss_agent.core.automation.domain.geometry import calculate_probe_coordinate
 from boss_agent.core.automation.use_cases.gestures import HumanizedGestureExecutor
+
+_LOCATORS = InMemoryLocatorStore()
 
 
 def test_calculate_probe_coordinate_bottom_left_percentage_and_pixels():
@@ -64,7 +67,7 @@ def test_expand_description_skips_when_not_truncated():
     mock_driver = MagicMock()
     mock_driver.find_elements.return_value = []
 
-    page = JobDetailPage(driver=mock_driver)
+    page = JobDetailPage(driver=mock_driver, locator_registry=_LOCATORS)
 
     mock_desc = MagicMock()
     mock_desc.text = "岗位职责: 1. 负责AI工具链研发。任职资格: 1. 熟练使用Python。"
@@ -91,7 +94,7 @@ def test_expand_description_early_stopping_on_first_hit(monkeypatch):
     monkeypatch.setattr(time, "sleep", lambda s: None)
 
     mock_driver = MagicMock()
-    page = JobDetailPage(driver=mock_driver)
+    page = JobDetailPage(driver=mock_driver, locator_registry=_LOCATORS)
 
     mock_desc = MagicMock()
     mock_desc.text = "岗位职责: 1. 负责AI工具链研发... 查看更多"
@@ -121,7 +124,7 @@ def test_expand_description_multi_point_retry_until_success(monkeypatch):
     monkeypatch.setattr(time, "sleep", lambda s: None)
 
     mock_driver = MagicMock()
-    page = JobDetailPage(driver=mock_driver)
+    page = JobDetailPage(driver=mock_driver, locator_registry=_LOCATORS)
 
     mock_desc = MagicMock()
     mock_desc.text = "岗位职责: 1. 负责AI工具链研发... 查看更多"
@@ -156,7 +159,7 @@ def test_expand_description_scrolls_when_bottom_obstructed(monkeypatch):
     monkeypatch.setattr(time, "sleep", lambda s: None)
 
     mock_driver = MagicMock()
-    page = JobDetailPage(driver=mock_driver)
+    page = JobDetailPage(driver=mock_driver, locator_registry=_LOCATORS)
     page._get_window_size = MagicMock(return_value={"width": 1080, "height": 2400})
 
     mock_desc = MagicMock()
@@ -204,7 +207,7 @@ def test_expand_description_scrolls_to_locate_desc_when_below_fold(monkeypatch):
     monkeypatch.setattr(time, "sleep", lambda s: None)
 
     mock_driver = MagicMock()
-    page = JobDetailPage(driver=mock_driver)
+    page = JobDetailPage(driver=mock_driver, locator_registry=_LOCATORS)
     page._get_window_size = MagicMock(return_value={"width": 1080, "height": 2400})
 
     mock_desc = MagicMock()
@@ -242,7 +245,7 @@ def test_expand_description_logs_error_when_expansion_fails(monkeypatch):
     monkeypatch.setattr(time, "sleep", lambda s: None)
 
     mock_driver = MagicMock()
-    page = JobDetailPage(driver=mock_driver)
+    page = JobDetailPage(driver=mock_driver, locator_registry=_LOCATORS)
     page._get_window_size = MagicMock(return_value={"width": 1080, "height": 2400})
 
     mock_desc = MagicMock()
@@ -273,7 +276,7 @@ def test_extract_job_posting_logs_error_if_desc_still_contains_expand_text(monke
     monkeypatch.setattr(time, "sleep", lambda s: None)
 
     mock_driver = MagicMock()
-    page = JobDetailPage(driver=mock_driver)
+    page = JobDetailPage(driver=mock_driver, locator_registry=_LOCATORS)
     page.wait_for_key = MagicMock(return_value=True)
 
     mock_title = MagicMock()
@@ -321,7 +324,7 @@ def test_extract_job_posting_preserves_headers_when_scrolled_offscreen(monkeypat
     monkeypatch.setattr(time, "sleep", lambda s: None)
 
     mock_driver = MagicMock()
-    page = JobDetailPage(driver=mock_driver)
+    page = JobDetailPage(driver=mock_driver, locator_registry=_LOCATORS)
     page.wait_for_key = MagicMock(return_value=True)
     page._get_window_size = MagicMock(return_value={"width": 1080, "height": 2400})
 
@@ -391,7 +394,7 @@ def test_extract_job_posting_tolerates_missing_headers_if_desc_present(monkeypat
     monkeypatch.setattr(time, "sleep", lambda s: None)
 
     mock_driver = MagicMock()
-    page = JobDetailPage(driver=mock_driver)
+    page = JobDetailPage(driver=mock_driver, locator_registry=_LOCATORS)
     page.wait_for_key = MagicMock(return_value=True)
 
     mock_desc = MagicMock()
@@ -418,7 +421,7 @@ def test_expand_description_explicit_btn_updates_current_description(monkeypatch
     monkeypatch.setattr(time, "sleep", lambda s: None)
 
     mock_driver = MagicMock()
-    page = JobDetailPage(driver=mock_driver)
+    page = JobDetailPage(driver=mock_driver, locator_registry=_LOCATORS)
 
     mock_btn = MagicMock()
     mock_desc = MagicMock()
@@ -454,7 +457,7 @@ def test_expand_description_falls_back_to_probing_when_expand_btn_does_not_expan
     monkeypatch.setattr(time, "sleep", lambda s: None)
 
     mock_driver = MagicMock()
-    page = JobDetailPage(driver=mock_driver)
+    page = JobDetailPage(driver=mock_driver, locator_registry=_LOCATORS)
     page._get_window_size = MagicMock(return_value={"width": 1080, "height": 2400})
 
     mock_btn = MagicMock()
@@ -503,7 +506,7 @@ def test_expand_description_falls_back_and_scrolls_when_obstructed(monkeypatch):
     monkeypatch.setattr(time, "sleep", lambda s: None)
 
     mock_driver = MagicMock()
-    page = JobDetailPage(driver=mock_driver)
+    page = JobDetailPage(driver=mock_driver, locator_registry=_LOCATORS)
     page._get_window_size = MagicMock(return_value={"width": 1080, "height": 2400})
 
     mock_btn = MagicMock()

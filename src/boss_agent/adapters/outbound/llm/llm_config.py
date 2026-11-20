@@ -1,18 +1,17 @@
 """
 boss_agent.adapters.outbound.llm.llm_config
 ===========================================
-The Configuration Realm's LLM section, assembled for the framework's client.
+The Configuration Realm's LLM section, assembled for the protocol clients.
 
-`droid_agent_core` is an app-agnostic framework layer: it must not read this
-application's configuration, and it must not contain this application's name. So the
-LLM realm is resolved *here* and handed over as data.
+The LLM realm is resolved *here* and handed to the clients as data: they must not read
+this application's configuration, and they must not contain its name.
 
-That inversion is what removed the last second defaults table. The framework's client
-used to start from the example *template* and ship `max_tokens=16384` /
-`timeout_sec=300.0` while every other realm shipped `262144` / `120.0`, so a
-config-less run silently used a sixteenth of the documented token ceiling. Now there is
-one table (:mod:`boss_agent.adapters.outbound.config.config_realm`), one chain, and one
-place that joins them.
+That inversion is what removed the last second defaults table. The clients used to
+start from the example *template* and ship `max_tokens=16384` / `timeout_sec=300.0`
+while every other realm shipped `262144` / `120.0`, so a config-less run silently used
+a sixteenth of the documented token ceiling. Now there is one table
+(:mod:`boss_agent.adapters.outbound.config.config_realm`), one chain, and one place
+that joins them.
 """
 
 from __future__ import annotations
@@ -23,7 +22,7 @@ from boss_agent.adapters.outbound.config import config_realm
 from boss_agent.core.shared.llm import LLMDecisionClient
 
 from .anthropic_client import AnthropicChatClient
-from .config import LLMConfig, configure_langsmith
+from .config import LLMConfig
 from .openai_client import OpenAIChatClient
 from .tracing import TracedLLMDecisionClient
 
@@ -89,8 +88,6 @@ def create_llm_client(
     protocol is currently configured.
     """
     cfg = config if config is not None else load_llm_config(config_path=config_path)
-    # Tracing is wired here, at the adapter factory, never inside the client itself.
-    configure_langsmith(cfg)
     return TracedLLMDecisionClient(client_class_for_provider(cfg.provider)(cfg))
 
 

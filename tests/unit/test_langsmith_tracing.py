@@ -14,11 +14,13 @@ from langsmith import traceable
 from langsmith.run_helpers import get_current_run_tree, tracing_context
 from langsmith.run_trees import RunTree
 
+from boss_agent.adapters.outbound.llm.anthropic_client import AnthropicChatClient
 from boss_agent.adapters.outbound.llm.config import LLMConfig, configure_langsmith
 from boss_agent.adapters.outbound.llm.openai_client import OpenAIChatClient
 from boss_agent.adapters.outbound.llm.tracing import (
     TracedCandidateScreener,
     TracedJobMatchGreetingService,
+    TracedLLMDecisionClient,
 )
 from boss_agent.adapters.outbound.resume.memory import ResumeMemoryManager
 from boss_agent.core.job.domain.job_entities import JobCardBrief, JobPosting
@@ -332,6 +334,84 @@ def test_candidate_screener_inherits_caller_tags_and_metadata():
         span = spans[span_name]
         assert "custom-tag-1" in span.tags, f"{span_name} lost the caller tags"
         assert span.metadata["task_id"] == "task-abc-123", f"{span_name} lost the caller metadata"
+
+
+_JSON_TEXT = '{"ok": true}'
+
+_TRACED_CLIENTS = [
+    (
+        OpenAIChatClient,
+        {
+            "choices": [{"message": {"content": _JSON_TEXT}}],
+            "usage": {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5},
+        },
+    ),
+    (
+        AnthropicChatClient,
+        {
+            "content": [{"type": "text", "text": _JSON_TEXT}],
+            "usage": {"input_tokens": 3, "output_tokens": 2},
+        },
+    ),
+]
+
+
+def _traced_client(client_cls):
+    config = LLMConfig(
+        model="test-model",
+        base_url="https://api.test.com/v1",
+        api_key="mock-key",
+    )
+    return TracedLLMDecisionClient(client_cls(config))
+
+
+@pytest.mark.parametrize(("client_cls", "response_json"), _TRACED_CLIENTS)
+def test_traced_client_emits_the_llm_span_for_chat_completion(client_cls, response_json):
+    """The tracing adapter, not the raw client, must emit the ``llm`` span and metadata."""
+    client = _traced_client(client_cls)
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = response_json
+
+    root = _tracing_root()
+    with (
+        tracing_context(parent=root, client=root.client),
+        patch("requests.post", return_value=mock_resp),
+    ):
+        assert client.chat_completion([{"role": "user", "content": "Hello"}]) == _JSON_TEXT
+
+    span = _spans(root)[f"{client_cls.__name__}.chat_completion"]
+    assert span.run_type == "llm"
+    assert span.metadata["model"] == "test-model"
+    assert span.metadata["base_url"] == "https://api.test.com/v1"
+    assert span.metadata["usage"] == response_json["usage"]
+
+
+@pytest.mark.parametrize(("client_cls", "response_json"), _TRACED_CLIENTS)
+def test_traced_client_nests_the_llm_span_under_chat_completion_json(client_cls, response_json):
+    """A JSON call is a ``chain`` span wrapping the model round-trip's ``llm`` child span."""
+    client = _traced_client(client_cls)
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = response_json
+
+    root = _tracing_root()
+    with (
+        tracing_context(parent=root, client=root.client),
+        patch("requests.post", return_value=mock_resp),
+    ):
+        assert client.chat_completion_json([{"role": "user", "content": "Screen JD"}]) == {
+            "ok": True
+        }
+
+    spans = _spans(root)
+    chain = spans[f"{client_cls.__name__}.chat_completion_json"]
+    llm = spans[f"{client_cls.__name__}.chat_completion"]
+    assert chain.run_type == "chain"
+    assert llm.run_type == "llm"
+    assert llm.parent_run_id == chain.id, "the llm span must nest under the JSON chain span"
+    assert llm.metadata["model"] == "test-model"
+    assert llm.metadata["usage"] == response_json["usage"]
 
 
 def test_openai_chat_client_error_propagation():

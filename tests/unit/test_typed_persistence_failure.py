@@ -17,13 +17,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import requests
+from _feed_harness import build_feed_device_world
 from _job_store_harness import FakePocketBaseSession, pocketbase_job_store
 
 from boss_agent.adapters.inbound.worker.context import WorkerContext
 from boss_agent.adapters.inbound.worker.handlers.auto_apply import AutoApplyHandler
 from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
 from boss_agent.adapters.outbound.config.settings import load_feed_config_defaults
-from boss_agent.adapters.outbound.device.pages.feed_bundle import build_feed_device_world
 from boss_agent.adapters.outbound.pocketbase.candidate_memory_store import (
     PocketBaseCandidateMemoryStore,
 )
@@ -312,7 +312,7 @@ async def test_feed_pipeline_logs_degradation_on_quota_transport_error():
         side_effect=TransportError("PocketBase 500 error")
     )
 
-    from boss_agent.adapters.outbound.device.pages.feed_bundle import build_feed_device_world
+    from _feed_harness import build_feed_device_world
 
     pipeline = JobFeedPipeline.for_task(
         broker=broker,

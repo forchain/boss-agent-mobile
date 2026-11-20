@@ -12,8 +12,8 @@ same shape from scripted stand-ins.
 
 from __future__ import annotations
 
-from typing import Any
-
+from boss_agent.core.automation.interfaces.locator_store import LocatorStorePort
+from boss_agent.core.automation.interfaces.ui_driver import UIDriverPort
 from boss_agent.core.chat.interfaces.device import TriagePages
 
 from .chat_adapters import ChatActorAdapter, CommunicationListAdapter
@@ -21,7 +21,7 @@ from .communication import ChatPage, CommunicationListPage
 from .system import StartupDialogPage
 
 
-def build_triage_world(driver: Any, locator_store: Any = None) -> TriagePages:
+def build_triage_world(driver: UIDriverPort, locator_store: LocatorStorePort) -> TriagePages:
     """Compose the device bundle one triage run drives from a live driver session.
 
     The startup dialog is dismissed here, before any page object is handed to a run:

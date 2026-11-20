@@ -16,20 +16,21 @@ import logging
 import random
 import time
 from collections.abc import Callable
-from typing import Any
 
 from ..domain.geometry import (
     TAP_DURATION_MS,
     BézierTouchSynthesizer,
     Point,
+    RandomSource,
     calculate_bounding_box_jitter,
     clamp_double_tap_interval,
 )
+from ..interfaces.ui_driver import UIDriverPort, UIElementPort
 
 ui_logger = logging.getLogger("droid_agent_core.ui")
 
 
-def _describe_element(element: Any) -> str:
+def _describe_element(element: UIElementPort | None) -> str:
     """Compact, non-sensitive element description for UI debug telemetry."""
     if element is None:
         return "None"
@@ -45,14 +46,14 @@ class HumanizedGestureExecutor:
 
     def __init__(
         self,
-        driver: Any = None,
+        driver: UIDriverPort | None = None,
         *,
         sleep: Callable[[float], None] | None = None,
-        rng: Any | None = None,
+        rng: RandomSource | None = None,
     ) -> None:
         self.driver = driver
         self._sleep = sleep
-        self._rng = rng if rng is not None else random
+        self._rng: RandomSource = rng if rng is not None else random
 
     def _pause(self, seconds: float) -> None:
         (self._sleep or time.sleep)(seconds)
@@ -61,7 +62,7 @@ class HumanizedGestureExecutor:
         """Pause execution with a human-like delay."""
         self._pause(self._rng.uniform(min_sec, max_sec))
 
-    def human_click(self, element: Any, jitter: bool = True) -> None:
+    def human_click(self, element: UIElementPort | None, jitter: bool = True) -> None:
         """Perform a humanized click on a mobile element."""
         if not self.driver or not element:
             return
@@ -133,7 +134,7 @@ class HumanizedGestureExecutor:
             self.driver.tap([(target_x, target_y)], duration=dur)
         self.random_sleep(0.1, 0.3)
 
-    def _double_click_element(self, element: Any, interval: float) -> None:
+    def _double_click_element(self, element: UIElementPort, interval: float) -> None:
         """Two sequential ``element.click()`` calls, ``interval`` apart."""
         element.click()
         self._pause(interval)
@@ -164,7 +165,7 @@ class HumanizedGestureExecutor:
 
     def human_double_click(
         self,
-        element: Any,
+        element: UIElementPort | None,
         interval_range: tuple[float, float] = (0.10, 0.22),
         jitter: bool = True,
         duration_ms: tuple[int, int] = TAP_DURATION_MS,
@@ -259,7 +260,9 @@ class HumanizedGestureExecutor:
         )
         self.random_sleep(0.1, 0.3)
 
-    def human_type(self, element: Any, text: str, clear_first: bool = False) -> None:
+    def human_type(
+        self, element: UIElementPort | None, text: str, clear_first: bool = False
+    ) -> None:
         """Type text into an input element with realistic humanized timing."""
         if not element or not text:
             return

@@ -1,7 +1,7 @@
 """
 tests.unit.test_llm_client
 ==========================
-Unit tests for the LLM clients in droid_agent_core — both the OpenAI-compatible
+Unit tests for the LLM clients in boss_agent — both the OpenAI-compatible
 protocol and the native Anthropic Messages protocol — plus the factory dispatch
 that selects between them.
 """

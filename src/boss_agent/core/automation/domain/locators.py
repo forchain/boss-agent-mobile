@@ -111,10 +111,6 @@ def deep_merge_dict(base: dict[str, Any], override: dict[str, Any]) -> dict[str,
     return result
 
 
-#: Backward-compatible private spelling.
-_deep_merge_dict = deep_merge_dict
-
-
 @dataclass(frozen=True)
 class ViewDescriptor:
     """A named screen signature: all required selectors must be present."""

@@ -8,16 +8,19 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from _card_fixtures import located
+from _feed_harness import build_feed_device_world
 
 from boss_agent.adapters.inbound.worker.context import WorkerContext
 from boss_agent.adapters.inbound.worker.handlers.scrape_jobs import ScrapeJobsHandler
 from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
+from boss_agent.adapters.outbound.config.locator_registry import YamlLocatorRegistry
 from boss_agent.adapters.outbound.config.settings import load_feed_config_defaults
-from boss_agent.adapters.outbound.device.pages.feed_bundle import build_feed_device_world
 from boss_agent.core.job.domain.job_entities import JobCardBrief, JobPosting
 from boss_agent.core.job.use_cases.screening import CandidateScreener
 from boss_agent.core.shared.identifier_helpers import compute_job_fingerprint
 from boss_agent.core.task.domain.models import AutomationTask, TaskType
+
+_LOCATORS = YamlLocatorRegistry()
 
 
 def _scrape_handler(broker, llm_client=None) -> ScrapeJobsHandler:
@@ -238,7 +241,7 @@ def test_extract_visible_job_cards_parser():
     mock_card.find_elements.side_effect = mock_find
     mock_driver.find_elements.return_value = [mock_card]
 
-    page = JobListPage(mock_driver)
+    page = JobListPage(mock_driver, _LOCATORS)
     briefs = page.extract_visible_job_cards(max_cards=5)
 
     assert len(briefs) == 1

@@ -18,6 +18,7 @@ from unittest.mock import MagicMock
 import pytest
 from _feed_harness import ScriptedFeed, _card, _detail_page, _pipeline, _posting
 
+from boss_agent.adapters.outbound.config.locator_registry import YamlLocatorRegistry
 from boss_agent.adapters.outbound.device.pages.job_feed import IndustryFilterDialogPage
 from boss_agent.core.job.use_cases.feed_pipeline import FeedStreamConfig
 from boss_agent.core.search.domain.models import FilterConfig
@@ -30,6 +31,9 @@ WITH_INDUSTRIES = FilterConfig(
     company_scales=["100-499人"],
     industries=["游戏", "人工智能"],
 )
+
+
+_LOCATORS = YamlLocatorRegistry()
 
 
 def test_industry_filter_config():
@@ -88,7 +92,7 @@ def test_industry_filter_dialog_page_interactions():
 
     mock_driver.find_elements.side_effect = mock_find_elements
 
-    page = IndustryFilterDialogPage(mock_driver)
+    page = IndustryFilterDialogPage(mock_driver, _LOCATORS)
 
     # 1. Open industry filter
     assert page.open_industry_filter() is True
@@ -133,7 +137,7 @@ def test_industry_filter_dialog_auto_scroll():
 
     mock_driver.find_elements.side_effect = mock_find_elements
 
-    page = IndustryFilterDialogPage(mock_driver)
+    page = IndustryFilterDialogPage(mock_driver, _LOCATORS)
 
     def mock_swipe(start, end, duration_ms=400):
         nonlocal scroll_count

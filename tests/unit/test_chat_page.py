@@ -6,8 +6,11 @@ Unit tests for ChatPage UI automation ensuring greeting typing without sending.
 
 from unittest.mock import MagicMock
 
+from boss_agent.adapters.outbound.config.locator_registry import YamlLocatorRegistry
 from boss_agent.adapters.outbound.device.pages.communication import ChatPage
 from boss_agent.adapters.outbound.device.pages.job_detail import JobDetailPage
+
+_LOCATORS = YamlLocatorRegistry()
 
 
 def test_chat_page_open_chat_clicks_entry():
@@ -15,7 +18,7 @@ def test_chat_page_open_chat_clicks_entry():
     mock_btn = MagicMock()
     mock_btn.is_displayed.return_value = True
 
-    chat_page = ChatPage(driver)
+    chat_page = ChatPage(driver, _LOCATORS)
     chat_page.find_by_key = MagicMock(return_value=mock_btn)  # type: ignore[method-assign]
 
     success = chat_page.open_chat(timeout_sec=2.0)
@@ -28,7 +31,7 @@ def test_chat_page_type_greeting_without_sending():
     mock_input = MagicMock()
     mock_input.is_displayed.return_value = True
 
-    chat_page = ChatPage(driver)
+    chat_page = ChatPage(driver, _LOCATORS)
     chat_page.find_by_key = MagicMock(return_value=mock_input)  # type: ignore[method-assign]
     chat_page.gestures.human_type = MagicMock()  # type: ignore[method-assign]
 
@@ -44,7 +47,7 @@ def test_chat_page_navigate_back():
     driver = MagicMock()
     mock_back = MagicMock()
 
-    chat_page = ChatPage(driver)
+    chat_page = ChatPage(driver, _LOCATORS)
     chat_page.find_by_key = MagicMock(return_value=mock_back)  # type: ignore[method-assign]
 
     success = chat_page.navigate_back(timeout_sec=2.0)
@@ -56,7 +59,7 @@ def test_job_detail_page_open_chat_delegate():
     driver = MagicMock()
     mock_btn = MagicMock()
 
-    detail_page = JobDetailPage(driver)
+    detail_page = JobDetailPage(driver, _LOCATORS)
     detail_page.find_by_key = MagicMock(return_value=mock_btn)  # type: ignore[method-assign]
 
     success = detail_page.open_chat(timeout_sec=2.0)
@@ -68,7 +71,7 @@ def test_chat_page_click_send_success():
     driver = MagicMock()
     mock_btn = MagicMock()
 
-    chat_page = ChatPage(driver)
+    chat_page = ChatPage(driver, _LOCATORS)
     chat_page.find_by_key = MagicMock(return_value=mock_btn)  # type: ignore[method-assign]
     chat_page.gestures.human_click = MagicMock()  # type: ignore[method-assign]
 
@@ -81,7 +84,7 @@ def test_chat_page_click_send_success():
 def test_chat_page_click_send_not_found():
     driver = MagicMock()
 
-    chat_page = ChatPage(driver)
+    chat_page = ChatPage(driver, _LOCATORS)
     chat_page.find_by_key = MagicMock(return_value=None)  # type: ignore[method-assign]
 
     success = chat_page.click_send(timeout_sec=2.0)
@@ -92,7 +95,7 @@ def test_chat_page_click_send_not_found():
 def test_chat_page_send_message_flow():
     driver = MagicMock()
 
-    chat_page = ChatPage(driver)
+    chat_page = ChatPage(driver, _LOCATORS)
     chat_page.type_greeting_message = MagicMock(return_value=True)  # type: ignore[method-assign]
     chat_page.click_send = MagicMock(return_value=True)  # type: ignore[method-assign]
 
@@ -105,7 +108,7 @@ def test_chat_page_send_message_flow():
 
 def test_chat_page_send_message_empty():
     driver = MagicMock()
-    chat_page = ChatPage(driver)
+    chat_page = ChatPage(driver, _LOCATORS)
     assert chat_page.send_message("") is False
     assert chat_page.send_message("   ") is False
 
@@ -114,7 +117,7 @@ def test_chat_page_clear_message_input():
     driver = MagicMock()
     mock_input = MagicMock()
 
-    chat_page = ChatPage(driver)
+    chat_page = ChatPage(driver, _LOCATORS)
     chat_page.find_by_key = MagicMock(return_value=mock_input)  # type: ignore[method-assign]
 
     assert chat_page.clear_message_input(timeout_sec=2.0) is True

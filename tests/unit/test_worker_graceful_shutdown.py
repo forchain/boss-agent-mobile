@@ -16,6 +16,7 @@ from boss_agent.adapters.inbound.worker.config import WorkerConfig
 from boss_agent.adapters.inbound.worker.context import WorkerContext
 from boss_agent.adapters.inbound.worker.daemon import SHUTDOWN_CANCEL_REASON, AutomationWorker
 from boss_agent.adapters.inbound.worker.handlers.base import BaseTaskHandler, HandlerResult
+from boss_agent.adapters.memory.automation import FakeDeviceSession
 from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
 from boss_agent.core.task.domain.models import TaskStatus, TaskType
 
@@ -59,14 +60,14 @@ def mock_driver():
     return MagicMock()
 
 
-def _build_worker(broker, handler, driver_factory=None, driver=None, poll_interval=0.01):
+def _build_worker(broker, handler, session_factory=None, driver=None, poll_interval=0.01):
     config = WorkerConfig(
         worker_id="worker-shutdown-test",
         device_id="emulator-5554",
         poll_interval_sec=poll_interval,
         heartbeat_interval_sec=0.05,
     )
-    context = WorkerContext(config=config, driver=driver, driver_factory=driver_factory)
+    context = WorkerContext(config=config, driver=driver, session_factory=session_factory)
     return AutomationWorker(config=config, broker=broker, context=context, handlers=[handler])
 
 
@@ -88,12 +89,12 @@ async def test_shutdown_logs_signal_acknowledgment_and_completion(broker, caplog
 @pytest.mark.asyncio
 async def test_shutdown_does_not_open_device_session_when_idle(broker, mock_driver):
     """Verify shutdown never lazily opens a Virtual Device Session it then has to release."""
-    driver_factory = MagicMock(return_value=mock_driver)
-    worker = _build_worker(broker, BlockingHandler(), driver_factory=driver_factory)
+    session_factory = MagicMock(return_value=FakeDeviceSession(mock_driver))
+    worker = _build_worker(broker, BlockingHandler(), session_factory=session_factory)
 
     await worker.shutdown("SIGTERM")
 
-    driver_factory.assert_not_called()
+    session_factory.assert_not_called()
     mock_driver.quit.assert_not_called()
 
 
@@ -137,7 +138,8 @@ async def test_shutdown_marks_in_flight_task_cancelled_in_broker(broker, mock_dr
 async def test_shutdown_releases_active_device_session(broker, mock_driver):
     """Verify the active Appium session is closed so the device is left stable."""
     handler = BlockingHandler()
-    worker = _build_worker(broker, handler, driver=mock_driver)
+    session = FakeDeviceSession(mock_driver)
+    worker = _build_worker(broker, handler, session_factory=lambda: session)
     await broker.create_task(task_type=TaskType.SCRAPE_JOBS)
 
     loop_task = asyncio.create_task(worker.start())
@@ -146,7 +148,7 @@ async def test_shutdown_releases_active_device_session(broker, mock_driver):
     await worker.shutdown("SIGTERM")
 
     assert handler.driver_touched is True
-    mock_driver.quit.assert_called_once()
+    assert session.stopped is True
     await asyncio.wait_for(loop_task, timeout=2.0)
 
 
@@ -155,10 +157,12 @@ async def test_shutdown_completes_quickly_even_when_device_release_hangs(broker,
     """Verify a wedged Appium session cannot hold the shutdown sequence hostage."""
     import logging
 
-    hanging_driver = MagicMock()
-    hanging_driver.quit.side_effect = TimeoutError("appium server not responding")
+    class HangingSession(FakeDeviceSession):
+        def stop(self) -> None:
+            raise TimeoutError("appium server not responding")
+
     handler = BlockingHandler()
-    worker = _build_worker(broker, handler, driver=hanging_driver)
+    worker = _build_worker(broker, handler, session_factory=HangingSession)
     await broker.create_task(task_type=TaskType.SCRAPE_JOBS)
 
     loop_task = asyncio.create_task(worker.start())
@@ -199,7 +203,14 @@ async def test_shutdown_is_idempotent(broker, mock_driver, caplog):
     import logging
 
     handler = BlockingHandler()
-    worker = _build_worker(broker, handler, driver=mock_driver)
+    stop_calls: list[int] = []
+
+    class CountingSession(FakeDeviceSession):
+        def stop(self) -> None:
+            stop_calls.append(1)
+            super().stop()
+
+    worker = _build_worker(broker, handler, session_factory=CountingSession)
     await broker.create_task(task_type=TaskType.SCRAPE_JOBS)
 
     loop_task = asyncio.create_task(worker.start())
@@ -209,7 +220,7 @@ async def test_shutdown_is_idempotent(broker, mock_driver, caplog):
         await worker.shutdown("SIGTERM")
         await worker.shutdown("SIGINT")
 
-    mock_driver.quit.assert_called_once()
+    assert len(stop_calls) == 1
     await asyncio.wait_for(loop_task, timeout=2.0)
 
 

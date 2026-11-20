@@ -71,6 +71,12 @@ class AppiumDriverAdapter:
     def activate_app(self, app_id: str) -> bool | None:
         return self.raw_driver.activate_app(app_id)
 
+    def press_keycode(self, keycode: int) -> None:
+        self.raw_driver.press_keycode(keycode)
+
+    def back(self) -> None:
+        self.raw_driver.back()
+
     def perform_double_tap(self, x: float, y: float, interval: float) -> bool:
         """Emit both taps as one W3C pointer batch; ``False`` when unsupported."""
         action_chains_cls = _load_w3c_action_chains()
