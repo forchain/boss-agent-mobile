@@ -13,7 +13,9 @@ from boss_agent.adapters.inbound.worker.config import WorkerConfig
 from boss_agent.adapters.inbound.worker.context import WorkerContext
 from boss_agent.adapters.inbound.worker.daemon import AutomationWorker
 from boss_agent.adapters.inbound.worker.handlers.check_login import CheckLoginHandler
+from boss_agent.adapters.memory.automation import FakeDeviceSession
 from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
+from boss_agent.adapters.outbound.config.locator_registry import YamlLocatorRegistry
 from boss_agent.core.task.domain.models import TaskStatus, TaskType
 
 
@@ -51,7 +53,7 @@ async def test_worker_polls_and_executes_check_login_success(broker, mock_driver
         config=config,
         broker=broker,
         context=context,
-        handlers=[CheckLoginHandler()],
+        handlers=[CheckLoginHandler(locator_store=YamlLocatorRegistry())],
     )
 
     task = await broker.create_task(
@@ -90,7 +92,7 @@ async def test_worker_handles_unauthenticated_login_failure(broker, mock_driver)
         config=config,
         broker=broker,
         context=context,
-        handlers=[CheckLoginHandler()],
+        handlers=[CheckLoginHandler(locator_store=YamlLocatorRegistry())],
     )
 
     task = await broker.create_task(task_type=TaskType.CHECK_LOGIN)
@@ -113,7 +115,7 @@ async def test_worker_idle_when_no_pending_tasks(broker, mock_driver):
         config=config,
         broker=broker,
         context=context,
-        handlers=[CheckLoginHandler()],
+        handlers=[CheckLoginHandler(locator_store=YamlLocatorRegistry())],
     )
 
     executed = await worker.run_once()
@@ -176,7 +178,7 @@ async def test_worker_logs_task_claiming_progress_and_success(broker, mock_drive
         config=config,
         broker=broker,
         context=context,
-        handlers=[CheckLoginHandler()],
+        handlers=[CheckLoginHandler(locator_store=YamlLocatorRegistry())],
     )
 
     task = await broker.create_task(task_type=TaskType.CHECK_LOGIN, payload={"keyword": "python"})
@@ -222,7 +224,7 @@ async def test_worker_logs_task_failure(broker, mock_driver, caplog):
         config=config,
         broker=broker,
         context=context,
-        handlers=[CheckLoginHandler()],
+        handlers=[CheckLoginHandler(locator_store=YamlLocatorRegistry())],
     )
 
     task = await broker.create_task(task_type=TaskType.CHECK_LOGIN)
@@ -293,7 +295,7 @@ async def test_worker_start_logs_readiness(broker, mock_driver, caplog):
         config=config,
         broker=broker,
         context=context,
-        handlers=[CheckLoginHandler()],
+        handlers=[CheckLoginHandler(locator_store=YamlLocatorRegistry())],
     )
 
     with caplog.at_level(logging.INFO, logger="boss_agent.worker"):
@@ -353,7 +355,7 @@ async def test_worker_logs_truncated_payload_on_task_claim(broker, mock_driver, 
         config=config,
         broker=broker,
         context=context,
-        handlers=[CheckLoginHandler()],
+        handlers=[CheckLoginHandler(locator_store=YamlLocatorRegistry())],
     )
 
     huge_payload = {
@@ -505,7 +507,10 @@ async def test_worker_reopens_a_dead_device_session_before_the_handler_runs(brok
 
     config = WorkerConfig(worker_id="worker-session-reopen", poll_interval_sec=0.01)
     dead = DeadDriver()
-    context = WorkerContext(config=config, driver=dead, driver_factory=lambda: fresh_driver)
+    dead_session = FakeDeviceSession(dead)
+    sessions = iter([dead_session, FakeDeviceSession(fresh_driver)])
+    context = WorkerContext(config=config, session_factory=lambda: next(sessions))
+    assert context.driver is dead, "start the session the daemon must notice is dead"
     worker = AutomationWorker(
         config=config, broker=broker, context=context, handlers=[RecordingHandler()]
     )
@@ -515,5 +520,5 @@ async def test_worker_reopens_a_dead_device_session_before_the_handler_runs(brok
 
     assert executed is True
     assert seen == [fresh_driver], "the handler must run against a reopened session"
-    assert dead.quit_called is True, "the dead session must be released"
+    assert dead_session.stopped is True, "the dead session must be released"
     assert (await broker.get_task(task.id)).status == TaskStatus.SUCCESS

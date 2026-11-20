@@ -17,9 +17,9 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from boss_agent.core.automation.domain.geometry import Point
 from boss_agent.core.chat.domain.rejection import DISINTEREST_REASON
 from boss_agent.core.chat.domain.triage import OUTBOUND_STATUS_MARKERS
-from droid_agent_core.gestures import Point
 
 from .base import BACK_INTERVAL_SEC, BaseBossPage, ui_logger
 

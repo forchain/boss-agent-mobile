@@ -2,8 +2,11 @@
 
 from unittest.mock import MagicMock
 
+from boss_agent.adapters.outbound.config.locator_registry import YamlLocatorRegistry
 from boss_agent.adapters.outbound.device.pages.job_feed import JobListPage, SearchPage
 from boss_agent.core.search.domain.models import SearchConfig
+
+_LOCATORS = YamlLocatorRegistry()
 
 
 def test_search_config_default_and_validation():
@@ -42,7 +45,7 @@ def test_job_list_page_open_search_and_tab_navigation():
 
     mock_driver.find_elements.side_effect = mock_find_elements
 
-    list_page = JobListPage(mock_driver)
+    list_page = JobListPage(mock_driver, _LOCATORS)
 
     # Test ensuring on Job tab
     assert list_page.ensure_job_tab() is True
@@ -75,7 +78,7 @@ def test_search_page_input_and_submission():
 
     mock_driver.find_elements.side_effect = mock_find_elements
 
-    search_page = SearchPage(mock_driver)
+    search_page = SearchPage(mock_driver, _LOCATORS)
     assert search_page.is_search_page() is True
 
     # Perform keyword search

@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
 import pytest
+from _feed_harness import build_feed_device_world
 
 from boss_agent.adapters.inbound.worker.config import WorkerConfig
 from boss_agent.adapters.inbound.worker.context import WorkerContext
@@ -25,7 +26,6 @@ from boss_agent.adapters.memory.job_store import InMemoryJobRecordStore
 from boss_agent.adapters.memory.saved_search_store import InMemorySavedSearchStore
 from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
 from boss_agent.adapters.outbound.config.settings import load_feed_config_defaults
-from boss_agent.adapters.outbound.device.pages.feed_bundle import build_feed_device_world
 from boss_agent.adapters.outbound.resume.graph import run_resume_lifecycle_graph
 from boss_agent.core.job.use_cases.screening import CandidateScreener
 from boss_agent.core.search.domain.models import FilterConfig, SavedSearch, SearchConfig

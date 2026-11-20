@@ -1,7 +1,8 @@
 """
 boss_agent.core.shared.errors
 =================
-Typed failure hierarchy for broker and persistence repository seams (Spec #303, ADR 0013).
+Typed failure hierarchy for broker/persistence seams (Spec #303, ADR 0013) and the
+LLM decision port.
 """
 
 from __future__ import annotations
@@ -25,3 +26,15 @@ class ConflictError(BrokerError):
 
 class RecordNotFoundError(BrokerError):
     """Raised when an explicit entity is not found by ID when required."""
+
+
+class LLMError(Exception):
+    """Base exception for LLM operations (connection, HTTP status, unparsable output)."""
+
+
+class LLMAuthError(LLMError):
+    """Authentication or authorization failure when invoking an LLM API."""
+
+
+class LLMTimeoutError(LLMError):
+    """Request timed out while waiting for an LLM response."""

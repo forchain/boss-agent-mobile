@@ -4,16 +4,16 @@ Mobile automation framework and intelligent job application agent for the Boss �
 
 ## Language
 
-**Core Automation Framework (`droid_agent_core`)**:
-The reusable, application-agnostic Android automation engine handling driver lifecycles, element resolution, humanized gesture synthesis, popup interception, and LLM reasoning interfaces.
+**Automation Framework (`boss_agent.core.automation`)**:
+The mobile automation aggregate inside `boss_agent`: pure geometry and selector rules in `domain`, ports in `interfaces`, and orchestration in `use_cases`. Technology-specific driver, ADB, locator, and LLM implementations live under `adapters/`.
 _Avoid_: Boss automation engine, base scripts, appium helper
 
 **App Domain Layer (`boss_agent`)**:
-The Boss-specific application module implementing page objects, candidate profiles, matching rules, greeting templates, and application workflows on top of `droid_agent_core`.
+The Boss-specific application module implementing page objects, candidate profiles, matching rules, greeting templates, and application workflows on top of `boss_agent.core.automation`.
 _Avoid_: Core app, main module
 
 **Core (`boss_agent.core`)**:
-The framework-free Domain + Application layer. It holds business rules, ports, and Use Cases, imports only the standard library, its own tree, and the framework's LLM decision abstraction, and never reaches into `adapters/`. Dependency direction points inward: adapters → core.
+The framework-free Domain + Application layer. It holds business rules, ports, and Use Cases, imports only the standard library and its own tree, and never reaches into `adapters/`. Dependency direction points inward: adapters → core.
 _Avoid_: Domain layer package, business dump, shared helpers folder
 
 **Aggregate Triad (`domain` / `interfaces` / `use_cases`)**:
@@ -78,7 +78,7 @@ The mechanism that detects user authentication status and preserves the logged-i
 _Avoid_: Login keeper, cookie store, auth cache
 
 **Humanized Interaction Engine**:
-The gesture and timing synthesizer within `droid_agent_core` that applies Bézier curves, randomized touch down/up durations, spatial jitter, and variable pauses to emulate real user touch behavior.
+The gesture and timing synthesizer within `boss_agent.core.automation.domain.geometry` that applies Bézier curves, randomized touch down/up durations, spatial jitter, and variable pauses to emulate real user touch behavior.
 _Avoid_: Click helper, sleep wrapper, tap util
 
 **Takeover Handler**:

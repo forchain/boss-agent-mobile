@@ -231,11 +231,12 @@ async def test_auto_apply_resolves_a_candidate_profile_from_the_payload() -> Non
     """The handler builds its profile from the entity when the payload carries one."""
     from unittest.mock import MagicMock
 
+    from _feed_harness import build_feed_device_world
+
     from boss_agent.adapters.inbound.worker.handlers.auto_apply import AutoApplyHandler
     from boss_agent.adapters.memory.candidate_memory_store import InMemoryCandidateMemoryStore
     from boss_agent.adapters.memory.job_store import InMemoryJobRecordStore
     from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
-    from boss_agent.adapters.outbound.device.pages.feed_bundle import build_feed_device_world
     from boss_agent.core.job.use_cases.screening import CandidateScreener
 
     handler = AutoApplyHandler(
@@ -264,11 +265,12 @@ async def test_auto_apply_falls_back_to_a_zero_argument_profile() -> None:
     """
     from unittest.mock import MagicMock
 
+    from _feed_harness import build_feed_device_world
+
     from boss_agent.adapters.inbound.worker.handlers.auto_apply import AutoApplyHandler
     from boss_agent.adapters.memory.candidate_memory_store import InMemoryCandidateMemoryStore
     from boss_agent.adapters.memory.job_store import InMemoryJobRecordStore
     from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
-    from boss_agent.adapters.outbound.device.pages.feed_bundle import build_feed_device_world
     from boss_agent.core.job.use_cases.screening import CandidateScreener
 
     handler = AutoApplyHandler(

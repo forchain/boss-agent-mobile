@@ -10,13 +10,16 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from boss_agent.adapters.outbound.config.locator_registry import (
+    LocatorRegistry,
+    YamlLocatorRegistry,
+)
 from boss_agent.adapters.outbound.device.pages.communication import (
     CommunicationCard,
     CommunicationListPage,
     parse_company_from_descriptor,
 )
 from boss_agent.core.chat.domain.rejection import DISINTEREST_REASON
-from droid_agent_core.locators import LocatorRegistry
 
 NEW_LOCATOR_KEYS = (
     "communication_list.entry_tab",
@@ -32,6 +35,9 @@ NEW_LOCATOR_KEYS = (
     "chat.disinterest_btn",
     "chat.disinterest_reason_option",
 )
+
+
+_LOCATORS = YamlLocatorRegistry()
 
 
 @pytest.fixture
@@ -217,7 +223,7 @@ def test_card_without_a_descriptor_exposes_no_employer():
 
 def test_is_on_list_detects_the_communication_tab_marker():
     driver = MagicMock()
-    page = CommunicationListPage(driver)
+    page = CommunicationListPage(driver, _LOCATORS)
     page.find_by_key = MagicMock(return_value=MagicMock())  # type: ignore[method-assign]
 
     assert page.is_on_list(timeout_sec=0.1) is True
@@ -280,7 +286,7 @@ class _NavDriver:
 
 def _recovery_page(driver: _NavDriver) -> CommunicationListPage:
     """Wire a page object's probes onto the fake driver's screen state."""
-    page = CommunicationListPage(driver)
+    page = CommunicationListPage(driver, _LOCATORS)
     message_tab, communication_tab, back_btn = (
         _Element("消息"),
         _Element("仅沟通"),
@@ -339,7 +345,7 @@ def test_open_list_clicks_message_tab_then_communication_tab():
 
 def test_open_list_reports_failure_without_communication_tab():
     driver = MagicMock()
-    page = CommunicationListPage(driver)
+    page = CommunicationListPage(driver, _LOCATORS)
     page.find_by_key = MagicMock(  # type: ignore[method-assign]
         side_effect=lambda key, **_: MagicMock() if key == "communication_list.entry_tab" else None
     )
@@ -446,7 +452,7 @@ def test_recovery_steps_never_wait_out_the_element_timeout():
     """
     driver = MagicMock()
     driver.find_elements.return_value = []
-    page = CommunicationListPage(driver)
+    page = CommunicationListPage(driver, _LOCATORS)
     page.gestures.human_click = MagicMock()  # type: ignore[method-assign]
     page.gestures.random_sleep = MagicMock()  # type: ignore[method-assign]
     page.press_back = MagicMock()  # type: ignore[method-assign]
@@ -497,7 +503,7 @@ def _message_card(sender: str, text: str, *, status: str = "", descriptor: str =
 def _page_with_cards(cards: list[MagicMock]) -> CommunicationListPage:
     driver = MagicMock()
     driver.get_window_size.return_value = {"width": 1080, "height": 2400}
-    page = CommunicationListPage(driver)
+    page = CommunicationListPage(driver, _LOCATORS)
     page._find_message_cards = MagicMock(return_value=cards)  # type: ignore[method-assign]
     return page
 
@@ -632,7 +638,7 @@ def test_find_message_cards_resolves_parent_container_on_fallback():
     text_node = MagicMock()
     text_node.find_element.return_value = parent_card
 
-    page = CommunicationListPage(driver)
+    page = CommunicationListPage(driver, _LOCATORS)
     page._find_elements_by_key = MagicMock(
         side_effect=lambda key, **_: [] if key == "communication_list.message_card" else [text_node]
     )
@@ -644,7 +650,7 @@ def test_find_message_cards_resolves_parent_container_on_fallback():
 
 def test_has_message_tab_unread_dot_detects_dot_when_bottom_nav_present():
     driver = MagicMock()
-    page = CommunicationListPage(driver)
+    page = CommunicationListPage(driver, _LOCATORS)
 
     # When entry_tab is found and red dot is found
     page.find_by_key = MagicMock(return_value=MagicMock())
@@ -662,7 +668,7 @@ def test_has_message_tab_unread_dot_detects_dot_when_bottom_nav_present():
 
 def test_get_unread_badge_count_parses_count():
     driver = MagicMock()
-    page = CommunicationListPage(driver)
+    page = CommunicationListPage(driver, _LOCATORS)
 
     badge_elem = MagicMock()
     page.find_by_key = MagicMock(return_value=badge_elem)
@@ -685,7 +691,7 @@ def test_get_unread_badge_count_parses_count():
 
 def test_scroll_message_list_swipes_down():
     driver = MagicMock()
-    page = CommunicationListPage(driver)
+    page = CommunicationListPage(driver, _LOCATORS)
     page.gestures = MagicMock()
     page._get_window_size = MagicMock(return_value={"width": 1080, "height": 2400})
 

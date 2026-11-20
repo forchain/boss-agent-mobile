@@ -26,7 +26,7 @@ from boss_agent.core.shared.identifier_helpers import (
     format_recruiter_greeting_prefix,
     is_substantive_jd,
 )
-from droid_agent_core.llm import LLMDecisionClient
+from boss_agent.core.shared.llm import LLMDecisionClient
 
 __all__ = [
     "JobMatchGreetingService",

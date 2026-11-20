@@ -16,10 +16,15 @@ from unittest.mock import patch
 
 import pytest
 
+from boss_agent.adapters.outbound.config.locator_registry import YamlLocatorRegistry
 from boss_agent.adapters.outbound.device.pages.job_feed import JobListPage, SearchPage
-from droid_agent_core.gestures import HumanizedGestureExecutor, Point
+from boss_agent.core.automation.domain.geometry import Point
+from boss_agent.core.automation.use_cases.gestures import HumanizedGestureExecutor
 
 UI_LOGGER = "droid_agent_core.ui"
+
+
+_LOCATORS = YamlLocatorRegistry()
 
 
 @pytest.fixture(autouse=True)
@@ -152,7 +157,7 @@ def test_human_swipe_logs_endpoints(ui_caplog):
 
 def test_press_back_logs_keycode(ui_caplog):
     driver = FakeDriver()
-    page = JobListPage(driver)
+    page = JobListPage(driver, _LOCATORS)
 
     page.press_back()
 
@@ -165,7 +170,7 @@ def test_press_back_logs_keycode(ui_caplog):
 def test_press_back_telemetry_is_available_on_every_page_object(ui_caplog):
     """#194 lists press_back among BaseBossPage telemetry, not only the job list page."""
     driver = FakeDriver()
-    page = SearchPage(driver)
+    page = SearchPage(driver, _LOCATORS)
 
     page.press_back()
 
@@ -175,7 +180,7 @@ def test_press_back_telemetry_is_available_on_every_page_object(ui_caplog):
 
 def test_find_by_key_logs_selector_value_and_duration(ui_caplog):
     driver = FakeDriver(found_elements=[FakeElement()])
-    page = JobListPage(driver)
+    page = JobListPage(driver, _LOCATORS)
 
     elem = page.find_by_key("search.search_input", timeout_sec=0.0)
 
@@ -191,7 +196,7 @@ def test_find_by_key_logs_selector_value_and_duration(ui_caplog):
 
 def test_find_by_key_logs_miss_for_absent_element(ui_caplog):
     driver = FakeDriver(found_elements=[])
-    page = JobListPage(driver)
+    page = JobListPage(driver, _LOCATORS)
 
     elem = page.find_by_key("job_list.search_icon", timeout_sec=0.0)
 
@@ -202,7 +207,7 @@ def test_find_by_key_logs_miss_for_absent_element(ui_caplog):
 
 def test_wait_for_key_logs_lookup(ui_caplog):
     driver = FakeDriver(found_elements=[FakeElement()])
-    page = JobListPage(driver)
+    page = JobListPage(driver, _LOCATORS)
 
     elem = page.wait_for_key("search.search_input", timeout_sec=2.0)
 

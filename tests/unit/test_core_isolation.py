@@ -3,15 +3,15 @@ tests.unit.test_core_isolation
 ==============================
 The dependency direction into ``boss_agent.core`` (spec #443, ADR 0021).
 
-Core is Domain + Application: it imports the standard library, its own package tree,
-and the framework's LLM decision abstraction. It must not import an adapter, and it
-must not import a framework (pydantic, langsmith, langgraph, langchain, rich,
-requests, yaml, Appium/selenium, or anything not yet invented).
+Core is Domain + Application: it imports the standard library and its own package
+tree, nothing else. It must not import an adapter, and it must not import a framework
+(pydantic, langsmith, langgraph, langchain, rich, requests, yaml, Appium/selenium, or
+anything not yet invented).
 
 The scan is an **allowlist**: a top-level module is allowed only when it is standard
-library, ``boss_agent.core``, or ``droid_agent_core``. A new framework therefore
-fails the guard the day it is imported, instead of waiting for someone to add it to a
-denylist that was never going to be updated.
+library or ``boss_agent.core``. A new framework therefore fails the guard the day it
+is imported, instead of waiting for someone to add it to a denylist that was never
+going to be updated.
 """
 
 from __future__ import annotations
@@ -25,11 +25,7 @@ import pytest
 REPO_ROOT = Path(__file__).parents[2]
 CORE_ROOT = REPO_ROOT / "src" / "boss_agent" / "core"
 
-#: Third-party packages core may depend on. The framework is the one approved deviation
-#: (ADR 0002): its LLM decision abstraction is the interface every caller holds.
-ALLOWED_THIRD_PARTY = frozenset({"droid_agent_core"})
-
-ALLOWED_TOP_LEVEL = frozenset(sys.stdlib_module_names) | {"boss_agent"} | ALLOWED_THIRD_PARTY
+ALLOWED_TOP_LEVEL = frozenset(sys.stdlib_module_names) | {"boss_agent"}
 
 #: Named in ADR 0021 so a regression is reported in the vocabulary the ADR uses.
 FORBIDDEN_FRAMEWORKS = (
@@ -89,7 +85,30 @@ def _package_for_file(path: Path) -> str:
     return ".".join(("boss_agent", *rel_parent.parts))
 
 
-def test_core_imports_only_stdlib_core_and_the_framework() -> None:
+def _imported_modules(source: str, package: str) -> list[str]:
+    """Every absolute module name imported by ``source``, relative imports resolved."""
+    modules: list[str] = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            modules.extend(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            modules.extend(_resolve_import_targets(node, package))
+    return modules
+
+
+def test_domain_layers_never_import_application_use_cases_or_ports() -> None:
+    """Domain depends on nothing in Application: no Use Case and no Port may be imported."""
+    offenders = [
+        f"{path.relative_to(REPO_ROOT)}: {module}"
+        for path in sorted(CORE_ROOT.glob("*/domain/*.py"))
+        for module in _imported_modules(path.read_text(encoding="utf-8"), _package_for_file(path))
+        if {"use_cases", "interfaces"} & set(module.split("."))
+    ]
+
+    assert offenders == [], "a domain module imports an application layer: " + "; ".join(offenders)
+
+
+def test_core_imports_only_stdlib_and_its_own_tree() -> None:
     """The whole core package points inward; adapters and frameworks are out of reach."""
     offenders = [
         f"{path.relative_to(REPO_ROOT)}: {module}"
@@ -122,12 +141,15 @@ def test_the_allowlist_rejects_any_adapter_import() -> None:
     assert _violations("import boss_agent.main") == ["boss_agent.main"]
 
 
-def test_the_allowlist_accepts_stdlib_core_and_the_framework() -> None:
+def test_the_allowlist_accepts_stdlib_and_own_tree_only() -> None:
     """The guard must not reject the imports core is allowed to make."""
     assert _violations("import json") == []
     assert _violations("from boss_agent.core.shared import enums") == []
     assert _violations("from ..shared import enums", package="boss_agent.core.job.domain") == []
-    assert _violations("from droid_agent_core.llm import LLMDecisionClient") == []
+    assert _violations("from boss_agent.core.shared.llm import LLMDecisionClient") == []
+    assert _violations("from droid_agent_core.llm import LLMDecisionClient") == [
+        "droid_agent_core.llm"
+    ]
 
 
 def test_the_allowlist_rejects_relative_imports_escaping_core() -> None:

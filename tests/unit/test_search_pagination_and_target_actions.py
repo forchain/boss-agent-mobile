@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
 import pytest
+from _feed_harness import build_feed_device_world
 
 from boss_agent.adapters.inbound.worker.config import WorkerConfig
 from boss_agent.adapters.inbound.worker.context import WorkerContext
@@ -19,8 +20,8 @@ from boss_agent.adapters.inbound.worker.daemon import AutomationWorker
 from boss_agent.adapters.inbound.worker.handlers.auto_apply import AutoApplyHandler
 from boss_agent.adapters.inbound.worker.handlers.scrape_jobs import ScrapeJobsHandler
 from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
+from boss_agent.adapters.outbound.config.locator_registry import YamlLocatorRegistry
 from boss_agent.adapters.outbound.config.settings import load_feed_config_defaults
-from boss_agent.adapters.outbound.device.pages.feed_bundle import build_feed_device_world
 from boss_agent.adapters.outbound.device.pages.job_feed import JobListPage
 from boss_agent.core.job.use_cases.screening import CandidateScreener
 from boss_agent.core.search.domain.models import (
@@ -34,6 +35,8 @@ from boss_agent.core.shared.enums import (
     TargetAction,
 )
 from boss_agent.core.task.domain.models import TaskStatus, TaskType
+
+_LOCATORS = YamlLocatorRegistry()
 
 
 def _scrape_handler(broker, llm_client=None) -> ScrapeJobsHandler:
@@ -82,7 +85,7 @@ def _stub_llm_client() -> MagicMock:
 def test_job_list_page_is_feed_bottom_reached():
     """Verify is_feed_bottom_reached and get_feed_bottom_boundary recognize all divider text patterns."""
     driver = MagicMock()
-    page = JobListPage(driver)
+    page = JobListPage(driver, _LOCATORS)
 
     # Patterns seen in Boss 直聘:
     patterns = [
@@ -114,7 +117,7 @@ def test_job_list_page_scroll_job_list_uses_human_swipe():
     """Verify scroll_job_list calls gestures.human_swipe upwards."""
     driver = MagicMock()
     driver.get_window_size.return_value = {"width": 1080, "height": 2400}
-    page = JobListPage(driver)
+    page = JobListPage(driver, _LOCATORS)
 
     page.gestures.human_swipe = MagicMock()
     page.scroll_job_list()

@@ -2,6 +2,7 @@
 
 from unittest.mock import MagicMock
 
+from boss_agent.adapters.outbound.config.locator_registry import YamlLocatorRegistry
 from boss_agent.adapters.outbound.device.pages.system import (
     LoginPage,
     StartupDialogPage,
@@ -9,6 +10,8 @@ from boss_agent.adapters.outbound.device.pages.system import (
 from boss_agent.adapters.outbound.device.takeover import TakeoverHandler
 from boss_agent.core.job.domain.job_entities import JobPosting
 from boss_agent.core.shared.enums import AuthStatus
+
+_LOCATORS = YamlLocatorRegistry()
 
 
 def test_job_posting_dataclass():
@@ -30,7 +33,7 @@ def test_startup_dialog_page_detection_and_dismissal():
     mock_elem.rect = {"x": 100, "y": 200, "width": 50, "height": 30}
     mock_driver.find_elements.return_value = [mock_elem]
 
-    page = StartupDialogPage(mock_driver)
+    page = StartupDialogPage(mock_driver, _LOCATORS)
     assert page.is_dialog_present() is True
 
     dismissed = page.dismiss_dialog()
@@ -48,7 +51,7 @@ def test_login_page_detection():
 
     mock_driver.find_elements.side_effect = mock_find_elements
 
-    login_page = LoginPage(mock_driver)
+    login_page = LoginPage(mock_driver, _LOCATORS)
     assert login_page.is_login_screen() is True
     assert login_page.is_captcha_present() is False
     assert login_page.get_auth_status() == AuthStatus.UNAUTHENTICATED
@@ -65,6 +68,6 @@ def test_takeover_handler_triggers_on_unauthenticated():
 
     mock_driver.find_elements.side_effect = mock_find_elements
 
-    handler = TakeoverHandler(mock_driver, auto_confirm_for_test=True)
+    handler = TakeoverHandler(mock_driver, auto_confirm_for_test=True, locator_store=_LOCATORS)
     status = handler.check_and_handle_takeover()
     assert status == AuthStatus.AUTHENTICATED

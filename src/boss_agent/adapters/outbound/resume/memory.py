@@ -23,7 +23,7 @@ from boss_agent.core.candidate.use_cases.resume_lifecycle import (
     refresh_candidate_profile,
     structure_resume_profile,
 )
-from droid_agent_core.llm import LLMDecisionClient
+from boss_agent.core.shared.llm import LLMDecisionClient
 
 console = Console()
 

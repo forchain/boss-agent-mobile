@@ -657,7 +657,7 @@ FORBIDDEN_IN_CLOSURE = {
     "requests",
     "httpx",
     "openai",
-    "droid_agent_core",
+    "boss_agent.adapters.outbound.llm.openai_client",
     "boss_agent.adapters.outbound.resume.memory",
     "boss_agent.adapters.outbound.llm.llm_config",
     "boss_agent.adapters.outbound.resume.graph",

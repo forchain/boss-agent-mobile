@@ -893,8 +893,9 @@ def test_for_task_wires_the_brokers_job_ledger():
     handle had no ledger, letting any broker-shaped object silently satisfy
     store-typed code — so the type story no longer said which object was passed.
     """
+    from _feed_harness import build_feed_device_world
+
     from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
-    from boss_agent.adapters.outbound.device.pages.feed_bundle import build_feed_device_world
 
     broker = InMemoryTaskBroker()
     pipeline = JobFeedPipeline.for_task(

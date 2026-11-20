@@ -9,11 +9,12 @@ through the page objects and pauses for a human at the console.
 """
 
 import time
-from typing import Any
 
 from rich.console import Console
 
 from boss_agent.adapters.outbound.device.pages.system import LoginPage
+from boss_agent.core.automation.interfaces.locator_store import LocatorStorePort
+from boss_agent.core.automation.interfaces.ui_driver import UIDriverPort
 from boss_agent.core.shared.enums import AuthStatus
 
 console = Console()
@@ -22,9 +23,15 @@ console = Console()
 class TakeoverHandler:
     """Detects security challenges (captchas, SMS, login expired) and facilitates manual takeover."""
 
-    def __init__(self, driver: Any, auto_confirm_for_test: bool = False):
+    def __init__(
+        self,
+        driver: UIDriverPort,
+        auto_confirm_for_test: bool = False,
+        *,
+        locator_store: LocatorStorePort,
+    ):
         self.driver = driver
-        self.login_page = LoginPage(driver)
+        self.login_page = LoginPage(driver, locator_registry=locator_store)
         self.auto_confirm_for_test = auto_confirm_for_test
 
     def check_and_handle_takeover(self, timeout_sec: int = 300) -> AuthStatus:

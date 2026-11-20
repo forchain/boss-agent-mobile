@@ -196,6 +196,44 @@ def test_retired_broker_facade_fails_loudly() -> None:
         importlib.import_module("boss_agent.broker")
 
 
+def test_retired_droid_agent_core_fails_loudly() -> None:
+    """``droid_agent_core`` was integrated, not shimmed; importing it must fail loudly."""
+    import importlib
+
+    import pytest
+
+    assert not (SRC_ROOT.parent / "droid_agent_core").exists()
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("droid_agent_core")
+
+
+def _top_level_imports(path: Path) -> set[str]:
+    """Top-level module names imported by ``path`` (relative imports have no top level)."""
+    names: set[str] = set()
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.Import):
+            names.update(alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            names.add(node.module.split(".")[0])
+    return names
+
+
+def test_appium_and_selenium_imports_are_confined_to_the_appium_adapter() -> None:
+    """Only ``adapters/outbound/device/appium/`` may name the Android automation stack."""
+    appium_root = ADAPTERS_ROOT / "outbound" / "device" / "appium"
+    forbidden = {"appium", "selenium"}
+    offenders = [
+        f"{path.relative_to(REPO_ROOT)}: {sorted(forbidden & imports)}"
+        for path in sorted(SRC_ROOT.rglob("*.py"))
+        if not path.is_relative_to(appium_root)
+        and (imports := _top_level_imports(path)) & forbidden
+    ]
+
+    assert offenders == [], "appium/selenium imported outside the Appium adapter: " + "; ".join(
+        offenders
+    )
+
+
 def test_the_guard_sees_an_adapter_class_constructed_by_import(tmp_path: Path) -> None:
     """Prove the rule is reachable: an imported adapter class call is a violation."""
     adapter_classes = _adapter_class_names()

@@ -19,8 +19,11 @@ from unittest.mock import MagicMock
 import pytest
 from _feed_harness import ScriptedFeed, _card, _detail_page, _pipeline, _posting
 
+from boss_agent.adapters.outbound.config.locator_registry import YamlLocatorRegistry
 from boss_agent.adapters.outbound.device.pages.job_feed import JobListPage
 from boss_agent.core.job.use_cases.feed_pipeline import FeedStreamConfig
+
+_LOCATORS = YamlLocatorRegistry()
 
 
 def test_is_on_home_page_detection():
@@ -32,7 +35,7 @@ def test_is_on_home_page_detection():
 
     # Case 1: Search icon is present -> On Home Page
     mock_driver.find_elements.return_value = [mock_search_icon]
-    page = JobListPage(mock_driver)
+    page = JobListPage(mock_driver, _LOCATORS)
     assert page.is_on_home_page() is True
 
     # Case 2: No search icon or job card -> Not on Home Page
@@ -64,7 +67,7 @@ def test_navigate_to_home_presses_back_until_search_entry_visible():
     mock_driver.find_elements.side_effect = mock_find_elements
     mock_driver.press_keycode.side_effect = mock_press_keycode
 
-    page = JobListPage(mock_driver)
+    page = JobListPage(mock_driver, _LOCATORS)
     clicked: list = []
     page.gestures.human_click = clicked.append
 
@@ -99,7 +102,7 @@ def test_navigate_to_home_recovers_from_another_bottom_tab():
 
     mock_driver.find_elements.side_effect = mock_find_elements
 
-    page = JobListPage(mock_driver)
+    page = JobListPage(mock_driver, _LOCATORS)
 
     def mock_click(elem):
         if elem is mock_job_tab:
@@ -119,7 +122,7 @@ def test_navigate_to_home_gives_up_after_bounded_attempts():
     mock_driver.get_window_size.return_value = {"width": 1080, "height": 2400}
     mock_driver.find_elements.return_value = []
 
-    page = JobListPage(mock_driver)
+    page = JobListPage(mock_driver, _LOCATORS)
 
     assert page.navigate_to_home(max_attempts=4) is False
     assert mock_driver.press_keycode.call_count <= 4
@@ -163,8 +166,8 @@ def test_chat_screen_does_not_collide_with_search_or_home():
 
     mock_driver.find_elements.side_effect = mock_find_elements
 
-    job_list_page = JobListPage(mock_driver)
-    search_page = SearchPage(mock_driver)
+    job_list_page = JobListPage(mock_driver, _LOCATORS)
+    search_page = SearchPage(mock_driver, _LOCATORS)
 
     # Must NOT be identified as home page
     assert job_list_page.is_on_home_page() is False

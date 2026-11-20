@@ -13,6 +13,7 @@ effective — not merely configured — preference is announced by both search h
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from _feed_harness import build_feed_device_world
 
 from boss_agent.adapters.inbound.worker.config import WorkerConfig
 from boss_agent.adapters.inbound.worker.context import WorkerContext
@@ -20,7 +21,6 @@ from boss_agent.adapters.inbound.worker.handlers.auto_apply import AutoApplyHand
 from boss_agent.adapters.inbound.worker.handlers.scrape_jobs import ScrapeJobsHandler
 from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
 from boss_agent.adapters.outbound.config.settings import load_feed_config_defaults
-from boss_agent.adapters.outbound.device.pages.feed_bundle import build_feed_device_world
 from boss_agent.core.job.use_cases.feed_pipeline import FeedStreamResult
 from boss_agent.core.job.use_cases.screening import CandidateScreener
 

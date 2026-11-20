@@ -6,14 +6,12 @@ Runtime execution context holding device driver and configurations for handlers.
 
 import logging
 from collections.abc import Callable
-from typing import Any
 
 from boss_agent.adapters.inbound.worker.config import WorkerConfig
+from boss_agent.core.automation.interfaces.device_session import DeviceSessionPort
+from boss_agent.core.automation.interfaces.ui_driver import UIDriverPort
 
 logger = logging.getLogger("boss_agent.worker")
-
-# Appium's WebDriver entrypoint first, then the AppiumSession wrapper's own teardown.
-_SESSION_CLOSERS: tuple[str, ...] = ("quit", "stop")
 
 
 class WorkerContext:
@@ -22,20 +20,22 @@ class WorkerContext:
     def __init__(
         self,
         config: WorkerConfig,
-        driver: Any | None = None,
-        driver_factory: Callable[[], Any] | None = None,
+        driver: UIDriverPort | None = None,
+        session_factory: Callable[[], DeviceSessionPort] | None = None,
     ) -> None:
         self.config = config
         self._driver = driver
-        self._driver_factory = driver_factory
+        self._session: DeviceSessionPort | None = None
+        self._session_factory = session_factory
 
     @property
-    def driver(self) -> Any:
-        if self._driver is None and self._driver_factory is not None:
-            self._driver = self._driver_factory()
+    def driver(self) -> UIDriverPort | None:
+        if self._driver is None and self._session_factory is not None:
+            self._session = self._session_factory()
+            self._driver = self._session.start()
         return self._driver
 
-    def set_driver(self, driver: Any) -> None:
+    def set_driver(self, driver: UIDriverPort) -> None:
         self._driver = driver
 
     def has_device_session(self) -> bool:
@@ -82,27 +82,22 @@ class WorkerContext:
     def release_device_session(self) -> bool:
         """Close the active Virtual Device Session and drop the reference.
 
-        Returns True when a session was handed to a closer, False when there was nothing to
-        release (or the driver exposed no teardown entrypoint at all). Never raises — a
-        failing teardown must not be able to block worker shutdown.
+        Returns True when a session was stopped, False when there was nothing to release
+        (or the driver was injected without a session to stop). Never raises — a failing
+        teardown must not be able to block worker shutdown.
         """
+        session = self._session
         driver = self._driver
+        self._session = None
         self._driver = None
+        if session is not None:
+            try:
+                session.stop()
+            except Exception as e:
+                logger.warning("Error while releasing device session: %s", e)
+            return True
         if driver is None:
             return False
 
-        for closer_name in _SESSION_CLOSERS:
-            closer = getattr(driver, closer_name, None)
-            if not callable(closer):
-                continue
-            try:
-                closer()
-            except Exception as e:
-                logger.warning("Error while releasing device session via %s(): %s", closer_name, e)
-            return True
-
-        logger.warning(
-            "Device session object exposes no closer (%s); dropping the reference only.",
-            _SESSION_CLOSERS,
-        )
+        logger.warning("Device driver was injected without a session; dropping the reference only.")
         return False

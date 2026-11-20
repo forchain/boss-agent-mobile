@@ -15,7 +15,7 @@ from boss_agent.core.chat.domain.rejection import (
     RejectionVerdict,
     build_rejection_classification_messages,
 )
-from droid_agent_core.llm import LLMDecisionClient
+from boss_agent.core.shared.llm import LLMDecisionClient
 
 
 class RejectionClassifier:

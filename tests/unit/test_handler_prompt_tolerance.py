@@ -51,7 +51,7 @@ def _capture_screener(monkeypatch, captured: dict) -> None:
         captured.update(kwargs)
         return MagicMock()
 
-    monkeypatch.setattr(composition, "create_llm_client", lambda: MagicMock())
+    monkeypatch.setattr(composition, "create_llm_client", lambda **_kwargs: MagicMock())
     monkeypatch.setattr(composition, "PocketBaseTaskBroker", MagicMock())
     monkeypatch.setattr(composition, "build_screener", factory)
 

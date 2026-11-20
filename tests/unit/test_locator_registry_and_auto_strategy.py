@@ -5,11 +5,8 @@ from pathlib import Path
 
 import yaml
 
-from droid_agent_core.locators import (
-    By,
-    LocatorRegistry,
-    parse_selector,
-)
+from boss_agent.adapters.outbound.config.locator_registry import LocatorRegistry
+from boss_agent.core.automation.domain.locators import By, parse_selector
 
 
 def test_parse_selector_auto_strategy_detection():

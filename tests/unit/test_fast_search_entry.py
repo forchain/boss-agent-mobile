@@ -16,14 +16,21 @@ from unittest.mock import patch
 
 import pytest
 
+from boss_agent.adapters.outbound.config.locator_registry import (
+    LocatorRegistry,
+    YamlLocatorRegistry,
+)
 from boss_agent.adapters.outbound.device.pages.job_feed import JobListPage, SearchPage
-from droid_agent_core.locators import By, LocatorRegistry
+from boss_agent.core.automation.domain.locators import By
 
 EXACT_SEARCH_ICON_XPATH = (
     '//android.widget.LinearLayout[@resource-id="com.hpbr.bosszhipin:id/ly_menu"]'
     "/android.widget.RelativeLayout[2]"
     '/android.widget.ImageView[@resource-id="com.hpbr.bosszhipin:id/img_icon"]'
 )
+
+
+_LOCATORS = YamlLocatorRegistry()
 
 
 @pytest.fixture(autouse=True)
@@ -114,7 +121,7 @@ def test_search_input_locator_is_single_verified_id():
 def test_is_search_page_miss_costs_exactly_one_query():
     driver = EntryDriver()
     driver.icon_visible = False  # off the search page: nothing matches
-    page = SearchPage(driver)
+    page = SearchPage(driver, _LOCATORS)
 
     assert page.is_search_page() is False
     assert len(driver.queried) == 1, (
@@ -142,7 +149,7 @@ def test_search_icon_locator_is_single_exact_xpath():
 def test_open_search_short_circuits_when_input_already_present():
     driver = EntryDriver()
     driver.input_visible = True
-    page = JobListPage(driver)
+    page = JobListPage(driver, _LOCATORS)
 
     assert page.open_search(timeout_sec=5.0) is True
     assert driver.keycodes == [], "must not press Back when search input already visible"
@@ -150,7 +157,7 @@ def test_open_search_short_circuits_when_input_already_present():
 
 def test_open_search_clicks_entry_icon_from_home():
     driver = EntryDriver()  # icon visible, input hidden (classic home screen)
-    page = JobListPage(driver)
+    page = JobListPage(driver, _LOCATORS)
 
     assert page.open_search(timeout_sec=5.0) is True
     assert driver.input_visible is True, "clicking the entry icon must reach the search input"
@@ -159,7 +166,7 @@ def test_open_search_clicks_entry_icon_from_home():
 
 def test_open_search_backtracks_from_subpage_until_entry_found():
     driver = EntryDriver(icon_visible_after_backs=3)
-    page = JobListPage(driver)
+    page = JobListPage(driver, _LOCATORS)
 
     assert page.open_search(timeout_sec=5.0, max_back_attempts=10) is True
     assert driver.keycodes == [4, 4, 4], (
@@ -173,7 +180,7 @@ def test_open_search_backtracks_from_subpage_until_entry_found():
 def test_open_search_backtracking_is_bounded():
     driver = EntryDriver(icon_visible_after_backs=None)
     driver.icon_visible = False  # never reaches home (e.g. stuck overlay)
-    page = JobListPage(driver)
+    page = JobListPage(driver, _LOCATORS)
 
     assert page.open_search(timeout_sec=3.0, max_back_attempts=10) is False
     assert 1 <= len(driver.keycodes) <= 10, (
@@ -183,7 +190,7 @@ def test_open_search_backtracking_is_bounded():
 
 def test_open_search_reactivates_app_when_foreground_lost():
     driver = EntryDriver(icon_visible_after_backs=2, package="com.android.launcher")
-    page = JobListPage(driver)
+    page = JobListPage(driver, _LOCATORS)
 
     assert page.open_search(timeout_sec=5.0) is True
     assert driver.activated_count >= 1, "must re-activate Boss when Back escapes the app"

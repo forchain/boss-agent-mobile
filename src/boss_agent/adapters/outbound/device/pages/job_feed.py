@@ -15,6 +15,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from boss_agent.core.automation.domain.geometry import Point
+from boss_agent.core.automation.use_cases.wait import wait_until
 from boss_agent.core.job.domain.card_parser import (
     CardFacets,
     ParsedCard,
@@ -24,8 +26,6 @@ from boss_agent.core.job.domain.card_parser import (
 from boss_agent.core.job.domain.job_entities import JobCardBrief
 from boss_agent.core.job.interfaces.device import FeedBoundary, FeedCardHandle
 from boss_agent.core.search.domain.models import FilterConfig
-from droid_agent_core.gestures import Point
-from droid_agent_core.locators import wait_until
 
 from .base import BACK_INTERVAL_SEC, BaseBossPage, logger
 
@@ -116,7 +116,7 @@ class JobListPage(BaseBossPage):
            up to ``max_back_attempts`` times, so a deep subpage unwinds quickly
            instead of scanning every dialog/detail/chat close button in the tree.
         """
-        search_page = SearchPage(self.driver)
+        search_page = SearchPage(self.driver, self.locators)
 
         def try_enter() -> bool:
             if search_page.is_search_page():

@@ -268,7 +268,7 @@ def triage_run(
 def scripted_pages(harness: Harness, chat_page: Any | None = None) -> Any:
     """The device world a CHECK_CHAT dispatch drives: the harness behind the ports."""
     chat = chat_page if chat_page is not None else FakeChatPage(harness)
-    return lambda driver: TriagePages(
+    return lambda driver, locator_store=None: TriagePages(
         list_reader=CommunicationListAdapter(harness),
         chat_actor=ChatActorAdapter(chat),
     )

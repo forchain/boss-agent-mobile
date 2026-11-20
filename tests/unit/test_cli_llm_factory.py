@@ -27,12 +27,10 @@ import scripts.refine_greeting as refine_greeting
 import scripts.refine_screening as refine_screening
 
 from boss_agent import main as composition
-from droid_agent_core.llm import (
-    AnthropicChatClient,
-    LLMConfig,
-    LLMDecisionClient,
-    OpenAIChatClient,
-)
+from boss_agent.adapters.outbound.llm.anthropic_client import AnthropicChatClient
+from boss_agent.adapters.outbound.llm.config import LLMConfig
+from boss_agent.adapters.outbound.llm.openai_client import OpenAIChatClient
+from boss_agent.core.shared.llm import LLMDecisionClient
 
 SCRIPTS = [
     ("evaluate_match", evaluate_match),
@@ -71,7 +69,7 @@ def test_script_routes_provider_to_its_protocol(
 ) -> None:
     """The configured protocol — not a hard-coded import — decides the client."""
     client = module.build_llm_client(_config_json(provider))
-    assert isinstance(client, expected)
+    assert isinstance(client.inner, expected)
 
 
 @pytest.mark.parametrize("name, module", SCRIPTS, ids=[n for n, _ in SCRIPTS])
@@ -85,7 +83,7 @@ def test_script_converges_legacy_provider_to_default_protocol(
     speaks the default (OpenAI-compatible) protocol.
     """
     client = module.build_llm_client(_config_json(legacy))
-    assert isinstance(client, OpenAIChatClient)
+    assert isinstance(client.inner, OpenAIChatClient)
 
 
 @pytest.mark.parametrize("name, module", SCRIPTS, ids=[n for n, _ in SCRIPTS])
