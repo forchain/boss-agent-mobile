@@ -13,14 +13,14 @@ The dialog's own behaviours — multi-select, cancel, auto-scroll to an off-scre
 stay tested against ``IndustryFilterDialogPage``, which is the object the pipeline drives.
 """
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from _feed_harness import ScriptedFeed, _card, _detail_page, _pipeline, _posting
 
-from boss_agent.feed_pipeline import FeedStreamConfig
-from boss_agent.pages.job_feed import IndustryFilterDialogPage
-from boss_agent.search_entities import FilterConfig
+from boss_agent.adapters.outbound.device.pages.job_feed import IndustryFilterDialogPage
+from boss_agent.core.job.use_cases.feed_pipeline import FeedStreamConfig
+from boss_agent.core.search.domain.models import FilterConfig
 
 WITH_INDUSTRIES = FilterConfig(
     education="硕士",
@@ -155,19 +155,19 @@ async def test_a_run_applies_the_operator_industry_list_to_the_industry_dialog()
     order the app expects. The list that arrives has to be the operator's own: an industry
     silently dropped here is a whole category of postings the run never shows them.
     """
+    industry_filter_page = MagicMock()
     pipeline = _pipeline(
         None,
         feed=ScriptedFeed([[_card("资深大模型算法专家", "智元创新")]]),
         detail=_detail_page(posting=_posting()),
+        industry_filter_page=industry_filter_page,
+    )
+    result = await pipeline.stream_jobs(
+        FeedStreamConfig(keyword="Agent", max_jobs=1, filter_config=WITH_INDUSTRIES)
     )
 
-    with patch("boss_agent.feed_pipeline.IndustryFilterDialogPage") as industry_cls:
-        result = await pipeline.stream_jobs(
-            FeedStreamConfig(keyword="Agent", max_jobs=1, filter_config=WITH_INDUSTRIES)
-        )
-
-    industry_cls.return_value.apply_industry_filters.assert_called_once()
-    industries = industry_cls.return_value.apply_industry_filters.call_args.args[0]
+    industry_filter_page.apply_industry_filters.assert_called_once()
+    industries = industry_filter_page.apply_industry_filters.call_args.args[0]
     assert industries == ["游戏", "人工智能"]
     # Filtering narrows what the feed shows; it is not what decides whether the run
     # produced anything, so the extraction is still reported.

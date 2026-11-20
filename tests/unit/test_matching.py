@@ -7,13 +7,13 @@ verifying education fit (Master's candidate matching Bachelor's JD with Master's
 
 from unittest.mock import MagicMock
 
-from boss_agent.candidate_entities import CandidateProfile
-from boss_agent.job_entities import JobPosting
-from boss_agent.matching import (
+from boss_agent.core.candidate.domain.candidate_profile import CandidateProfile
+from boss_agent.core.job.domain.job_entities import JobPosting
+from boss_agent.core.job.use_cases.matching import (
     JobMatchGreetingService,
     format_search_filter,
 )
-from boss_agent.search_entities import FilterConfig
+from boss_agent.core.search.domain.models import FilterConfig
 
 
 def test_format_search_filter_with_dict():
@@ -270,7 +270,7 @@ def test_evaluate_match_script_preserves_tags_and_digest(monkeypatch):
     def fake_evaluate(self, job, profile=None, greeting_prompt=None):
         nonlocal captured_job
         captured_job = job
-        from boss_agent.matching import MatchGreetingResult
+        from boss_agent.core.job.use_cases.matching import MatchGreetingResult
 
         return MatchGreetingResult(
             match_score=90,

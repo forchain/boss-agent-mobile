@@ -17,8 +17,10 @@
  * (cf. `channel_preference` → 'all').
  */
 
-export function normalizeCommuteLimit(value: unknown): number | null {
-	if (value === null || value === undefined) return null;
+export type CommuteLimitInput = number | string | null | undefined;
+
+export function normalizeCommuteLimit(value: CommuteLimitInput): number | null {
+	if (value === null || value === undefined || typeof value === 'boolean') return null;
 	if (typeof value === 'number') return Number.isFinite(value) ? value : null;
 	const trimmed = String(value).trim();
 	if (!trimmed) return null;
@@ -35,14 +37,14 @@ export function formatCommuteLimitInput(value: number | null | undefined): strin
  * below 1km. Routes through the same coercion as the ceiling so an unknown distance
  * renders as nothing instead of a "0 m" reading the job never had.
  */
-export function formatCommuteDistance(value: unknown): string {
+export function formatCommuteDistance(value: CommuteLimitInput): string {
 	const km = normalizeCommuteLimit(value);
 	if (km === null || km < 0) return '';
 	return km >= 1 ? `${km.toFixed(1)} km` : `${Math.round(km * 1000)} m`;
 }
 
 /** True when the ceiling cannot reject anything, so the filter is effectively off. */
-export function isCommuteLimitDisabled(value: unknown): boolean {
+export function isCommuteLimitDisabled(value: CommuteLimitInput): boolean {
 	const limit = normalizeCommuteLimit(value);
 	return limit === null || limit <= 0;
 }

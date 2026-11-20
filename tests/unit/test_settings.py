@@ -8,9 +8,8 @@ resolution hierarchy, precedence rules, and URL normalization.
 from pathlib import Path
 from unittest.mock import patch
 
-from boss_agent.broker.pocketbase_adapter import PocketBaseTaskBroker
-from boss_agent.rejection import ChatAcknowledgmentSettings
-from boss_agent.settings import (
+from boss_agent.adapters.inbound.worker.config import WorkerConfig
+from boss_agent.adapters.outbound.config.settings import (
     load_settings,
     resolve_chat_acknowledgment_settings,
     resolve_pocketbase_data_dir,
@@ -19,7 +18,8 @@ from boss_agent.settings import (
     resolve_run_cleanup_on_startup,
     resolve_server_url,
 )
-from boss_agent.worker.config import WorkerConfig
+from boss_agent.adapters.outbound.pocketbase.pocketbase_adapter import PocketBaseTaskBroker
+from boss_agent.core.chat.domain.rejection import ChatAcknowledgmentSettings
 
 
 def test_resolve_pocketbase_url_default():
@@ -103,7 +103,10 @@ def test_pocketbase_adapter_defaults_to_resolved_url(tmp_path: Path):
     custom_yaml.write_text("pocketbase_url: 'http://adapter-host:8090'\n", encoding="utf-8")
 
     with (
-        patch("boss_agent.settings.DEFAULT_CONFIG_SEARCH_PATHS", [custom_yaml]),
+        patch(
+            "boss_agent.adapters.outbound.config.settings.DEFAULT_CONFIG_SEARCH_PATHS",
+            [custom_yaml],
+        ),
         patch.dict("os.environ", {}, clear=True),
     ):
         broker = PocketBaseTaskBroker(base_url=None)
@@ -118,7 +121,10 @@ def test_file_precedence_local_overrides_base(tmp_path: Path):
     local_yaml.write_text("pocketbase_url: 'http://local-pb:8090'\n", encoding="utf-8")
 
     with (
-        patch("boss_agent.settings.DEFAULT_CONFIG_SEARCH_PATHS", [local_yaml, base_yaml]),
+        patch(
+            "boss_agent.adapters.outbound.config.settings.DEFAULT_CONFIG_SEARCH_PATHS",
+            [local_yaml, base_yaml],
+        ),
         patch.dict("os.environ", {}, clear=True),
     ):
         url = resolve_pocketbase_url()
@@ -128,7 +134,7 @@ def test_file_precedence_local_overrides_base(tmp_path: Path):
 def test_worker_config_contains_pocketbase_url():
     """WorkerConfig includes pocketbase_url field with default value."""
     with (
-        patch("boss_agent.settings.DEFAULT_CONFIG_SEARCH_PATHS", []),
+        patch("boss_agent.adapters.outbound.config.settings.DEFAULT_CONFIG_SEARCH_PATHS", []),
         patch.dict("os.environ", {}, clear=True),
     ):
         cfg = WorkerConfig(worker_id="worker-test")
@@ -265,7 +271,7 @@ device: 'emulator-5558'
     )
 
     with (
-        patch("boss_agent.settings.yaml", None),
+        patch("boss_agent.adapters.outbound.config.settings.yaml", None),
         patch.dict("os.environ", {}, clear=True),
     ):
         settings = load_settings(config_path=custom_yaml)
@@ -288,7 +294,7 @@ pocketbase_url: "http://127.0.0.1:8090" # URL
     )
 
     with (
-        patch("boss_agent.settings.yaml", None),
+        patch("boss_agent.adapters.outbound.config.settings.yaml", None),
         patch.dict("os.environ", {}, clear=True),
     ):
         settings = load_settings(config_path=custom_yaml)
@@ -299,7 +305,7 @@ pocketbase_url: "http://127.0.0.1:8090" # URL
 
 def test_resolve_git_common_root():
     """resolve_git_common_root correctly resolves repository root via git-common-dir."""
-    from boss_agent.settings import resolve_git_common_root
+    from boss_agent.adapters.outbound.config.settings import resolve_git_common_root
 
     root = resolve_git_common_root()
     assert isinstance(root, Path)
@@ -309,7 +315,7 @@ def test_resolve_git_common_root():
 
 def test_resolve_pocketbase_db_path_with_common_root(tmp_path: Path):
     """When resolve_common_root=True, relative paths are anchored to git common root."""
-    from boss_agent.settings import resolve_git_common_root
+    from boss_agent.adapters.outbound.config.settings import resolve_git_common_root
 
     with patch.dict("os.environ", {}, clear=True):
         db_path = resolve_pocketbase_db_path(
@@ -322,7 +328,7 @@ def test_resolve_pocketbase_db_path_with_common_root(tmp_path: Path):
 
 def test_resolve_pocketbase_data_dir_with_common_root(tmp_path: Path):
     """When resolve_common_root=True, relative data dir is anchored to git common root."""
-    from boss_agent.settings import resolve_git_common_root
+    from boss_agent.adapters.outbound.config.settings import resolve_git_common_root
 
     with patch.dict("os.environ", {}, clear=True):
         data_dir = resolve_pocketbase_data_dir(
@@ -401,7 +407,7 @@ def test_worker_config_defaults_to_resolved_appium_url(tmp_path: Path):
 
     with (
         patch(
-            "boss_agent.settings.DEFAULT_CONFIG_SEARCH_PATHS",
+            "boss_agent.adapters.outbound.config.settings.DEFAULT_CONFIG_SEARCH_PATHS",
             [custom_yaml],
         ),
         patch.dict("os.environ", {}, clear=True),
@@ -465,7 +471,7 @@ def test_load_settings_legacy_llm_fallback(tmp_path: Path, monkeypatch):
 
     monkeypatch.chdir(tmp_path)
     with (
-        patch("boss_agent.settings.DEFAULT_CONFIG_SEARCH_PATHS", []),
+        patch("boss_agent.adapters.outbound.config.settings.DEFAULT_CONFIG_SEARCH_PATHS", []),
         patch.dict("os.environ", {}, clear=True),
     ):
         settings = load_settings()
@@ -601,7 +607,7 @@ def test_partial_chat_override_keeps_the_sibling_setting(tmp_path: Path):
     with (
         patch.dict("os.environ", {}, clear=True),
         patch(
-            "boss_agent.settings.DEFAULT_CONFIG_SEARCH_PATHS",
+            "boss_agent.adapters.outbound.config.settings.DEFAULT_CONFIG_SEARCH_PATHS",
             [partial, example],
         ),
     ):
@@ -666,21 +672,21 @@ def test_run_cleanup_on_startup_env_overrides_the_file(monkeypatch):
 
 def test_resolve_enable_scheduler_defaults_to_true():
     """Worker daemon must enable the integrated scheduler by default so configured cron jobs run."""
-    from boss_agent.settings import resolve_enable_scheduler
+    from boss_agent.adapters.outbound.config.settings import resolve_enable_scheduler
 
     with patch.dict("os.environ", {}, clear=True):
         assert resolve_enable_scheduler(settings={}) is True
 
 
 def test_resolve_enable_scheduler_reads_settings_file():
-    from boss_agent.settings import resolve_enable_scheduler
+    from boss_agent.adapters.outbound.config.settings import resolve_enable_scheduler
 
     with patch.dict("os.environ", {}, clear=True):
         assert resolve_enable_scheduler(settings={"enable_scheduler": False}) is False
 
 
 def test_resolve_enable_scheduler_env_overrides_settings(monkeypatch):
-    from boss_agent.settings import resolve_enable_scheduler
+    from boss_agent.adapters.outbound.config.settings import resolve_enable_scheduler
 
     monkeypatch.setenv("ENABLE_SCHEDULER", "0")
     assert resolve_enable_scheduler(settings={"enable_scheduler": True}) is False
@@ -690,7 +696,31 @@ def test_resolve_enable_scheduler_env_overrides_settings(monkeypatch):
 
 
 def test_resolve_enable_scheduler_explicit_arg_overrides_all(monkeypatch):
-    from boss_agent.settings import resolve_enable_scheduler
+    from boss_agent.adapters.outbound.config.settings import resolve_enable_scheduler
 
     monkeypatch.setenv("ENABLE_SCHEDULER", "1")
     assert resolve_enable_scheduler(explicit=False, settings={"enable_scheduler": True}) is False
+
+
+def test_resolvers_delegate_env_overrides_to_config_realm_table(monkeypatch):
+    """Extending config_realm.ENV_OVERRIDES propagates directly to settings.resolve_*."""
+    from boss_agent.adapters.outbound.config import config_realm
+
+    extended = tuple(
+        (key, ("CUSTOM_PB_URL_ALIAS", *names)) if key == "pocketbase_url" else (key, names)
+        for key, names in config_realm.ENV_OVERRIDES
+    )
+    monkeypatch.setattr(config_realm, "ENV_OVERRIDES", extended)
+    monkeypatch.delenv("POCKETBASE_URL", raising=False)
+    monkeypatch.setenv("CUSTOM_PB_URL_ALIAS", "http://custom-alias:9999/")
+    config_realm.invalidate_cache()
+
+    assert (
+        resolve_pocketbase_url(config_path="/non/existent/path.yaml") == "http://custom-alias:9999"
+    )
+    assert (
+        resolve_pocketbase_url(
+            explicit_url="http://explicit:8080/", config_path="/non/existent/path.yaml"
+        )
+        == "http://explicit:8080"
+    )

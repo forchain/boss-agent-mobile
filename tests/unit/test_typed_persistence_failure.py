@@ -19,15 +19,20 @@ import pytest
 import requests
 from _job_store_harness import FakePocketBaseSession, pocketbase_job_store
 
-from boss_agent.broker.models import TaskType
-from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
-from boss_agent.candidate_memory_store import PocketBaseCandidateMemoryStore
-from boss_agent.errors import TransportError, ValidationError
-from boss_agent.feed_pipeline import FeedStreamConfig, JobFeedPipeline
-from boss_agent.job_store import PocketBaseJobRecordStore
-from boss_agent.screening_policy import ScreeningPolicy
-from boss_agent.worker.context import WorkerContext
-from boss_agent.worker.handlers.auto_apply import AutoApplyHandler
+from boss_agent.adapters.inbound.worker.context import WorkerContext
+from boss_agent.adapters.inbound.worker.handlers.auto_apply import AutoApplyHandler
+from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
+from boss_agent.adapters.outbound.config.settings import load_feed_config_defaults
+from boss_agent.adapters.outbound.device.pages.feed_bundle import build_feed_device_world
+from boss_agent.adapters.outbound.pocketbase.candidate_memory_store import (
+    PocketBaseCandidateMemoryStore,
+)
+from boss_agent.adapters.outbound.pocketbase.job_store import PocketBaseJobRecordStore
+from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
+from boss_agent.core.job.use_cases.feed_pipeline import FeedStreamConfig, JobFeedPipeline
+from boss_agent.core.job.use_cases.screening import CandidateScreener
+from boss_agent.core.shared.errors import TransportError, ValidationError
+from boss_agent.core.task.domain.models import TaskType
 
 
 class FailingSession:
@@ -224,10 +229,16 @@ async def test_auto_apply_handler_logs_degradation_on_profile_transport_error():
         side_effect=TransportError("PocketBase unreachable: 503")
     )
 
-    from boss_agent.worker.config import WorkerConfig
+    from boss_agent.adapters.inbound.worker.config import WorkerConfig
 
     context = WorkerContext(config=WorkerConfig(), driver=MagicMock())
-    handler = AutoApplyHandler()
+    handler = AutoApplyHandler(
+        screener=CandidateScreener(llm_client=MagicMock()),
+        pages=build_feed_device_world,
+        job_store=broker.job_store,
+        candidate_memory=broker.candidate_memory,
+        feed_config_defaults_loader=load_feed_config_defaults,
+    )
 
     result = await handler.handle(task, broker, context)
     assert result.success is False
@@ -249,7 +260,7 @@ async def test_auto_apply_handler_logs_degradation_on_exclusion_pool_transport_e
     machine running it happens to keep in an untracked ``settings.local.yaml``.
     """
     monkeypatch.setattr(
-        "boss_agent.feed_pipeline.resolve_screening_policy",
+        "boss_agent.core.job.domain.feed_stream.resolve_screening_policy",
         lambda base_policy, **_: ScreeningPolicy(),
     )
     broker = InMemoryTaskBroker()
@@ -268,10 +279,16 @@ async def test_auto_apply_handler_logs_degradation_on_exclusion_pool_transport_e
         side_effect=TransportError("Database connection lost")
     )
 
-    from boss_agent.worker.config import WorkerConfig
+    from boss_agent.adapters.inbound.worker.config import WorkerConfig
 
     context = WorkerContext(config=WorkerConfig(), driver=MagicMock())
-    handler = AutoApplyHandler()
+    handler = AutoApplyHandler(
+        screener=CandidateScreener(llm_client=MagicMock()),
+        pages=build_feed_device_world,
+        job_store=broker.job_store,
+        candidate_memory=broker.candidate_memory,
+        feed_config_defaults_loader=load_feed_config_defaults,
+    )
 
     result = await handler.handle(task, broker, context)
     assert result.success is False
@@ -295,14 +312,17 @@ async def test_feed_pipeline_logs_degradation_on_quota_transport_error():
         side_effect=TransportError("PocketBase 500 error")
     )
 
+    from boss_agent.adapters.outbound.device.pages.feed_bundle import build_feed_device_world
+
     pipeline = JobFeedPipeline.for_task(
         broker=broker,
         task_id=task.id,
-        driver=MagicMock(),
+        world=build_feed_device_world(MagicMock()),
+        store=broker.job_store,
         screener=MagicMock(),
     )
 
-    from boss_agent.feed_pipeline import FeedStreamResult, _CardRun
+    from boss_agent.core.job.use_cases.feed_pipeline import FeedStreamResult, _CardRun
 
     run = _CardRun(
         config=FeedStreamConfig(),

@@ -10,9 +10,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from boss_agent.job_entities import JobPosting
-from boss_agent.screening import CandidateScreener, ScreeningVerdict
-from boss_agent.screening_policy import ScreeningPolicy
+from boss_agent.core.job.domain.job_entities import JobPosting
+from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
+from boss_agent.core.job.use_cases.screening import CandidateScreener, ScreeningVerdict
 
 
 def _sample_job() -> JobPosting:
@@ -216,7 +216,7 @@ def test_cli_evaluate_loads_policy_from_settings_when_flag_omitted(capsys):
 
     with (
         patch("sys.argv", test_args),
-        patch("boss_agent.settings.load_settings", return_value=settings),
+        patch("boss_agent.adapters.outbound.config.settings.load_settings", return_value=settings),
         patch.object(script, "build_llm_client", return_value=mock_llm),
     ):
         script.main()

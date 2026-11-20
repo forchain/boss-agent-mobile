@@ -526,7 +526,7 @@ runner_runtime_dir() {
 # Supervisors and test harnesses match on these lines to prove a service accepted a
 # termination signal and actually shut down. They are a contract across three
 # producers and one consumer, so they are defined once, here, and referenced by the
-# runners; boss_agent.services.teardown mirrors the worker's half.
+# runners; boss_agent.adapters.infra.teardown mirrors the worker's half.
 
 #: The Web Dashboard echoes this when its runner accepts a stop command.
 RUNNER_WEB_SHUTDOWN_ACK="Received stop command"
@@ -607,6 +607,422 @@ runner_log_restart_complete() {
     local LABEL="${2:-Service}"
     local DETAIL="${3:-}"
     runner_log_event "${LOG_FILE}" "✅ [${LABEL}] ${RUNNER_LIFECYCLE_RESTART_COMPLETE}: ${DETAIL}"
+}
+
+# --------------------------------------------------------------------------- #
+# Parameterized service-command choreography
+# --------------------------------------------------------------------------- #
+#
+# Five Dedicated Runner Scripts used to hand-roll the same four commands — status, stop,
+# attach and restart — and the copies drifted into two live hazards:
+#
+#   * `dashboard.sh` narrated its own lifecycle without the shared wording and emitted no
+#     restart telemetry at all, so the E2E Pre-Test Teardown Gate could see a stop but not
+#     a restart;
+#   * `emulator.sh` fell back to a raw kill-and-sleep for the one process it owns, giving
+#     the Remote ADB Bridge none of the Graceful Shutdown Protocol's budget.
+#
+# This section owns the choreography. A runner describes its service once, by setting the
+# variables below, and then calls the shared commands. What stays in the runner is what is
+# genuinely that runner's: the preflight checks, the launch command, and the decisions only
+# it can make (which transports exist, what "running" means for a device).
+#
+# The description is a set of plain shell variables rather than a struct, because bash 3.2
+# has no associative arrays and this library has to run on the macOS its users develop on.
+#
+#   RUNNER_SERVICE_LABEL                     the name the lifecycle events carry
+#   RUNNER_SERVICE_NAME                      the name the operator's report carries
+#   RUNNER_SERVICE_PID_FILE                  where the service's PID is recorded
+#   RUNNER_SERVICE_LOG_FILE                  the service's own log
+#   RUNNER_SERVICE_PORT                      the TCP port it listens on ("" when it has none)
+#   RUNNER_SERVICE_HEALTH_URL                the URL that answers when it is up ("" when none)
+#   RUNNER_SERVICE_HEALTH_URLS               several URLs to try, space-separated
+#   RUNNER_SERVICE_ENDPOINT                  the address shown in the operator's report
+#   RUNNER_SERVICE_STOP_TIMEOUT_SEC          the Graceful Shutdown Protocol budget
+#   RUNNER_SERVICE_STOP_ACK_LABEL            the label the shutdown acknowledgment carries
+#   RUNNER_SERVICE_STOP_ACK_DETAIL           the service named in the acknowledgment ("" = none)
+#   RUNNER_SERVICE_STOP_DETAIL               what the stop request says it is stopping
+#   RUNNER_SERVICE_STOP_COMPLETE_DETAIL     what the stop completion says it stopped
+#   RUNNER_SERVICE_RESTART_DETAIL            what the restart request says it is restarting
+#   RUNNER_SERVICE_RESTART_COMPLETE_DETAIL   what the restart completion says
+#   RUNNER_SERVICE_RESIDUAL_PATTERN          pgrep pattern for processes that outlived a parent
+#   RUNNER_SERVICE_RECLAIM_PATTERN           pgrep pattern reclaimed with the same budget
+#   RUNNER_SERVICE_FIND_PATTERN              pgrep pattern used to find an unrecorded service
+#   RUNNER_SERVICE_STOP_CHILDREN             "1" when the service's children go first
+#   RUNNER_SERVICE_STALE_CWD                 "1" when a deleted working directory is reported
+#   RUNNER_SERVICE_RESTART_ISOLATED          "1" when the start half runs in a subshell
+#   RUNNER_SERVICE_RESTART_TOLERATES_STOP    "1" when a failed stop does not abort a restart
+#   RUNNER_SERVICE_IDLE_MESSAGE              what an idle stop says
+#   RUNNER_SERVICE_STOPPED_MESSAGE           what a completed stop says
+#   RUNNER_SERVICE_STATUS_CHECKING           what the status probe announces
+#   RUNNER_SERVICE_STATUS_UP                 what a healthy service reports
+#   RUNNER_SERVICE_STATUS_DOWN               what an unreachable service reports
+#   RUNNER_SERVICE_STATUS_PID_LINE           the PID line, when the service reports one
+#   RUNNER_SERVICE_STATUS_LOG_LINE           the log line, when the service reports one
+#   RUNNER_SERVICE_STATUS_STALE_WARNING      the warning for a process that outlived its port
+#   RUNNER_SERVICE_ATTACH_MISSING            what an attach to a stopped service says
+
+# Reset every field of the service description to its default.
+#
+# A runner calls this *before* it fills the description in, so a field it does not set is
+# empty rather than inherited from whatever the previous runner in the same shell left
+# behind — a sourced library in a shared shell is exactly the place where a stale value
+# would quietly change a stop's behaviour.
+runner_service_reset() {
+    RUNNER_SERVICE_LABEL="Service"
+    RUNNER_SERVICE_NAME="service"
+    RUNNER_SERVICE_PID_FILE=""
+    RUNNER_SERVICE_LOG_FILE=""
+    RUNNER_SERVICE_PORT=""
+    RUNNER_SERVICE_HEALTH_URL=""
+    RUNNER_SERVICE_HEALTH_URLS=""
+    RUNNER_SERVICE_ENDPOINT=""
+    RUNNER_SERVICE_STOP_TIMEOUT_SEC="10"
+    RUNNER_SERVICE_RESIDUAL_TIMEOUT_SEC=""
+    RUNNER_SERVICE_STOP_ACK_LABEL=""
+    RUNNER_SERVICE_STOP_ACK_DETAIL=""
+    RUNNER_SERVICE_STOP_DETAIL=""
+    RUNNER_SERVICE_STOP_COMPLETE_DETAIL=""
+    RUNNER_SERVICE_RESTART_DETAIL=""
+    RUNNER_SERVICE_RESTART_COMPLETE_DETAIL=""
+    RUNNER_SERVICE_RESIDUAL_PATTERN=""
+    RUNNER_SERVICE_RECLAIM_PATTERN=""
+    RUNNER_SERVICE_FIND_PATTERN=""
+    RUNNER_SERVICE_STOP_CHILDREN="0"
+    RUNNER_SERVICE_STALE_CWD="0"
+    RUNNER_SERVICE_RESTART_ISOLATED="0"
+    RUNNER_SERVICE_RESTART_TOLERATES_STOP="0"
+    RUNNER_SERVICE_RESTART_COMMAND="./run.sh restart"
+    RUNNER_SERVICE_RESTART_DELAY_SEC="0.5"
+    RUNNER_SERVICE_STOP_BANNER="Stopping service..."
+    RUNNER_SERVICE_IDLE_MESSAGE="No running service found."
+    RUNNER_SERVICE_STOPPED_MESSAGE="Service stopped."
+    RUNNER_SERVICE_STATUS_CHECKING="Checking service status..."
+    RUNNER_SERVICE_STATUS_UP="Service is RUNNING."
+    RUNNER_SERVICE_STATUS_DOWN="Service is NOT RUNNING."
+    RUNNER_SERVICE_STATUS_PID_LINE=""
+    RUNNER_SERVICE_STATUS_LOG_LINE=""
+    RUNNER_SERVICE_STATUS_STALE_WARNING=""
+    RUNNER_SERVICE_ATTACH_MISSING="Cannot attach to log stream."
+}
+
+# The PID of the service this description names, or empty.
+#
+# Three sources, in this order:
+#
+#   1. the pidfile, when it names a live process whose working directory still exists —
+#      a service whose source tree was deleted under it is a stale record, not a service;
+#   2. the LISTEN-only owner of the service's port, when it has one, adopted into the
+#      pidfile so the next lookup is cheap;
+#   3. the find pattern, for a service with neither a pidfile nor a port (the Automation
+#      Worker, whose launcher is found by the script it runs).
+#
+# A merely *connected* client is never a candidate: every port probe in this library is
+# LISTEN-only, because a dashboard holding an SSE stream to PocketBase must not be
+# mistaken for PocketBase and signalled.
+runner_service_resolve_pid() {
+    local PID
+    PID="$(runner_pidfile_read "${RUNNER_SERVICE_PID_FILE}")"
+    if [[ -n "${PID}" ]] \
+        && runner_process_alive "${PID}" \
+        && runner_process_cwd_alive "${PID}"; then
+        echo "${PID}"
+        return 0
+    fi
+
+    if [[ -n "${RUNNER_SERVICE_PORT}" ]]; then
+        local PORT_PID
+        PORT_PID="$(runner_port_listener_pid "${RUNNER_SERVICE_PORT}")"
+        if [[ -n "${PORT_PID}" ]] && runner_process_cwd_alive "${PORT_PID}"; then
+            runner_pidfile_write "${RUNNER_SERVICE_PID_FILE}" "${PORT_PID}"
+            echo "${PORT_PID}"
+            return 0
+        fi
+    fi
+
+    if [[ -n "${RUNNER_SERVICE_FIND_PATTERN}" ]]; then
+        local FOUND_PID
+        while IFS= read -r FOUND_PID; do
+            [[ -z "${FOUND_PID}" ]] && continue
+            if runner_process_alive "${FOUND_PID}" && runner_process_cwd_alive "${FOUND_PID}"; then
+                runner_pidfile_write "${RUNNER_SERVICE_PID_FILE}" "${FOUND_PID}"
+                echo "${FOUND_PID}"
+                return 0
+            fi
+        done < <(pgrep -f "${RUNNER_SERVICE_FIND_PATTERN}" 2>/dev/null || true)
+    fi
+
+    echo ""
+}
+
+# Whether the service answers its health probe.
+#
+# A service with no health URL has no probe to make: it is judged by its process alone,
+# which is the Automation Worker's case — it has no port and no endpoint of its own.
+runner_service_healthy() {
+    local PID="${1:-}"
+    local URL
+    if [[ -z "${RUNNER_SERVICE_HEALTH_URL}" && -z "${RUNNER_SERVICE_HEALTH_URLS}" ]]; then
+        # A service with no probe of its own is judged by its process alone.
+        [[ -n "${PID}" ]] && runner_process_alive "${PID}"
+        return
+    fi
+    for URL in ${RUNNER_SERVICE_HEALTH_URL} ${RUNNER_SERVICE_HEALTH_URLS}; do
+        if curl -s -f "${URL}" >/dev/null 2>&1; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Substitute the placeholders a status template may carry.
+runner_service_expand() {
+    local TEMPLATE="${1:-}"
+    local PID="${2:-}"
+    local EXPANDED="${TEMPLATE}"
+    EXPANDED="${EXPANDED//\{pid\}/${PID}}"
+    EXPANDED="${EXPANDED//\{log\}/${RUNNER_SERVICE_LOG_FILE}}"
+    EXPANDED="${EXPANDED//\{endpoint\}/${RUNNER_SERVICE_ENDPOINT}}"
+    EXPANDED="${EXPANDED//\{port\}/${RUNNER_SERVICE_PORT}}"
+    printf '%s\n' "${EXPANDED}"
+}
+
+# The shared `status` command.
+#
+# Read-only, and it never touches the service: a status probe that repaired something
+# would make "is it up?" a question that changes the answer. The one thing it does change
+# is a stale pidfile — a record of a service that is demonstrably gone — which is removed
+# so the next stop does not chase a PID that was never ours.
+runner_service_status() {
+    local PID
+    PID="$(runner_service_resolve_pid)"
+
+    echo "🔍 ${RUNNER_SERVICE_STATUS_CHECKING}"
+
+    # A port held by a process whose working directory was deleted is a service that can
+    # never serve again, and it is worth naming: the remedy (restart) is different from
+    # the one for "not running" (start).
+    if [[ "${RUNNER_SERVICE_STALE_CWD}" == "1" && -n "${RUNNER_SERVICE_PORT}" ]]; then
+        local PORT_PID STALE_CWD
+        PORT_PID="$(runner_port_listener_pid "${RUNNER_SERVICE_PORT}")"
+        if [[ -n "${PORT_PID}" ]] && ! runner_process_cwd_alive "${PORT_PID}"; then
+            STALE_CWD="$(runner_process_cwd "${PORT_PID}")"
+            echo "🔴 ${RUNNER_SERVICE_NAME} port ${RUNNER_SERVICE_PORT} is held by a STALE process (PID: ${PORT_PID})"
+            echo "   Deleted CWD: ${STALE_CWD:-unknown}"
+            echo "   Run '${RUNNER_SERVICE_RESTART_COMMAND}' to reclaim port and start a fresh server."
+            return 1
+        fi
+    fi
+
+    if runner_service_healthy "${PID}"; then
+        echo "$(runner_service_expand "${RUNNER_SERVICE_STATUS_UP}" "${PID}")"
+        if [[ -n "${RUNNER_SERVICE_STATUS_PID_LINE}" && -n "${PID}" ]]; then
+            echo "$(runner_service_expand "${RUNNER_SERVICE_STATUS_PID_LINE}" "${PID}")"
+        fi
+        if [[ -n "${RUNNER_SERVICE_STATUS_LOG_LINE}" ]]; then
+            echo "$(runner_service_expand "${RUNNER_SERVICE_STATUS_LOG_LINE}" "${PID}")"
+        fi
+        return 0
+    fi
+
+    echo "$(runner_service_expand "${RUNNER_SERVICE_STATUS_DOWN}" "${PID}")"
+    if [[ -n "${RUNNER_SERVICE_STATUS_STALE_WARNING}" && -n "${PID}" ]]; then
+        echo "$(runner_service_expand "${RUNNER_SERVICE_STATUS_STALE_WARNING}" "${PID}")"
+    fi
+    runner_pidfile_clear "${RUNNER_SERVICE_PID_FILE}"
+    return 1
+}
+
+# The shared `stop` command.
+#
+# One order for every service, so no runner can drift into a different escalation or a
+# different event:
+#
+#   1. the service itself, its children first when it has any;
+#   2. whatever outlived it and still matches the residual pattern;
+#   3. whatever still holds the port, reclaimed with the same budget;
+#   4. the pidfile cleared, and the port waited for;
+#   5. the completion event, or the plain statement that nothing was running.
+#
+# An idle stop writes nothing at all: lifecycle events record real stops, not heartbeats,
+# and a runner that logged unconditionally would create its service's log on every
+# `./run.sh stop`.
+runner_service_stop() {
+    local LABEL="${RUNNER_SERVICE_LABEL}"
+    local LOG_FILE="${RUNNER_SERVICE_LOG_FILE}"
+    local TIMEOUT="${RUNNER_SERVICE_STOP_TIMEOUT_SEC}"
+    # A leftover process gets the same budget by default; a service whose leftovers are
+    # known to be quick may narrow it.
+    local RESIDUAL_TIMEOUT="${RUNNER_SERVICE_RESIDUAL_TIMEOUT_SEC:-${TIMEOUT}}"
+    local STOPPED=0
+    local PID
+    PID="$(runner_service_resolve_pid)"
+
+    echo "${RUNNER_SERVICE_STOP_BANNER}"
+
+    if [[ -n "${PID}" ]]; then
+        # The Web Dashboard's acknowledgment is a cross-process contract the teardown gate
+        # greps for, so a service that declares one records it before the stop request.
+        if [[ -n "${RUNNER_SERVICE_STOP_ACK_DETAIL}" ]]; then
+            runner_ack_shutdown "${LOG_FILE}" "${RUNNER_SERVICE_STOP_ACK_LABEL}" "${PID}" \
+                "${RUNNER_SERVICE_STOP_ACK_DETAIL}"
+        fi
+        runner_log_stop_request "${LOG_FILE}" "${LABEL}" "${PID}" "${RUNNER_SERVICE_STOP_DETAIL}"
+        if [[ "${RUNNER_SERVICE_STOP_CHILDREN}" == "1" ]]; then
+            # Children first: the recorded PID is the launcher, and the child that holds
+            # the device session is its own. Signalling the parent first re-parents the
+            # child to init, where it can no longer be found or stopped at all.
+            pkill -P "${PID}" 2>/dev/null || true
+        fi
+        runner_graceful_stop "${PID}" "${TIMEOUT}" "${LABEL}" "${LOG_FILE}"
+        STOPPED=1
+    fi
+
+    # Processes that outlived their parent: the same budget, the same escalation.
+    local PATTERN
+    for PATTERN in "${RUNNER_SERVICE_RESIDUAL_PATTERN}" "${RUNNER_SERVICE_RECLAIM_PATTERN}"; do
+        [[ -n "${PATTERN}" ]] || continue
+        local RESIDUAL_PIDS RESIDUAL_PID
+        RESIDUAL_PIDS="$(pgrep -f "${PATTERN}" 2>/dev/null || true)"
+        for RESIDUAL_PID in ${RESIDUAL_PIDS}; do
+            runner_graceful_stop "${RESIDUAL_PID}" "${RESIDUAL_TIMEOUT}" "${LABEL}" "${LOG_FILE}"
+            STOPPED=1
+        done
+    done
+
+    # Whatever still holds the port. The probe is LISTEN-only, so a connected client is
+    # never a candidate for being signalled.
+    if [[ -n "${RUNNER_SERVICE_PORT}" ]]; then
+        local PORT_PID
+        PORT_PID="$(runner_port_listener_pid "${RUNNER_SERVICE_PORT}")"
+        if [[ -n "${PORT_PID}" ]]; then
+            echo "⚠️ Port ${RUNNER_SERVICE_PORT} still held by PID ${PORT_PID}; reclaiming."
+            runner_graceful_stop "${PORT_PID}" "${TIMEOUT}" "port ${RUNNER_SERVICE_PORT} listener" "${LOG_FILE}"
+            STOPPED=1
+        fi
+    fi
+
+    runner_pidfile_clear "${RUNNER_SERVICE_PID_FILE}"
+
+    if [[ -n "${RUNNER_SERVICE_PORT}" ]]; then
+        if ! runner_wait_until "${TIMEOUT}" runner_port_released "${RUNNER_SERVICE_PORT}"; then
+            echo "❌ Error: port ${RUNNER_SERVICE_PORT} is still occupied after shutdown." >&2
+            runner_log_event "${LOG_FILE}" "❌ [${LABEL}] Port ${RUNNER_SERVICE_PORT} is still occupied after shutdown."
+            return 1
+        fi
+    fi
+
+    if [[ ${STOPPED} -eq 1 ]]; then
+        runner_log_stop_complete "${LOG_FILE}" "${LABEL}" "${RUNNER_SERVICE_STOP_COMPLETE_DETAIL}"
+        echo "✅ ${RUNNER_SERVICE_STOPPED_MESSAGE}"
+    else
+        echo "ℹ️ ${RUNNER_SERVICE_IDLE_MESSAGE}"
+    fi
+    return 0
+}
+
+# The shared `attach` command.
+#
+# Attaching to a service that is not running is a refusal, not an empty stream: the
+# operator needs to know that there is nothing to watch before they wait for a line that
+# will never come.
+runner_service_attach() {
+    local PID
+    PID="$(runner_service_resolve_pid)"
+    if [[ -z "${PID}" ]] || ! runner_process_alive "${PID}"; then
+        echo "🔴 ${RUNNER_SERVICE_NAME} is NOT RUNNING." >&2
+        echo "   ${RUNNER_SERVICE_ATTACH_MISSING}" >&2
+        return 1
+    fi
+    runner_attached_logs \
+        "${PID}" \
+        "${RUNNER_SERVICE_LOG_FILE}" \
+        "${RUNNER_SERVICE_NAME}" \
+        "${RUNNER_SERVICE_ENDPOINT}" \
+        "${RUNNER_SERVICE_PID_FILE}"
+}
+
+# The shared `restart` command.
+#
+# A restart is a stop, a pause, and a start — and the two events that bracket it are
+# recorded either side of the work, so a supervisor reading the service's own log can tell
+# a restart that was asked for from one that finished.
+#
+# The start half runs in a subshell for the runners whose `cmd_start` ends in an `exit`:
+# in the parent shell that exit would take the completion event down with it. For the
+# runners whose start half attaches to a live log stream, the subshell would swallow the
+# Ctrl+C that detaches it — so those run it in place, and say so.
+runner_service_restart() {
+    local LABEL="${RUNNER_SERVICE_LABEL}"
+
+    runner_log_restart_request \
+        "${RUNNER_SERVICE_LOG_FILE}" "${LABEL}" "${RUNNER_SERVICE_RESTART_DETAIL}"
+
+    if [[ "${RUNNER_SERVICE_RESTART_TOLERATES_STOP}" == "1" ]]; then
+        runner_service_stop || true
+    else
+        runner_service_stop
+    fi
+
+    sleep "${RUNNER_SERVICE_RESTART_DELAY_SEC:-0.5}"
+
+    if declare -f cmd_start >/dev/null 2>&1; then
+        if [[ "${RUNNER_SERVICE_RESTART_ISOLATED}" == "1" ]]; then
+            # The status is captured rather than propagated, so a start that failed cannot
+            # be recorded below as a service that came back up. Not written as
+            # `( cmd_start ) || return 1`: a subshell used as an operand of `||` has
+            # errexit suspended *inside* it, which would let a failed pre-flight fall
+            # through to the foreground log stream and hang forever. Suspension is
+            # therefore lifted only for the outer shell, and restored for the subshell
+            # where `cmd_start` depends on it to abort.
+            set +e
+            ( set -e; cmd_start "$@" )
+            local START_STATUS=$?
+            set -e
+            if [[ ${START_STATUS} -ne 0 ]]; then
+                return 1
+            fi
+        else
+            cmd_start "$@"
+        fi
+    fi
+
+    runner_log_restart_complete \
+        "${RUNNER_SERVICE_LOG_FILE}" "${LABEL}" "${RUNNER_SERVICE_RESTART_COMPLETE_DETAIL}"
+}
+
+# --------------------------------------------------------------------------- #
+# Version sniffing
+# --------------------------------------------------------------------------- #
+
+#: What an install with no version of its own renders — the Version Resolution Chain's last
+#: resort. This is the shell's declaration of the same value as
+#: `web/src/lib/server/version.ts:DEFAULT_APP_VERSION` and
+#: `scripts/sync_version.py:FALLBACK_VERSION`; tests/e2e/test_version_resolution_chain.py
+#: pins all three equal, so the shell cannot drift from the two consumers.
+RUNNER_VERSION_FALLBACK="v0.1"
+
+#: The shape of a commit hash rather than a version. `git describe --tags --always` exits 0
+#: and prints a bare abbreviated hash when no tag is reachable, so the output's *shape* is
+#: the only signal that separates "no version here" from "here is your version". Mirrors
+#: `BARE_COMMIT_HASH` in web/src/lib/server/gitDescribe.ts.
+RUNNER_BARE_COMMIT_HASH='^[0-9a-fA-F]{7,64}$'
+
+# The live checkout's version tag, or empty.
+#
+# A bare commit hash is not a version: exporting one as APP_VERSION would outrank the
+# Version Manifest with a raw hash (#422). Every failure — no git binary, not a repository,
+# a shallow clone, empty output — degrades to empty, leaving the Web build to fall through
+# to the manifest and then RUNNER_VERSION_FALLBACK.
+runner_version_sniff() {
+    local TAG
+    TAG="$(git describe --tags --always 2>/dev/null || true)"
+    TAG="$(printf '%s' "${TAG}" | tr -d '[:space:]')"
+    if [[ -z "${TAG}" ]] || [[ "${TAG}" =~ ${RUNNER_BARE_COMMIT_HASH} ]]; then
+        echo ""
+        return 0
+    fi
+    echo "${TAG}"
 }
 
 # --------------------------------------------------------------------------- #

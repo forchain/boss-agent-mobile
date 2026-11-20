@@ -1,0 +1,124 @@
+{
+  "_comment": "Cross-language parity vectors for Greeting Provenance, Commute Coercion, Chat Acknowledgment Coercion, Cooldown Timestamps, and Salutation parsing.",
+  "greeting_provenance": [
+    {
+      "case": "human-exact",
+      "record": { "greeting_message": "李总您好", "greeting_source": "human" },
+      "expected_is_human": true
+    },
+    {
+      "case": "human-padded-whitespace",
+      "record": { "greeting_message": "李总您好", "greeting_source": " human " },
+      "expected_is_human": true
+    },
+    {
+      "case": "agent-draft",
+      "record": { "greeting_message": "李总您好", "greeting_source": "agent_draft" },
+      "expected_is_human": false
+    },
+    {
+      "case": "unknown-source",
+      "record": { "greeting_message": "李总您好", "greeting_source": "legacy" },
+      "expected_is_human": false
+    },
+    {
+      "case": "blank-message-even-if-human",
+      "record": { "greeting_message": "   ", "greeting_source": "human" },
+      "expected_is_human": false
+    }
+  ],
+  "commute_limit": [
+    { "case": "null", "input": null, "expected": null },
+    { "case": "empty-string", "input": "", "expected": null },
+    { "case": "null-string", "input": "null", "expected": null },
+    { "case": "none-string", "input": "None", "expected": null },
+    { "case": "tilde-string", "input": "~", "expected": null },
+    { "case": "int-zero", "input": 0, "expected": 0 },
+    { "case": "float-string", "input": " 27.5 ", "expected": 27.5 },
+    { "case": "number-40", "input": 40, "expected": 40 },
+    { "case": "inf-string", "input": "inf", "expected": null },
+    { "case": "neg-inf-string", "input": "-Infinity", "expected": null },
+    { "case": "nan-string", "input": "NaN", "expected": null },
+    { "case": "non-numeric", "input": "abc", "expected": null },
+    { "case": "bool-true", "input": true, "expected": null }
+  ],
+  "chat_acknowledgment_positive_int": [
+    { "case": "positive-int", "input": 15, "fallback": 30, "expected": 15 },
+    { "case": "numeric-string", "input": "12", "fallback": 30, "expected": 12 },
+    { "case": "float-floors", "input": 12.7, "fallback": 5, "expected": 12 },
+    { "case": "float-string-floors", "input": "12.7", "fallback": 5, "expected": 12 },
+    { "case": "sub-one-float-degrades", "input": 0.5, "fallback": 5, "expected": 5 },
+    { "case": "zero-degrades", "input": 0, "fallback": 30, "expected": 30 },
+    { "case": "negative-degrades", "input": -3, "fallback": 5, "expected": 5 },
+    { "case": "inf-string-degrades", "input": "inf", "fallback": 5, "expected": 5 },
+    { "case": "non-numeric-degrades", "input": "nope", "fallback": 5, "expected": 5 },
+    { "case": "bool-degrades", "input": true, "fallback": 30, "expected": 30 }
+  ],
+  "cooldown_timestamps": [
+    {
+      "case": "utc-z-expired",
+      "record": { "applied_at": "2026-08-01T00:00:00Z" },
+      "cooldown_days": 30,
+      "now": "2026-09-15T00:00:00Z",
+      "expected_expired": true
+    },
+    {
+      "case": "pocketbase-space-naive-utc-not-expired",
+      "record": { "applied_at": "2026-09-01 12:00:00.000" },
+      "cooldown_days": 30,
+      "now": "2026-09-15T12:00:00Z",
+      "expected_expired": false
+    },
+    {
+      "case": "pocketbase-space-naive-utc-boundary-exact-30d-not-expired",
+      "record": { "applied_at": "2026-08-16 12:00:00" },
+      "cooldown_days": 30,
+      "now": "2026-09-15T12:00:00Z",
+      "expected_expired": false
+    },
+    {
+      "case": "pocketbase-space-naive-utc-just-over-30d-expired",
+      "record": { "applied_at": "2026-08-16 11:59:59" },
+      "cooldown_days": 30,
+      "now": "2026-09-15T12:00:00Z",
+      "expected_expired": true
+    },
+    {
+      "case": "historical-created-fallback",
+      "record": { "applied_at": "", "created": "2026-08-01 08:00:00Z" },
+      "cooldown_days": 30,
+      "now": "2026-09-15T00:00:00Z",
+      "expected_expired": true
+    },
+    {
+      "case": "zero-cooldown-permanent",
+      "record": { "applied_at": "2020-01-01T00:00:00Z" },
+      "cooldown_days": 0,
+      "now": "2026-09-15T00:00:00Z",
+      "expected_expired": false
+    },
+    {
+      "case": "unparseable-timestamp-never-expires",
+      "record": { "applied_at": "not-a-date" },
+      "cooldown_days": 30,
+      "now": "2026-09-15T00:00:00Z",
+      "expected_expired": false
+    }
+  ],
+  "compound_surnames": [
+    "欧阳", "太史", "端木", "上官", "司马", "东方", "独孤", "南宫", "万俟", "闻人",
+    "夏侯", "诸葛", "尉迟", "公羊", "赫连", "澹台", "皇甫", "宗政", "濮阳", "公冶",
+    "太叔", "申屠", "公孙", "慕容", "仲孙", "钟离", "长孙", "宇文", "司徒", "司空",
+    "司寇", "子车", "微生", "呼延", "拓跋", "乐正", "壤驷", "公良", "漆雕", "巫马",
+    "公西", "令狐"
+  ],
+  "salutation": [
+    { "case": "lady-spaced", "raw": "张 女士 · HR", "expected_title": "张女士", "expected_prefix": "张女士您好,幸会!" },
+    { "case": "mister-with-brackets", "raw": "钟先生(招聘)", "expected_title": "钟先生", "expected_prefix": "钟先生您好,幸会!" },
+    { "case": "single-surname", "raw": "张伟·技术总监", "expected_title": "张总", "expected_prefix": "张总您好,幸会!" },
+    { "case": "compound-surname-zhuge", "raw": "诸葛孔明", "expected_title": "诸葛总", "expected_prefix": "诸葛总您好,幸会!" },
+    { "case": "compound-surname-ouyang", "raw": "欧阳六", "expected_title": "欧阳总", "expected_prefix": "欧阳总您好,幸会!" },
+    { "case": "generic-hr", "raw": "HRBP", "expected_title": "", "expected_prefix": "您好,幸会!" },
+    { "case": "english-name", "raw": "Alice", "expected_title": "", "expected_prefix": "您好,幸会!" }
+  ]
+}

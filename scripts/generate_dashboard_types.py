@@ -45,7 +45,7 @@ def _generate_collection_interface(collection, interface_name: str) -> list[str]
 
 
 def generate_typescript_content() -> str:
-    from boss_agent.broker.collection_schema import (
+    from boss_agent.adapters.outbound.pocketbase.collection_schema import (
         AUTOMATION_TASKS,
         JOB_RECORDS,
         SAVED_SEARCHES,

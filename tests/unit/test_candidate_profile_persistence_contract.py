@@ -17,16 +17,19 @@ from typing import Any
 
 import pytest
 
-from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
-from boss_agent.candidate_entities import CandidateProfile
-from boss_agent.candidate_memory_store import (
+from boss_agent.adapters.memory.candidate_memory_store import InMemoryCandidateMemoryStore
+from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
+from boss_agent.adapters.outbound.pocketbase.candidate_memory_store import (
     PROFILE_JSON_COLUMNS,
-    InMemoryCandidateMemoryStore,
     PocketBaseCandidateMemoryStore,
     migrate_legacy_candidate_profile,
 )
-from boss_agent.graph import resume_normalizer_node, resume_text_extractor_node
-from boss_agent.memory import ResumeMemoryManager
+from boss_agent.adapters.outbound.resume.graph import (
+    resume_normalizer_node,
+    resume_text_extractor_node,
+)
+from boss_agent.adapters.outbound.resume.memory import ResumeMemoryManager
+from boss_agent.core.candidate.domain.candidate_profile import CandidateProfile
 
 #: The eleven keys `CandidateProfile.to_dict()` emits. This is the persisted column
 #: contract for `candidate_profiles`; adding, dropping or renaming one is a schema change.
@@ -278,24 +281,26 @@ def test_text_extractor_node_feeds_the_same_profile_contract(tmp_path: Path) -> 
 
 def test_manager_saves_and_loads_through_the_entity_serialization(tmp_path: Path) -> None:
     """Criterion 3: `ResumeMemoryManager` moves only entity dicts across its boundary."""
-    from unittest.mock import AsyncMock, MagicMock, patch
+    from unittest.mock import AsyncMock, MagicMock
 
     memory_file = tmp_path / "profile.json"
     store = InMemoryCandidateMemoryStore()
-    broker = MagicMock()
-    broker.candidate_memory = store
-    broker.candidate_memory.get_candidate_profile = AsyncMock(
+    candidate_memory = MagicMock()
+    candidate_memory.get_candidate_profile = AsyncMock(
         side_effect=lambda **kw: store.get_candidate_profile(**kw)
     )
-    broker.candidate_memory.save_candidate_profile = AsyncMock(
+    candidate_memory.save_candidate_profile = AsyncMock(
         side_effect=lambda data, **kw: store.save_candidate_profile(data, **kw)
     )
 
-    manager = ResumeMemoryManager(llm_client=MagicMock(), memory_file_path=memory_file)
+    manager = ResumeMemoryManager(
+        llm_client=MagicMock(),
+        candidate_memory=candidate_memory,
+        memory_file_path=memory_file,
+    )
     original = _populated_profile()
 
-    with patch("boss_agent.broker.PocketBaseBroker", return_value=broker):
-        manager.save_memory_profile(original)
+    manager.save_memory_profile(original)
 
     # The on-disk fallback is written with the same dict the database receives.
     import json
@@ -303,8 +308,7 @@ def test_manager_saves_and_loads_through_the_entity_serialization(tmp_path: Path
     on_disk = json.loads(memory_file.read_text(encoding="utf-8"))
     assert CandidateProfile.from_dict(on_disk).to_dict() == original.to_dict()
 
-    with patch("boss_agent.broker.PocketBaseBroker", return_value=broker):
-        loaded = manager.load_cached_memory()
+    loaded = manager.load_cached_memory()
 
     assert loaded is not None
     assert isinstance(loaded, CandidateProfile)

@@ -9,12 +9,24 @@ from unittest.mock import MagicMock, patch
 import pytest
 from _card_fixtures import located
 
-from boss_agent.broker.models import AutomationTask, TaskType
-from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
-from boss_agent.identifier_helpers import compute_job_fingerprint
-from boss_agent.job_entities import JobCardBrief, JobPosting
-from boss_agent.worker.context import WorkerContext
-from boss_agent.worker.handlers.scrape_jobs import ScrapeJobsHandler
+from boss_agent.adapters.inbound.worker.context import WorkerContext
+from boss_agent.adapters.inbound.worker.handlers.scrape_jobs import ScrapeJobsHandler
+from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
+from boss_agent.adapters.outbound.config.settings import load_feed_config_defaults
+from boss_agent.adapters.outbound.device.pages.feed_bundle import build_feed_device_world
+from boss_agent.core.job.domain.job_entities import JobCardBrief, JobPosting
+from boss_agent.core.job.use_cases.screening import CandidateScreener
+from boss_agent.core.shared.identifier_helpers import compute_job_fingerprint
+from boss_agent.core.task.domain.models import AutomationTask, TaskType
+
+
+def _scrape_handler(broker, llm_client=None) -> ScrapeJobsHandler:
+    return ScrapeJobsHandler(
+        screener=CandidateScreener(llm_client=llm_client or MagicMock()),
+        pages=build_feed_device_world,
+        job_store=broker.job_store,
+        feed_config_defaults_loader=load_feed_config_defaults,
+    )
 
 
 def test_job_card_brief_fingerprint():
@@ -65,9 +77,9 @@ async def test_scrape_jobs_handler_skips_existing_and_scrapes_new():
         recruiter_name="李总",
     )
 
-    from boss_agent.worker.config import WorkerConfig
+    from boss_agent.adapters.inbound.worker.config import WorkerConfig
 
-    handler = ScrapeJobsHandler(llm_client=MagicMock())
+    handler = _scrape_handler(broker)
     context = WorkerContext(config=WorkerConfig(worker_id="test-worker"), driver=mock_driver)
     task = AutomationTask(
         task_type=TaskType.SCRAPE_JOBS,
@@ -75,10 +87,16 @@ async def test_scrape_jobs_handler_skips_existing_and_scrapes_new():
     )
 
     with (
-        patch("boss_agent.feed_pipeline.StartupDialogPage") as mock_startup_cls,
-        patch("boss_agent.feed_pipeline.JobListPage") as mock_list_cls,
-        patch("boss_agent.feed_pipeline.SearchPage") as mock_search_cls,
-        patch("boss_agent.feed_pipeline.JobDetailPage") as mock_detail_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.StartupDialogPage"
+        ) as mock_startup_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobListPage") as mock_list_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.SearchPage"
+        ) as mock_search_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.JobDetailPage"
+        ) as mock_detail_cls,
     ):
         mock_startup = mock_startup_cls.return_value
         mock_startup.is_dialog_present.return_value = False
@@ -136,9 +154,9 @@ async def test_scrape_jobs_handler_direct_ingestion_even_when_detail_fails():
         snippet="负责基于agent的devops体系的架构",
     )
 
-    from boss_agent.worker.config import WorkerConfig
+    from boss_agent.adapters.inbound.worker.config import WorkerConfig
 
-    handler = ScrapeJobsHandler(llm_client=MagicMock())
+    handler = _scrape_handler(broker)
     context = WorkerContext(config=WorkerConfig(worker_id="test-worker"), driver=mock_driver)
     task = AutomationTask(
         task_type=TaskType.SCRAPE_JOBS,
@@ -146,10 +164,16 @@ async def test_scrape_jobs_handler_direct_ingestion_even_when_detail_fails():
     )
 
     with (
-        patch("boss_agent.feed_pipeline.StartupDialogPage") as mock_startup_cls,
-        patch("boss_agent.feed_pipeline.JobListPage") as mock_list_cls,
-        patch("boss_agent.feed_pipeline.SearchPage") as mock_search_cls,
-        patch("boss_agent.feed_pipeline.JobDetailPage") as mock_detail_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.StartupDialogPage"
+        ) as mock_startup_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobListPage") as mock_list_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.SearchPage"
+        ) as mock_search_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.JobDetailPage"
+        ) as mock_detail_cls,
     ):
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_list = mock_list_cls.return_value
@@ -183,7 +207,7 @@ async def test_scrape_jobs_handler_direct_ingestion_even_when_detail_fails():
 
 def test_extract_visible_job_cards_parser():
     """extract_visible_job_cards accurately parses cards with salary, location, recruiter, tags, and snippet."""
-    from boss_agent.pages.job_feed import JobListPage
+    from boss_agent.adapters.outbound.device.pages.job_feed import JobListPage
 
     mock_driver = MagicMock()
     mock_card = MagicMock()
@@ -264,9 +288,9 @@ async def test_scrape_jobs_handler_preliminary_card_screening_and_enrichment():
         digest="负责核心智能体工作流平台搭建",
     )
 
-    from boss_agent.worker.config import WorkerConfig
+    from boss_agent.adapters.inbound.worker.config import WorkerConfig
 
-    handler = ScrapeJobsHandler(llm_client=MagicMock())
+    handler = _scrape_handler(broker)
     context = WorkerContext(config=WorkerConfig(worker_id="test-worker"), driver=mock_driver)
     task = AutomationTask(
         task_type=TaskType.SCRAPE_JOBS,
@@ -281,10 +305,16 @@ async def test_scrape_jobs_handler_preliminary_card_screening_and_enrichment():
     )
 
     with (
-        patch("boss_agent.feed_pipeline.StartupDialogPage") as mock_startup_cls,
-        patch("boss_agent.feed_pipeline.JobListPage") as mock_list_cls,
-        patch("boss_agent.feed_pipeline.SearchPage") as mock_search_cls,
-        patch("boss_agent.feed_pipeline.JobDetailPage") as mock_detail_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.StartupDialogPage"
+        ) as mock_startup_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobListPage") as mock_list_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.SearchPage"
+        ) as mock_search_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.JobDetailPage"
+        ) as mock_detail_cls,
     ):
         mock_startup = mock_startup_cls.return_value
         mock_startup.is_dialog_present.return_value = False
@@ -314,11 +344,13 @@ async def test_scrape_jobs_handler_preliminary_card_screening_and_enrichment():
     assert result.output["skipped_count"] == 1
     assert result.output["scraped_count"] == 1
 
-    # Card 1 must NOT have been clicked (zero UI navigation)
-    card1_elem.click.assert_not_called()
-
-    # Card 2 was clicked
-    card2_elem.click.assert_called_once()
+    # Opening a card is the list screen's job since issue #481: the engine asks the
+    # screen to open the card and never taps the device handle itself. Card 1 was
+    # turned down at the card stage, so it was never opened (zero UI navigation);
+    # card 2 was.
+    opened = [call.args[0] for call in mock_list.open_card.call_args_list]
+    assert len(opened) == 1, "only the card that survived card screening is opened"
+    assert opened[0].card is card2
 
     # Verify Card 1 persisted as ignored
     ignored_records = await broker.job_store.list_job_records(status="ignored")
@@ -338,7 +370,7 @@ async def test_scrape_jobs_handler_preliminary_card_screening_and_enrichment():
 @pytest.mark.asyncio
 async def test_scrape_jobs_handler_facet_persistence_and_recruitment_type_telemetry():
     """Verify ScrapeJobsHandler persists company_scale, industry, tags, recruiter_title, and is_headhunter with logs."""
-    from boss_agent.worker.config import WorkerConfig
+    from boss_agent.adapters.inbound.worker.config import WorkerConfig
 
     broker = InMemoryTaskBroker()
     mock_driver = MagicMock()
@@ -368,7 +400,7 @@ async def test_scrape_jobs_handler_facet_persistence_and_recruitment_type_teleme
         digest="负责核心研发团队管理与前沿算法落地",
     )
 
-    handler = ScrapeJobsHandler(llm_client=MagicMock())
+    handler = _scrape_handler(broker)
     context = WorkerContext(config=WorkerConfig(worker_id="test-worker"), driver=mock_driver)
     task = await broker.create_task(
         task_type=TaskType.SCRAPE_JOBS,
@@ -376,10 +408,16 @@ async def test_scrape_jobs_handler_facet_persistence_and_recruitment_type_teleme
     )
 
     with (
-        patch("boss_agent.feed_pipeline.StartupDialogPage") as mock_startup_cls,
-        patch("boss_agent.feed_pipeline.JobListPage") as mock_list_cls,
-        patch("boss_agent.feed_pipeline.SearchPage") as mock_search_cls,
-        patch("boss_agent.feed_pipeline.JobDetailPage") as mock_detail_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.StartupDialogPage"
+        ) as mock_startup_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobListPage") as mock_list_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.SearchPage"
+        ) as mock_search_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.JobDetailPage"
+        ) as mock_detail_cls,
     ):
         mock_startup = mock_startup_cls.return_value
         mock_startup.is_dialog_present.return_value = False
@@ -453,7 +491,7 @@ async def test_scrape_jobs_handler_facet_persistence_and_recruitment_type_teleme
 @pytest.mark.asyncio
 async def test_scrape_jobs_handler_logs_error_when_jd_contains_view_more():
     """Verify that when JD still contains '查看更多', an explicit error log is recorded in task logs."""
-    from boss_agent.worker.config import WorkerConfig
+    from boss_agent.adapters.inbound.worker.config import WorkerConfig
 
     broker = InMemoryTaskBroker()
     mock_driver = MagicMock()
@@ -466,7 +504,7 @@ async def test_scrape_jobs_handler_logs_error_when_jd_contains_view_more():
         recruiter_name="张总监",
     )
 
-    handler = ScrapeJobsHandler(llm_client=MagicMock())
+    handler = _scrape_handler(broker)
     context = WorkerContext(config=WorkerConfig(worker_id="test-worker"), driver=mock_driver)
     task = await broker.create_task(
         task_type=TaskType.SCRAPE_JOBS,
@@ -474,10 +512,16 @@ async def test_scrape_jobs_handler_logs_error_when_jd_contains_view_more():
     )
 
     with (
-        patch("boss_agent.feed_pipeline.StartupDialogPage") as mock_startup_cls,
-        patch("boss_agent.feed_pipeline.JobListPage") as mock_list_cls,
-        patch("boss_agent.feed_pipeline.SearchPage") as mock_search_cls,
-        patch("boss_agent.feed_pipeline.JobDetailPage") as mock_detail_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.StartupDialogPage"
+        ) as mock_startup_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobListPage") as mock_list_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.SearchPage"
+        ) as mock_search_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.JobDetailPage"
+        ) as mock_detail_cls,
     ):
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_list_cls.return_value.extract_visible_job_cards.return_value = [
@@ -506,14 +550,14 @@ async def test_scrape_jobs_handler_logs_error_when_jd_contains_view_more():
 @pytest.mark.asyncio
 async def test_scrape_jobs_cancelled_task_does_not_execute_fallback():
     """Cancelled scrape task terminates immediately and does not fallback to extracting from current screen."""
-    from boss_agent.broker.models import TaskStatus
-    from boss_agent.worker.config import WorkerConfig
+    from boss_agent.adapters.inbound.worker.config import WorkerConfig
+    from boss_agent.core.task.domain.models import TaskStatus
 
     broker = InMemoryTaskBroker()
     mock_driver = MagicMock()
     mock_driver.get_window_size.return_value = {"width": 1080, "height": 2400}
     context = WorkerContext(config=WorkerConfig(worker_id="test-worker"), driver=mock_driver)
-    handler = ScrapeJobsHandler(llm_client=MagicMock())
+    handler = _scrape_handler(broker)
 
     task = await broker.create_task(
         task_type=TaskType.SCRAPE_JOBS,
@@ -523,8 +567,10 @@ async def test_scrape_jobs_cancelled_task_does_not_execute_fallback():
     await broker.update_task_status(task.id, status=TaskStatus.CANCELLED)
 
     with (
-        patch("boss_agent.feed_pipeline.JobListPage") as mock_list_cls,
-        patch("boss_agent.feed_pipeline.JobDetailPage") as mock_detail_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobListPage") as mock_list_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.JobDetailPage"
+        ) as mock_detail_cls,
     ):
         mock_list_cls.return_value.get_feed_bottom_boundary.return_value = None
         mock_detail = mock_detail_cls.return_value
@@ -545,13 +591,13 @@ async def test_scrape_jobs_cancelled_task_does_not_execute_fallback():
 @pytest.mark.asyncio
 async def test_scrape_jobs_fallback_ignores_unspecified_title():
     """Fallback extraction must not persist records with '未注明职位'."""
-    from boss_agent.worker.config import WorkerConfig
+    from boss_agent.adapters.inbound.worker.config import WorkerConfig
 
     broker = InMemoryTaskBroker()
     mock_driver = MagicMock()
     mock_driver.get_window_size.return_value = {"width": 1080, "height": 2400}
     context = WorkerContext(config=WorkerConfig(worker_id="test-worker"), driver=mock_driver)
-    handler = ScrapeJobsHandler(llm_client=MagicMock())
+    handler = _scrape_handler(broker)
 
     task = await broker.create_task(
         task_type=TaskType.SCRAPE_JOBS,
@@ -559,8 +605,10 @@ async def test_scrape_jobs_fallback_ignores_unspecified_title():
     )
 
     with (
-        patch("boss_agent.feed_pipeline.JobListPage") as mock_list_cls,
-        patch("boss_agent.feed_pipeline.JobDetailPage") as mock_detail_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobListPage") as mock_list_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.JobDetailPage"
+        ) as mock_detail_cls,
     ):
         mock_list_cls.return_value.extract_visible_job_cards.return_value = []
         mock_list_cls.return_value.get_feed_bottom_boundary.return_value = MagicMock()
@@ -581,13 +629,13 @@ async def test_scrape_jobs_fallback_ignores_unspecified_title():
 @pytest.mark.asyncio
 async def test_scrape_jobs_detail_enrichment_does_not_overwrite_title_with_unspecified():
     """Enrichment must never overwrite a valid card title with '未注明职位'."""
-    from boss_agent.worker.config import WorkerConfig
+    from boss_agent.adapters.inbound.worker.config import WorkerConfig
 
     broker = InMemoryTaskBroker()
     mock_driver = MagicMock()
     mock_driver.get_window_size.return_value = {"width": 1080, "height": 2400}
     context = WorkerContext(config=WorkerConfig(worker_id="test-worker"), driver=mock_driver)
-    handler = ScrapeJobsHandler(llm_client=MagicMock())
+    handler = _scrape_handler(broker)
 
     task = await broker.create_task(
         task_type=TaskType.SCRAPE_JOBS,
@@ -602,8 +650,10 @@ async def test_scrape_jobs_detail_enrichment_does_not_overwrite_title_with_unspe
     )
 
     with (
-        patch("boss_agent.feed_pipeline.JobListPage") as mock_list_cls,
-        patch("boss_agent.feed_pipeline.JobDetailPage") as mock_detail_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobListPage") as mock_list_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.JobDetailPage"
+        ) as mock_detail_cls,
     ):
         mock_list_cls.return_value.extract_visible_job_cards.return_value = [
             located(card, card_elem)

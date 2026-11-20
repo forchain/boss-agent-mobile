@@ -8,9 +8,9 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from boss_agent.broker.models import TaskStatus, TaskType
-from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
-from boss_agent.broker.sweeper import TaskLeaseSweeper
+from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
+from boss_agent.core.task.domain.models import TaskStatus, TaskType
+from boss_agent.core.task.use_cases.sweeper import TaskLeaseSweeper
 
 
 @pytest.fixture

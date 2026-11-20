@@ -31,9 +31,11 @@ describe('commute ceiling coercion', () => {
 	});
 
 	it('never lets garbage become a ceiling', () => {
-		for (const bogus of ['abc', '4O', 'Infinity', 'NaN', NaN, Infinity, {}]) {
+		for (const bogus of ['abc', '4O', 'Infinity', 'NaN', NaN, Infinity]) {
 			expect(normalizeCommuteLimit(bogus)).toBeNull();
 		}
+		// @ts-expect-error runtime guard for non-primitive input
+		expect(normalizeCommuteLimit({})).toBeNull();
 	});
 
 	it('renders null / undefined as an empty field', () => {

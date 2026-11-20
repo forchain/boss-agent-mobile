@@ -1,0 +1,120 @@
+"""
+src/boss_agent/adapters/inbound/worker/handlers/scrape_jobs.py
+==============================================================
+Handler for SCRAPE_JOBS: streams screened job postings out of the mobile search feed.
+
+The feed navigation, card screening, JD extraction and persistence all live in the
+deep ``JobFeedPipeline`` (ADR 0013); this handler only configures a run and reports
+its result.
+"""
+
+import logging
+from collections.abc import Callable
+from typing import Any
+
+from boss_agent.adapters.inbound.worker.context import WorkerContext
+from boss_agent.adapters.inbound.worker.handlers.base import BaseTaskHandler, HandlerResult
+from boss_agent.core.job.domain.feed_stream import FeedStreamConfig
+from boss_agent.core.job.interfaces.device import FeedDeviceWorld
+from boss_agent.core.job.interfaces.store import JobRecordStore
+from boss_agent.core.job.use_cases.feed_pipeline import JobFeedPipeline
+from boss_agent.core.job.use_cases.screening import CandidateScreener
+from boss_agent.core.task.domain.models import AutomationTask, TaskType
+from boss_agent.core.task.interfaces.broker import BaseTaskBroker
+
+logger = logging.getLogger(__name__)
+
+
+class ScrapeJobsHandler(BaseTaskHandler):
+    """Executes search, screening, and job posting extraction."""
+
+    def __init__(
+        self,
+        *,
+        screener: CandidateScreener,
+        pages: Callable[[Any], FeedDeviceWorld],
+        job_store: JobRecordStore,
+        feed_config_defaults: dict[str, Any] | None = None,
+        feed_config_defaults_loader: Callable[[], dict[str, Any]] | None = None,
+    ) -> None:
+        self.screener = screener
+        self._pages = pages
+        self._job_store = job_store
+        self._feed_config_defaults = dict(feed_config_defaults or {})
+        self._feed_config_defaults_loader = feed_config_defaults_loader
+
+    @property
+    def task_type(self) -> TaskType:
+        return TaskType.SCRAPE_JOBS
+
+    async def handle(
+        self,
+        task: AutomationTask,
+        broker: BaseTaskBroker,
+        context: WorkerContext,
+    ) -> HandlerResult:
+        driver = context.driver
+        if not driver:
+            await broker.append_log(task.id, "Error: No driver session initialized")
+            return HandlerResult(success=False, error_message="Driver session is unavailable")
+
+        payload = task.payload or {}
+        # Resolved by the parser, not stamped on afterwards: a SCRAPE_JOBS task never
+        # sends a greeting, and the depth question has exactly one answering site (#302).
+        # A payload that states its own Target Action still wins.
+        defaults = (
+            self._feed_config_defaults_loader()
+            if self._feed_config_defaults_loader is not None
+            else self._feed_config_defaults
+        )
+        config = FeedStreamConfig.from_payload(payload, task_type=TaskType.SCRAPE_JOBS, **defaults)
+        config.source_task_id = task.id
+
+        search_name = payload.get("search_name") or payload.get("saved_search_name") or ""
+        strategy_desc = f"strategy='{search_name}', " if search_name else ""
+        await broker.append_log(
+            task.id,
+            f"Starting SCRAPE_JOBS ({strategy_desc}keyword='{config.keyword}', "
+            f"target_action='{config.target_action.value}', max_jobs={config.max_jobs}, "
+            f"channel='{config.screening_policy.channel_preference}')",
+        )
+
+        pipeline = JobFeedPipeline.for_task(
+            broker=broker,
+            task_id=task.id,
+            world=self._pages(driver),
+            store=self._job_store,
+            screener=self.screener,
+        )
+        result = await pipeline.stream_jobs(config)
+
+        if result.search_failed:
+            return HandlerResult(
+                success=False,
+                output={"error": result.error_message, "search_failed": True},
+            )
+
+        scraped = len(result.jobs)
+        if result.cancelled:
+            summary = (
+                f"Finished scraping: task was cancelled by user (scanned {result.scanned}, "
+                f"scraped {scraped}, skipped {result.skipped})"
+            )
+        else:
+            summary = (
+                f"Finished scraping: scanned {result.scanned}, scraped {scraped} job postings, "
+                f"skipped {result.skipped}"
+            )
+        await broker.append_log(task.id, summary)
+
+        return HandlerResult(
+            success=True,
+            output={
+                "total_scanned": result.scanned,
+                "total_scraped": scraped,
+                "scraped_count": scraped,
+                "skipped_count": result.skipped,
+                "scraped_jobs": result.jobs,
+                "jobs": result.jobs,
+            },
+        )

@@ -9,12 +9,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from boss_agent.broker.collection_schema import (
+from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
+from boss_agent.adapters.outbound.pocketbase.collection_schema import (
     AUTOMATION_TASKS,
     pocketbase_collection_payload,
 )
-from boss_agent.broker.models import AutomationTask, TaskStatus, TaskType
-from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker, PocketBaseTaskBroker
+from boss_agent.adapters.outbound.pocketbase.pocketbase_adapter import PocketBaseTaskBroker
+from boss_agent.core.task.domain.models import AutomationTask, TaskStatus, TaskType
 
 
 def test_pocketbase_schema_definition_validity():
@@ -270,7 +271,7 @@ async def test_pocketbase_broker_claim_task_conflict():
 @pytest.mark.asyncio
 async def test_saved_search_broker_crud():
     """Verify broker supports CRUD for SavedSearch presets."""
-    from boss_agent.search_entities import FilterConfig, SavedSearch, SearchConfig
+    from boss_agent.core.search.domain.models import FilterConfig, SavedSearch, SearchConfig
 
     broker = InMemoryTaskBroker()
     search = SavedSearch(
@@ -320,7 +321,7 @@ async def test_list_pending_tasks_handles_request_exception():
     """Verify PocketBaseTaskBroker raises TransportError on network/connection error."""
     import requests
 
-    from boss_agent.errors import TransportError
+    from boss_agent.core.shared.errors import TransportError
 
     mock_session = MagicMock()
     mock_session.get.side_effect = requests.exceptions.ConnectionError("Connection refused")

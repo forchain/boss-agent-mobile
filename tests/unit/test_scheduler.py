@@ -4,16 +4,19 @@ from datetime import UTC, datetime
 
 import pytest
 
-from boss_agent.broker.models import TaskType
-from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
-from boss_agent.scheduler import (
-    AutomationScheduler,
+from boss_agent.adapters.inbound.worker.scheduler import AutomationScheduler
+from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
+from boss_agent.core.search.domain.models import SavedSearch
+from boss_agent.core.search.use_cases.cron import (
     get_next_cron_run,
     is_cron_match,
     parse_cron_field,
 )
-from boss_agent.search_entities import SavedSearch
-from boss_agent.startup_cleanup import STARTUP_CLEANUP_MARKER, StartupCleanupGate
+from boss_agent.core.task.domain.models import TaskType
+from boss_agent.core.task.use_cases.startup_cleanup import (
+    STARTUP_CLEANUP_MARKER,
+    StartupCleanupGate,
+)
 
 
 def test_parse_cron_field():
@@ -76,7 +79,11 @@ def test_get_next_cron_run():
 async def test_scheduler_queues_the_startup_cleanup_once():
     """#230: a starting scheduler queues one CHECK_CHAT, never one per poll."""
     broker = InMemoryTaskBroker()
-    scheduler = AutomationScheduler(broker=broker, startup_gate=StartupCleanupGate(broker))
+    scheduler = AutomationScheduler(
+        broker=broker,
+        saved_searches=broker.saved_searches,
+        startup_gate=StartupCleanupGate(broker),
+    )
 
     await scheduler.run_once(now=datetime(2026, 9, 7, 9, 0, tzinfo=UTC))
     await scheduler.run_once(now=datetime(2026, 9, 7, 9, 1, tzinfo=UTC))
@@ -90,7 +97,9 @@ async def test_scheduler_queues_the_startup_cleanup_once():
 async def test_scheduler_queues_nothing_when_the_startup_cleanup_is_disabled():
     broker = InMemoryTaskBroker()
     scheduler = AutomationScheduler(
-        broker=broker, startup_gate=StartupCleanupGate(broker, enabled=False)
+        broker=broker,
+        saved_searches=broker.saved_searches,
+        startup_gate=StartupCleanupGate(broker, enabled=False),
     )
 
     await scheduler.run_once(now=datetime(2026, 9, 7, 9, 0, tzinfo=UTC))
@@ -102,7 +111,7 @@ async def test_scheduler_queues_nothing_when_the_startup_cleanup_is_disabled():
 async def test_scheduler_run_once():
     broker = InMemoryTaskBroker()
 
-    from boss_agent.search_entities import FilterConfig, SearchConfig
+    from boss_agent.core.search.domain.models import FilterConfig, SearchConfig
 
     # Search 1: Enabled and matches Monday 09:00
     search_active = SavedSearch(
@@ -136,7 +145,7 @@ async def test_scheduler_run_once():
     await broker.saved_searches.save_saved_search(search_disabled)
     await broker.saved_searches.save_saved_search(search_other_time)
 
-    scheduler = AutomationScheduler(broker=broker)
+    scheduler = AutomationScheduler(broker=broker, saved_searches=broker.saved_searches)
 
     # Monday at 09:00
     monday_9am = datetime(2026, 9, 7, 9, 0, 0, tzinfo=UTC)
@@ -175,7 +184,7 @@ async def test_scheduler_dispatches_check_chat_task_for_inbox_cleanup_strategy()
     """#208: a CHECK_CHAT SavedSearch dispatches a rejection-acknowledgment task."""
     from unittest.mock import patch
 
-    from boss_agent.rejection import ChatAcknowledgmentSettings
+    from boss_agent.core.chat.domain.rejection import ChatAcknowledgmentSettings
 
     broker = InMemoryTaskBroker()
     await broker.saved_searches.save_saved_search(
@@ -189,11 +198,11 @@ async def test_scheduler_dispatches_check_chat_task_for_inbox_cleanup_strategy()
         )
     )
 
-    scheduler = AutomationScheduler(broker=broker)
+    scheduler = AutomationScheduler(broker=broker, saved_searches=broker.saved_searches)
     now = datetime(2026, 9, 7, 21, 0, 0, tzinfo=UTC)
 
     with patch(
-        "boss_agent.task_launch.resolve_chat_acknowledgment_settings",
+        "boss_agent.adapters.inbound.worker.scheduler.resolve_chat_acknowledgment_settings",
         return_value=ChatAcknowledgmentSettings(
             rejection_reply_text="谢谢，祝招聘顺利", max_scan_depth=7
         ),
@@ -223,7 +232,7 @@ async def test_scheduled_chat_cleanup_honours_the_configured_drill_mode():
     """A drill configured in settings must not be overridden into a live run."""
     from unittest.mock import patch
 
-    from boss_agent.rejection import ChatAcknowledgmentSettings
+    from boss_agent.core.chat.domain.rejection import ChatAcknowledgmentSettings
 
     broker = InMemoryTaskBroker()
     await broker.saved_searches.save_saved_search(
@@ -237,11 +246,11 @@ async def test_scheduled_chat_cleanup_honours_the_configured_drill_mode():
         )
     )
 
-    scheduler = AutomationScheduler(broker=broker)
+    scheduler = AutomationScheduler(broker=broker, saved_searches=broker.saved_searches)
     now = datetime(2026, 9, 7, 21, 0, 0, tzinfo=UTC)
 
     with patch(
-        "boss_agent.task_launch.resolve_chat_acknowledgment_settings",
+        "boss_agent.adapters.inbound.worker.scheduler.resolve_chat_acknowledgment_settings",
         return_value=ChatAcknowledgmentSettings(dry_run=True),
     ):
         tasks = await scheduler.run_once(now=now)
@@ -282,7 +291,7 @@ def test_saved_search_search_targets_are_unchanged_by_chat_support():
 async def test_scheduler_respects_is_enabled_toggle_and_nested_authoritative_flags():
     """Verify disabled searches are never dispatched, and nested flags govern dispatched payload (Issue #321)."""
     broker = InMemoryTaskBroker()
-    from boss_agent.search_entities import SearchConfig
+    from boss_agent.core.search.domain.models import SearchConfig
 
     # 1. Disabled strategy -> Must NOT be dispatched
     disabled_search = SavedSearch(
@@ -294,7 +303,7 @@ async def test_scheduler_respects_is_enabled_toggle_and_nested_authoritative_fla
     )
     await broker.saved_searches.save_saved_search(disabled_search)
 
-    scheduler = AutomationScheduler(broker=broker)
+    scheduler = AutomationScheduler(broker=broker, saved_searches=broker.saved_searches)
     monday_9am = datetime(2026, 9, 7, 9, 0, 0, tzinfo=UTC)
     tasks = await scheduler.run_once(now=monday_9am)
     assert len(tasks) == 0, "Disabled search must never be dispatched by scheduler"
@@ -350,10 +359,13 @@ async def test_scheduler_evaluates_cron_in_local_timezone_when_now_is_none():
     beijing_9am = datetime(2026, 10, 5, 9, 0, 0, tzinfo=cst)
 
     scheduler = AutomationScheduler(
-        broker=broker, startup_gate=StartupCleanupGate(broker, enabled=False), tz=cst
+        broker=broker,
+        saved_searches=broker.saved_searches,
+        startup_gate=StartupCleanupGate(broker, enabled=False),
+        tz=cst,
     )
 
-    with patch("boss_agent.scheduler.datetime") as mock_dt:
+    with patch("boss_agent.adapters.inbound.worker.scheduler.datetime") as mock_dt:
         mock_dt.now.side_effect = lambda tz=None: beijing_9am.astimezone(tz) if tz else beijing_9am
         mock_dt.fromisoformat = datetime.fromisoformat
         tasks = await scheduler.run_once(now=None)
@@ -384,7 +396,10 @@ async def test_scheduler_same_minute_guard_handles_pocketbase_utc_timestamp():
 
     cst = ZoneInfo("Asia/Shanghai")
     scheduler = AutomationScheduler(
-        broker=broker, startup_gate=StartupCleanupGate(broker, enabled=False), tz=cst
+        broker=broker,
+        saved_searches=broker.saved_searches,
+        startup_gate=StartupCleanupGate(broker, enabled=False),
+        tz=cst,
     )
 
     # 20 seconds later in the same minute

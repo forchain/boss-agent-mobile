@@ -688,7 +688,7 @@ def test_the_automation_worker_log_carries_one_label(tmp_path: Path):
     every line a runner writes into `worker.log` carries that one label.
 
     The `[Worker]` prefix that survives in this repo belongs to the Python daemon's own
-    shutdown marker (`boss_agent.worker.daemon.SHUTDOWN_ACK_MARKER`, which the teardown
+    shutdown marker (`boss_agent.adapters.inbound.worker.daemon.SHUTDOWN_ACK_MARKER`, which the teardown
     service greps). These shell lines do not produce it, and that marker is not touched
     here — so this asserts on `worker.log` as the runner alone wrote it.
     """

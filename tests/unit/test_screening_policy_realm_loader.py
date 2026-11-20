@@ -21,9 +21,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-from boss_agent import config_realm
-from boss_agent.screening_config import load_screening_policy
-from boss_agent.screening_policy import ScreeningPolicy
+from boss_agent.adapters.outbound.config import config_realm
+from boss_agent.adapters.outbound.config.screening_config import load_screening_policy
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -57,7 +56,7 @@ def test_screening_policy_loader_explicit_path(tmp_path: Path):
     assert policy.source_path == str(custom_yaml)
 
     # Class method load_default delegation
-    policy_class = ScreeningPolicy.load_default(config_path=custom_yaml)
+    policy_class = load_screening_policy(config_path=custom_yaml)
     assert policy_class.to_dict() == policy.to_dict()
     assert policy_class.source_path == policy.source_path
 
@@ -90,7 +89,9 @@ def test_screening_policy_loader_precedence_levels(tmp_path: Path, monkeypatch: 
     # 1. Base template only
     chain = [settings_local_yaml, settings_local_json, settings_yaml, example_yaml]
     monkeypatch.setattr(config_realm, "CONFIG_CHAIN", tuple(chain))
-    monkeypatch.setattr("boss_agent.settings.DEFAULT_CONFIG_SEARCH_PATHS", chain)
+    monkeypatch.setattr(
+        "boss_agent.adapters.outbound.config.settings.DEFAULT_CONFIG_SEARCH_PATHS", chain
+    )
     config_realm.invalidate_cache()
     p1 = load_screening_policy()
     assert p1.company_blacklist == ["公司A"]
@@ -150,9 +151,9 @@ def test_screening_policy_loader_precedence_levels(tmp_path: Path, monkeypatch: 
 
 def test_import_graph_independence():
     """Verify editing screening_policy leaves enums and keyword_constants untouched."""
-    enums_path = REPO_ROOT / "src/boss_agent/enums.py"
-    keywords_path = REPO_ROOT / "src/boss_agent/keyword_constants.py"
-    policy_path = REPO_ROOT / "src/boss_agent/screening_policy.py"
+    enums_path = REPO_ROOT / "src/boss_agent/core/shared/enums.py"
+    keywords_path = REPO_ROOT / "src/boss_agent/core/shared/keyword_constants.py"
+    policy_path = REPO_ROOT / "src/boss_agent/core/job/domain/screening_policy.py"
 
     enums_tree = ast.parse(enums_path.read_text(encoding="utf-8"))
     keywords_tree = ast.parse(keywords_path.read_text(encoding="utf-8"))
@@ -173,14 +174,13 @@ def test_import_graph_independence():
     policy_imports = get_imported_modules(policy_tree)
 
     # enums and keyword_constants MUST NOT import screening_policy
-    assert "boss_agent.screening_policy" not in enums_imports
+    assert "boss_agent.core.job.domain.screening_policy" not in enums_imports
     assert ".screening_policy" not in enums_imports
-    assert "boss_agent.screening_policy" not in keywords_imports
+    assert "boss_agent.core.job.domain.screening_policy" not in keywords_imports
     assert ".screening_policy" not in keywords_imports
 
     # screening_policy must not import entities
-    assert "boss_agent.job_entities" not in policy_imports
-    assert "boss_agent.candidate_entities" not in policy_imports
-    assert "boss_agent.search_entities" not in policy_imports
+    assert "boss_agent.core.job.domain.job_entities" not in policy_imports
+    assert "boss_agent.core.candidate.domain.candidate_profile" not in policy_imports
+    assert "boss_agent.core.search.domain.models" not in policy_imports
     assert "boss_agent.entities" not in policy_imports
-    assert "boss_agent.models" not in policy_imports

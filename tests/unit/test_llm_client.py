@@ -510,24 +510,6 @@ def test_anthropic_client_json_mode_reuses_the_shared_repair_chain():
     assert parsed["match_reasons"] == ["Python"]
 
 
-def test_anthropic_client_evaluate_text_match():
-    client = AnthropicChatClient(_anthropic_config())
-
-    response = _anthropic_response(
-        '{"match_score": 82, "match_reasons": ["Go"], "greeting_message": "你好"}'
-    )
-    with patch("requests.post", return_value=response) as mock_post:
-        parsed = client.evaluate_text_match("Go 后端 5 年", "Go 工程师")
-
-    assert parsed["match_score"] == 82
-    assert parsed["greeting_message"] == "你好"
-
-    _, kwargs = mock_post.call_args
-    payload = kwargs["json"]
-    assert "Go 后端 5 年" in payload["messages"][-1]["content"]
-    assert "Go 工程师" in payload["messages"][-1]["content"]
-
-
 @pytest.mark.parametrize("status", [401, 403])
 def test_anthropic_client_maps_auth_failures(status):
     client = AnthropicChatClient(_anthropic_config())
@@ -600,7 +582,7 @@ def test_anthropic_client_parses_json_through_the_same_recovery_as_openai():
 
 @pytest.mark.parametrize("provider", ["anthropic", "Anthropic", " anthropic "])
 def test_create_llm_client_dispatches_to_the_anthropic_protocol(provider):
-    from boss_agent.llm_config import create_llm_client
+    from boss_agent.adapters.outbound.llm.llm_config import create_llm_client
 
     client = create_llm_client(config=LLMConfig(provider=provider))
 
@@ -609,7 +591,7 @@ def test_create_llm_client_dispatches_to_the_anthropic_protocol(provider):
 
 @pytest.mark.parametrize("provider", ["openai", "OpenAI"])
 def test_create_llm_client_dispatches_to_the_openai_protocol(provider):
-    from boss_agent.llm_config import create_llm_client
+    from boss_agent.adapters.outbound.llm.llm_config import create_llm_client
 
     client = create_llm_client(config=LLMConfig(provider=provider))
 
@@ -618,7 +600,7 @@ def test_create_llm_client_dispatches_to_the_openai_protocol(provider):
 
 @pytest.mark.parametrize("provider", ["minimax", "deepseek", "", "something-else"])
 def test_create_llm_client_converges_legacy_providers_to_the_default_protocol(provider):
-    from boss_agent.llm_config import create_llm_client
+    from boss_agent.adapters.outbound.llm.llm_config import create_llm_client
 
     client = create_llm_client(config=LLMConfig(provider=provider))
 
@@ -626,7 +608,7 @@ def test_create_llm_client_converges_legacy_providers_to_the_default_protocol(pr
 
 
 def test_create_llm_client_returns_the_shared_abstraction():
-    from boss_agent.llm_config import create_llm_client
+    from boss_agent.adapters.outbound.llm.llm_config import create_llm_client
 
     client = create_llm_client(config=LLMConfig(provider="anthropic"))
 
@@ -635,7 +617,7 @@ def test_create_llm_client_returns_the_shared_abstraction():
 
 
 def test_create_llm_client_passes_the_resolved_config_through():
-    from boss_agent.llm_config import create_llm_client
+    from boss_agent.adapters.outbound.llm.llm_config import create_llm_client
 
     config = _anthropic_config(model="some-anthropic-model")
     client = create_llm_client(config=config)

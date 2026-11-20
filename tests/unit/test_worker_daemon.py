@@ -9,12 +9,12 @@ from unittest.mock import MagicMock
 import pytest
 from selenium.common.exceptions import WebDriverException
 
-from boss_agent.broker.models import TaskStatus, TaskType
-from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
-from boss_agent.worker.config import WorkerConfig
-from boss_agent.worker.context import WorkerContext
-from boss_agent.worker.daemon import AutomationWorker
-from boss_agent.worker.handlers.check_login import CheckLoginHandler
+from boss_agent.adapters.inbound.worker.config import WorkerConfig
+from boss_agent.adapters.inbound.worker.context import WorkerContext
+from boss_agent.adapters.inbound.worker.daemon import AutomationWorker
+from boss_agent.adapters.inbound.worker.handlers.check_login import CheckLoginHandler
+from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
+from boss_agent.core.task.domain.models import TaskStatus, TaskType
 
 
 @pytest.fixture
@@ -123,7 +123,7 @@ async def test_worker_idle_when_no_pending_tasks(broker, mock_driver):
 @pytest.mark.asyncio
 async def test_worker_preserves_cancelled_status(broker, mock_driver):
     """Verify worker preserves CANCELLED status if user cancelled the task mid-execution."""
-    from boss_agent.worker.handlers.base import BaseTaskHandler, HandlerResult
+    from boss_agent.adapters.inbound.worker.handlers.base import BaseTaskHandler, HandlerResult
 
     class FakeLongRunningHandler(BaseTaskHandler):
         @property
@@ -245,7 +245,7 @@ async def test_worker_logs_task_cancellation_and_exceptions(broker, mock_driver,
     """Verify worker logs cancellation and uncaught exceptions with duration."""
     import logging
 
-    from boss_agent.worker.handlers.base import BaseTaskHandler, HandlerResult
+    from boss_agent.adapters.inbound.worker.handlers.base import BaseTaskHandler, HandlerResult
 
     class ThrowingHandler(BaseTaskHandler):
         @property
@@ -309,7 +309,7 @@ async def test_worker_start_logs_readiness(broker, mock_driver, caplog):
 
 def test_format_payload_for_logging_truncation():
     """Verify _format_payload_for_logging compresses large docs, truncates long strings and lists."""
-    from boss_agent.worker.daemon import _format_payload_for_logging
+    from boss_agent.adapters.inbound.worker.daemon import _format_payload_for_logging
 
     huge_doc = "# Candidate Profile\n" + ("x" * 2000)
     huge_payload = {
@@ -403,14 +403,14 @@ async def test_worker_survives_task_record_vanishing_before_finalize(broker, moc
     """
     import logging
 
-    from boss_agent.worker.handlers.base import BaseTaskHandler, HandlerResult
+    from boss_agent.adapters.inbound.worker.handlers.base import BaseTaskHandler, HandlerResult
 
     class VanishingFailureHandler(BaseTaskHandler):
         @property
         def task_type(self) -> TaskType:
             return TaskType.SCRAPE_JOBS
 
-        async def handle(self, task, broker, context) -> HandlerResult:
+        async def handle(self, task, _handler_broker, context) -> HandlerResult:
             await _delete_task_record(broker, task.id)
             return HandlerResult(success=False, error_message="simulated failure")
 
@@ -438,14 +438,14 @@ async def test_worker_survives_uncaught_exception_with_vanished_record(broker, m
     """An uncaught handler exception must not escalate when the record was already purged."""
     import logging
 
-    from boss_agent.worker.handlers.base import BaseTaskHandler, HandlerResult
+    from boss_agent.adapters.inbound.worker.handlers.base import BaseTaskHandler, HandlerResult
 
     class VanishingThrowingHandler(BaseTaskHandler):
         @property
         def task_type(self) -> TaskType:
             return TaskType.SCRAPE_JOBS
 
-        async def handle(self, task, broker, context) -> HandlerResult:
+        async def handle(self, task, _handler_broker, context) -> HandlerResult:
             await _delete_task_record(broker, task.id)
             raise RuntimeError("simulated crash")
 
@@ -478,7 +478,7 @@ async def test_worker_reopens_a_dead_device_session_before_the_handler_runs(brok
     verifies the session the moment it claims work, so the handler gets a live driver
     and the device-drop never reaches the task as a phantom UI bug.
     """
-    from boss_agent.worker.handlers.base import BaseTaskHandler, HandlerResult
+    from boss_agent.adapters.inbound.worker.handlers.base import BaseTaskHandler, HandlerResult
 
     class DeadDriver:
         def __init__(self) -> None:

@@ -26,15 +26,27 @@ from _chat_triage_harness import (
     throwaway_config,
 )
 
-from boss_agent.broker.models import TaskStatus, TaskType
-from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
-from boss_agent.chat_triage import TriagePages
-from boss_agent.pages.communication import CommunicationListPage
-from boss_agent.rejection import DEFAULT_REJECTION_REPLY_TEXT, ChatAcknowledgmentSettings
-from boss_agent.screening_policy import ScreeningPolicy
-from boss_agent.worker.config import WorkerConfig
-from boss_agent.worker.context import WorkerContext
-from boss_agent.worker.handlers.check_chat import CheckChatHandler
+from boss_agent.adapters.inbound.worker.config import WorkerConfig
+from boss_agent.adapters.inbound.worker.context import WorkerContext
+from boss_agent.adapters.inbound.worker.handlers.check_chat import CheckChatHandler
+from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
+from boss_agent.adapters.outbound.config.screening_config import (
+    ScreeningConfigBlacklistSink,
+    load_screening_policy,
+)
+from boss_agent.adapters.outbound.device.pages.chat_adapters import (
+    ChatActorAdapter,
+    CommunicationListAdapter,
+)
+from boss_agent.adapters.outbound.device.pages.chat_bundle import build_triage_world
+from boss_agent.adapters.outbound.device.pages.communication import CommunicationListPage
+from boss_agent.core.chat.domain.rejection import (
+    DEFAULT_REJECTION_REPLY_TEXT,
+    ChatAcknowledgmentSettings,
+)
+from boss_agent.core.chat.interfaces.device import TriagePages
+from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
+from boss_agent.core.task.domain.models import TaskStatus, TaskType
 
 
 @pytest.fixture
@@ -45,7 +57,7 @@ def config_path(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def policy(config_path: Path) -> ScreeningPolicy:
-    return ScreeningPolicy.load_default(config_path=config_path)
+    return load_screening_policy(config_path=config_path)
 
 
 @pytest.fixture
@@ -64,10 +76,11 @@ def context() -> WorkerContext:
 def make_handler(pages=None, classifier=None, policy=None, settings=None) -> CheckChatHandler:
     """Handler pinned to explicit settings/policy so no test reads or writes local config."""
     return CheckChatHandler(
-        classifier=classifier,
+        classifier=classifier or FakeClassifier(),
+        blacklist_sink=ScreeningConfigBlacklistSink(),
         settings=settings or ChatAcknowledgmentSettings(),
         policy=policy or ScreeningPolicy(),
-        pages=pages,
+        pages=pages or build_triage_world,
     )
 
 
@@ -186,6 +199,34 @@ def test_handler_declares_check_chat_task_type():
 
 
 @pytest.mark.asyncio
+async def test_the_classifier_client_is_resolved_at_the_edge(broker, context, policy, monkeypatch):
+    """The classifier no longer reaches for the realm itself; the composition root hands it a client."""
+    from boss_agent import main as composition
+
+    harness = Harness([card("方便约个时间聊聊吗？", sender="张先生", descriptor="深至科技 | 后端")])
+    llm_client = MagicMock()
+    llm_client.chat_completion_json.return_value = {
+        "is_rejection": False,
+        "confidence": 0.9,
+        "rationale": "面试邀约",
+    }
+    monkeypatch.setattr(composition, "create_llm_client", lambda: llm_client)
+    monkeypatch.setattr(composition, "PocketBaseTaskBroker", MagicMock())
+    monkeypatch.setattr(composition, "build_triage_world", scripted_pages(harness))
+    monkeypatch.setattr(
+        composition, "resolve_chat_acknowledgment_settings", ChatAcknowledgmentSettings
+    )
+    monkeypatch.setattr(composition, "load_screening_policy", lambda: policy)
+    handler = composition.build_worker()._handlers[TaskType.CHECK_CHAT]
+
+    task = await broker.create_task(task_type=TaskType.CHECK_CHAT, payload={})
+    result = await handler.handle(task, broker, context)
+
+    assert result.success is True
+    assert llm_client.chat_completion_json.call_count == 1
+
+
+@pytest.mark.asyncio
 async def test_handler_processes_single_card_through_the_real_page_object(broker, context, policy):
     """#206: end-to-end single target resolved from a mock accessibility hierarchy."""
     sender_node = MagicMock(text="严胜")
@@ -235,7 +276,8 @@ async def test_handler_processes_single_card_through_the_real_page_object(broker
     # Only the chat is scripted: the 仅沟通 list stays the real page object reading
     # the mock hierarchy above.
     pages = lambda driver: TriagePages(  # noqa: E731 - a one-line injected seam
-        list_page=CommunicationListPage(driver), chat_page=chat_double
+        list_reader=CommunicationListAdapter(CommunicationListPage(driver)),
+        chat_actor=ChatActorAdapter(chat_double),
     )
     handler = make_handler(
         pages=pages, classifier=FakeClassifier({REJECTION_TEXT: True}), policy=policy

@@ -57,7 +57,7 @@ def e2e_service_teardown_gate() -> None:
 
     # Imported here, not at module scope: the E2E conftest is loaded by broadly scoped
     # collections (`pytest tests`), where an inert run should not pull in service code.
-    from boss_agent.services.teardown import ServiceTeardownGate, TeardownGateError
+    from boss_agent.adapters.infra.teardown import ServiceTeardownGate, TeardownGateError
 
     gate = ServiceTeardownGate(
         repo_root=REPO_ROOT,

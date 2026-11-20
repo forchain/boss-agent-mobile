@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from boss_agent.graph import (
+from boss_agent.adapters.outbound.resume.graph import (
     build_resume_lifecycle_graph,
     run_resume_lifecycle_graph,
 )
@@ -68,7 +68,7 @@ def test_run_resume_lifecycle_initial(mock_broker, mock_llm_client):
         file_name="resume_lisi.txt",
         user_id="user_test",
         llm_client=mock_llm_client,
-        broker=mock_broker,
+        candidate_memory=mock_broker.candidate_memory,
     )
 
     assert result["status"] == "completed"
@@ -106,7 +106,7 @@ def test_run_resume_lifecycle_incremental_merge(mock_broker, mock_llm_client):
         user_id="user_test",
         merge_mode="merge",
         llm_client=mock_llm_client,
-        broker=mock_broker,
+        candidate_memory=mock_broker.candidate_memory,
     )
 
     assert result["status"] == "completed"
@@ -135,7 +135,7 @@ def test_run_resume_lifecycle_await_review(mock_broker, mock_llm_client):
         user_id="user_test",
         await_review=True,
         llm_client=mock_llm_client,
-        broker=mock_broker,
+        candidate_memory=mock_broker.candidate_memory,
     )
 
     assert result["status"] == "diff_ready"
@@ -162,7 +162,7 @@ def test_resume_lifecycle_llm_failure_resilience(mock_broker):
         file_name="wangwu.txt",
         user_id="user_wang",
         llm_client=faulty_llm,
-        broker=mock_broker,
+        candidate_memory=mock_broker.candidate_memory,
     )
 
     assert result["status"] == "completed"

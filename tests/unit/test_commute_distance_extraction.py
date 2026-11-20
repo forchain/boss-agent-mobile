@@ -14,8 +14,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from boss_agent.job_entities import JobPosting
-from boss_agent.pages.job_detail import JobDetailPage
+from boss_agent.adapters.outbound.device.pages.job_detail import JobDetailPage
+from boss_agent.core.job.domain.job_entities import JobPosting
 
 
 def _page(locator_for_distance=None, scroll_hits: int = 0) -> JobDetailPage:
@@ -123,7 +123,7 @@ def test_extract_commute_distance_default_budget_is_relaxed_to_at_least_six_scro
     the constant is retuned, and the default the probe actually uses must be that constant
     rather than a number copied into the method.
     """
-    from boss_agent.pages.job_detail import COMMUTE_PROBE_MAX_SCROLLS
+    from boss_agent.adapters.outbound.device.pages.job_detail import COMMUTE_PROBE_MAX_SCROLLS
 
     page = _page(None)
 

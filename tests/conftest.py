@@ -26,7 +26,7 @@ def _sandbox_screening_config_writes(tmp_path_factory, monkeypatch):
     ``test_settings.py`` and ``test_pb_runner_lifecycle.py`` still assert against the
     genuine resolver.
     """
-    from boss_agent import screening_config
+    from boss_agent.adapters.outbound.config import screening_config
 
     real_resolver = screening_config.resolve_writable_screening_config_path
     sandbox = tmp_path_factory.mktemp("screening-config") / "settings.local.yaml"

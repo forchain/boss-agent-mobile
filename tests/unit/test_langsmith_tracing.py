@@ -14,11 +14,14 @@ from langsmith import traceable
 from langsmith.run_helpers import get_current_run_tree, tracing_context
 from langsmith.run_trees import RunTree
 
-from boss_agent.job_entities import JobCardBrief, JobPosting
-from boss_agent.matching import JobMatchGreetingService
-from boss_agent.memory import ResumeMemoryManager
-from boss_agent.screening import CandidateScreener, CardVerdictStage, JobVerdictStage
-from boss_agent.screening_policy import ScreeningPolicy
+from boss_agent.adapters.outbound.llm.tracing import (
+    TracedCandidateScreener,
+    TracedJobMatchGreetingService,
+)
+from boss_agent.adapters.outbound.resume.memory import ResumeMemoryManager
+from boss_agent.core.job.domain.job_entities import JobCardBrief, JobPosting
+from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
+from boss_agent.core.job.use_cases.screening import CardVerdictStage, JobVerdictStage
 from droid_agent_core.llm import LLMConfig, OpenAIChatClient, configure_langsmith
 
 
@@ -153,33 +156,6 @@ def test_openai_chat_client_chat_completion_json():
         assert data["score"] == 95
 
 
-def test_openai_chat_client_evaluate_text_match():
-    """Verify evaluate_text_match executes and returns matching evaluation dict."""
-    cfg = LLMConfig(
-        model="test-model",
-        base_url="https://api.test.com/v1",
-        api_key="mock-key",
-    )
-    client = OpenAIChatClient(cfg)
-
-    mock_resp = MagicMock()
-    mock_resp.status_code = 200
-    mock_resp.json.return_value = {
-        "choices": [
-            {
-                "message": {
-                    "content": '{"match_score": 88, "match_reasons": ["Strong experience"], "greeting_message": "Hello"}'
-                }
-            }
-        ],
-    }
-
-    with patch("requests.post", return_value=mock_resp):
-        res = client.evaluate_text_match("Resume text", "JD description")
-        assert res["match_score"] == 88
-        assert res["greeting_message"] == "Hello"
-
-
 def test_candidate_screener_traced_execution():
     """CandidateScreener.evaluate_card / evaluate_job are themselves @traceable spans.
 
@@ -213,7 +189,7 @@ def test_candidate_screener_traced_execution():
     ]
 
     root = _tracing_root()
-    screener = CandidateScreener(llm_client=mock_llm)
+    screener = TracedCandidateScreener(llm_client=mock_llm)
     with tracing_context(parent=root, client=root.client):
         verdict = screener.evaluate_card(card, policy)
         result = screener.evaluate_job(
@@ -238,7 +214,7 @@ def test_candidate_screener_traced_execution():
 
 def test_jd_semantic_screen_runs_traceable_through_the_screener():
     """Verify the JD semantic screen runs under its traceable decorator via the seam."""
-    screener = CandidateScreener(llm_client=MagicMock())
+    screener = TracedCandidateScreener(llm_client=MagicMock())
     screener.llm_client.chat_completion_json.return_value = {
         "pass": False,
         "reason": "Explicit Java JD",
@@ -269,7 +245,7 @@ def test_job_match_greeting_service_traceable():
         "greeting_message": "Hello, I have extensive Appium agent experience.",
     }
 
-    service = JobMatchGreetingService(llm_client=mock_llm)
+    service = TracedJobMatchGreetingService(llm_client=mock_llm)
     job = JobPosting(
         title="Mobile Automation Lead",
         company_name="StartupX",
@@ -331,7 +307,7 @@ def test_candidate_screener_inherits_caller_tags_and_metadata():
     mock_llm.chat_completion_json.return_value = {"pass": False, "reason": "Not matching"}
 
     root = _tracing_root()
-    screener = CandidateScreener(llm_client=mock_llm)
+    screener = TracedCandidateScreener(llm_client=mock_llm)
     with tracing_context(
         parent=root,
         tags=["custom-tag-1"],

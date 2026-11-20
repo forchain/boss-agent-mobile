@@ -19,7 +19,36 @@
     "communication_cooldown_days": 30,
     "enable_screening": true,
     "channel_preference": "all",
-    "run_cleanup_on_startup": true
+    "run_cleanup_on_startup": true,
+    "title_whitelist": [],
+    "title_blacklist": [
+      "销售",
+      "电话销售",
+      "电销",
+      "管培生",
+      "实习",
+      "助理",
+      "讲师",
+      "课程顾问",
+      "客服"
+    ],
+    "company_blacklist": [],
+    "jd_blacklist": [
+      "驻场",
+      "外包",
+      "电销",
+      "无底薪",
+      "纯提成"
+    ],
+    "business_district_blacklist": [],
+    "business_district_inspect_list": [],
+    "max_commute_distance_km": 40.0
+  },
+  "nullable_defaults": {
+    "api_key": null,
+    "langsmith_api_key": null,
+    "pocketbase_data_dir": null,
+    "pocketbase_db_path": null
   },
   "chat_defaults": {
     "rejection_reply_text": "收到 谢谢",

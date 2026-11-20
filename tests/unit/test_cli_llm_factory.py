@@ -9,7 +9,7 @@ The evaluation scripts' LLM seam, after ticket #419.
 endpoint got a client that spoke the wrong wire protocol — a 404 or a silently
 empty verdict, depending on how forgiving the endpoint was.
 
-Each now delegates to ``boss_agent.llm_config.create_llm_client`` and returns the
+Each now delegates to ``boss_agent.adapters.outbound.llm.llm_config.create_llm_client`` and returns the
 ``LLMDecisionClient`` abstraction, so which protocol is spoken is decided once, by
 the configuration, rather than four times by hard-coded imports.
 
@@ -17,12 +17,16 @@ What is asserted here is the routing, not the network: these are fast-tier tests
 so the endpoints are never reached and the API key is a literal.
 """
 
+import ast
+from pathlib import Path
+
 import pytest
 import scripts.evaluate_match as evaluate_match
 import scripts.parse_resume as parse_resume
 import scripts.refine_greeting as refine_greeting
 import scripts.refine_screening as refine_screening
 
+from boss_agent import main as composition
 from droid_agent_core.llm import (
     AnthropicChatClient,
     LLMConfig,
@@ -89,8 +93,8 @@ def test_script_client_is_a_decision_client(name: str, module) -> None:
     """Whatever the protocol, the script holds the abstraction it needs to call."""
     client = module.build_llm_client(_config_json("anthropic"))
     assert isinstance(client, LLMDecisionClient)
-    # The seam every caller actually depends on.
-    assert callable(client.evaluate_text_match)
+    # The seam callers depend on for structured JSON decisions.
+    assert callable(client.chat_completion_json)
 
 
 @pytest.mark.parametrize("name, module", SCRIPTS, ids=[n for n, _ in SCRIPTS])
@@ -125,7 +129,7 @@ def test_script_client_carries_the_resolved_configuration(name: str, module) -> 
     ],
 )
 def test_realm_normalizes_provider_to_a_known_protocol(raw, expected: str) -> None:
-    from boss_agent.config_realm import LLM_PROTOCOLS, normalize_provider
+    from boss_agent.adapters.outbound.config.config_realm import LLM_PROTOCOLS, normalize_provider
 
     assert normalize_provider(raw) == expected
     assert normalize_provider(raw) in LLM_PROTOCOLS
@@ -133,13 +137,87 @@ def test_realm_normalizes_provider_to_a_known_protocol(raw, expected: str) -> No
 
 def test_realm_settings_resolve_a_legacy_provider_to_the_default_protocol() -> None:
     """A saved config still naming a vendor must load, on a working protocol."""
-    from boss_agent.config_realm import llm_settings
+    from boss_agent.adapters.outbound.config.config_realm import llm_settings
 
     resolved = llm_settings({"provider": "deepseek"})
     assert resolved.provider == "openai"
 
 
 def test_realm_settings_keep_an_explicit_anthropic_provider() -> None:
-    from boss_agent.config_realm import llm_settings
+    from boss_agent.adapters.outbound.config.config_realm import llm_settings
 
     assert llm_settings({"provider": "anthropic"}).provider == "anthropic"
+
+
+# --- Finalization fixes (#463): exact pre-refactor behavior ---------------------------
+
+#: A masked display value, never a real secret.
+_MASKED_KEY = "sk-cp-j••••••••••••uG8w"
+
+
+def _masked_config_json() -> str:
+    return (
+        '{"provider": "openai", "base_url": "https://api.minimaxi.com/v1",'
+        f' "api_key": "{_MASKED_KEY}", "model": "MiniMax-M3"}}'
+    )
+
+
+def test_masked_key_is_a_missing_key_unless_the_caller_opts_out() -> None:
+    """The shared builder falls back on a mask by default, and passes it through on request.
+
+    ``parse_resume.py`` (and ``evaluate_match.py``) always treated a masked key as
+    missing. ``refine_greeting.py`` / ``refine_screening.py`` only fell back on a
+    genuinely absent key, so a masked value reached the wire and failed auth the way it
+    did before the composition root existed.
+    """
+    fallback = composition.build_llm_client(_masked_config_json())
+    assert "•" not in (fallback.config.api_key or "")
+
+    passthrough = composition.build_llm_client(
+        _masked_config_json(), treat_masked_key_as_missing=False
+    )
+    assert passthrough.config.api_key == _MASKED_KEY
+
+
+@pytest.mark.parametrize(
+    "module", [refine_greeting, refine_screening], ids=["refine_greeting", "refine_screening"]
+)
+def test_refine_scripts_opt_out_of_the_masked_key_fallback(module) -> None:
+    """Both refinement scripts wire the builder with the pre-refactor key rule."""
+    tree = ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "build_llm_client"
+    ]
+
+    assert calls, f"{module.__name__} no longer calls the composition root's builder"
+    assert any(
+        keyword.arg == "treat_masked_key_as_missing"
+        and isinstance(keyword.value, ast.Constant)
+        and keyword.value.value is False
+        for call in calls
+        for keyword in call.keywords
+    ), f"{module.__name__} must pass treat_masked_key_as_missing=False"
+
+
+def test_parse_resume_honors_the_config_timeout_and_token_budget() -> None:
+    """An inline ``--llm-config`` carries the budget, and the script must not override it."""
+    client = parse_resume.build_llm_client(
+        '{"provider": "openai", "api_key": "unit-test-key-not-a-secret",'
+        ' "timeout_sec": 45.0, "max_tokens": 1234}'
+    )
+
+    assert client.config.timeout_sec == 45.0
+    assert client.config.max_tokens == 1234
+
+
+def test_parse_resume_keeps_its_pre_refactor_default_budget() -> None:
+    """With no budget in the inline config, the resume lifecycle keeps its 300s/16384 run."""
+    client = composition.build_llm_client(
+        '{"provider": "openai", "api_key": "unit-test-key-not-a-secret"}',
+        allow_config_path=True,
+    )
+
+    assert client.config.timeout_sec == 300.0
+    assert client.config.max_tokens == 16384

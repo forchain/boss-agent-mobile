@@ -6,7 +6,8 @@ Executes a verification run against a live Virtual Device Session or physical de
 
 The run is one ``JobFeedPipeline`` pass — the same engine the Automation Worker's handlers
 drive, reached through the entry point it publishes (issue #391). This script used to hand
-itself to ``SmokeHarness`` and thereby walk a second, bespoke implementation of a job feed
+itself to the retired verification adapter and thereby walk a second, bespoke implementation
+of a job feed
 that no device run ever exercised twice; two implementations of one feed drift, and this
 was the one nobody tested on a device. Which card was chosen, whether its JD was usable,
 what was screened and why: that is now answered in one place, and this runner reports it.
@@ -15,7 +16,8 @@ What stays here is what is genuinely this script's: which saved search preset it
 how, the device session it opens and closes, the two screenshots it captures for an operator
 to look at afterwards, and the flags. The composition *around* the engine — the config
 translation, the log sink, activation, the profile load, the refusal to report a run that
-read nothing — is ``boss_agent.feed_verification``'s, because ``SmokeHarness`` composes the
+read nothing — is ``boss_agent.adapters.inbound.verification.feed_verification``'s,
+because the retired verification adapter composed the
 same run and #391 left two copies of that block free to drift.
 
 Two things stay here because the pipeline cannot answer them for itself — it assumes a
@@ -41,32 +43,36 @@ from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
 
-from boss_agent.async_bridge import run_sync
-from boss_agent.config_realm import DEFAULTS
-from boss_agent.enums import AuthStatus
-from boss_agent.errors import BrokerError
-from boss_agent.feed_pipeline import FeedStreamResult
-from boss_agent.feed_verification import (
-    BOSS_PACKAGE,
+from boss_agent.adapters.inbound.verification.feed_verification import (
     activate_app,
-    build_verification_pipeline,
     load_candidate_profile,
     render_greeting_match_card,
     run_verification_feed,
 )
-from boss_agent.matching import JobMatchGreetingService
-from boss_agent.memory import ResumeMemoryManager
-from boss_agent.saved_search_store import (
-    SavedSearchStore,
-    missing_saved_search_message,
-    resolve_saved_search_store,
+from boss_agent.core.job.domain.feed_stream import FeedStreamResult
+from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
+from boss_agent.core.job.use_cases.screening import JobVerdictStage
+from boss_agent.core.search.domain.models import FilterConfig, SavedSearch, SearchConfig
+from boss_agent.core.search.interfaces.store import SavedSearchStore
+from boss_agent.core.shared.enums import AuthStatus
+from boss_agent.core.shared.errors import BrokerError
+from boss_agent.main import (
+    build_device_session,
+    build_matching_service,
+    build_resume_memory_manager,
+    build_saved_search_store,
+    build_takeover_handler,
+    build_verification_pipeline,
+    format_missing_saved_search_message,
+    run_async,
 )
-from boss_agent.screening import JobVerdictStage
-from boss_agent.screening_policy import ScreeningPolicy
-from boss_agent.search_entities import FilterConfig, SavedSearch, SearchConfig
-from boss_agent.settings import load_settings
-from boss_agent.workflows import TakeoverHandler
-from droid_agent_core.driver import AppiumSession, DriverConfig
+from boss_agent.main import (
+    load_runner_settings as _load_runner_settings,
+)
+
+# The store resolution stays a module-level name so a caller can substitute it; the
+# composition root owns the concrete adapter it resolves to.
+resolve_saved_search_store = build_saved_search_store
 
 console = Console()
 
@@ -97,16 +103,16 @@ def _read_presets(
     operator did not name.
     """
     if store is not None:
-        return run_sync(read(store))
+        return run_async(read(store))
 
     try:
-        return run_sync(read(resolve_saved_search_store()))
+        return run_async(read(resolve_saved_search_store()))
     except BrokerError as e:
         console.print(
             f"[yellow]⚠️  PocketBase saved searches unavailable ({e}). "
             f"Continuing with the built-in default presets.[/yellow]"
         )
-        return run_sync(read(resolve_saved_search_store(prefer_database=False)))
+        return run_async(read(resolve_saved_search_store(prefer_database=False)))
 
 
 def read_saved_search(search_id: str, store: SavedSearchStore | None = None) -> SavedSearch | None:
@@ -214,7 +220,7 @@ def run_live_test(
             available = [s.id for s in read_saved_searches(saved_search_store)]
             # The message is escaped because Rich reads ``[alpha_preset]`` as a markup tag
             # and swallows it — the one line that tells the operator what to type instead.
-            message = escape(missing_saved_search_message(search_id, available))
+            message = escape(format_missing_saved_search_message(search_id, available))
             console.print(f"[bold red]❌ {message}[/bold red]")
             return False
         search_config = (
@@ -222,7 +228,7 @@ def run_live_test(
         )
         active_filter = filter_config or saved_search.filter
         console.print(
-            f"\n[bold cyan]🚀 Starting Smoke Harness using Saved Search:[/bold cyan] [bold yellow]'{search_id}'[/bold yellow] ({saved_search.name})"
+            f"\n[bold cyan]🚀 Starting Feed Verification using Saved Search:[/bold cyan] [bold yellow]'{search_id}'[/bold yellow] ({saved_search.name})"
         )
     else:
         search_config = SearchConfig(keyword=keyword)
@@ -255,27 +261,7 @@ def run_live_test(
     else:
         console.print("[dim]Filters disabled: proceeding without filtering.[/dim]")
 
-    # Target device configuration
-    config = DriverConfig(
-        server_url=server_url,
-        platform_name="Android",
-        automation_name="UiAutomator2",
-        device_name=device_udid,
-        app_package=BOSS_PACKAGE,
-        app_activity="com.hpbr.bosszhipin.module.launcher.WelcomeActivity",
-        no_reset=True,
-        auto_grant_permissions=True,
-        new_command_timeout=300,
-        extra_capabilities={
-            "appium:udid": device_udid,
-            "appium:uiautomator2ServerInstallTimeout": 60000,
-            "appium:adbExecTimeout": 60000,
-            "appium:ensureWebviewsHavePages": True,
-            "appium:nativeWebScreenshot": True,
-        },
-    )
-
-    session = AppiumSession(config)
+    session = build_device_session(device_udid=device_udid, server_url=server_url)
     output_dir = Path.home() / ".boss_agent" / "artifacts"
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -300,7 +286,7 @@ def run_live_test(
         # challenge has to stop the run *here*, not after it has begun scrolling a login
         # wall (issue #391). It runs before the engine is even composed so a blocked run
         # costs an operator nothing but the wait for them to solve it.
-        takeover = TakeoverHandler(driver, auto_confirm_for_test=False)
+        takeover = build_takeover_handler(driver, auto_confirm_for_test=False)
         auth_status = takeover.check_and_handle_takeover()
         if auth_status != AuthStatus.AUTHENTICATED:
             raise RuntimeError(f"Authentication failed: {auth_status}")
@@ -311,14 +297,14 @@ def run_live_test(
         # (issue #389). The screener carries *this* run's matching service, so the greeting
         # is drafted by the object the operator configured rather than by a second one the
         # pipeline built for itself.
-        matching_service = JobMatchGreetingService()
+        matching_service = build_matching_service()
         # Loading the profile is the expensive half of drafting a greeting: with
         # ``--force-refresh-memory`` it regenerates the profile from the resume through the
         # LLM. So it happens only on the greeting path — ``--no-greeting`` skips it rather
         # than paying for an answer the run will not use (issue #391).
         candidate_profile = (
             load_candidate_profile(
-                memory_manager=ResumeMemoryManager(),
+                memory_manager=build_resume_memory_manager(),
                 resume_file=resume_file,
                 force_refresh_memory=force_refresh_memory,
                 matching_service=matching_service,
@@ -333,7 +319,7 @@ def run_live_test(
             search_config=search_config,
             filter_config=active_filter,
             # Deliberately the engine's own default, not the preset's stored policy:
-            # resolving it would call ``ScreeningPolicy.load_default()``, read the
+            # resolving it would call ``load_screening_policy()``, read the
             # operator's global screening configuration, and change which cards this live
             # run accepts. This script's job is to report what the engine does, not to
             # re-decide what the engine should accept (issue #391).
@@ -348,7 +334,6 @@ def run_live_test(
         )
 
         render_greeting_match_card(
-            matching_service=matching_service,
             posting=job,
             result=result,
             candidate_profile=candidate_profile,
@@ -376,7 +361,7 @@ def run_live_test(
 
 def load_runner_settings(config_path: str | Path | None = None) -> dict[str, Any]:
     """Load settings from configuration files with priority: local overrides -> configs -> defaults."""
-    return load_settings(config_path=config_path)
+    return _load_runner_settings(config_path=config_path)
 
 
 def main():
@@ -429,17 +414,6 @@ def main():
         action="store_true",
         default=None,
         help="Force re-generation of candidate memory profile from resume using LLM",
-    )
-    parser.add_argument(
-        "--preview-timeout",
-        type=float,
-        default=None,
-        help=(
-            "Accepted for backward compatibility and ignored. It paced the pause before "
-            "navigating back out of a greeting typed into a live chat box; a verification "
-            "run drafts a greeting and sends nothing, so there is no pause left to time "
-            "(issue #390). Passing it prints a notice rather than waiting silently."
-        ),
     )
     parser.add_argument(
         "--no-greeting",
@@ -502,29 +476,6 @@ def main():
         True if args.force_refresh_memory else bool(cfg.get("force_refresh_memory", False))
     )
     enable_greeting = False if args.no_greeting else bool(cfg.get("enable_greeting", True))
-
-    # Say it out loud, on both routes in. The flag stayed because invocations are in muscle
-    # memory and in runbooks, and the key stayed because it is in DEFAULTS and therefore in
-    # every operator's settings file — an operator who set `preview_timeout_sec: 10` and now
-    # waits for nothing deserves the same notice as one who typed the flag. Only a *changed*
-    # value is announced: DEFAULTS carries 3.0, so an untouched key would otherwise put the
-    # warning in front of every run in the world (issue #391).
-    configured_preview_timeout = cfg.get("preview_timeout_sec")
-    if args.preview_timeout is not None:
-        console.print(
-            f"[yellow]⚠️  --preview-timeout ({args.preview_timeout}s) is inert:[/yellow] "
-            f"[dim]a verification run types no greeting into a chat box, so there is no "
-            f"preview pause to time (issue #390).[/dim]"
-        )
-    elif configured_preview_timeout is not None and float(configured_preview_timeout) != float(
-        DEFAULTS["preview_timeout_sec"]
-    ):
-        console.print(
-            f"[yellow]⚠️  preview_timeout_sec ({configured_preview_timeout}s) in your settings "
-            f"is inert:[/yellow] "
-            f"[dim]a verification run types no greeting into a chat box, so there is no "
-            f"preview pause to time (issue #390).[/dim]"
-        )
 
     target_keyword = keyword if enable_search else None
     target_search_id = search_id if enable_search else None

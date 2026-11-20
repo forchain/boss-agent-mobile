@@ -9,15 +9,15 @@ import sqlite3
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from boss_agent.broker.collection_schema import JOB_RECORDS, pocketbase_fields
-from boss_agent.broker.provisioner import provision_sqlite_database
-from boss_agent.card_parser import (
+from boss_agent.adapters.outbound.device.pages.job_feed import JobListPage
+from boss_agent.adapters.outbound.pocketbase.collection_schema import JOB_RECORDS, pocketbase_fields
+from boss_agent.adapters.outbound.pocketbase.provisioner import provision_sqlite_database
+from boss_agent.core.job.domain.card_parser import (
     parse_company_scale_industry,
     parse_recruiter_info,
 )
-from boss_agent.identifier_helpers import clean_job_title
-from boss_agent.job_entities import JobCardBrief, JobPosting, JobRecord
-from boss_agent.pages.job_feed import JobListPage
+from boss_agent.core.job.domain.job_entities import JobCardBrief, JobPosting, JobRecord
+from boss_agent.core.shared.identifier_helpers import clean_job_title
 
 
 def test_parse_recruiter_info_headhunter_detection():
@@ -554,7 +554,7 @@ def test_backfill_purges_unknown_company_records(tmp_path: Path):
     assert len(remaining_before_migration) == 4
 
     # Dedicated migration purges invalid records
-    from boss_agent.broker.provisioner import run_legacy_record_migration
+    from boss_agent.adapters.outbound.pocketbase.provisioner import run_legacy_record_migration
 
     assert run_legacy_record_migration(db_file) is True
 
@@ -571,7 +571,7 @@ def test_backfill_purges_unknown_company_records(tmp_path: Path):
 
 def test_sanitize_tags_filters_recruiter_and_location():
     """sanitize_tags must filter out recruiter name, recruiter title, location, scale, and duplicates."""
-    from boss_agent.identifier_helpers import sanitize_tags
+    from boss_agent.core.shared.identifier_helpers import sanitize_tags
 
     # Scenario 1: Recruiter info and location mixed in tags
     raw_tags = ["3-5年", "硕士", "王琳 · 猎头顾问", "上海"]
@@ -612,7 +612,7 @@ def test_sanitize_tags_filters_recruiter_and_location():
 
 def test_is_invalid_company_name():
     """is_invalid_company_name must detect education, experience, recruiter, location, and scale strings."""
-    from boss_agent.identifier_helpers import is_invalid_company_name
+    from boss_agent.core.shared.identifier_helpers import is_invalid_company_name
 
     # Education / Experience keywords
     assert is_invalid_company_name("硕士") is True

@@ -13,15 +13,14 @@ produced inverted execution depth depending on who dispatched it.
 
 import json
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
-from boss_agent import task_launch
-from boss_agent.enums import TargetAction
-from boss_agent.feed_pipeline import FeedStreamConfig
-from boss_agent.rejection import ChatAcknowledgmentSettings
-from boss_agent.search_entities import FilterConfig, SavedSearch, SearchConfig
+from boss_agent.core.chat.domain.rejection import ChatAcknowledgmentSettings
+from boss_agent.core.job.use_cases.feed_pipeline import FeedStreamConfig
+from boss_agent.core.search.domain import launch as task_launch
+from boss_agent.core.search.domain.models import FilterConfig, SavedSearch, SearchConfig
+from boss_agent.core.shared.enums import TargetAction
 
 FIXTURE_PATH = Path(__file__).parents[2] / "config" / "task_launch.cases.json"
 
@@ -86,17 +85,14 @@ def test_python_builder_matches_the_shared_case(case: dict) -> None:
     kwargs.update(case.get("depth_keys") or {})
 
     ack = ChatAcknowledgmentSettings(**(case["chat"] or {}))
+    kwargs["acknowledgment"] = ack
     if case.get("expect_error"):
         # A case may state something the contract must refuse instead of a payload to build.
-        with (
-            patch("boss_agent.task_launch.resolve_chat_acknowledgment_settings", return_value=ack),
-            pytest.raises(task_launch.LaunchContractError),
-        ):
+        with pytest.raises(task_launch.LaunchContractError):
             task_launch.build_launch(**kwargs)
         return
 
-    with patch("boss_agent.task_launch.resolve_chat_acknowledgment_settings", return_value=ack):
-        launch = task_launch.build_launch(**kwargs)
+    launch = task_launch.build_launch(**kwargs)
 
     assert launch.task_type.value == case["expected"]["task_type"]
     # Provenance is a task attribute, not a payload key.
@@ -120,7 +116,7 @@ def test_the_job_ceiling_is_the_schemas_declared_default() -> None:
     what stops a second literal from drifting the way 20-vs-30 once did. Exercise the
     fallback branch, where `DEFAULT_MAX_JOBS` is what actually reaches the payload.
     """
-    from boss_agent.broker.collection_schema import SAVED_SEARCH_MAX_JOBS
+    from boss_agent.adapters.outbound.pocketbase.collection_schema import SAVED_SEARCH_MAX_JOBS
 
     assert task_launch.DEFAULT_MAX_JOBS == SAVED_SEARCH_MAX_JOBS
 

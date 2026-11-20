@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -39,9 +40,16 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MANIFEST_PATH = REPO_ROOT / "version.json"
 
-# Last resort matching the consumer's own `DEFAULT_APP_VERSION` in version.ts, so a
-# manifest that somehow lands here is never a *worse* answer than the tier below it.
+# Last resort matching the consumer's own `DEFAULT_APP_VERSION` in version.ts and
+# `RUNNER_VERSION_FALLBACK` in runner_lib.sh, so a manifest that somehow lands here is never
+# a *worse* answer than the tier below it. All three declarations are pinned equal by
+# tests/e2e/test_version_resolution_chain.py.
 FALLBACK_VERSION = "v0.1"
+
+# The shape of a commit hash rather than a version: `git describe --always` prints one when
+# no tag is reachable. Mirrors `BARE_COMMIT_HASH` in web/src/lib/server/gitDescribe.ts and
+# `RUNNER_BARE_COMMIT_HASH` in runner_lib.sh.
+BARE_COMMIT_HASH = re.compile(r"^[0-9a-f]{7,64}$", re.IGNORECASE)
 
 
 def format_version(major: Any, pr_count: Any, commits: Any) -> str:
@@ -134,9 +142,13 @@ def git_tag_lookup(cwd: str | Path | None = None) -> str | None:
             check=True,
         )
         tag = result.stdout.strip()
-        return tag or None
     except Exception:
         return None
+    # `--abbrev=0` normally fails without a reachable tag, but a tag *shaped* like a commit
+    # hash is not a version either — the same guard the shell and TypeScript tiers apply.
+    if not tag or BARE_COMMIT_HASH.match(tag):
+        return None
+    return tag
 
 
 def resolve_version_and_source(

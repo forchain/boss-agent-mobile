@@ -10,9 +10,10 @@ cycle — fails exactly the same way: the package imports cleanly and the name i
 missing. Nothing raises, and the failure surfaces later as an ``ImportError`` in
 whoever ran ``from boss_agent import X``.
 
-That is not hypothetical. ``job_store`` imported ``boss_agent.broker.collection_schema``
+That is not hypothetical. ``job_store`` imported ``boss_agent.adapters.outbound.pocketbase.collection_schema``
 at module scope, which ran the ``broker`` package ``__init__``, which imported
-``boss_agent.job_store`` straight back while it was still executing. Seven names —
+``boss_agent.adapters.outbound.pocketbase.job_store`` straight back while it was still
+executing. Seven names —
 every ``JobRecordStore`` and ``JobFeedPipeline`` export — were silently unbound, and
 the suite stayed green because a different module happened to re-enter the broker
 package afterwards and let a retry succeed. Asserting against the namespace is what

@@ -9,14 +9,36 @@ from unittest.mock import MagicMock, patch
 import pytest
 from _card_fixtures import located
 
-from boss_agent.broker.models import TaskStatus, TaskType
-from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
-from boss_agent.job_entities import JobCardBrief
-from boss_agent.worker.config import WorkerConfig
-from boss_agent.worker.context import WorkerContext
-from boss_agent.worker.daemon import AutomationWorker
-from boss_agent.worker.handlers.auto_apply import AutoApplyHandler
-from boss_agent.worker.handlers.scrape_jobs import ScrapeJobsHandler
+from boss_agent.adapters.inbound.worker.config import WorkerConfig
+from boss_agent.adapters.inbound.worker.context import WorkerContext
+from boss_agent.adapters.inbound.worker.daemon import AutomationWorker
+from boss_agent.adapters.inbound.worker.handlers.auto_apply import AutoApplyHandler
+from boss_agent.adapters.inbound.worker.handlers.scrape_jobs import ScrapeJobsHandler
+from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
+from boss_agent.adapters.outbound.config.settings import load_feed_config_defaults
+from boss_agent.adapters.outbound.device.pages.feed_bundle import build_feed_device_world
+from boss_agent.core.job.domain.job_entities import JobCardBrief
+from boss_agent.core.job.use_cases.screening import CandidateScreener
+from boss_agent.core.task.domain.models import TaskStatus, TaskType
+
+
+def _scrape_handler(broker, llm_client=None) -> ScrapeJobsHandler:
+    return ScrapeJobsHandler(
+        screener=CandidateScreener(llm_client=llm_client or MagicMock()),
+        pages=build_feed_device_world,
+        job_store=broker.job_store,
+        feed_config_defaults_loader=load_feed_config_defaults,
+    )
+
+
+def _apply_handler(broker, llm_client=None) -> AutoApplyHandler:
+    return AutoApplyHandler(
+        screener=CandidateScreener(llm_client=llm_client or MagicMock()),
+        pages=build_feed_device_world,
+        job_store=broker.job_store,
+        candidate_memory=broker.candidate_memory,
+        feed_config_defaults_loader=load_feed_config_defaults,
+    )
 
 
 @pytest.fixture
@@ -61,7 +83,7 @@ async def test_scrape_jobs_handler_extracts_and_persists_jobs(broker, mock_drive
         config=config,
         broker=broker,
         context=context,
-        handlers=[ScrapeJobsHandler(llm_client=MagicMock())],
+        handlers=[_scrape_handler(broker)],
     )
 
     task = await broker.create_task(
@@ -84,8 +106,8 @@ async def test_scrape_enrichment_falls_back_to_jd_digest_when_card_has_no_snippe
 ):
     """A popup card without a snippet must not persist an empty digest; the enrichment
     should fall back to the digest derived from the full job description."""
-    from boss_agent.enums import ChatButtonState
-    from boss_agent.job_entities import JobPosting
+    from boss_agent.core.job.domain.job_entities import JobPosting
+    from boss_agent.core.shared.enums import ChatButtonState
 
     card = JobCardBrief(
         title="Senior AI Agent Engineer（英语口语）",
@@ -111,7 +133,7 @@ async def test_scrape_enrichment_falls_back_to_jd_digest_when_card_has_no_snippe
         config=config,
         broker=broker,
         context=context,
-        handlers=[ScrapeJobsHandler()],
+        handlers=[_scrape_handler(broker)],
     )
     await broker.create_task(
         task_type=TaskType.SCRAPE_JOBS,
@@ -123,10 +145,16 @@ async def test_scrape_enrichment_falls_back_to_jd_digest_when_card_has_no_snippe
     )
 
     with (
-        patch("boss_agent.feed_pipeline.StartupDialogPage") as mock_startup_cls,
-        patch("boss_agent.feed_pipeline.JobListPage") as mock_list_cls,
-        patch("boss_agent.feed_pipeline.SearchPage") as mock_search_cls,
-        patch("boss_agent.feed_pipeline.JobDetailPage") as mock_detail_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.StartupDialogPage"
+        ) as mock_startup_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobListPage") as mock_list_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.SearchPage"
+        ) as mock_search_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.JobDetailPage"
+        ) as mock_detail_cls,
     ):
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_list = mock_list_cls.return_value
@@ -186,7 +214,7 @@ async def test_auto_apply_handler_reads_a_legacy_preview_payload_and_never_sends
         "greeting_message": "针对贵司大模型 Agent 落地需求，我具备完整实战经验！",
     }
 
-    apply_handler = AutoApplyHandler(llm_client=mock_llm_client)
+    apply_handler = _apply_handler(broker, llm_client=mock_llm_client)
 
     worker = AutomationWorker(
         config=config,
@@ -259,7 +287,7 @@ async def test_auto_apply_handler_auto_send_mode(broker, mock_driver):
         "greeting_message": "针对贵司大模型 Agent 落地需求，我具备完整实战经验！",
     }
 
-    apply_handler = AutoApplyHandler(llm_client=mock_llm_client)
+    apply_handler = _apply_handler(broker, llm_client=mock_llm_client)
 
     worker = AutomationWorker(
         config=config,
@@ -323,7 +351,7 @@ async def test_scrape_jobs_handler_applies_filters(broker, mock_driver):
         config=config,
         broker=broker,
         context=context,
-        handlers=[ScrapeJobsHandler(llm_client=MagicMock())],
+        handlers=[_scrape_handler(broker)],
     )
 
     task = await broker.create_task(
@@ -373,7 +401,7 @@ async def test_auto_apply_handler_filtered_by_keyword(broker, mock_driver):
     context = WorkerContext(config=config, driver=mock_driver)
     mock_llm = MagicMock()
 
-    apply_handler = AutoApplyHandler(llm_client=mock_llm)
+    apply_handler = _apply_handler(broker, llm_client=mock_llm)
     worker = AutomationWorker(
         config=config,
         broker=broker,
@@ -435,7 +463,7 @@ async def test_auto_apply_handler_filtered_by_deep_screener(broker, mock_driver)
         "reason": "JD正文明确要求熟练掌握Java微服务，触犯黑名单技术栈",
     }
 
-    apply_handler = AutoApplyHandler(llm_client=mock_llm)
+    apply_handler = _apply_handler(broker, llm_client=mock_llm)
     worker = AutomationWorker(
         config=config,
         broker=broker,
@@ -483,7 +511,7 @@ async def test_scrape_jobs_handler_eliminates_blacklisted_cards_and_persists_rea
         config=config,
         broker=broker,
         context=context,
-        handlers=[ScrapeJobsHandler(llm_client=MagicMock())],
+        handlers=[_scrape_handler(broker)],
     )
 
     task = await broker.create_task(
@@ -505,10 +533,16 @@ async def test_scrape_jobs_handler_eliminates_blacklisted_cards_and_persists_rea
     )
 
     with (
-        patch("boss_agent.feed_pipeline.StartupDialogPage") as mock_startup_cls,
-        patch("boss_agent.feed_pipeline.JobListPage") as mock_list_cls,
-        patch("boss_agent.feed_pipeline.SearchPage") as mock_search_cls,
-        patch("boss_agent.feed_pipeline.JobDetailPage") as mock_detail_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.StartupDialogPage"
+        ) as mock_startup_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobListPage") as mock_list_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.SearchPage"
+        ) as mock_search_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.JobDetailPage"
+        ) as mock_detail_cls,
     ):
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_list = mock_list_cls.return_value
@@ -581,7 +615,7 @@ async def test_auto_apply_skips_an_already_ignored_posting_without_spending_quot
         config=config,
         broker=broker,
         context=context,
-        handlers=[AutoApplyHandler(llm_client=mock_llm)],
+        handlers=[_apply_handler(broker, llm_client=mock_llm)],
     )
 
     task = await broker.create_task(
@@ -595,10 +629,16 @@ async def test_auto_apply_skips_an_already_ignored_posting_without_spending_quot
     )
 
     with (
-        patch("boss_agent.feed_pipeline.StartupDialogPage") as mock_startup_cls,
-        patch("boss_agent.feed_pipeline.JobListPage") as mock_list_cls,
-        patch("boss_agent.feed_pipeline.SearchPage") as mock_search_cls,
-        patch("boss_agent.feed_pipeline.JobDetailPage") as mock_detail_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.StartupDialogPage"
+        ) as mock_startup_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobListPage") as mock_list_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.SearchPage"
+        ) as mock_search_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.JobDetailPage"
+        ) as mock_detail_cls,
     ):
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_list = mock_list_cls.return_value
@@ -632,7 +672,7 @@ async def test_auto_apply_handler_preflight_blocks_blacklisted_company(broker, m
     context = WorkerContext(config=config, driver=mock_driver)
 
     mock_llm = MagicMock()
-    apply_handler = AutoApplyHandler(llm_client=mock_llm)
+    apply_handler = _apply_handler(broker, llm_client=mock_llm)
 
     worker = AutomationWorker(
         config=config,
@@ -679,7 +719,7 @@ async def test_scrape_jobs_handler_aborts_when_search_fails(broker, mock_driver)
         config=config,
         broker=broker,
         context=context,
-        handlers=[ScrapeJobsHandler(llm_client=MagicMock())],
+        handlers=[_scrape_handler(broker)],
     )
 
     task = await broker.create_task(
@@ -711,7 +751,7 @@ async def test_auto_apply_handler_aborts_when_search_fails(broker, mock_driver):
         config=config,
         broker=broker,
         context=context,
-        handlers=[AutoApplyHandler(llm_client=MagicMock())],
+        handlers=[_apply_handler(broker)],
     )
 
     task = await broker.create_task(
@@ -759,7 +799,7 @@ async def test_scrape_jobs_handler_clears_filters_when_enable_filter_false(broke
         config=config,
         broker=broker,
         context=context,
-        handlers=[ScrapeJobsHandler(llm_client=MagicMock())],
+        handlers=[_scrape_handler(broker)],
     )
 
     task = await broker.create_task(
@@ -771,7 +811,9 @@ async def test_scrape_jobs_handler_clears_filters_when_enable_filter_false(broke
         },
     )
 
-    with patch("boss_agent.feed_pipeline.FilterDialogPage") as mock_filter_cls:
+    with patch(
+        "boss_agent.adapters.outbound.device.pages.feed_bundle.FilterDialogPage"
+    ) as mock_filter_cls:
         mock_filter_inst = MagicMock()
         mock_filter_cls.return_value = mock_filter_inst
 
@@ -814,7 +856,7 @@ async def test_auto_apply_handler_clears_filters_when_no_filter(broker, mock_dri
         config=config,
         broker=broker,
         context=context,
-        handlers=[AutoApplyHandler(llm_client=MagicMock())],
+        handlers=[_apply_handler(broker)],
     )
 
     task = await broker.create_task(
@@ -826,7 +868,9 @@ async def test_auto_apply_handler_clears_filters_when_no_filter(broker, mock_dri
         },
     )
 
-    with patch("boss_agent.feed_pipeline.FilterDialogPage") as mock_filter_cls:
+    with patch(
+        "boss_agent.adapters.outbound.device.pages.feed_bundle.FilterDialogPage"
+    ) as mock_filter_cls:
         mock_filter_inst = MagicMock()
         mock_filter_cls.return_value = mock_filter_inst
 
@@ -849,8 +893,8 @@ async def test_auto_apply_handler_runs_a_contract_built_launch_as_auto_send(brok
     the real artifact — `build_search_launch` over an `auto_apply` SavedSearch, read by the
     worker's own parser — and the log line an operator actually reads.
     """
-    from boss_agent import task_launch
-    from boss_agent.search_entities import SavedSearch, SearchConfig
+    from boss_agent.core.search.domain import launch as task_launch
+    from boss_agent.core.search.domain.models import SavedSearch, SearchConfig
 
     mock_title = MagicMock(text="Agent 平台工程师")
     mock_company = MagicMock(text="智元创新")
@@ -886,7 +930,7 @@ async def test_auto_apply_handler_runs_a_contract_built_launch_as_auto_send(brok
         config=config,
         broker=broker,
         context=context,
-        handlers=[AutoApplyHandler(llm_client=mock_llm_client)],
+        handlers=[_apply_handler(broker, llm_client=mock_llm_client)],
     )
 
     search = SavedSearch(

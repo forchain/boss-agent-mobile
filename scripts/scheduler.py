@@ -3,6 +3,8 @@
 scripts/scheduler.py
 ====================
 CLI entrypoint for running the Boss Agent Cron Scheduler daemon.
+
+Composition lives in :mod:`boss_agent.main`; this module keeps the flags and the loop.
 """
 
 import argparse
@@ -10,9 +12,7 @@ import asyncio
 import logging
 import sys
 
-from boss_agent.broker.pocketbase_adapter import PocketBaseTaskBroker
-from boss_agent.scheduler import AutomationScheduler
-from boss_agent.settings import resolve_pocketbase_url
+from boss_agent.main import build_scheduler
 
 
 def main() -> None:
@@ -37,13 +37,14 @@ def main() -> None:
     )
     logger = logging.getLogger("scheduler_main")
 
-    resolved_pb_url = resolve_pocketbase_url(explicit_url=args.pb_url)
-    broker = PocketBaseTaskBroker(base_url=resolved_pb_url)
-    scheduler = AutomationScheduler(broker=broker, poll_interval_sec=args.poll_interval)
+    scheduler = build_scheduler(
+        pocketbase_url=args.pb_url,
+        poll_interval_sec=args.poll_interval,
+    )
 
     logger.info(
         "Starting Boss Agent Cron Scheduler (PocketBase: %s, Poll interval: %.1fs)",
-        resolved_pb_url,
+        scheduler.broker.base_url,
         args.poll_interval,
     )
 

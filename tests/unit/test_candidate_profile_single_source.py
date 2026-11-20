@@ -11,21 +11,21 @@ Unit tests verifying Candidate Profile as the single source of truth:
 """
 
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
-from boss_agent.candidate_memory_store import (
-    InMemoryCandidateMemoryStore,
+from boss_agent.adapters.memory.candidate_memory_store import InMemoryCandidateMemoryStore
+from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
+from boss_agent.adapters.outbound.pocketbase.candidate_memory_store import (
     migrate_legacy_candidate_profile,
 )
-from boss_agent.errors import BrokerError, TransportError
-from boss_agent.graph import run_resume_lifecycle_graph
-from boss_agent.memory import (
+from boss_agent.adapters.outbound.resume.graph import run_resume_lifecycle_graph
+from boss_agent.adapters.outbound.resume.memory import (
     ResumeMemoryManager,
     StructuredCandidateProfile,
 )
+from boss_agent.core.shared.errors import BrokerError, TransportError
 
 
 def test_in_memory_store_isolated_from_local_file(tmp_path, monkeypatch):
@@ -134,17 +134,17 @@ def test_storage_failure_propagates_without_degrading():
     )
 
     # 1. ResumeMemoryManager load_cached_memory must raise TransportError
-    with patch("boss_agent.broker.PocketBaseBroker", return_value=faulty_broker):
-        manager = ResumeMemoryManager()
-        with pytest.raises(TransportError):
-            manager.load_cached_memory()
+    manager = ResumeMemoryManager(
+        llm_client=MagicMock(),
+        candidate_memory=faulty_broker.candidate_memory,
+    )
+    with pytest.raises(TransportError):
+        manager.load_cached_memory()
 
     # 2. ResumeMemoryManager save_memory_profile must raise BrokerError
-    with patch("boss_agent.broker.PocketBaseBroker", return_value=faulty_broker):
-        manager = ResumeMemoryManager()
-        sample_profile = StructuredCandidateProfile(name="王五", years_of_experience=5)
-        with pytest.raises(BrokerError):
-            manager.save_memory_profile(sample_profile)
+    sample_profile = StructuredCandidateProfile(name="王五", years_of_experience=5)
+    with pytest.raises(BrokerError):
+        manager.save_memory_profile(sample_profile)
 
     # 3. Resume lifecycle graph must raise when storage fails during diff analyzer
     # A stub client, not the real one: without it the graph builds a live LLM client and the
@@ -156,7 +156,7 @@ def test_storage_failure_propagates_without_degrading():
             raw_resume_text="王五，5年经验",
             file_name="wangwu.txt",
             user_id="user_err",
-            broker=faulty_broker,
+            candidate_memory=faulty_broker.candidate_memory,
             llm_client=stub_llm,
         )
 
@@ -194,7 +194,7 @@ def test_incremental_merge_flow_against_single_source():
         user_id="user_123",
         merge_mode="merge",
         llm_client=mock_llm,
-        broker=broker,
+        candidate_memory=broker.candidate_memory,
     )
 
     assert result["status"] == "completed"

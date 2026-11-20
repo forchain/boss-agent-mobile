@@ -7,14 +7,12 @@ must not stamp an empty policy onto the task payload, which would wipe out the g
 title_blacklist, company_blacklist, and other screening rules.
 """
 
-from unittest.mock import patch
-
-from boss_agent.feed_pipeline import FeedStreamConfig
-from boss_agent.job_entities import JobCardBrief
-from boss_agent.screening import CandidateScreener
-from boss_agent.screening_policy import ScreeningPolicy
-from boss_agent.search_entities import FilterConfig, SavedSearch, SearchConfig
-from boss_agent.task_launch import LaunchSource, TaskKind, build_launch
+from boss_agent.core.job.domain.job_entities import JobCardBrief
+from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
+from boss_agent.core.job.use_cases.feed_pipeline import FeedStreamConfig
+from boss_agent.core.job.use_cases.screening import CandidateScreener
+from boss_agent.core.search.domain.launch import LaunchSource, TaskKind, build_launch
+from boss_agent.core.search.domain.models import FilterConfig, SavedSearch, SearchConfig
 
 
 def test_saved_search_without_policy_defaults_screening_policy_to_none():
@@ -73,14 +71,15 @@ def test_feed_stream_config_inherits_global_policy_when_not_in_payload():
     )
     launch = build_launch(TaskKind.SEARCH, source=LaunchSource.SCHEDULER, search=search)
 
-    with patch("boss_agent.screening_policy.ScreeningPolicy.load_default") as mock_load:
-        mock_load.return_value = ScreeningPolicy(
+    config = FeedStreamConfig.from_payload(
+        launch.payload,
+        default_policy=ScreeningPolicy(
             title_blacklist=["解决方案", "Solution", "产品经理"],
             title_whitelist=["英语", "硕士"],
             company_blacklist=["某某公司"],
             channel_preference="all",
-        )
-        config = FeedStreamConfig.from_payload(launch.payload)
+        ),
+    )
 
     assert "产品经理" in config.screening_policy.title_blacklist
     assert "某某公司" in config.screening_policy.company_blacklist
@@ -98,12 +97,13 @@ def test_card_screener_rejects_product_manager_under_scheduled_search():
     )
     launch = build_launch(TaskKind.SEARCH, source=LaunchSource.SCHEDULER, search=search)
 
-    with patch("boss_agent.screening_policy.ScreeningPolicy.load_default") as mock_load:
-        mock_load.return_value = ScreeningPolicy(
+    config = FeedStreamConfig.from_payload(
+        launch.payload,
+        default_policy=ScreeningPolicy(
             title_blacklist=["解决方案", "Solution", "产品经理"],
             channel_preference="all",
-        )
-        config = FeedStreamConfig.from_payload(launch.payload)
+        ),
+    )
 
     screener = CandidateScreener()
 
@@ -144,13 +144,14 @@ def test_feed_stream_config_defense_in_depth_against_empty_policy_payload():
         },
     }
 
-    with patch("boss_agent.screening_policy.ScreeningPolicy.load_default") as mock_load:
-        mock_load.return_value = ScreeningPolicy(
+    config = FeedStreamConfig.from_payload(
+        empty_payload,
+        default_policy=ScreeningPolicy(
             title_blacklist=["解决方案", "Solution", "产品经理"],
             company_blacklist=["某某外包"],
             channel_preference="all",
-        )
-        config = FeedStreamConfig.from_payload(empty_payload)
+        ),
+    )
 
     assert "产品经理" in config.screening_policy.title_blacklist
     assert "某某外包" in config.screening_policy.company_blacklist

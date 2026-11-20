@@ -19,15 +19,15 @@ from dataclasses import replace
 import pytest
 from _feed_harness import ScriptedFeed, _card, _detail_page, _pipeline, _posting
 
-from boss_agent.feed_pipeline import FeedStreamConfig, JobFeedPipeline
-from boss_agent.job_entities import JobPosting
-from boss_agent.job_store import InMemoryJobRecordStore
-from boss_agent.screening_policy import ScreeningPolicy
+from boss_agent.adapters.memory.job_store import InMemoryJobRecordStore
+from boss_agent.core.job.domain.job_entities import JobPosting
+from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
+from boss_agent.core.job.use_cases.feed_pipeline import FeedStreamConfig
 
 
-def test_pipeline_persists_to_an_in_memory_store_when_none_is_given():
-    """Composing the pipeline without a store must still have somewhere to write."""
-    pipeline = JobFeedPipeline(driver=None)
+def test_pipeline_keeps_the_in_memory_store_it_is_given():
+    """A standalone composition still writes into the store it was handed."""
+    pipeline = _pipeline(InMemoryJobRecordStore())
 
     assert isinstance(pipeline.store, InMemoryJobRecordStore)
 
@@ -48,7 +48,7 @@ def test_an_empty_ledger_is_honoured_rather_than_swapped_for_the_default():
     """
     store = _EmptyLedger()
 
-    pipeline = JobFeedPipeline(driver=None, store=store)
+    pipeline = _pipeline(store)
 
     assert pipeline.store is store
 

@@ -22,7 +22,7 @@ fast tier never reaches an endpoint.
 Where the seams are: the runner resolves its own preset and device session, so it still
 constructs its own ``ResumeMemoryManager`` and ``JobMatchGreetingService`` and the tests
 still patch those on the script module. The engine composition — ``JobFeedPipeline`` plus the
-screener that carries this run's matching service — moved to ``boss_agent.feed_verification``
+screener that carries this run's matching service — moved to ``boss_agent.adapters.inbound.verification.feed_verification``
 in the #391 review, so those two patches moved with it. That is the point of the move: the
 runner and ``SmokeHarness`` now build one pipeline in one place, and a test that watched the
 runner build it watches the shared composition instead.
@@ -32,20 +32,24 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import scripts.run_live_test as runner
-from _feed_harness import ScriptedFeed, _card, _detail_page, _posting, script_pages, stub_llm
+from _feed_harness import ScriptedFeed, _card, _detail_page, _posting, scripted_world, stub_llm
 
-from boss_agent.enums import AuthStatus, JobRecordStatus, TargetAction
-from boss_agent.feed_pipeline import FeedStreamResult, JobFeedPipeline
-from boss_agent.job_entities import JobPosting
-from boss_agent.matching import JobMatchGreetingService
-from boss_agent.memory import StructuredCandidateProfile
-from boss_agent.screening import CandidateScreener, JobVerdictStage
+from boss_agent import main as composition
+from boss_agent.adapters.outbound.llm.tracing import (
+    TracedCandidateScreener,
+    TracedJobMatchGreetingService,
+)
+from boss_agent.adapters.outbound.resume.memory import StructuredCandidateProfile
+from boss_agent.core.job.domain.job_entities import JobPosting
+from boss_agent.core.job.use_cases.feed_pipeline import FeedStreamResult, JobFeedPipeline
+from boss_agent.core.job.use_cases.screening import JobVerdictStage
+from boss_agent.core.shared.enums import AuthStatus, JobRecordStatus, TargetAction
 
 # Captured before any patching: the tests replace these attributes to observe composition,
 # and must still be able to reach the real classes through them.
 _REAL_PIPELINE = JobFeedPipeline
-_REAL_SCREENER = CandidateScreener
-_REAL_GREETING = JobMatchGreetingService
+_REAL_SCREENER = TracedCandidateScreener
+_REAL_GREETING = TracedJobMatchGreetingService
 
 POSTING_TITLE = "资深 Python / Android 自动化专家"
 POSTING_COMPANY = "北京智联前沿科技有限公司"
@@ -65,7 +69,8 @@ def _run(
 ):
     """Drive ``run_live_test`` over a scripted device; return what the run was made of.
 
-    The pipeline the runner composes is captured and scripted through ``script_pages`` —
+    The pipeline the runner composes is captured and driven over a scripted device world
+    that is injected at construction — so ``stream_jobs`` really runs
     the seam ``SmokeHarness``-owned pipelines already get — so ``stream_jobs`` really runs
     over a scripted feed rather than being mocked into agreeing with the test. The config
     it was handed is recorded too, because the runner's decisions live in that config and
@@ -96,15 +101,19 @@ def _run(
         detail.extract_job_posting.return_value = None
 
     def _compose_pipeline(**kwargs):
-        pipeline = _REAL_PIPELINE(**kwargs)
-        composed.append(pipeline)
-        script_pages(
-            pipeline,
+        """Build the pipeline with a complete scripted world already in it.
+
+        The world is injected at construction (issue #481) — the engine's screens are
+        never rebound after the fact.
+        """
+        kwargs["world"] = scripted_world(
             feed=feed
             if feed is not None
             else ScriptedFeed([[_card(POSTING_TITLE, POSTING_COMPANY)]]),
             detail=detail,
         )
+        pipeline = _REAL_PIPELINE(**kwargs)
+        composed.append(pipeline)
         real_stream = pipeline.stream_jobs
 
         async def _record(config, on_job=None):
@@ -123,15 +132,18 @@ def _run(
     with (
         patch("pathlib.Path.home", return_value=tmp_path),
         patch("time.sleep", return_value=None),
-        patch.object(runner, "AppiumSession", return_value=session),
-        patch.object(runner, "TakeoverHandler", return_value=takeover),
-        patch.object(runner, "ResumeMemoryManager", return_value=memory),
-        patch("boss_agent.feed_verification.JobFeedPipeline", side_effect=_compose_pipeline),
-        patch("boss_agent.feed_verification.CandidateScreener") as screener_cls,
-        patch.object(runner, "JobMatchGreetingService") as greeting_cls,
+        patch.object(composition, "AppiumSession", return_value=session),
+        patch.object(composition, "TakeoverHandler", return_value=takeover),
+        patch.object(composition, "ResumeMemoryManager", return_value=memory),
+        patch(
+            "boss_agent.adapters.inbound.verification.feed_verification.JobFeedPipeline",
+            side_effect=_compose_pipeline,
+        ),
+        patch.object(composition, "build_traced_screener") as screener_cls,
+        patch.object(composition, "TracedJobMatchGreetingService") as greeting_cls,
     ):
-        screener_cls.side_effect = lambda **kw: _REAL_SCREENER(llm_client=verdict, **kw)
-        greeting_cls.side_effect = lambda **kw: _REAL_GREETING(llm_client=stub_llm(), **kw)
+        screener_cls.side_effect = lambda **kw: _REAL_SCREENER(**{**kw, "llm_client": verdict})
+        greeting_cls.side_effect = lambda **kw: _REAL_GREETING(**{**kw, "llm_client": stub_llm()})
         outcome = runner.run_live_test(
             search_id=None,
             keyword="Agent",
@@ -322,71 +334,6 @@ def test_a_run_the_screening_engine_turned_down_says_so_instead_of_claiming_a_ma
     assert "🎉" in accepted_line
     assert "screened out" not in accepted_line
     assert "outcome=matched" in accepted_line
-
-
-def test_preview_timeout_still_parses_but_says_it_paces_nothing(capsys):
-    """The flag survives, and no longer lies about what it does.
-
-    The pause it was written for watched a greeting being typed into a live chat box. A
-    verification run types nothing into one, so the pause went away with the typing
-    (issue #390). Invocations are in muscle memory and runbooks, so the flag is still
-    accepted — but an operator who passes it is told plainly that it waits for nothing,
-    rather than watching a number they set do nothing at all.
-    """
-    with (
-        patch.object(runner.sys, "argv", ["run_live_test.py", "--preview-timeout", "9"]),
-        patch.object(runner, "load_runner_settings", return_value={}),
-        patch.object(runner, "run_live_test", return_value=True) as run_mock,
-        pytest.raises(SystemExit) as exit_info,
-    ):
-        runner.main()
-
-    assert exit_info.value.code == 0
-    assert run_mock.called, "the flag must not break the invocation"
-    assert "preview_timeout_sec" not in run_mock.call_args.kwargs
-    printed = capsys.readouterr().out
-    assert "--preview-timeout" in printed
-    assert "inert" in printed
-
-
-def test_a_preview_timeout_set_in_settings_is_announced_too(capsys):
-    """The notice covers both routes in, or it covers the one an operator notices less.
-
-    Issue #391's review. ``preview_timeout_sec`` is in ``DEFAULTS``, so every operator's
-    settings file carries it and an operator who deliberately changed it to wait longer got
-    silence while ``--preview-timeout`` printed a warning. Both spellings of the same dead
-    number deserve the same word. The *unchanged* default must stay quiet, or the warning
-    would lead every run in the world.
-    """
-    with (
-        patch.object(runner.sys, "argv", ["run_live_test.py"]),
-        patch.object(runner, "load_runner_settings", return_value={"preview_timeout_sec": 10.0}),
-        patch.object(runner, "run_live_test", return_value=True),
-        pytest.raises(SystemExit),
-    ):
-        runner.main()
-
-    printed = capsys.readouterr().out
-    assert "preview_timeout_sec" in printed
-    assert "10.0" in printed and "inert" in printed
-
-
-def test_an_untouched_preview_timeout_default_prints_no_warning(capsys):
-    """The other half of the same fix: silence for a number nobody set.
-
-    ``DEFAULTS`` states 3.0, so without this the notice would fire on every invocation and
-    train operators to scroll past it — which is how the flag's warning stopped meaning
-    anything in the first place.
-    """
-    with (
-        patch.object(runner.sys, "argv", ["run_live_test.py"]),
-        patch.object(runner, "load_runner_settings", return_value={"preview_timeout_sec": 3.0}),
-        patch.object(runner, "run_live_test", return_value=True),
-        pytest.raises(SystemExit),
-    ):
-        runner.main()
-
-    assert "inert" not in capsys.readouterr().out
 
 
 def test_a_failed_run_still_exits_nonzero(capsys):

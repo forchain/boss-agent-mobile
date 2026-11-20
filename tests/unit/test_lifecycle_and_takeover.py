@@ -2,13 +2,13 @@
 
 from unittest.mock import MagicMock
 
-from boss_agent.enums import AuthStatus
-from boss_agent.job_entities import JobPosting
-from boss_agent.pages.system import (
+from boss_agent.adapters.outbound.device.pages.system import (
     LoginPage,
     StartupDialogPage,
 )
-from boss_agent.workflows import TakeoverHandler
+from boss_agent.adapters.outbound.device.takeover import TakeoverHandler
+from boss_agent.core.job.domain.job_entities import JobPosting
+from boss_agent.core.shared.enums import AuthStatus
 
 
 def test_job_posting_dataclass():

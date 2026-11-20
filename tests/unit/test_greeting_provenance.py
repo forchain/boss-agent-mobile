@@ -30,15 +30,15 @@ from _feed_harness import (
     _posting,
 )
 
-from boss_agent.enums import JobRecordStatus
-from boss_agent.job_entities import JobCardBrief
-from boss_agent.job_store import InMemoryJobRecordStore
-from boss_agent.keyword_constants import (
+from boss_agent.adapters.memory.job_store import InMemoryJobRecordStore
+from boss_agent.core.job.domain.job_entities import JobCardBrief
+from boss_agent.core.job.use_cases.screening import CandidateScreener
+from boss_agent.core.shared.enums import JobRecordStatus
+from boss_agent.core.shared.keyword_constants import (
     APPLIED_SOURCE_AGENT,
     GREETING_SOURCE_AGENT,
     GREETING_SOURCE_HUMAN,
 )
-from boss_agent.screening import CandidateScreener
 
 HUMAN_COPY = "李工您好！看到贵司在招 Agent 平台方向，我做过端侧推理编排，想具体聊聊。"
 RECRUITER = "王女士"

@@ -1,0 +1,260 @@
+{
+  "_comment": "Canonical Headhunter Agency & Masked Company Guardrail vectors, shared by pytest (tests/unit/test_blacklist_guardrail_vectors.py) and vitest (web/src/tests/blacklistGuardrailVectors.test.ts). Both Python and TypeScript validators must match every vector and keyword.",
+  "agency_keywords": [
+    "人力资源",
+    "人力资本",
+    "劳务派遣",
+    "劳务服务",
+    "人才服务",
+    "人才中介",
+    "人才咨询",
+    "人才招聘",
+    "招聘服务",
+    "职业介绍",
+    "企业管理咨询",
+    "猎头",
+    "代招"
+  ],
+  "vectors": [
+    {
+      "case": "empty-string",
+      "company_name": "",
+      "is_headhunter": false,
+      "expected_allowed": false,
+      "expected_is_agency": false,
+      "expected_is_masked": false
+    },
+    {
+      "case": "whitespace-only",
+      "company_name": "   ",
+      "is_headhunter": false,
+      "expected_allowed": false,
+      "expected_is_agency": false,
+      "expected_is_masked": false
+    },
+    {
+      "case": "explicit-headhunter-authentic-name",
+      "company_name": "深至科技",
+      "is_headhunter": true,
+      "expected_allowed": false,
+      "expected_is_agency": false,
+      "expected_is_masked": false
+    },
+    {
+      "case": "agency-renliziyuan",
+      "company_name": "杭州脉享人力资源",
+      "is_headhunter": false,
+      "expected_allowed": false,
+      "expected_is_agency": true,
+      "expected_is_masked": false
+    },
+    {
+      "case": "agency-renliziben",
+      "company_name": "上海锐仕方达人力资本",
+      "is_headhunter": false,
+      "expected_allowed": false,
+      "expected_is_agency": true,
+      "expected_is_masked": false
+    },
+    {
+      "case": "agency-laowupaiqian",
+      "company_name": "江苏中智劳务派遣",
+      "is_headhunter": false,
+      "expected_allowed": false,
+      "expected_is_agency": true,
+      "expected_is_masked": false
+    },
+    {
+      "case": "agency-laowufuwu",
+      "company_name": "苏州锦绣劳务服务",
+      "is_headhunter": false,
+      "expected_allowed": false,
+      "expected_is_agency": true,
+      "expected_is_masked": false
+    },
+    {
+      "case": "agency-rencaifuwu",
+      "company_name": "深圳前海人才服务",
+      "is_headhunter": false,
+      "expected_allowed": false,
+      "expected_is_agency": true,
+      "expected_is_masked": false
+    },
+    {
+      "case": "agency-rencaizhongjie",
+      "company_name": "华信人才中介",
+      "is_headhunter": false,
+      "expected_allowed": false,
+      "expected_is_agency": true,
+      "expected_is_masked": false
+    },
+    {
+      "case": "agency-rencaizixun",
+      "company_name": "科锐人才咨询有限公司",
+      "is_headhunter": false,
+      "expected_allowed": false,
+      "expected_is_agency": true,
+      "expected_is_masked": false
+    },
+    {
+      "case": "agency-rencaizhaopin",
+      "company_name": "智联人才招聘有限公司",
+      "is_headhunter": false,
+      "expected_allowed": false,
+      "expected_is_agency": true,
+      "expected_is_masked": false
+    },
+    {
+      "case": "agency-zhaopinfuwu",
+      "company_name": "前程招聘服务有限公司",
+      "is_headhunter": false,
+      "expected_allowed": false,
+      "expected_is_agency": true,
+      "expected_is_masked": false
+    },
+    {
+      "case": "agency-zhiyejieshao",
+      "company_name": "申城职业介绍所",
+      "is_headhunter": false,
+      "expected_allowed": false,
+      "expected_is_agency": true,
+      "expected_is_masked": false
+    },
+    {
+      "case": "agency-qiyeguanlizixun",
+      "company_name": "大连麦驰企业管理咨询",
+      "is_headhunter": false,
+      "expected_allowed": false,
+      "expected_is_agency": true,
+      "expected_is_masked": false
+    },
+    {
+      "case": "agency-lietou",
+      "company_name": "上海伯乐猎头",
+      "is_headhunter": false,
+      "expected_allowed": false,
+      "expected_is_agency": true,
+      "expected_is_masked": false
+    },
+    {
+      "case": "agency-daizhao",
+      "company_name": "优仕代招团队",
+      "is_headhunter": false,
+      "expected_allowed": false,
+      "expected_is_agency": true,
+      "expected_is_masked": false
+    },
+    {
+      "case": "agency-and-masked-mou",
+      "company_name": "某某人力资源有限公司",
+      "is_headhunter": false,
+      "expected_allowed": false,
+      "expected_is_agency": true,
+      "expected_is_masked": true
+    },
+    {
+      "case": "masked-mou-ai",
+      "company_name": "某中型人工智能公司",
+      "is_headhunter": false,
+      "expected_allowed": false,
+      "expected_is_agency": false,
+      "expected_is_masked": true
+    },
+    {
+      "case": "masked-mou-ellipsis",
+      "company_name": "成都某中型...智能公司",
+      "is_headhunter": false,
+      "expected_allowed": false,
+      "expected_is_agency": false,
+      "expected_is_masked": true
+    },
+    {
+      "case": "masked-stars",
+      "company_name": "***公司",
+      "is_headhunter": false,
+      "expected_allowed": false,
+      "expected_is_agency": false,
+      "expected_is_masked": true
+    },
+    {
+      "case": "masked-baomi",
+      "company_name": "保密公司",
+      "is_headhunter": false,
+      "expected_allowed": false,
+      "expected_is_agency": false,
+      "expected_is_masked": true
+    },
+    {
+      "case": "masked-yincang",
+      "company_name": "隐藏企业",
+      "is_headhunter": false,
+      "expected_allowed": false,
+      "expected_is_agency": false,
+      "expected_is_masked": true
+    },
+    {
+      "case": "masked-niming",
+      "company_name": "匿名公司",
+      "is_headhunter": false,
+      "expected_allowed": false,
+      "expected_is_agency": false,
+      "expected_is_masked": true
+    },
+    {
+      "case": "masked-generic-foreign",
+      "company_name": "知名外企",
+      "is_headhunter": false,
+      "expected_allowed": false,
+      "expected_is_agency": false,
+      "expected_is_masked": true
+    },
+    {
+      "case": "masked-generic-tech",
+      "company_name": "头部科技公司",
+      "is_headhunter": false,
+      "expected_allowed": false,
+      "expected_is_agency": false,
+      "expected_is_masked": true
+    },
+    {
+      "case": "authentic-shenzhi",
+      "company_name": "深至科技",
+      "is_headhunter": false,
+      "expected_allowed": true,
+      "expected_is_agency": false,
+      "expected_is_masked": false
+    },
+    {
+      "case": "authentic-tencent",
+      "company_name": "腾讯科技（深圳）有限公司",
+      "is_headhunter": false,
+      "expected_allowed": true,
+      "expected_is_agency": false,
+      "expected_is_masked": false
+    },
+    {
+      "case": "authentic-accenture-consulting",
+      "company_name": "埃森哲咨询",
+      "is_headhunter": false,
+      "expected_allowed": true,
+      "expected_is_agency": false,
+      "expected_is_masked": false
+    },
+    {
+      "case": "authentic-transsion",
+      "company_name": "传音控股",
+      "is_headhunter": false,
+      "expected_allowed": true,
+      "expected_is_agency": false,
+      "expected_is_masked": false
+    },
+    {
+      "case": "authentic-google",
+      "company_name": "Google LLC",
+      "is_headhunter": false,
+      "expected_allowed": true,
+      "expected_is_agency": false,
+      "expected_is_masked": false
+    }
+  ]
+}

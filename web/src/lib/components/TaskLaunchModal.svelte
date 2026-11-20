@@ -6,7 +6,7 @@
 	import { createAutomationTask } from '$lib/stores/tasks';
 	import { getCandidateProfile } from '$lib/stores/candidateMemory';
 	import { DEFAULT_CHAT_ACKNOWLEDGMENT, DEFAULT_LAUNCH_CHAT_DRY_RUN, normalizeChatAcknowledgment } from '$lib/chatAcknowledgment';
-	import { buildChatCleanupLaunch, buildLoginDiagnosticLaunch, buildSearchLaunch } from '$lib/taskLaunch';
+	import { buildChatCleanupLaunch, buildLoginDiagnosticLaunch, buildSearchLaunch, DEFAULT_MAX_JOBS } from '$lib/taskLaunch';
 	import { apiGet } from '$lib/apiClient';
 
 	let {
@@ -59,7 +59,7 @@
 			if (list.length > 0 && (!selectedSearchId || !list.some((s) => s.id === selectedSearchId))) {
 				selectedSearchId = list[0].id;
 				targetAction = resolveTargetAction(list[0]);
-				maxJobs = list[0].max_jobs ?? 30;
+				maxJobs = list[0].max_jobs ?? DEFAULT_MAX_JOBS;
 			}
 		} catch (e) {}
 	}
@@ -76,7 +76,7 @@
 			const target = searches.find((s) => s.id === selectedSearchId);
 			if (target) {
 				targetAction = resolveTargetAction(target);
-				maxJobs = target.max_jobs ?? 30;
+				maxJobs = target.max_jobs ?? DEFAULT_MAX_JOBS;
 			}
 		}
 	});

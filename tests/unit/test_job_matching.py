@@ -6,9 +6,9 @@ Unit tests for JobMatchGreetingService and MatchGreetingResult.
 
 from unittest.mock import MagicMock
 
-from boss_agent.candidate_entities import CandidateProfile
-from boss_agent.job_entities import JobPosting
-from boss_agent.matching import (
+from boss_agent.core.candidate.domain.candidate_profile import CandidateProfile
+from boss_agent.core.job.domain.job_entities import JobPosting
+from boss_agent.core.job.use_cases.matching import (
     JobMatchGreetingService,
     MatchGreetingResult,
     offline_match_result,
@@ -78,11 +78,8 @@ def test_job_match_greeting_service_fallback_on_error():
     assert "您好" in result.greeting_message
 
 
-def test_persistent_candidate_profile_context(monkeypatch):
-    monkeypatch.setattr(
-        "boss_agent.matching.load_greeting_prompt",
-        lambda: "【打招呼破冰铁律与原则】\n1. 【严禁模板化套话】",
-    )
+def test_persistent_candidate_profile_context():
+    greeting_prompt = "【打招呼破冰铁律与原则】\n1. 【严禁模板化套话】"
     mock_llm = MagicMock()
     mock_llm.chat_completion_json.return_value = {
         "match_score": 88,
@@ -99,7 +96,9 @@ def test_persistent_candidate_profile_context(monkeypatch):
     )
 
     # Initialize service with persistent candidate profile
-    service = JobMatchGreetingService(llm_client=mock_llm, candidate_profile=profile)
+    service = JobMatchGreetingService(
+        llm_client=mock_llm, candidate_profile=profile, greeting_prompt=greeting_prompt
+    )
     job = JobPosting(
         title="移动端 Agent 架构师",
         company_name="智能终端科技",
@@ -239,9 +238,13 @@ def test_job_match_greeting_service_requires_full_substantive_jd():
 
 def test_evaluate_job_reports_missing_jd_without_crashing():
     """CandidateScreener.evaluate_job records the unavailable JD rather than crashing on it."""
-    from boss_agent.job_entities import JobCardBrief
-    from boss_agent.screening import CandidateScreener, CardVerdictStage, JobVerdictStage
-    from boss_agent.screening_policy import ScreeningPolicy
+    from boss_agent.core.job.domain.job_entities import JobCardBrief
+    from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
+    from boss_agent.core.job.use_cases.screening import (
+        CandidateScreener,
+        CardVerdictStage,
+        JobVerdictStage,
+    )
 
     policy = ScreeningPolicy(title_whitelist=["Agent"])
     card = JobCardBrief(
@@ -267,23 +270,8 @@ def test_evaluate_job_reports_missing_jd_without_crashing():
     mock_llm.chat_completion_json.assert_not_called()
 
 
-def test_job_match_greeting_service_default_client_uses_realm(monkeypatch):
-    """When no client is passed, JobMatchGreetingService uses create_llm_client with realm configuration."""
-    from boss_agent import config_realm
-
-    for _key, names in config_realm.ENV_OVERRIDES:
-        for name in names:
-            monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("LLM_MODEL", "matching-realm-model")
-    config_realm.invalidate_cache()
-
-    service = JobMatchGreetingService()
-    assert service.llm_client is not None
-    assert service.llm_client.config.model == "matching-realm-model"
-
-
 def test_parse_recruiter_title_and_format_prefix():
-    from boss_agent.identifier_helpers import (
+    from boss_agent.core.shared.identifier_helpers import (
         format_recruiter_greeting_prefix,
         parse_recruiter_title,
     )
@@ -334,7 +322,7 @@ def test_parse_recruiter_title_and_format_prefix():
 
 
 def test_ensure_greeting_prefix_normalization():
-    from boss_agent.matching import ensure_greeting_prefix
+    from boss_agent.core.job.use_cases.matching import ensure_greeting_prefix
 
     # 1. Already exact match
     exact = "张女士您好,幸会!看到贵司正在招聘AI架构师..."

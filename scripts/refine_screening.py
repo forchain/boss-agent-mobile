@@ -16,11 +16,14 @@ root_dir = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(root_dir))
 sys.path.insert(0, str(root_dir / "src"))
 
-from boss_agent.job_entities import JobPosting  # noqa: E402
-from boss_agent.llm_config import create_llm_client, load_llm_config  # noqa: E402
-from boss_agent.screening import CandidateScreener  # noqa: E402
-from boss_agent.screening_policy import ScreeningPolicy  # noqa: E402
-from droid_agent_core.llm import LLMConfig, LLMDecisionClient  # noqa: E402
+from boss_agent.core.job.domain.screening_policy import ScreeningPolicy  # noqa: E402
+from boss_agent.main import (  # noqa: E402
+    build_default_screening_policy,
+    build_llm_client,
+    build_screener,
+    resolve_screening_prompt,
+)
+from scripts._eval_cli import parse_job_posting_json  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -63,52 +66,11 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def build_llm_client(llm_config_arg: str | None) -> LLMDecisionClient:
-    if llm_config_arg:
-        try:
-            if llm_config_arg.strip().startswith("{"):
-                config_data = json.loads(llm_config_arg)
-                base_url = config_data.get("base_url") or "https://api.minimaxi.com/v1"
-                api_key = config_data.get("api_key") or None
-                model = config_data.get("model") or "MiniMax-M3"
-                temp = float(config_data.get("temperature") or 0.2)
-
-                default_cfg = load_llm_config()
-                if not api_key:
-                    api_key = default_cfg.api_key
-                if (
-                    not base_url or base_url == "https://api.openai.com/v1"
-                ) and not config_data.get("api_key"):
-                    base_url = default_cfg.base_url
-                    model = default_cfg.model
-
-                llm_cfg = LLMConfig(
-                    provider=config_data.get("provider", default_cfg.provider),
-                    base_url=base_url.rstrip("/"),
-                    api_key=api_key,
-                    model=model,
-                    temperature=temp,
-                )
-                return create_llm_client(config=llm_cfg)
-        except Exception as e:
-            sys.stderr.write(f"Warning: Failed to parse custom LLM config ({e}), falling back.\n")
-
-    return create_llm_client()
-
-
 def main() -> None:
     args = parse_args()
 
     try:
-        job_dict = json.loads(args.job)
-        job = JobPosting(
-            title=job_dict.get("job_title") or job_dict.get("title") or "目标岗位",
-            company_name=job_dict.get("company_name") or job_dict.get("company") or "招聘公司",
-            salary_range=job_dict.get("salary_range") or job_dict.get("salary") or "面议",
-            job_description=job_dict.get("job_description") or job_dict.get("description") or "",
-            recruiter_name=job_dict.get("recruiter_name") or job_dict.get("recruiter") or None,
-            recruiter_title=job_dict.get("recruiter_title") or None,
-        )
+        job = parse_job_posting_json(args.job)
     except Exception as e:
         sys.stdout.write(json.dumps({"error": f"Invalid job JSON: {e}"}, ensure_ascii=False) + "\n")
         sys.exit(1)
@@ -122,21 +84,14 @@ def main() -> None:
             sys.stderr.write(f"Warning: Failed to parse policy JSON ({e})\n")
 
     if policy is None:
-        try:
-            from boss_agent.settings import load_settings
+        policy = build_default_screening_policy()
 
-            app_settings = load_settings()
-            # load_settings() returns the merged Configuration Realm dict with the
-            # blacklist lists at top level; ScreeningPolicy.from_dict reads them there.
-            policy = ScreeningPolicy.from_dict(app_settings)
-        except Exception as e:
-            sys.stderr.write(f"Warning: Failed to load default screening policy ({e})\n")
-            policy = ScreeningPolicy()
+    screening_prompt = resolve_screening_prompt(args.screening_prompt)
 
-    llm_client = build_llm_client(args.llm_config)
-    screener = CandidateScreener(
+    llm_client = build_llm_client(args.llm_config, treat_masked_key_as_missing=False)
+    screener = build_screener(
         llm_client=llm_client,
-        screening_prompt=args.screening_prompt,
+        screening_prompt=screening_prompt,
     )
 
     if args.action == "retest":
@@ -207,7 +162,7 @@ def main() -> None:
             )
     elif args.action in ("evaluate", "screen"):
         try:
-            verdict = screener._evaluate_jd(
+            verdict = screener.evaluate_jd(
                 job=job,
                 current_prompt=args.screening_prompt,
                 policy=policy,

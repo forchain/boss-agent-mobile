@@ -8,9 +8,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
-from boss_agent.errors import TransportError, ValidationError
-from boss_agent.identifier_helpers import compute_job_fingerprint
+from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
+from boss_agent.core.shared.errors import TransportError, ValidationError
+from boss_agent.core.shared.identifier_helpers import compute_job_fingerprint
 
 
 def test_compute_job_fingerprint_consistency_and_normalization():
@@ -113,7 +113,7 @@ async def test_pocketbase_broker_job_records_mocked(monkeypatch):
     """Test PocketBaseTaskBroker job records methods with mocked HTTP session."""
     from unittest.mock import MagicMock
 
-    from boss_agent.broker.pocketbase_adapter import PocketBaseTaskBroker
+    from boss_agent.adapters.outbound.pocketbase.pocketbase_adapter import PocketBaseTaskBroker
 
     mock_session = MagicMock()
     broker = PocketBaseTaskBroker(base_url="http://mock-pb:8090", session=mock_session)
@@ -151,7 +151,7 @@ async def test_pocketbase_broker_job_records_no_fallback_on_empty(tmp_path, monk
     from pathlib import Path
     from unittest.mock import MagicMock
 
-    from boss_agent.broker.pocketbase_adapter import PocketBaseTaskBroker
+    from boss_agent.adapters.outbound.pocketbase.pocketbase_adapter import PocketBaseTaskBroker
 
     monkeypatch.chdir(tmp_path)
 
@@ -173,7 +173,7 @@ async def test_pocketbase_broker_job_records_no_fallback_on_404(tmp_path, monkey
     from pathlib import Path
     from unittest.mock import MagicMock
 
-    from boss_agent.broker.pocketbase_adapter import PocketBaseTaskBroker
+    from boss_agent.adapters.outbound.pocketbase.pocketbase_adapter import PocketBaseTaskBroker
 
     monkeypatch.chdir(tmp_path)
 
@@ -207,7 +207,7 @@ async def test_pocketbase_broker_upsert_persists_without_fallback_file(tmp_path,
     from pathlib import Path
     from unittest.mock import MagicMock
 
-    from boss_agent.broker.pocketbase_adapter import PocketBaseTaskBroker
+    from boss_agent.adapters.outbound.pocketbase.pocketbase_adapter import PocketBaseTaskBroker
 
     monkeypatch.chdir(tmp_path)
 
@@ -251,7 +251,7 @@ async def test_pocketbase_broker_upsert_persists_without_fallback_file(tmp_path,
 @pytest.mark.asyncio
 async def test_job_records_digest_and_job_description_decoupling():
     """Verify that digest and job_description are decoupled across models and broker."""
-    from boss_agent.job_entities import JobCardBrief, JobPosting, JobRecord
+    from boss_agent.core.job.domain.job_entities import JobCardBrief, JobPosting, JobRecord
 
     # 1. JobCardBrief supports digest with backward-compatible snippet alias
     card = JobCardBrief(
@@ -365,7 +365,7 @@ async def test_pocketbase_broker_delete_job_record():
 
     import requests
 
-    from boss_agent.broker.pocketbase_adapter import PocketBaseTaskBroker
+    from boss_agent.adapters.outbound.pocketbase.pocketbase_adapter import PocketBaseTaskBroker
 
     mock_session = MagicMock()
     broker = PocketBaseTaskBroker(base_url="https://remote-pb:4433", session=mock_session)
@@ -398,8 +398,11 @@ async def test_pocketbase_broker_delete_job_record():
 
 def test_extract_digest_and_tags_from_jd():
     """extract_digest_from_jd extracts concise summary and extract_tags_from_text matches tech tags."""
-    from boss_agent.identifier_helpers import extract_digest_from_jd, extract_tags_from_text
-    from boss_agent.job_entities import JobRecord
+    from boss_agent.core.job.domain.job_entities import JobRecord
+    from boss_agent.core.shared.identifier_helpers import (
+        extract_digest_from_jd,
+        extract_tags_from_text,
+    )
 
     raw_jd = """岗位职责
 负责公司 后端与前端系统的设计、开发与迭代
@@ -440,7 +443,7 @@ def test_extract_digest_and_tags_from_jd():
 def test_extract_digest_from_jd_english_headers_and_word_boundary():
     """English/bilingual JDs: bracketed section headers must not leak into the digest,
     and the 100-char truncation must not cut a Latin word in half."""
-    from boss_agent.identifier_helpers import extract_digest_from_jd
+    from boss_agent.core.shared.identifier_helpers import extract_digest_from_jd
 
     raw_jd = """【 Role Summary 】；
 We are seeking a passionate and experienced Senior Engineer to join our team to build the architecture of our shared coding agent platform used in your daily workflow and deeply integrated tooling.
@@ -535,7 +538,7 @@ def _long_expanded_jd() -> str:
 def _pb_broker():
     from unittest.mock import MagicMock
 
-    from boss_agent.broker.pocketbase_adapter import PocketBaseTaskBroker
+    from boss_agent.adapters.outbound.pocketbase.pocketbase_adapter import PocketBaseTaskBroker
 
     mock_session = MagicMock()
     broker = PocketBaseTaskBroker(base_url="http://mock-pb:8090", session=mock_session)
@@ -549,7 +552,9 @@ async def test_pocketbase_upsert_truncates_jd_and_retries_when_server_rejects_le
     truncate and re-send instead of dropping the whole enriched record."""
     import logging
 
-    from boss_agent.broker.pocketbase_adapter import POCKETBASE_DEFAULT_TEXT_MAX_CHARS
+    from boss_agent.adapters.outbound.pocketbase.pocketbase_adapter import (
+        POCKETBASE_DEFAULT_TEXT_MAX_CHARS,
+    )
 
     broker, mock_session = _pb_broker()
     check_resp = MagicMock(status_code=200, json=lambda: {"items": []})
@@ -584,7 +589,9 @@ async def test_pocketbase_upsert_truncates_jd_and_retries_when_server_rejects_le
 @pytest.mark.asyncio
 async def test_pocketbase_upsert_patch_truncates_jd_and_retries_on_length_rejection():
     """The same recovery must cover the update path of an existing record."""
-    from boss_agent.broker.pocketbase_adapter import POCKETBASE_DEFAULT_TEXT_MAX_CHARS
+    from boss_agent.adapters.outbound.pocketbase.pocketbase_adapter import (
+        POCKETBASE_DEFAULT_TEXT_MAX_CHARS,
+    )
 
     broker, mock_session = _pb_broker()
     check_resp = MagicMock(

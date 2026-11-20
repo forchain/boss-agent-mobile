@@ -16,14 +16,14 @@ Worker and the Web Dashboard can be pointed at either and must not disagree.
 import pytest
 from _job_store_harness import FakePocketBaseSession, pocketbase_job_store
 
-from boss_agent.enums import (
+from boss_agent.adapters.memory.job_store import InMemoryJobRecordStore
+from boss_agent.core.shared.enums import (
     STATE_RANK,
     TARGET_ACTION_RANK,
     JobRecordStatus,
     TargetAction,
     depth_already_reached,
 )
-from boss_agent.job_store import InMemoryJobRecordStore
 
 GOOD_JD = (
     "岗位职责：主导企业级大模型应用与Agent工作流平台建设，负责推理链编排、"

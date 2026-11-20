@@ -1,24 +1,31 @@
-"""Unit tests for SavedSearch, the SavedSearchStore seam, and SmokeHarness integration."""
+"""Unit tests for SavedSearch, the SavedSearchStore seam, and launch/verification preset resolution."""
 
 import importlib.util
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from _feed_harness import GOOD_JD, ScriptedFeed, _card, _detail_page, script_pages, stub_llm
+from _feed_harness import GOOD_JD, ScriptedFeed, _card, _detail_page, scripted_world, stub_llm
 
 import boss_agent
-from boss_agent import saved_search_store
-from boss_agent.errors import TransportError
-from boss_agent.feed_pipeline import FeedStreamConfig
-from boss_agent.job_entities import JobPosting
-from boss_agent.saved_search_store import (
-    InMemorySavedSearchStore,
+from boss_agent.adapters.inbound.verification.feed_verification import (
+    build_verification_pipeline,
+    run_verification_feed,
+)
+from boss_agent.adapters.memory.job_store import InMemoryJobRecordStore
+from boss_agent.adapters.memory.saved_search_store import InMemorySavedSearchStore
+from boss_agent.adapters.outbound.pocketbase import saved_search_store
+from boss_agent.adapters.outbound.pocketbase.async_bridge import run_sync
+from boss_agent.adapters.outbound.pocketbase.saved_search_store import (
     missing_saved_search_message,
     resolve_saved_search_store,
 )
-from boss_agent.search_entities import FilterConfig, SavedSearch, SearchConfig
-from boss_agent.workflows import SmokeHarness, TakeoverHandler
+from boss_agent.core.job.domain.job_entities import JobPosting
+from boss_agent.core.job.use_cases.feed_pipeline import FeedStreamConfig
+from boss_agent.core.job.use_cases.screening import CandidateScreener
+from boss_agent.core.search.domain.launch import LaunchSource, build_search_launch
+from boss_agent.core.search.domain.models import FilterConfig, SavedSearch, SearchConfig
+from boss_agent.core.shared.errors import TransportError
 
 PACKAGE_ROOT = Path(boss_agent.__file__).parent
 
@@ -215,127 +222,84 @@ def test_saved_search_dual_shape_migration_nested_is_authoritative():
     assert migrated["filter"]["enable_filter"] is False
 
 
-def test_smoke_harness_with_saved_search_id():
-    """A saved search id becomes the run, and the run's extraction is what comes back.
+def test_saved_search_preset_drives_feed_verification_and_launch_config():
+    """A saved search id resolves into the launch config and drives ``run_verification_feed``.
 
-    Issue #390 collapsed the harness onto the pipeline; this test was left behind, still
-    driving a feed nothing scripted and asserting ``isinstance(job, JobPosting)`` over a
-    MagicMock driver — a claim any object of that type satisfies, so it pinned the return
-    type and not the behaviour its name states. It is re-seated on the same scripted-device
-    seam as the harness's siblings, and asserts both halves of what resolving a preset is
-    for: the preset's search, filters and screening policy reach the ``FeedStreamConfig``
-    the engine was handed, and the posting that comes back is the one that run extracted.
-
-    The harness reads that preset through an injected store rather than a global (#394).
-    Injection is what makes this a seam: the harness resolves no store of its own, so the
-    test supplies the same defaults the resolver seeds for a database-less run.
+    Asserts both halves of what resolving a preset is for: the preset's search, filters,
+    and screening policy reach both ``FeedStreamConfig.from_payload(build_search_launch(...).payload)``
+    and the ``FeedStreamConfig`` handed to the pipeline, and the extracted ``JobPosting``
+    returned in ``FeedStreamResult.postings`` is the exact one the engine parsed.
     """
+    store = resolve_saved_search_store(prefer_database=False)
+    preset = run_sync(store.get_saved_search("default_agent_search"))
+    assert preset is not None
+    assert preset.search.keyword == "agent"
+    assert preset.filter.industries == ["在线教育", "游戏", "人工智能"]
+
+    launch_config = FeedStreamConfig.from_payload(
+        build_search_launch(preset, source=LaunchSource.MANUAL).payload
+    )
+    assert launch_config.keyword == "agent"
+    assert launch_config.filter_config.industries == ["在线教育", "游戏", "人工智能"]
+
     mock_driver = MagicMock()
     mock_driver.get_window_size.return_value = {"width": 1080, "height": 2400}
-
-    harness = SmokeHarness(
-        driver=mock_driver,
-        takeover_handler=TakeoverHandler(mock_driver, auto_confirm_for_test=True),
-        saved_search_id="default_agent_search",
-        saved_search_store=resolve_saved_search_store(prefer_database=False),
-        # No greeting. The subject here is what a preset id resolves to, and the greeting
-        # path loads a candidate profile from ``config/candidate_memory.json`` — a file on
-        # the developer's checkout rather than a fixture, so the run would answer
-        # differently on someone else's machine.
-        enable_greeting_draft=False,
-    )
-
-    assert harness.search_config.keyword == "agent"
-    assert harness.filter_config.industries == ["在线教育", "游戏", "人工智能"]
-
     posting = JobPosting(
         title="资深 Agent 专家",
         company_name="智元创新",
         salary_range="40-60K",
         job_description=GOOD_JD,
     )
+    pipeline = build_verification_pipeline(
+        mock_driver,
+        screener=CandidateScreener(llm_client=stub_llm()),
+        world=scripted_world(
+            feed=ScriptedFeed([[_card("资深 Agent 专家", "智元创新")]]),
+            detail=_detail_page(posting=posting),
+        ),
+        store=InMemoryJobRecordStore(),
+    )
+
     configs: list[FeedStreamConfig] = []
 
     async def _record(config, on_job=None):
         configs.append(config)
         return await _real_stream(config, on_job)
 
-    _real_stream = harness.pipeline.stream_jobs
-    harness.pipeline.stream_jobs = _record
-    script_pages(
-        harness.pipeline,
-        feed=ScriptedFeed([[_card("资深 Agent 专家", "智元创新")]]),
-        detail=_detail_page(posting=posting),
-    )
+    _real_stream = pipeline.stream_jobs
+    pipeline.stream_jobs = _record
 
-    with (
-        patch("time.sleep", return_value=None),
-        # ``SAVE_JD`` does not skip the semantic screen — the pipeline evaluates before it
-        # branches on the target action — so a preset whose policy carries blacklists puts
-        # a live client one call away. It has to be a stub: a screener handed none builds a
-        # real one and fails open, which costs a round trip and a token bill without
-        # failing anything.
-        patch("boss_agent.llm_config.create_llm_client", return_value=stub_llm()),
-    ):
-        job = harness.run_smoke_test()
+    with patch("time.sleep", return_value=None):
+        result = run_verification_feed(
+            pipeline=pipeline,
+            search_config=preset.search,
+            filter_config=preset.filter,
+            screening_policy=launch_config.screening_policy,
+            candidate_profile=None,
+            enable_greeting_draft=False,
+        )
 
     assert len(configs) == 1, "a verification run is exactly one feed run"
     assert configs[0].keyword == "agent"
-    assert configs[0].filter_config is harness.filter_config
-    assert configs[0].screening_policy is harness.screening_policy
-    assert job is posting, "the posting handed back is the one the engine extracted"
-    assert job.title == "资深 Agent 专家"
+    assert configs[0].filter_config is preset.filter
+    assert configs[0].screening_policy is launch_config.screening_policy
+    assert result.postings[0] is posting, "the posting handed back is the one the engine extracted"
+    assert result.postings[0].title == "资深 Agent 专家"
 
 
 @pytest.mark.asyncio
-async def test_smoke_harness_resolves_a_named_preset_from_inside_a_running_loop():
-    """The harness is synchronous but the store is not, and that gap is bridged (#394).
+async def test_saved_search_preset_read_bridges_inside_a_running_loop():
+    """Synchronous callers can resolve named presets even inside an active event loop."""
+    store = resolve_saved_search_store(prefer_database=False)
+    preset = run_sync(store.get_saved_search("default_agent_search"))
 
-    A harness built from an async worker or a LangGraph step already has a running loop
-    in this thread; ``asyncio.run`` there would raise, and the store read would have to
-    be threaded out of the constructor entirely. This pins the bridging as something the
-    harness does for its caller rather than something each caller has to arrange.
-    """
-    harness = SmokeHarness(
-        driver=MagicMock(),
-        saved_search_id="default_agent_search",
-        saved_search_store=resolve_saved_search_store(prefer_database=False),
-    )
-
-    assert harness.search_config.keyword == "agent"
-    assert harness.filter_config.industries == ["在线教育", "游戏", "人工智能"]
-
-
-def test_smoke_harness_names_the_available_presets_when_the_id_is_unknown():
-    """A miss must stay actionable: the store answers ``None``, so the harness re-raises.
-
-    Letting the ``None`` through would drop the constructor into its no-preset branch and
-    run an unfiltered sweep against a live device under a preset the operator never chose.
-    """
-    store = InMemorySavedSearchStore(
-        {
-            "only_preset": SavedSearch(
-                id="only_preset",
-                name="Only Preset",
-                search=SearchConfig(keyword="rust"),
-                filter=FilterConfig(education="本科"),
-            )
-        }
-    )
-
-    with pytest.raises(KeyError) as excinfo:
-        SmokeHarness(driver=MagicMock(), saved_search_id="missing", saved_search_store=store)
-
-    assert "missing" in str(excinfo.value)
-    assert "only_preset" in str(excinfo.value)
+    assert preset is not None
+    assert preset.search.keyword == "agent"
+    assert preset.filter.industries == ["在线教育", "游戏", "人工智能"]
 
 
 def test_the_miss_message_is_written_once_for_both_callers() -> None:
-    """The harness's ``KeyError`` and the CLI's console line are the same sentence.
-
-    They were assembled separately, so an edit to one — a different word, a lost id —
-    left the other telling an operator a half-truth about which presets exist.
-    """
+    """Missing saved search formatting names both the missed id and available ids."""
     assert missing_saved_search_message("missing", ["alpha", "beta"]) == (
         "Saved search 'missing' not found. Available searches: [alpha, beta]"
     )
@@ -344,46 +308,27 @@ def test_the_miss_message_is_written_once_for_both_callers() -> None:
     )
 
 
-def test_smoke_harness_does_not_hide_an_unreachable_store():
-    """A dead PocketBase must surface, not degrade into an empty store's settings.
-
-    The retired registry swallowed a dead PocketBase; falling back here would silently
-    run the smoke sweep with an empty store's worth of settings — the operator would see
-    a completed run and no indication that the preset they named never arrived.
-    """
+def test_unreachable_saved_search_store_surfaces_transport_error():
+    """A dead PocketBase must raise ``TransportError`` rather than degrading silently inside the store."""
 
     class _UnreachableStore(InMemorySavedSearchStore):
         async def get_saved_search(self, search_id: str) -> SavedSearch | None:
             raise TransportError("PocketBase get_saved_search failed: connection refused")
 
     with pytest.raises(TransportError, match="connection refused"):
-        SmokeHarness(
-            driver=MagicMock(),
-            saved_search_id="default_agent_search",
-            saved_search_store=_UnreachableStore(),
-        )
+        run_sync(_UnreachableStore().get_saved_search("default_agent_search"))
 
 
-def test_smoke_harness_prefers_a_supplied_preset_over_a_named_one():
-    """Precedence is unchanged: an explicit object wins and the store is left alone."""
-
-    class _UnusableStore(InMemorySavedSearchStore):
-        async def get_saved_search(self, search_id: str) -> SavedSearch | None:
-            raise AssertionError("the store must not be consulted when a preset is supplied")
-
+def test_explicit_launch_overrides_beat_preset_defaults():
+    """An explicit preset / override supplied at launch governs ``FeedStreamConfig``."""
     preset = SavedSearch(
         id="explicit_preset",
         name="Explicit Preset",
         search=SearchConfig(keyword="from_object"),
         filter=FilterConfig(education="本科"),
     )
+    launch = build_search_launch(preset, source=LaunchSource.MANUAL)
+    config = FeedStreamConfig.from_payload(launch.payload)
 
-    harness = SmokeHarness(
-        driver=MagicMock(),
-        saved_search=preset,
-        saved_search_id="default_agent_search",
-        saved_search_store=_UnusableStore(),
-    )
-
-    assert harness.search_config.keyword == "from_object"
-    assert harness.filter_config.education == "本科"
+    assert config.keyword == "from_object"
+    assert config.filter_config.education == "本科"

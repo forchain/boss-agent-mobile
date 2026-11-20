@@ -6,7 +6,7 @@ Boss 直聘 Android application automation domain layer.
 Public symbols resolve lazily (PEP 562).
 
 Importing *any* submodule of a package executes that package's ``__init__`` first, so
-this module used to decide the import cost of ``boss_agent.candidate_entities`` — a
+this module used to decide the import cost of the candidate profile entity — a
 leaf whose entire promise is that it is standard-library only. The eager
 ``from .memory import ...`` below dragged in ``memory``'s ``langsmith``, ``rich`` and
 ``droid_agent_core.llm``, roughly 1300 modules, and made "the profile entity is pure"
@@ -46,90 +46,97 @@ import importlib
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - import-time work for static type checkers only
-    from .candidate_entities import CandidateProfile
-    from .enums import AuthStatus, ChannelPreference
-    from .greeting_prompt import load_greeting_prompt
-    from .identifier_helpers import (
-        format_recruiter_greeting_prefix,
-        is_headhunter_agency_name,
-        is_masked_company_name,
-        parse_recruiter_title,
+    from .adapters.outbound.config.greeting_prompt import load_greeting_prompt
+    from .adapters.outbound.config.screening_config import (
+        append_company_blacklist_entry,
+        is_writable_screening_path,
+        resolve_writable_screening_config_path,
     )
-    from .job_entities import JobPosting
-    from .screening import (
+    from .core.candidate.domain.candidate_profile import CandidateProfile
+    from .core.job.domain.feed_stream import FeedStreamConfig, FeedStreamResult
+    from .core.job.domain.job_entities import JobPosting
+    from .core.job.domain.screening_policy import ScreeningPolicy
+    from .core.job.interfaces.store import JobRecordStore
+    from .core.job.use_cases.feed_pipeline import JobFeedPipeline, JobOutcome
+    from .core.job.use_cases.matching import (
+        JobMatchGreetingService,
+        MatchGreetingResult,
+        ensure_greeting_prefix,
+    )
+    from .core.job.use_cases.screening import (
         CandidateScreener,
         CardScreeningVerdict,
         CardVerdictStage,
         JobEvaluationResult,
         JobVerdictStage,
     )
-    from .screening_config import (
-        append_company_blacklist_entry,
-        is_writable_screening_path,
-        resolve_writable_screening_config_path,
+    from .core.search.domain.models import FilterConfig, SavedSearch, SearchConfig
+    from .core.shared.enums import AuthStatus, ChannelPreference
+    from .core.shared.identifier_helpers import (
+        format_recruiter_greeting_prefix,
+        is_headhunter_agency_name,
+        is_masked_company_name,
+        parse_recruiter_title,
     )
-    from .screening_policy import ScreeningPolicy
-    from .search_entities import FilterConfig, SavedSearch, SearchConfig
 
 _LAZY_EXPORTS: dict[str, str] = {
-    "AuthStatus": ".enums",
-    "BaseBossPage": ".pages",
-    "CandidateProfile": ".candidate_entities",
-    "CandidateScreener": ".screening",
-    "CardScreeningVerdict": ".screening",
-    "CardVerdictStage": ".screening",
-    "ChannelPreference": ".enums",
-    "ChatPage": ".pages",
-    "FeedStreamConfig": ".feed_pipeline",
-    "FeedStreamResult": ".feed_pipeline",
-    "FilterConfig": ".search_entities",
-    "FilterDialogPage": ".pages",
-    "IndustryFilterDialogPage": ".pages",
-    "InMemoryJobRecordStore": ".job_store",
-    "InMemorySavedSearchStore": ".saved_search_store",
-    "JobDetailPage": ".pages",
-    "JobEvaluationResult": ".screening",
-    "JobFeedPipeline": ".feed_pipeline",
-    "JobListPage": ".pages",
-    "JobMatchGreetingService": ".matching",
-    "JobOutcome": ".feed_pipeline",
-    "JobPosting": ".job_entities",
-    "JobRecordStore": ".job_store",
-    "JobVerdictStage": ".screening",
-    "LoginPage": ".pages",
-    "MatchGreetingResult": ".matching",
-    "PocketBaseJobRecordStore": ".job_store",
-    "PocketBaseSavedSearchStore": ".saved_search_store",
-    "ProfileNormalizer": ".memory",
-    "ResumeLifecycleState": ".graph",
-    "ResumeMemoryManager": ".memory",
-    "ResumeTextExtractor": ".memory",
-    "SavedSearch": ".search_entities",
-    "SavedSearchStore": ".saved_search_store",
-    "ScreeningPolicy": ".screening_policy",
-    "SearchConfig": ".search_entities",
-    "SearchPage": ".pages",
-    "SmokeHarness": ".workflows",
-    "StartupDialogPage": ".pages",
-    "StructuredCandidateProfile": ".candidate_entities",
-    "TakeoverHandler": ".workflows",
-    "append_company_blacklist_entry": ".screening_config",
-    "build_resume_lifecycle_graph": ".graph",
-    "ensure_greeting_prefix": ".matching",
-    "format_recruiter_greeting_prefix": ".identifier_helpers",
-    "is_headhunter_agency_name": ".identifier_helpers",
-    "is_masked_company_name": ".identifier_helpers",
-    "is_writable_screening_path": ".screening_config",
-    "load_greeting_prompt": ".greeting_prompt",
-    "load_settings": ".settings",
-    "parse_recruiter_title": ".identifier_helpers",
-    "resolve_git_common_root": ".settings",
-    "resolve_pocketbase_data_dir": ".settings",
-    "resolve_pocketbase_db_path": ".settings",
-    "resolve_pocketbase_url": ".settings",
-    "resolve_saved_search_store": ".saved_search_store",
-    "resolve_writable_screening_config_path": ".screening_config",
-    "run_resume_lifecycle_graph": ".graph",
+    "AuthStatus": ".core.shared.enums",
+    "BaseBossPage": ".adapters.outbound.device.pages",
+    "CandidateProfile": ".core.candidate.domain.candidate_profile",
+    "CandidateScreener": ".core.job.use_cases.screening",
+    "CardScreeningVerdict": ".core.job.use_cases.screening",
+    "CardVerdictStage": ".core.job.use_cases.screening",
+    "ChannelPreference": ".core.shared.enums",
+    "ChatPage": ".adapters.outbound.device.pages",
+    "FeedStreamConfig": ".core.job.domain.feed_stream",
+    "FeedStreamResult": ".core.job.domain.feed_stream",
+    "FilterConfig": ".core.search.domain.models",
+    "FilterDialogPage": ".adapters.outbound.device.pages",
+    "IndustryFilterDialogPage": ".adapters.outbound.device.pages",
+    "InMemoryJobRecordStore": ".adapters.memory.job_store",
+    "InMemorySavedSearchStore": ".adapters.memory.saved_search_store",
+    "JobDetailPage": ".adapters.outbound.device.pages",
+    "JobEvaluationResult": ".core.job.use_cases.screening",
+    "JobFeedPipeline": ".core.job.use_cases.feed_pipeline",
+    "JobListPage": ".adapters.outbound.device.pages",
+    "JobMatchGreetingService": ".core.job.use_cases.matching",
+    "JobOutcome": ".core.job.use_cases.feed_pipeline",
+    "JobPosting": ".core.job.domain.job_entities",
+    "JobRecordStore": ".core.job.interfaces.store",
+    "JobVerdictStage": ".core.job.use_cases.screening",
+    "LoginPage": ".adapters.outbound.device.pages",
+    "MatchGreetingResult": ".core.job.use_cases.matching",
+    "PocketBaseJobRecordStore": ".adapters.outbound.pocketbase.job_store",
+    "PocketBaseSavedSearchStore": ".adapters.outbound.pocketbase.saved_search_store",
+    "ProfileNormalizer": ".core.candidate.domain.profile_normalizer",
+    "ResumeLifecycleState": ".adapters.outbound.resume.graph",
+    "ResumeMemoryManager": ".adapters.outbound.resume.memory",
+    "ResumeTextExtractor": ".adapters.outbound.resume.memory",
+    "SavedSearch": ".core.search.domain.models",
+    "SavedSearchStore": ".core.search.interfaces.store",
+    "ScreeningPolicy": ".core.job.domain.screening_policy",
+    "SearchConfig": ".core.search.domain.models",
+    "SearchPage": ".adapters.outbound.device.pages",
+    "StartupDialogPage": ".adapters.outbound.device.pages",
+    "StructuredCandidateProfile": ".core.candidate.domain.candidate_profile",
+    "TakeoverHandler": ".adapters.outbound.device.takeover",
+    "append_company_blacklist_entry": ".adapters.outbound.config.screening_config",
+    "build_resume_lifecycle_graph": ".adapters.outbound.resume.graph",
+    "ensure_greeting_prefix": ".core.job.use_cases.matching",
+    "format_recruiter_greeting_prefix": ".core.shared.identifier_helpers",
+    "is_headhunter_agency_name": ".core.shared.identifier_helpers",
+    "is_masked_company_name": ".core.shared.identifier_helpers",
+    "is_writable_screening_path": ".adapters.outbound.config.screening_config",
+    "load_greeting_prompt": ".adapters.outbound.config.greeting_prompt",
+    "load_settings": ".adapters.outbound.config.settings",
+    "parse_recruiter_title": ".core.shared.identifier_helpers",
+    "resolve_git_common_root": ".adapters.outbound.config.settings",
+    "resolve_pocketbase_data_dir": ".adapters.outbound.config.settings",
+    "resolve_pocketbase_db_path": ".adapters.outbound.config.settings",
+    "resolve_pocketbase_url": ".adapters.outbound.config.settings",
+    "resolve_saved_search_store": ".adapters.outbound.pocketbase.saved_search_store",
+    "resolve_writable_screening_config_path": ".adapters.outbound.config.screening_config",
+    "run_resume_lifecycle_graph": ".adapters.outbound.resume.graph",
 }
 
 
@@ -194,7 +201,6 @@ __all__ = [
     "ScreeningPolicy",
     "SearchConfig",
     "SearchPage",
-    "SmokeHarness",
     "StartupDialogPage",
     "StructuredCandidateProfile",
     "TakeoverHandler",

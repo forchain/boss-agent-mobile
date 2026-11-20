@@ -13,13 +13,16 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from boss_agent.broker.models import TaskType
-from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
-from boss_agent.pages.job_feed import JobListPage, SearchPage
-from boss_agent.worker.config import WorkerConfig
-from boss_agent.worker.context import WorkerContext
-from boss_agent.worker.handlers.auto_apply import AutoApplyHandler
-from boss_agent.worker.handlers.scrape_jobs import ScrapeJobsHandler
+from boss_agent.adapters.inbound.worker.config import WorkerConfig
+from boss_agent.adapters.inbound.worker.context import WorkerContext
+from boss_agent.adapters.inbound.worker.handlers.auto_apply import AutoApplyHandler
+from boss_agent.adapters.inbound.worker.handlers.scrape_jobs import ScrapeJobsHandler
+from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
+from boss_agent.adapters.outbound.config.settings import load_feed_config_defaults
+from boss_agent.adapters.outbound.device.pages.feed_bundle import build_feed_device_world
+from boss_agent.adapters.outbound.device.pages.job_feed import JobListPage, SearchPage
+from boss_agent.core.job.use_cases.screening import CandidateScreener
+from boss_agent.core.task.domain.models import TaskType
 
 
 @pytest.fixture
@@ -48,7 +51,12 @@ def _patch_search_layer(search_ok: bool = True, entry_ok: bool = True):
 
 @pytest.mark.asyncio
 async def test_scrape_jobs_delegates_search_to_fast_entry_without_pre_navigation(broker, context):
-    handler = ScrapeJobsHandler(llm_client=MagicMock())
+    handler = ScrapeJobsHandler(
+        screener=CandidateScreener(llm_client=MagicMock()),
+        pages=build_feed_device_world,
+        job_store=broker.job_store,
+        feed_config_defaults_loader=load_feed_config_defaults,
+    )
     task = await broker.create_task(
         task_type=TaskType.SCRAPE_JOBS, payload={"keyword": "agent", "max_jobs": 1}
     )
@@ -71,7 +79,12 @@ async def test_scrape_jobs_delegates_search_to_fast_entry_without_pre_navigation
 
 @pytest.mark.asyncio
 async def test_scrape_jobs_retry_logging_marks_exhaustion_and_never_lies(broker, context):
-    handler = ScrapeJobsHandler(llm_client=MagicMock())
+    handler = ScrapeJobsHandler(
+        screener=CandidateScreener(llm_client=MagicMock()),
+        pages=build_feed_device_world,
+        job_store=broker.job_store,
+        feed_config_defaults_loader=load_feed_config_defaults,
+    )
     task = await broker.create_task(
         task_type=TaskType.SCRAPE_JOBS, payload={"keyword": "agent", "max_jobs": 1}
     )
@@ -96,7 +109,13 @@ async def test_scrape_jobs_retry_logging_marks_exhaustion_and_never_lies(broker,
 async def test_auto_apply_delegates_search_to_fast_entry_without_pre_navigation(broker, context):
     llm_client = MagicMock()
     llm_client.chat_completion_json.return_value = {"match_score": 50, "greeting_message": "hi"}
-    handler = AutoApplyHandler(llm_client=llm_client)
+    handler = AutoApplyHandler(
+        screener=CandidateScreener(llm_client=llm_client),
+        pages=build_feed_device_world,
+        job_store=broker.job_store,
+        candidate_memory=broker.candidate_memory,
+        feed_config_defaults_loader=load_feed_config_defaults,
+    )
     task = await broker.create_task(
         task_type=TaskType.AUTO_APPLY,
         payload={

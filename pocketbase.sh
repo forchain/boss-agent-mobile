@@ -52,6 +52,41 @@ LOG_FILE="${RUNTIME_DIR}/pocketbase.log"
 
 PB_BIN="$(runner_find_binary pocketbase /opt/homebrew/bin/pocketbase /usr/local/bin/pocketbase)"
 
+# The one description of the PocketBase State Stream broker (ticket #476). A runner fills
+# it in once; the lifecycle itself — what is signalled, in what order, with which budget,
+# and which events are recorded — belongs to the library. `--http` can move the port at
+# launch time, so `cmd_start` re-describes the service after it parses its arguments.
+configure_service() {
+    runner_service_reset
+    RUNNER_SERVICE_LABEL="PocketBase"
+    RUNNER_SERVICE_NAME="PocketBase"
+    RUNNER_SERVICE_PID_FILE="${PID_FILE}"
+    RUNNER_SERVICE_LOG_FILE="${LOG_FILE}"
+    RUNNER_SERVICE_PORT="${PB_HTTP##*:}"
+    RUNNER_SERVICE_HEALTH_URL="http://${PB_HTTP}/api/health"
+    RUNNER_SERVICE_ENDPOINT="http://${PB_HTTP}"
+    RUNNER_SERVICE_STOP_TIMEOUT_SEC="${PB_STOP_TIMEOUT_SEC}"
+    RUNNER_SERVICE_STOP_DETAIL="PocketBase State Stream broker"
+    RUNNER_SERVICE_STOP_COMPLETE_DETAIL="PocketBase State Stream broker stopped"
+    RUNNER_SERVICE_RESTART_DETAIL="PocketBase State Stream broker"
+    RUNNER_SERVICE_RESTART_COMPLETE_DETAIL="PocketBase State Stream broker back online"
+    # `pocketbase serve` re-execs, so a process can outlive the launcher's PID.
+    RUNNER_SERVICE_RESIDUAL_PATTERN="pocketbase serve --http ${PB_HTTP}"
+    # `cmd_start` exits from inside its own health check when the broker is already up.
+    RUNNER_SERVICE_RESTART_ISOLATED="1"
+    RUNNER_SERVICE_STOP_BANNER="🛑 Stopping local PocketBase instance..."
+    RUNNER_SERVICE_IDLE_MESSAGE="No running PocketBase process found."
+    RUNNER_SERVICE_STOPPED_MESSAGE="PocketBase stopped successfully."
+    RUNNER_SERVICE_STATUS_CHECKING="Checking PocketBase status..."
+    RUNNER_SERVICE_STATUS_UP="🟢 PocketBase is RUNNING and HEALTHY at http://${PB_HTTP}/api/health"
+    RUNNER_SERVICE_STATUS_DOWN="🔴 PocketBase is NOT REACHABLE at http://${PB_HTTP}/api/health"
+    RUNNER_SERVICE_STATUS_PID_LINE="   Process PID : {pid}"
+    RUNNER_SERVICE_STATUS_LOG_LINE="   Log file    : {log}"
+    RUNNER_SERVICE_STATUS_STALE_WARNING="   (Warning: Stale process {pid} detected)"
+}
+
+configure_service
+
 run_provisioner() {
     local TARGET_DB="${1:-${PB_DATA_DIR}/data.db}"
     if command -v uv >/dev/null 2>&1; then
@@ -62,69 +97,11 @@ run_provisioner() {
 }
 
 cmd_status() {
-    echo "🔍 Checking PocketBase status..."
-    local HEALTH_URL="http://${PB_HTTP}/api/health"
-    local PID
-    PID="$(runner_resolve_pid "${PID_FILE}" "${PB_HTTP##*:}")"
-
-    if curl -s -f "${HEALTH_URL}" >/dev/null 2>&1; then
-        echo "🟢 PocketBase is RUNNING and HEALTHY at ${HEALTH_URL}"
-        if [[ -n "${PID}" ]]; then
-            echo "   Process PID : ${PID}"
-        fi
-        echo "   Log file    : ${LOG_FILE}"
-        return 0
-    else
-        echo "🔴 PocketBase is NOT REACHABLE at ${HEALTH_URL}"
-        if [[ -n "${PID}" ]]; then
-            echo "   (Warning: Stale process ${PID} detected)"
-            rm -f "${PID_FILE}"
-        fi
-        return 1
-    fi
+    runner_service_status
 }
 
 cmd_stop() {
-    echo "🛑 Stopping local PocketBase instance..."
-    local STOPPED=0
-    local PID
-    PID="$(runner_resolve_pid "${PID_FILE}" "${PB_HTTP##*:}")"
-
-    if [[ -n "${PID}" ]]; then
-        runner_log_stop_request "${LOG_FILE}" "PocketBase" "${PID}" "PocketBase State Stream broker"
-        runner_graceful_stop "${PID}" "${PB_STOP_TIMEOUT_SEC}" "PocketBase" "${LOG_FILE}"
-        STOPPED=1
-    fi
-    runner_pidfile_clear "${PID_FILE}"
-
-    # Anything still listening on the port outlived its parent (a detached serve). The
-    # probe is LISTEN-only, so a connected client is never a candidate.
-    local PORT="${PB_HTTP##*:}"
-    local PORT_PID
-    PORT_PID="$(runner_port_listener_pid "${PORT}")"
-    if [[ -n "${PORT_PID}" ]]; then
-        echo "⚠️ Port ${PORT} still held by PID ${PORT_PID}; reclaiming."
-        runner_graceful_stop "${PORT_PID}" "${PB_STOP_TIMEOUT_SEC}" "PocketBase listener" "${LOG_FILE}"
-        STOPPED=1
-    fi
-
-    # Cleanup any lingering process matching pocketbase serve on PB_HTTP
-    local LINGER_PIDS
-    LINGER_PIDS="$(pgrep -f "pocketbase serve --http ${PB_HTTP}" 2>/dev/null || true)"
-    if [[ -n "${LINGER_PIDS}" ]]; then
-        local LINGER_PID
-        for LINGER_PID in ${LINGER_PIDS}; do
-            runner_graceful_stop "${LINGER_PID}" "${PB_STOP_TIMEOUT_SEC}" "PocketBase" "${LOG_FILE}"
-        done
-        STOPPED=1
-    fi
-
-    if [[ ${STOPPED} -eq 1 ]]; then
-        runner_log_stop_complete "${LOG_FILE}" "PocketBase" "PocketBase State Stream broker stopped"
-        echo "✅ PocketBase stopped successfully."
-    else
-        echo "ℹ️ No running PocketBase process found."
-    fi
+    runner_service_stop
 }
 
 cmd_start() {
@@ -155,12 +132,14 @@ cmd_start() {
         exit 1
     fi
 
+    # `--http` may have moved the port; the service description follows it.
+    configure_service
     local HEALTH_URL="http://${PB_HTTP}/api/health"
 
     # Check if already running
-    if curl -s -f "${HEALTH_URL}" >/dev/null 2>&1; then
+    if runner_service_healthy ""; then
         local RUNNING_PID
-        RUNNING_PID="$(runner_resolve_pid "${PID_FILE}" "${PB_HTTP##*:}")"
+        RUNNING_PID="$(runner_service_resolve_pid)"
         if [[ ${DAEMON} -eq 1 ]]; then
             echo "ℹ️ PocketBase is already running in background (PID: ${RUNNING_PID:-unknown}) at ${HEALTH_URL}"
             exit 0
@@ -235,26 +214,7 @@ cmd_start() {
 
 cmd_restart() {
     echo "🔄 Restarting local PocketBase instance..."
-    runner_log_restart_request "${LOG_FILE}" "PocketBase" "PocketBase State Stream broker"
-    cmd_stop
-    sleep 0.5
-    # In a subshell: `cmd_start` exits from inside its own health check when the broker is
-    # already up, and an `exit` there would otherwise take this confirmation down with it.
-    #
-    # The status is captured rather than propagated, so a start that failed cannot be
-    # recorded below as a broker that came back up. Not written as `( cmd_start ) || return 1`:
-    # a subshell used as an operand of `||` has errexit suspended *inside* it, which would
-    # let a failed pre-flight fall through to the foreground `tail -f` and hang forever.
-    # Suspension is therefore lifted only for the outer shell, and restored for the subshell
-    # where `cmd_start` depends on it to abort.
-    set +e
-    ( set -e; cmd_start "$@" )
-    local START_STATUS=$?
-    set -e
-    if [[ ${START_STATUS} -ne 0 ]]; then
-        return 1
-    fi
-    runner_log_restart_complete "${LOG_FILE}" "PocketBase" "PocketBase State Stream broker back online"
+    runner_service_restart "$@"
 }
 
 ACTION="${1:-start}"

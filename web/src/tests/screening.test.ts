@@ -89,6 +89,18 @@ describe('Masked Company Guardrail & Screening Utilities', () => {
 		const hhData = await hhResp.json();
 		expect(hhData.allowed).toBe(false);
 
+		// Headhunter agency name POST should fail even when is_headhunter is false
+		const agencyReq = new Request('http://localhost/api/screening/blacklist', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ company_name: '杭州脉享人力资源', is_headhunter: false })
+		});
+		const agencyResp = await POST({ request: agencyReq } as any);
+		expect(agencyResp.status).toBe(400);
+		const agencyData = await agencyResp.json();
+		expect(agencyData.allowed).toBe(false);
+		expect(agencyData.notice).toContain('人力资源/代招机构');
+
 		// Authentic direct company POST should succeed
 		const directReq = new Request('http://localhost/api/screening/blacklist', {
 			method: 'POST',
@@ -165,7 +177,7 @@ describe('Masked Company Guardrail & Screening Utilities', () => {
 					enable_screening: true,
 					title_whitelist: ['Python', 'Agent'],
 					title_blacklist: ['销售', '实习'],
-					company_blacklist: ['深至科技', '某中型人工智能公司'],
+					company_blacklist: ['深至科技', '某中型人工智能公司', '杭州脉享人力资源'],
 					jd_blacklist: ['驻场', '外包']
 				}
 			})
@@ -176,10 +188,13 @@ describe('Masked Company Guardrail & Screening Utilities', () => {
 		expect(postData.success).toBe(true);
 		expect(postData.policy.title_whitelist).toContain('Python');
 		expect(postData.policy.company_blacklist).toContain('深至科技');
-		// Masked company should have been rejected by guardrails
+		// Masked company and agency name should both have been rejected by guardrails
 		expect(postData.policy.company_blacklist).not.toContain('某中型人工智能公司');
-		expect(postData.rejected_companies.length).toBe(1);
-		expect(postData.rejected_companies[0].name).toBe('某中型人工智能公司');
+		expect(postData.policy.company_blacklist).not.toContain('杭州脉享人力资源');
+		expect(postData.rejected_companies.map((r: { name: string }) => r.name)).toEqual([
+			'某中型人工智能公司',
+			'杭州脉享人力资源'
+		]);
 	});
 
 	// Spec #209 / Ticket #210: the commute ceiling is edited from the same panel,

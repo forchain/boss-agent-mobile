@@ -10,7 +10,7 @@ backout, quota degradation and cancellation are all exercised without Appium.
 
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from _card_fixtures import located
@@ -26,29 +26,29 @@ from _feed_harness import (
 )
 from selenium.common.exceptions import StaleElementReferenceException
 
-from boss_agent.enums import (
+from boss_agent.adapters.memory.job_store import InMemoryJobRecordStore
+from boss_agent.adapters.outbound.device.pages.job_feed import element_y_position
+from boss_agent.core.job.domain.job_entities import (
+    JobCardBrief,
+    JobPosting,
+)
+from boss_agent.core.job.domain.screening_policy import (
+    ScreeningPolicy,
+)
+from boss_agent.core.job.use_cases.feed_pipeline import (
+    FeedStreamConfig,
+    JobAction,
+    JobFeedPipeline,
+)
+from boss_agent.core.job.use_cases.screening import CandidateScreener, JobVerdictStage
+from boss_agent.core.shared.enums import (
     ChatButtonState,
     JobRecordStatus,
     ScreeningStage,
     TargetAction,
 )
-from boss_agent.feed_pipeline import (
-    FeedStreamConfig,
-    JobAction,
-    JobFeedPipeline,
-    _element_y,
-    is_task_cancelled,
-)
-from boss_agent.job_entities import (
-    JobCardBrief,
-    JobPosting,
-)
-from boss_agent.job_store import InMemoryJobRecordStore
-from boss_agent.keyword_constants import APPLIED_SOURCE_AGENT
-from boss_agent.screening import CandidateScreener, JobVerdictStage
-from boss_agent.screening_policy import (
-    ScreeningPolicy,
-)
+from boss_agent.core.shared.keyword_constants import APPLIED_SOURCE_AGENT
+from boss_agent.core.task.use_cases.cancellation import is_task_cancelled
 
 
 class _StaleElement:
@@ -113,11 +113,13 @@ async def test_stale_feed_boundary_handle_does_not_abort_the_scan():
     boundary costs a little pagination precision, while raising costs every card.
     """
     store = InMemoryJobRecordStore()
-    feed = ScriptedFeed([[_card("真实搜索结果", "甲公司", y=600)]])
+    feed = ScriptedFeed(
+        [[_card("真实搜索结果", "甲公司", y=600)]],
+        boundary_after=0,
+        boundary_element=_StaleElement(),
+    )
     detail = _detail_page()
     pipeline = _pipeline(store, feed=feed, detail=detail)
-
-    pipeline.list_page.get_feed_bottom_boundary = lambda: _StaleElement()
 
     result = await pipeline.stream_jobs(FeedStreamConfig(keyword="Agent", max_jobs=10))
 
@@ -125,20 +127,20 @@ async def test_stale_feed_boundary_handle_does_not_abort_the_scan():
     assert detail.extract_job_posting.call_count == 1
 
 
-def test_element_y_reports_none_for_an_unreachable_element():
-    """``_element_y`` answers "where is it", and an element that is gone has no answer.
+def test_element_position_reports_none_for_an_unreachable_element():
+    """Reading a handle's position answers "where is it", and a gone handle has no answer.
 
-    Returning None lets both callers — the per-card boundary check and the banner read —
-    fall through to their existing "no position known" path, which is the whole point of
-    the helper's contract. Letting the driver error escape converts a missing coordinate
-    into a dead run.
+    The helper is adapter-owned since issue #481: core never reads a device coordinate.
+    Returning None lets the screen fall through to its "no position known" path, which is
+    the whole point of the contract. Letting the driver error escape converts a missing
+    coordinate into a dead run.
     """
-    assert _element_y(_StaleElement()) is None
-    assert _element_y(None) is None
-    assert _element_y(MagicMock()) is None
+    assert element_y_position(_StaleElement()) is None
+    assert element_y_position(None) is None
+    assert element_y_position(MagicMock()) is None
     healthy = MagicMock()
     healthy.location = {"x": 0, "y": 640.0}
-    assert _element_y(healthy) == pytest.approx(640.0)
+    assert element_y_position(healthy) == pytest.approx(640.0)
 
 
 @pytest.mark.asyncio
@@ -210,8 +212,10 @@ async def test_cards_below_the_boundary_marker_are_recommendations():
 @pytest.mark.asyncio
 async def test_search_failure_aborts_the_run():
     store = InMemoryJobRecordStore()
-    pipeline = _pipeline(store)
-    pipeline.search_page.search.return_value = False
+    search = MagicMock()
+    search.is_search_page.return_value = True
+    search.search.return_value = False
+    pipeline = _pipeline(store, search=search)
 
     result = await pipeline.stream_jobs(FeedStreamConfig(keyword="Agent"))
 
@@ -384,7 +388,7 @@ async def test_evaluate_card_runs_before_detail_and_evaluate_job_after():
     screener.evaluate_card.return_value = verdict
     screener.evaluate_job.return_value = MagicMock(
         stage=__import__(
-            "boss_agent.screening", fromlist=["JobVerdictStage"]
+            "boss_agent.core.job.use_cases.screening", fromlist=["JobVerdictStage"]
         ).JobVerdictStage.PASSED,
         passed=True,
         reason="精筛完成",
@@ -422,7 +426,6 @@ async def test_filtering_disabled_clears_conditions_instead_of_applying_them():
     still clears the previous run's conditions rather than applying its own.
     """
     store = InMemoryJobRecordStore()
-    pipeline = _pipeline(store, feed=ScriptedFeed([[_card("AI Agent 一号", "甲公司")]]))
     config = FeedStreamConfig.from_payload(
         {
             "keyword": "Agent",
@@ -434,15 +437,20 @@ async def test_filtering_disabled_clears_conditions_instead_of_applying_them():
     assert config.filter_config is not None
     assert config.filter_config.enable_filter is False
 
-    with (
-        patch("boss_agent.feed_pipeline.FilterDialogPage") as filter_cls,
-        patch("boss_agent.feed_pipeline.IndustryFilterDialogPage") as industry_cls,
-    ):
-        await pipeline.stream_jobs(config)
+    filter_page = MagicMock()
+    industry_filter_page = MagicMock()
+    pipeline = _pipeline(
+        store,
+        feed=ScriptedFeed([[_card("AI Agent 一号", "甲公司")]]),
+        detail=_detail_page(),
+        filter_page=filter_page,
+        industry_filter_page=industry_filter_page,
+    )
+    await pipeline.stream_jobs(config)
 
-    filter_cls.return_value.clear_filters.assert_called_once()
-    filter_cls.return_value.apply_filters.assert_not_called()
-    industry_cls.return_value.apply_industry_filters.assert_not_called()
+    filter_page.clear_filters.assert_called_once()
+    filter_page.apply_filters.assert_not_called()
+    industry_filter_page.apply_industry_filters.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -885,17 +893,20 @@ def test_for_task_wires_the_brokers_job_ledger():
     handle had no ledger, letting any broker-shaped object silently satisfy
     store-typed code — so the type story no longer said which object was passed.
     """
-    from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
+    from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
+    from boss_agent.adapters.outbound.device.pages.feed_bundle import build_feed_device_world
 
     broker = InMemoryTaskBroker()
-    pipeline = JobFeedPipeline.for_task(broker, "task-1", driver=None)
+    pipeline = JobFeedPipeline.for_task(
+        broker, "task-1", world=build_feed_device_world(MagicMock()), store=broker.job_store
+    )
     assert pipeline.store is broker.job_store
 
 
 @pytest.mark.asyncio
 async def test_is_task_cancelled_reads_the_task_lease():
-    from boss_agent.broker.models import TaskStatus, TaskType
-    from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
+    from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
+    from boss_agent.core.task.domain.models import TaskStatus, TaskType
 
     broker = InMemoryTaskBroker()
     task = await broker.create_task(task_type=TaskType.SCRAPE_JOBS, payload={})
@@ -1007,7 +1018,7 @@ async def test_a_queued_direct_target_never_becomes_a_search():
 
     # The negative, stated where the behaviour is: no search, no card, no greeting.
     entered_search.assert_not_called()
-    pipeline.search_page.search.assert_not_called()
+    pipeline.world.search_page.search.assert_not_called()
     chat.type_greeting_message.assert_not_called()
     assert result.scanned == 0
     assert result.jobs == []
@@ -1157,8 +1168,13 @@ async def test_a_resend_counts_the_daily_quota_only_once():
     assert await store.count_today_applied_jobs() == 1
 
     # Second run over the same card: it is `applied` now, so it is skipped, not re-greeted.
-    feed = ScriptedFeed([[card]])
-    pipeline.list_page = feed
+    pipeline = _pipeline(
+        store,
+        feed=ScriptedFeed([[card]]),
+        detail=detail,
+        chat=chat,
+        screener=CandidateScreener(llm_client=_llm(_greet(), _greet())),
+    )
     await pipeline.stream_jobs(_apply_config(max_jobs=1))
     assert await store.count_today_applied_jobs() == 1
     assert chat.click_send.call_count == 1, "an applied record is not greeted twice in a day"

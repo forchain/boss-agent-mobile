@@ -1,0 +1,482 @@
+"""
+src/boss_agent/adapters/outbound/pocketbase/pocketbase_adapter.py
+=================================================================
+PocketBase State Stream Broker adapter.
+"""
+
+import asyncio
+import json
+import logging
+import os
+import re
+import uuid
+from collections.abc import Callable
+from datetime import UTC, datetime
+from typing import Any
+
+import requests
+
+from boss_agent.adapters.outbound.config.settings import resolve_pocketbase_url
+from boss_agent.core.shared.errors import ConflictError, ValidationError
+from boss_agent.core.shared.identifier_helpers import parse_utc_timestamp
+from boss_agent.core.task.domain.models import AutomationTask, TaskStatus, TaskType
+from boss_agent.core.task.interfaces.broker import BaseTaskBroker
+
+from .async_bridge import execute_broker_request
+from .candidate_memory_store import PocketBaseCandidateMemoryStore
+from .job_store import PocketBaseJobRecordStore
+from .pocketbase_auth import pocketbase_headers
+from .saved_search_store import PocketBaseSavedSearchStore
+
+logger = logging.getLogger("boss_agent.adapters.outbound.pocketbase.pocketbase_adapter")
+
+__all__ = [
+    "BaseTaskBroker",
+    "PocketBaseBroker",
+    "PocketBaseTaskBroker",
+    "POCKETBASE_DEFAULT_TEXT_MAX_CHARS",
+    "TEXT_MAX_CONSTRAINT_CODE",
+    "LENGTH_RECOVERY_FIELD",
+    "is_length_rejection_for_job_description",
+    "resolve_text_constraint_limit",
+]
+
+#: PocketBase caps a text field at 5000 characters when it carries no explicit `max`
+#: (core/field_text.go). Provisioning raises that cap for `job_description`
+#: (provisioner.LONG_TEXT_FIELD_MAX_CHARS), but a collection predating the upgrade still
+#: rejects a fully expanded JD with `validation_max_text_constraint` — and because a
+#: rejected upsert returns empty, the worker used to drop the enriched record outright
+#: (log: `❌ [Enrich Error]`). Recovery truncates to the server's boundary instead.
+POCKETBASE_DEFAULT_TEXT_MAX_CHARS = 5000
+
+#: PocketBase error code for a text value longer than the field's configured `max`.
+TEXT_MAX_CONSTRAINT_CODE = "validation_max_text_constraint"
+
+#: The only field length recovery may rewrite. Another field hitting the constraint is not
+#: ours to repair: truncating `job_description` would lose data without clearing it.
+LENGTH_RECOVERY_FIELD = "job_description"
+
+#: The rejected bound as PocketBase reports it. v0.39 answers with
+#: ``{"message":"Must be no more than 5000 character(s).","params":{"max":5000}}`` — the
+#: structural `params.max` — while other releases only phrase it in prose ("Must be shorter
+#: than 5000."). Reading the number back means a deployment with a non-default cap is still
+#: recovered at the right boundary instead of at the assumed one.
+_SERVER_TEXT_LIMIT_PATTERNS = (
+    re.compile(r'"max"\s*:\s*(\d+)'),
+    re.compile(r"(?:no more than|shorter than)\s+(\d+)", re.IGNORECASE),
+)
+
+
+def is_length_rejection_for_job_description(response_text: Any) -> bool:
+    """Whether a PocketBase error is specifically about `job_description` being too long."""
+    text = response_text if isinstance(response_text, str) else ""
+    return TEXT_MAX_CONSTRAINT_CODE in text and LENGTH_RECOVERY_FIELD in text
+
+
+def resolve_text_constraint_limit(response_text: Any) -> int:
+    """Character boundary to truncate to, taken from the server's own message when present."""
+    text = response_text if isinstance(response_text, str) else ""
+    for pattern in _SERVER_TEXT_LIMIT_PATTERNS:
+        match = pattern.search(text)
+        if not match:
+            continue
+        limit = int(match.group(1))
+        if limit > 0:
+            return limit
+    return POCKETBASE_DEFAULT_TEXT_MAX_CHARS
+
+
+class PocketBaseTaskBroker(BaseTaskBroker):
+    """Production PocketBase REST and SSE client adapter."""
+
+    def __init__(
+        self,
+        base_url: str | None = None,
+        collection_name: str = "automation_tasks",
+        auth_token: str | None = None,
+        session: requests.Session | None = None,
+    ) -> None:
+        self.base_url = resolve_pocketbase_url(explicit_url=base_url)
+        self.collection_name = collection_name
+        self.auth_token = auth_token or os.getenv("POCKETBASE_AUTH_TOKEN")
+        self.session = session or requests.Session()
+        self.job_store = PocketBaseJobRecordStore(
+            base_url=self.base_url, session=self.session, headers=self._headers
+        )
+        self.candidate_memory = PocketBaseCandidateMemoryStore(
+            base_url=self.base_url, session=self.session, headers=self._headers
+        )
+        self.saved_searches = PocketBaseSavedSearchStore(
+            base_url=self.base_url, session=self.session, headers=self._headers
+        )
+        self._subscribers: list[Callable[[str, AutomationTask], Any]] = []
+        self.log_buffer_bound = 10
+        #: How long the oldest buffered line may stay invisible before it is published
+        #: anyway. The line bound above is an optimization — it caps how many round trips
+        #: a run costs — but on its own it caps nothing about *when* an operator sees the
+        #: log: a run emitting fewer lines than the bound never trips it, so its entire
+        #: log stayed in this process until the terminal transition. The dashboard's live
+        #: log stream reads the broker record, so for those runs it showed nothing at all
+        #: until the task ended. This deadline bounds that visibility independently.
+        self.log_flush_interval_sec = 2.0
+        self._task_logs: dict[str, list[str]] = {}
+        self._buffered_logs: dict[str, list[str]] = {}
+        #: When each task's current buffer started filling, keyed by task id.
+        self._log_buffer_since: dict[str, datetime] = {}
+
+        # Ensure obsolete fallback cache files are removed if present
+        try:
+            from pathlib import Path
+
+            for f in (
+                ".boss_agent/job_records_fallback.json",
+                ".boss_agent/job_records_fallback.json.bak",
+            ):
+                p = Path(f)
+                if p.exists():
+                    p.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    def _headers(self) -> dict[str, str]:
+        return pocketbase_headers(self.auth_token)
+
+    def _collection_url(self) -> str:
+        return f"{self.base_url}/api/collections/{self.collection_name}/records"
+
+    async def create_task(
+        self,
+        task_type: TaskType | str,
+        payload: dict[str, Any] | None = None,
+        source: str = "manual",
+    ) -> AutomationTask:
+        resolved_type = task_type if isinstance(task_type, TaskType) else TaskType(task_type)
+        url = self._collection_url()
+        body: dict[str, Any] = {
+            "id": uuid.uuid4().hex[:15],
+            "task_type": resolved_type.value,
+            "status": TaskStatus.PENDING.value,
+            "payload": payload or {},
+            "source": source,
+            "worker_id": None,
+            "locked_at": None,
+            "last_heartbeat_at": None,
+            "logs": [],
+            "error_message": None,
+        }
+        resp = await execute_broker_request(
+            lambda: self.session.post(url, json=body, headers=self._headers()),
+            expected_statuses=(200, 201),
+            error_prefix=f"PocketBase create_task({resolved_type.value}) failed",
+        )
+        data = resp.json()
+        task = self._record_to_task(data)
+        await self._notify_subscribers("create", task)
+        return task
+
+    async def claim_task(self, task_id: str, worker_id: str) -> AutomationTask | None:
+        url = f"{self._collection_url()}/{task_id}?expect_status={TaskStatus.PENDING.value}"
+        now = datetime.now(UTC).isoformat()
+
+        patch_body = {
+            "status": TaskStatus.RUNNING.value,
+            "worker_id": worker_id,
+            "locked_at": now,
+            "last_heartbeat_at": now,
+        }
+        try:
+            patch_resp = await execute_broker_request(
+                lambda: self.session.patch(url, json=patch_body, headers=self._headers()),
+                expected_statuses=(200,),
+                allow_404=True,
+                error_prefix=f"PocketBase claim_task patch({task_id}) failed",
+            )
+        except (ValidationError, ConflictError):  # persistence-guard: allow
+            # Losing the conditional-update race is the expected outcome of a CAS claim, not a
+            # failure: another worker won, so this one reports "nothing claimed" and moves on.
+            return None
+
+        if patch_resp.status_code == 404:
+            return None
+
+        record = patch_resp.json()
+        if record.get("worker_id") != worker_id or record.get("status") != TaskStatus.RUNNING.value:
+            return None
+
+        claimed = self._record_to_task(record)
+        self._task_logs[task_id] = list(claimed.logs or [])
+        self._buffered_logs[task_id] = []
+        self._log_buffer_since.pop(task_id, None)
+
+        await self._notify_subscribers("update", claimed)
+        return claimed
+
+    async def get_task(self, task_id: str) -> AutomationTask | None:
+        url = f"{self._collection_url()}/{task_id}"
+        resp = await execute_broker_request(
+            lambda: self.session.get(url, headers=self._headers()),
+            expected_statuses=(200,),
+            allow_404=True,
+            error_prefix=f"PocketBase get_task({task_id}) failed",
+        )
+        if resp.status_code == 404:
+            return None
+        task = self._record_to_task(resp.json())
+        if task_id in self._task_logs:
+            task.logs = list(self._task_logs[task_id])
+        return task
+
+    async def update_heartbeat(self, task_id: str, worker_id: str) -> bool:
+        url = f"{self._collection_url()}/{task_id}"
+        get_resp = await execute_broker_request(
+            lambda: self.session.get(url, headers=self._headers()),
+            expected_statuses=(200,),
+            allow_404=True,
+            error_prefix=f"PocketBase update_heartbeat check({task_id}) failed",
+        )
+        if get_resp.status_code == 404:
+            return False
+
+        record = get_resp.json()
+        if record.get("worker_id") != worker_id or record.get("status") != TaskStatus.RUNNING.value:
+            return False
+
+        now = datetime.now(UTC).isoformat()
+        # The heartbeat is the only write that happens while a worker is thinking rather
+        # than logging, and a single synchronous Appium command routinely keeps it silent
+        # for tens of seconds. Riding the buffer along here costs no extra round trip and
+        # bounds visibility even when the worker emits nothing at all — the append-side
+        # deadline can only fire on an append, so on its own it would hold the last few
+        # lines through exactly the quiet stretch an operator is watching.
+        body: dict[str, Any] = {"last_heartbeat_at": now}
+        carried = list(self._buffered_logs.get(task_id) or [])
+        if carried:
+            body["logs"] = self._task_logs[task_id]
+
+        resp = await execute_broker_request(
+            lambda: self.session.patch(url, json=body, headers=self._headers()),
+            expected_statuses=(200,),
+            allow_404=True,
+            error_prefix=f"PocketBase update_heartbeat patch({task_id}) failed",
+        )
+        if resp.status_code == 200 and carried:
+            # Retire only what this PATCH carried. The request awaited, so a line appended
+            # while it was in flight belongs to the next publish, not this one.
+            sent = set(carried)
+            remaining = [line for line in self._buffered_logs.get(task_id, []) if line not in sent]
+            self._buffered_logs[task_id] = remaining
+            if not remaining:
+                self._log_buffer_since.pop(task_id, None)
+        return resp.status_code == 200
+
+    async def update_task_status(
+        self,
+        task_id: str,
+        status: TaskStatus,
+        logs: list[str] | None = None,
+        error_message: str | None = None,
+        worker_id: str | None = None,
+    ) -> AutomationTask:
+        url = f"{self._collection_url()}/{task_id}"
+        body: dict[str, Any] = {"status": status.value}
+        if logs is not None:
+            self._task_logs[task_id] = list(logs)
+            self._buffered_logs[task_id] = []
+            self._log_buffer_since.pop(task_id, None)
+            body["logs"] = logs
+        elif self._buffered_logs.get(task_id) or task_id in self._task_logs:
+            # Guarantee flush: flush buffered logs within the status update payload
+            body["logs"] = self._task_logs[task_id]
+            self._buffered_logs[task_id] = []
+            self._log_buffer_since.pop(task_id, None)
+
+        if error_message is not None:
+            body["error_message"] = error_message
+        if worker_id is not None:
+            body["worker_id"] = worker_id
+
+        resp = await execute_broker_request(
+            lambda: self.session.patch(url, json=body, headers=self._headers()),
+            expected_statuses=(200,),
+            error_prefix=f"PocketBase update_task_status({task_id}) failed",
+        )
+        updated = self._record_to_task(resp.json())
+
+        if status.is_terminal():
+            self._task_logs.pop(task_id, None)
+            self._buffered_logs.pop(task_id, None)
+            self._log_buffer_since.pop(task_id, None)
+
+        await self._notify_subscribers("update", updated)
+        return updated
+
+    async def append_log(self, task_id: str, log_line: str) -> bool:
+        now = datetime.now(UTC)
+        formatted = f"[{now.isoformat()}] {log_line}"
+
+        if task_id not in self._task_logs:
+            task = await self.get_task(task_id)
+            if not task:
+                return False
+            self._task_logs[task_id] = list(task.logs or [])
+            self._buffered_logs[task_id] = []
+
+        self._task_logs[task_id].append(formatted)
+        self._buffered_logs.setdefault(task_id, []).append(formatted)
+        self._log_buffer_since.setdefault(task_id, now)
+
+        if len(self._buffered_logs[task_id]) >= self.log_buffer_bound or self._log_deadline_passed(
+            task_id, now
+        ):
+            await self.flush_logs(task_id)
+        return True
+
+    def _log_deadline_passed(self, task_id: str, now: datetime) -> bool:
+        """Whether the oldest buffered line has waited longer than it is allowed to.
+
+        Counted from when this buffer started filling, not from the newest line: a
+        steadily-streaming run would otherwise reset the clock on every append and never
+        publish anything until it ended.
+        """
+        since = self._log_buffer_since.get(task_id)
+        if since is None:
+            return False
+        return (now - since).total_seconds() >= self.log_flush_interval_sec
+
+    async def flush_logs(self, task_id: str | None = None) -> None:
+        target_ids = [task_id] if task_id else list(self._buffered_logs.keys())
+        for tid in target_ids:
+            pending = self._buffered_logs.get(tid)
+            if not pending:
+                continue
+            all_logs = self._task_logs.get(tid, [])
+            url = f"{self._collection_url()}/{tid}"
+            await execute_broker_request(
+                lambda u=url, logs=all_logs: self.session.patch(
+                    u, json={"logs": logs}, headers=self._headers()
+                ),
+                expected_statuses=(200,),
+                allow_404=True,
+                error_prefix=f"PocketBase flush_logs patch({tid}) failed",
+            )
+            self._buffered_logs[tid] = []
+            self._log_buffer_since.pop(tid, None)
+
+    async def list_pending_tasks(self, limit: int = 10) -> list[AutomationTask]:
+        url = f"{self._collection_url()}?filter=(status='pending')&sort=created&perPage={limit}"
+        resp = await execute_broker_request(
+            lambda: self.session.get(url, headers=self._headers()),
+            expected_statuses=(200,),
+            allow_404=True,
+            error_prefix="PocketBase list_pending_tasks failed",
+        )
+        if resp.status_code == 404:
+            logger.warning(
+                "PocketBase query for pending tasks returned 404: collection '%s' may not be provisioned or cached yet: %s",
+                self.collection_name,
+                url,
+            )
+            return []
+        items = resp.json().get("items", [])
+        return [self._record_to_task(item) for item in items]
+
+    async def list_stale_running_tasks(
+        self, lease_timeout_sec: float = 60.0
+    ) -> list[AutomationTask]:
+        url = f"{self._collection_url()}?filter=(status='running')&perPage=50"
+        resp = await execute_broker_request(
+            lambda: self.session.get(url, headers=self._headers()),
+            expected_statuses=(200,),
+            allow_404=True,
+            error_prefix="PocketBase list_stale_running_tasks failed",
+        )
+        if resp.status_code == 404:
+            return []
+        items = resp.json().get("items", [])
+        tasks = [self._record_to_task(item) for item in items]
+        now = datetime.now(UTC)
+        stale: list[AutomationTask] = []
+        for t in tasks:
+            hb = t.last_heartbeat_at or t.locked_at or t.created
+            if hb.tzinfo is None:
+                hb = hb.replace(tzinfo=UTC)
+            if (now - hb).total_seconds() > lease_timeout_sec:
+                stale.append(t)
+        return stale
+
+    async def requeue_task(self, task_id: str, retry_count: int) -> AutomationTask:
+        self._task_logs.pop(task_id, None)
+        self._buffered_logs.pop(task_id, None)
+        self._log_buffer_since.pop(task_id, None)
+        url = f"{self._collection_url()}/{task_id}"
+        body = {
+            "status": TaskStatus.PENDING.value,
+            "worker_id": "",
+            "locked_at": None,
+            "last_heartbeat_at": None,
+            "retry_count": retry_count,
+        }
+        resp = await execute_broker_request(
+            lambda: self.session.patch(url, json=body, headers=self._headers()),
+            expected_statuses=(200,),
+            error_prefix=f"PocketBase requeue_task({task_id}) failed",
+        )
+        return self._record_to_task(resp.json())
+
+    def subscribe_tasks(self, callback: Callable[[str, AutomationTask], Any]) -> None:
+        self._subscribers.append(callback)
+
+    async def _notify_subscribers(self, event_type: str, task: AutomationTask) -> None:
+        for sub in self._subscribers:
+            try:
+                res = sub(event_type, task)
+                if asyncio.iscoroutine(res):
+                    await res
+            except Exception as e:
+                logger.exception("Error in task subscriber callback: %s", e)
+
+    def _record_to_task(self, record: dict[str, Any]) -> AutomationTask:
+        payload = record.get("payload") or {}
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except (json.JSONDecodeError, TypeError, ValueError):
+                payload = {}
+
+        logs = record.get("logs") or []
+        if isinstance(logs, str):
+            try:
+                logs = json.loads(logs)
+            except (json.JSONDecodeError, TypeError, ValueError):
+                logs = []
+
+        return AutomationTask(
+            id=str(record["id"]),
+            task_type=TaskType(record["task_type"]),
+            status=TaskStatus(record["status"]),
+            payload=payload,
+            # A task created before provenance existed carries no column; it reads as
+            # manual, so the startup sweep never reclaims what it cannot attribute.
+            source=record.get("source") or "manual",
+            worker_id=record.get("worker_id"),
+            locked_at=self._parse_dt(record.get("locked_at")),
+            last_heartbeat_at=self._parse_dt(record.get("last_heartbeat_at")),
+            logs=logs,
+            error_message=record.get("error_message"),
+            # Recovery reads the retry count to decide between re-queueing and failing an
+            # orphan. Dropping it here made every broker-read task report 0, so a stale
+            # task could be re-queued forever instead of reaching a terminal state.
+            retry_count=int(record.get("retry_count") or 0),
+            created=self._parse_dt(record.get("created")) or datetime.now(UTC),
+            updated=self._parse_dt(record.get("updated")) or datetime.now(UTC),
+        )
+
+    def _parse_dt(self, val: Any) -> datetime | None:
+        if not val:
+            return None
+        if isinstance(val, datetime):
+            return val
+        return parse_utc_timestamp(str(val))
+
+
+PocketBaseBroker = PocketBaseTaskBroker

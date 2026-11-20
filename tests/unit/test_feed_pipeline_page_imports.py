@@ -1,18 +1,19 @@
 """
 tests/unit/test_feed_pipeline_page_imports.py
 ==============================================
-Where the job-feed engine takes its page models from (spec #395, ticket #400).
+Where the job-feed engine takes its page models from (spec #395, ticket #400, #463).
 
-`feed_pipeline` is the heaviest `pages` consumer in the repo, and it used to bind every screen
-through the package facade -- so a change to the 仅沟通 list or the rejection-descriptor
-parser reached the feed engine's import list too. The engine's own screens now come from the
-submodule that owns each one, which is what makes a chat-triage-side edit invisible here.
+The feed engine used to bind every screen through the ``pages`` package facade, so a
+change to the 仅沟通 list or the filter dialogs reached the engine too. ``JobFeedPipeline``
+now lives in core and receives a :class:`FeedDeviceWorld`; it imports no page model at
+all. Production composition is ``adapters.outbound.device.pages.feed_bundle``'s, and that
+bundle must name each concrete page from the submodule that owns it.
 
-The greeting dispatch is the one honest exception: `JobFeedPipeline` opens the chat screen to
-send the draft it just evaluated, so `ChatPage` is a real runtime dependency rather than a
-leftover import. Its source module is deliberately *not* pinned here, so this test only fails
-if some *other* page model sneaks into the feed engine's import list -- or if `ChatPage`
-migrates away from the facade and something must be re-decided on purpose.
+The previous form of this guard kept an empty ``FEED_OWNED_PAGE_MODELS = {}`` mapping and
+looped over it, so its first rule could never fail. The rules below are non-vacuous: an
+empty result is asserted directly, and the bundle's imports are asserted against a
+non-empty expected set read from relative imports, which is how the bundle actually
+spells them.
 """
 
 import ast
@@ -21,80 +22,75 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).parents[2]
-PAGES_ROOT = REPO_ROOT / "src" / "boss_agent" / "pages"
-FEED_PIPELINE = REPO_ROOT / "src" / "boss_agent" / "feed_pipeline.py"
+PAGES_ROOT = REPO_ROOT / "src" / "boss_agent" / "adapters" / "outbound" / "device" / "pages"
+PAGES_PACKAGE = "boss_agent.adapters.outbound.device.pages"
+FEED_PIPELINE = REPO_ROOT / "src" / "boss_agent" / "core" / "job" / "use_cases" / "feed_pipeline.py"
+FEED_BUNDLE = PAGES_ROOT / "feed_bundle.py"
 
 #: The page-layer submodules on disk, so an imported *name* can be read as the submodule it
-#: names rather than as a facade symbol: `from boss_agent.pages import job_feed` binds the
-#: submodule, not the package.
+#: names rather than as a facade symbol.
 PAGE_SUBMODULES = frozenset(
     path.stem for path in PAGES_ROOT.glob("*.py") if path.stem != "__init__"
 )
 
-#: Every page model the feed engine owns, mapped to the submodule that declares it. The facade
-#: is spelled ``<facade>`` so a regression that routes one of these back through it is
-#: visible as a wrong value rather than as a missing key.
+#: The concrete page models the feed bundle composes, and the submodule that owns each.
 FEED_OWNED_PAGE_MODELS: dict[str, str] = {
+    "StartupDialogPage": "system",
     "JobListPage": "job_feed",
     "SearchPage": "job_feed",
     "FilterDialogPage": "job_feed",
     "IndustryFilterDialogPage": "job_feed",
-    "LocatedJobCard": "job_feed",
     "JobDetailPage": "job_detail",
-    "StartupDialogPage": "system",
+    "ChatPage": "communication",
 }
 
-#: Bound by the greeting dispatch (typing the draft, clicking send, navigating back).
-GREETING_DISPATCH_PAGE_MODEL = "ChatPage"
 
+def _page_imports(
+    path: Path, package: str = PAGES_PACKAGE, *, relative_base: str | None = None
+) -> list[tuple[str, str, int]]:
+    """Every page-package import in `path` as (module, symbol, lineno).
 
-def _page_import_sources(module_path: Path) -> dict[str, str]:
-    """Map every name bound from a `pages` import to the submodule it came from.
-
-    A facade import reads as ``<facade>``, so this answers "which file declared the symbol
-    this module depends on" from the source tree alone -- no import of `boss_agent` needed.
-
-    All three spellings that reach the layer are read, matching
-    ``test_chat_triage_page_imports``: the ``from X import name`` the engine uses today, the
-    ``import boss_agent.pages.job_feed`` that is an ``ast.Import`` rather than an
-    ``ImportFrom``, and the ``from boss_agent.pages import job_feed`` whose ``node.module``
-    is the facade and whose imported *name* is the submodule.
+    Relative imports are resolved against ``relative_base`` (the package that owns the
+    file), so the bundle's ``from .communication import ChatPage`` is read as
+    ``boss_agent.adapters.outbound.device.pages.communication``. All three spellings that
+    reach the layer are read: direct module imports, ``ast.Import``, and facade imports
+    whose bound name is itself a submodule.
     """
-    tree = ast.parse(module_path.read_text(encoding="utf-8"))
-    sources: dict[str, str] = {}
-
-    def record(module: str, bound: str) -> None:
-        """Bind `bound` to the submodule tail after `pages`, or to ``<facade>``."""
-        parts = module.split(".")
-        if "pages" not in parts:
-            return
-        tail = ".".join(parts[parts.index("pages") + 1 :])
-        if not tail and bound in PAGE_SUBMODULES:
-            # A name imported straight from the package may be the submodule itself:
-            # `from .pages import job_feed` binds `job_feed`, not the facade.
-            tail = bound
-        sources[bound] = tail or "<facade>"
-
+    base = relative_base or package
+    found: list[tuple[str, str, int]] = []
+    tree = ast.parse(path.read_text(encoding="utf-8"))
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                record(alias.name, alias.asname or alias.name.split(".")[-1])
-        elif isinstance(node, ast.ImportFrom) and node.module is not None:
+                if alias.name == package or alias.name.startswith(f"{package}."):
+                    found.append((alias.name, alias.asname or alias.name, node.lineno))
+        elif isinstance(node, ast.ImportFrom):
+            if node.level and node.module:
+                module = f"{base}.{node.module}"
+            elif node.level:
+                module = base
+            else:
+                module = node.module or ""
+            if module != package and not module.startswith(f"{package}."):
+                continue
             for alias in node.names:
-                record(node.module, alias.name)
-    return sources
+                found.append((module, alias.name, node.lineno))
+                submodule = f"{module}.{alias.name}"
+                if module == package and alias.name in PAGE_SUBMODULES:
+                    found.append((submodule, alias.name, node.lineno))
+    return found
 
 
-#: Every spelling that reaches the page layer, pinned against synthetic sources: a parser that
-#: stops reading one of them would let a page model into the feed engine unnoticed.
+#: Every spelling that reaches job discovery, pinned against synthetic sources: if the
+#: parser stops reading one of them, a page model could reach the engine unseen.
 PAGE_IMPORT_SPELLINGS = (
-    "from .pages.job_feed import JobListPage",
-    "from .pages.communication import ChatPage",
-    "from boss_agent.pages.job_detail import JobDetailPage",
-    "import boss_agent.pages.job_feed",
-    "import boss_agent.pages.job_feed as feed",
-    "from .pages import job_feed",
-    "from boss_agent.pages import job_feed",
+    f"from {PAGES_PACKAGE}.job_detail import JobDetailPage",
+    f"import {PAGES_PACKAGE}.job_feed",
+    f"import {PAGES_PACKAGE}.job_feed as feed",
+    f"from {PAGES_PACKAGE} import job_feed",
+    f"from {PAGES_PACKAGE} import job_feed as feed",
+    "from .communication import ChatPage",
+    "from . import job_feed",
 )
 
 
@@ -102,26 +98,46 @@ PAGE_IMPORT_SPELLINGS = (
 def test_the_guard_reads_every_spelling_that_reaches_the_page_layer(
     source: str, tmp_path: Path
 ) -> None:
-    """Prove the source map is reachable, not just present.
-
-    Both rules below read `_page_import_sources`, so a spelling it cannot see is a page
-    model that arrives in the feed engine with no failure to explain it. Each spelling is
-    checked here rather than left to a future import to reveal.
-    """
+    """Prove the source map is reachable, not just present."""
     probe = tmp_path / "probe.py"
     probe.write_text(source, encoding="utf-8")
 
-    assert _page_import_sources(probe), (
+    assert _page_imports(probe, PAGES_PACKAGE, relative_base=PAGES_PACKAGE), (
         f"the parser cannot see {source!r}, so neither rule can fail"
     )
 
 
-def test_feed_pipeline_takes_each_page_model_from_the_submodule_that_owns_it() -> None:
-    sources = _page_import_sources(FEED_PIPELINE)
-    assert {name: sources.get(name) for name in FEED_OWNED_PAGE_MODELS} == FEED_OWNED_PAGE_MODELS
+def test_feed_pipeline_imports_no_page_objects() -> None:
+    """The engine receives its device world as ports; it never reaches for a page."""
+    imports = _page_imports(FEED_PIPELINE, PAGES_PACKAGE)
+
+    assert imports == [], f"core feed pipeline imports page objects: {imports}"
 
 
-def test_feed_pipeline_reaches_no_page_model_outside_its_own_submodules() -> None:
-    sources = _page_import_sources(FEED_PIPELINE)
-    unexpected = set(sources) - set(FEED_OWNED_PAGE_MODELS) - {GREETING_DISPATCH_PAGE_MODEL}
-    assert unexpected == set(), f"feed_pipeline gained page imports it has no use for: {unexpected}"
+def test_feed_bundle_takes_each_page_model_from_the_submodule_that_owns_it() -> None:
+    """Production composition names each concrete screen from its feature submodule."""
+    imports = _page_imports(FEED_BUNDLE, PAGES_PACKAGE, relative_base=PAGES_PACKAGE)
+
+    actual = {
+        symbol: module.removeprefix(f"{PAGES_PACKAGE}.")
+        for module, symbol, _ in imports
+        if module != PAGES_PACKAGE
+    }
+    assert {symbol: actual.get(symbol) for symbol in FEED_OWNED_PAGE_MODELS} == (
+        FEED_OWNED_PAGE_MODELS
+    )
+
+
+def test_feed_bundle_imports_no_page_model_through_the_facade() -> None:
+    """A facade import would drag every screen back into one bundle again."""
+    facade_imports = [
+        (symbol, lineno)
+        for module, symbol, lineno in _page_imports(
+            FEED_BUNDLE, PAGES_PACKAGE, relative_base=PAGES_PACKAGE
+        )
+        if module == PAGES_PACKAGE
+    ]
+
+    assert facade_imports == [], (
+        f"feed bundle imports page models through the facade: {facade_imports}"
+    )

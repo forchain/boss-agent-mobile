@@ -10,11 +10,11 @@ from pathlib import Path
 
 import pytest
 
-from boss_agent.broker.provisioner import (
+from boss_agent.adapters.outbound.pocketbase.provisioner import (
     provision_remote_pocketbase,
     provision_sqlite_database,
 )
-from boss_agent.errors import TransportError, ValidationError
+from boss_agent.core.shared.errors import TransportError, ValidationError
 
 _COLLECTIONS_DDL = """
     CREATE TABLE _collections (
@@ -223,7 +223,7 @@ def test_provision_sqlite_database_migrates_existing_table(tmp_path: Path):
 def test_provision_remote_pocketbase_mock():
     from unittest.mock import MagicMock, patch
 
-    from boss_agent.broker.provisioner import provision_remote_pocketbase
+    from boss_agent.adapters.outbound.pocketbase.provisioner import provision_remote_pocketbase
 
     mock_session = MagicMock()
     # Mock Auth
@@ -279,7 +279,10 @@ def test_provision_remote_pocketbase_mock():
 
 def test_provision_sqlite_database_adds_digest_column_if_missing(tmp_path: Path):
     """If job_records table was created in an older version without 'digest', provisioner alters table."""
-    from boss_agent.broker.collection_schema import JOB_RECORDS, pocketbase_fields
+    from boss_agent.adapters.outbound.pocketbase.collection_schema import (
+        JOB_RECORDS,
+        pocketbase_fields,
+    )
 
     # Verify field definition
     field_names = [f["name"] for f in pocketbase_fields(JOB_RECORDS)]
@@ -364,7 +367,7 @@ def test_provision_sqlite_database_job_description_exceeds_default_text_max(tmp_
 def test_provision_remote_pocketbase_job_description_exceeds_default_text_max():
     from unittest.mock import MagicMock, patch
 
-    from boss_agent.broker.provisioner import provision_remote_pocketbase
+    from boss_agent.adapters.outbound.pocketbase.provisioner import provision_remote_pocketbase
 
     mock_session = MagicMock()
     auth_resp = MagicMock(ok=True)
@@ -510,7 +513,10 @@ def test_provision_remote_pocketbase_widens_existing_job_description_cap(
     ``options.max`` is silently ignored, as verified against a live 0.39 server."""
     from unittest.mock import patch as mock_patch
 
-    from boss_agent.broker.provisioner import LONG_TEXT_FIELD_MAX_CHARS, provision_remote_pocketbase
+    from boss_agent.adapters.outbound.pocketbase.provisioner import (
+        LONG_TEXT_FIELD_MAX_CHARS,
+        provision_remote_pocketbase,
+    )
 
     collection = _legacy_job_records_collection(stored_max, nested=nested_options)
     session = _remote_provision_session(collection)
@@ -542,7 +548,10 @@ def test_provision_remote_pocketbase_leaves_wide_cap_alone():
     """An already-upgraded instance must not be rewritten on every provisioning run."""
     from unittest.mock import patch as mock_patch
 
-    from boss_agent.broker.provisioner import LONG_TEXT_FIELD_MAX_CHARS, provision_remote_pocketbase
+    from boss_agent.adapters.outbound.pocketbase.provisioner import (
+        LONG_TEXT_FIELD_MAX_CHARS,
+        provision_remote_pocketbase,
+    )
 
     session = _remote_provision_session(
         _legacy_job_records_collection(max_chars=LONG_TEXT_FIELD_MAX_CHARS)
@@ -564,7 +573,7 @@ def test_provision_remote_pocketbase_upgrade_failure_does_not_abort_provisioning
     the remaining collections and seeds still have to be provisioned."""
     from unittest.mock import patch as mock_patch
 
-    from boss_agent.broker.provisioner import provision_remote_pocketbase
+    from boss_agent.adapters.outbound.pocketbase.provisioner import provision_remote_pocketbase
 
     session = _remote_provision_session(_legacy_job_records_collection(), patch_ok=False)
 
@@ -584,7 +593,7 @@ def test_provision_remote_pocketbase_skips_upgrade_when_collection_is_new():
     nothing to migrate."""
     from unittest.mock import patch as mock_patch
 
-    from boss_agent.broker.provisioner import provision_remote_pocketbase
+    from boss_agent.adapters.outbound.pocketbase.provisioner import provision_remote_pocketbase
 
     session = _remote_provision_session(job_records_collection=None)
 
@@ -634,3 +643,93 @@ def test_provision_remote_pocketbase_raises_validation_error_on_bad_credentials(
         provision_remote_pocketbase(
             "http://127.0.0.1:8090", email="admin@example.com", password="wrongpassword"
         )
+
+
+def test_provisioner_loads_seed_presets_from_configuration_realm():
+    """Operator seed presets live in Configuration Realm rather than provisioner.py."""
+    from boss_agent.adapters.outbound.config.initial_searches import load_initial_searches
+    from boss_agent.adapters.outbound.pocketbase import provisioner
+
+    assert not hasattr(provisioner, "DEFAULT_INITIAL_SEARCHES")
+    seeds = load_initial_searches()
+    assert set(seeds) == {"default_agent_search", "ai_llm_engineer"}
+
+
+def test_legacy_record_migration_uses_shared_kernel_helpers_and_known_cities(tmp_path: Path):
+    """Backfill normalizes titles, recruiter splits, headhunter flag, and full KNOWN_CITIES."""
+    import json
+
+    from boss_agent.adapters.outbound.pocketbase.provisioner import run_legacy_record_migration
+
+    db_file = tmp_path / "legacy_backfill.db"
+    conn = sqlite3.connect(str(db_file))
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE _collections (
+            id TEXT PRIMARY KEY, system BOOLEAN, type TEXT, name TEXT UNIQUE,
+            fields JSON, indexes JSON, listRule TEXT, viewRule TEXT,
+            createRule TEXT, updateRule TEXT, deleteRule TEXT, options JSON,
+            created TEXT, updated TEXT
+        )
+    """)
+    cursor.execute("""
+        INSERT INTO _collections (id, system, type, name, fields)
+        VALUES ('pbc_job_records', 0, 'base', 'job_records', '[]')
+    """)
+    cursor.execute("""
+        CREATE TABLE job_records (
+            id TEXT PRIMARY KEY,
+            fingerprint TEXT UNIQUE,
+            title TEXT,
+            company_name TEXT,
+            recruiter_name TEXT,
+            recruiter_title TEXT DEFAULT '',
+            is_headhunter BOOLEAN DEFAULT 0,
+            location TEXT DEFAULT '',
+            digest TEXT DEFAULT '',
+            job_description TEXT DEFAULT '',
+            company_scale TEXT DEFAULT '',
+            industry TEXT DEFAULT '',
+            tags JSON DEFAULT '[]',
+            jd_key_requirements JSON DEFAULT '[]'
+        )
+    """)
+    cursor.execute(
+        """
+        INSERT INTO job_records
+            (id, fingerprint, title, company_name, recruiter_name, jd_key_requirements)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "rec_chongqing",
+            "fp_cq",
+            "Agent 架构师 &@ %",
+            "星辰智能",
+            "周先生 · 猎头顾问",
+            json.dumps(["重庆", "500-999人", "人工智能", "Python"], ensure_ascii=False),
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    assert run_legacy_record_migration(db_file) is True
+
+    conn = sqlite3.connect(str(db_file))
+    row = conn.execute(
+        """
+        SELECT title, recruiter_name, recruiter_title, is_headhunter, location, company_scale, industry, tags
+        FROM job_records WHERE id = 'rec_chongqing'
+        """
+    ).fetchone()
+    conn.close()
+
+    assert row is not None
+    title, rec_name, rec_title, is_hh, loc, scale, industry, tags = row
+    assert title == "Agent 架构师"
+    assert rec_name == "周先生"
+    assert rec_title == "猎头顾问"
+    assert is_hh == 1
+    assert loc == "重庆"
+    assert scale == "500-999人"
+    assert industry == "人工智能"
+    assert json.loads(tags) == ["Python"]

@@ -63,6 +63,10 @@ BRIDGE_READY_FILE=".boss_agent/remote_bridge.ready"
 BRIDGE_LOG_FILE=".boss_agent/remote_bridge.log"
 REMOTE_ADB_PORT="${REMOTE_ADB_PORT:-6555}"
 TARGET_ADB_PORT="${TARGET_ADB_PORT:-5555}"
+# Seconds the Remote ADB Bridge gets to exit on SIGTERM before SIGKILL. `stop` and `restart`
+# share this budget (`runner_graceful_stop`), so the one process this runner owns is never
+# raw kill-and-sleep (ticket #476).
+BRIDGE_STOP_TIMEOUT_SEC="${BRIDGE_STOP_TIMEOUT_SEC:-10}"
 
 EMULATOR_BIN="$(runner_find_binary emulator "${ANDROID_HOME:-}/emulator/emulator" "${ANDROID_SDK_ROOT:-}/emulator/emulator" "$HOME/Library/Android/sdk/emulator/emulator")"
 ADB_BIN="$(runner_find_binary adb "${ANDROID_HOME:-}/platform-tools/adb" "${ANDROID_SDK_ROOT:-}/platform-tools/adb" "$HOME/Library/Android/sdk/platform-tools/adb")"
@@ -454,7 +458,7 @@ get_primary_lan_ip() {
     fi
     local PY_BIN="${PYTHON_BIN:-$(runner_find_binary "${ROOT_DIR}/.venv/bin/python3" python3 python)}"
     if [[ -n "${PY_BIN}" ]]; then
-        LAN_IP="$(PYTHONPATH="${ROOT_DIR}/src:${PYTHONPATH:-}" "${PY_BIN}" -m boss_agent.services.remote_adb_bridge --print-lan-ip 2>/dev/null || true)"
+        LAN_IP="$(PYTHONPATH="${ROOT_DIR}/src:${PYTHONPATH:-}" "${PY_BIN}" -m boss_agent.adapters.infra.remote_adb_bridge --print-lan-ip 2>/dev/null || true)"
     fi
     if [[ -z "${LAN_IP}" || "${LAN_IP}" =~ ^127\. ]]; then
         LAN_IP="$(ifconfig 2>/dev/null | grep -E 'inet[[:space:]]+(192\.168|10\.|172\.(1[6-9]|2[0-9]|3[01]))\.' | awk '{print $2}' | head -n 1 || true)"
@@ -651,9 +655,8 @@ start_remote_bridge() {
             CONFLICT_ARGS="$(ps -p "${CONFLICT_PID}" -o args= 2>/dev/null || true)"
             if [[ "${CONFLICT_ARGS}" == *"remote_adb_bridge"* ]]; then
                 echo "⚠️ Port ${PORT} held by an orphaned Remote ADB Bridge (PID: ${CONFLICT_PID}). Reclaiming..."
-                kill -TERM "${CONFLICT_PID}" 2>/dev/null || true
-                sleep 0.5
-                kill -KILL "${CONFLICT_PID}" 2>/dev/null || true
+                runner_graceful_stop "${CONFLICT_PID}" "${BRIDGE_STOP_TIMEOUT_SEC}" \
+                    "Remote ADB Bridge" "${BRIDGE_LOG_FILE}"
             else
                 # Not ours, so not ours to kill. Naming it is the useful part: an operator
                 # can act on "port 6555 is held by PID N" and not on a mysterious exit.
@@ -677,7 +680,7 @@ start_remote_bridge() {
     BRIDGE_PID="$(detached_spawn \
         "${BRIDGE_LOG_FILE}" \
         env "PYTHONPATH=${ROOT_DIR}/src:${PYTHONPATH:-}" "${PYTHON_BIN}" \
-        -m boss_agent.services.remote_adb_bridge \
+        -m boss_agent.adapters.infra.remote_adb_bridge \
         --host 0.0.0.0 \
         --port "${PORT}" \
         --target-host 127.0.0.1 \
@@ -712,9 +715,10 @@ stop_remote_bridge() {
     local PID
     PID="$(get_running_bridge_pid)"
     if [[ -n "${PID}" ]]; then
-        kill -TERM "${PID}" 2>/dev/null || true
-        sleep 0.3
-        kill -KILL "${PID}" 2>/dev/null || true
+        # Budgeted, not kill-and-sleep: the bridge is a daemon this runner owns, so it gets
+        # the same Graceful Shutdown Protocol as every other service.
+        runner_graceful_stop "${PID}" "${BRIDGE_STOP_TIMEOUT_SEC}" \
+            "Remote ADB Bridge" "${BRIDGE_LOG_FILE}"
         echo "ℹ️ Stopped Remote ADB Bridge daemon (PID: ${PID})."
     fi
     rm -f "${BRIDGE_PID_FILE}" "${BRIDGE_READY_FILE}"

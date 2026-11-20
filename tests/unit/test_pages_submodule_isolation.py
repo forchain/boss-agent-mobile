@@ -28,17 +28,17 @@ The boundaries enforced here, one rule each:
    is a decision, entity, store, prompt or broker module that has no business paying Appium's
    import cost -- see `SCREEN_DRIVERS` for the accepted exception.
 
-The accepted cross-feature exception, stated once so it is not mistaken for an oversight:
-`src/boss_agent/feed_pipeline.py` imports `ChatPage` from `boss_agent.pages.communication`.
-`JobFeedPipeline` opens the chat screen to send the greeting it just evaluated, so that is a
-real runtime dependency and not a leftover import. Ticket #400's criterion was amended to
-"no broad facade import" rather than "zero communication imports" for exactly this edge.
-`feed_pipeline` is a screen driver, so rules 1-5 never see it -- and rule 6 permits the edge
-without caring whether the name arrives through the submodule or the facade.
+The cross-feature exception this rule once carried is gone: after #453 the feed engine
+receives a `FeedDeviceWorld` and imports no page model at all. The production bundle
+(`adapters.outbound.device.pages.feed_bundle`) is the module that composes the screens,
+and it is a screen driver for rule 6.
 
-Resolution is real, not string-matched: `from .pages.communication import ChatPage` inside
-`src/boss_agent/chat_triage.py` is `boss_agent.pages.communication`, and `from ..job_entities
-import JobCardBrief` inside `src/boss_agent/pages/__init__.py` is `boss_agent.job_entities`.
+Resolution is real, not string-matched: `from .communication import ChatPage` inside
+`src/boss_agent/adapters/outbound/device/pages/feed_bundle.py` is
+`boss_agent.adapters.outbound.device.pages.communication`, and
+`from ..job_entities import JobCardBrief` inside
+`src/boss_agent/adapters/outbound/device/pages/__init__.py` is
+`boss_agent.core.job.domain.job_entities`.
 A guard that only read `node.module` would pass on every relative import in the tree and
 would be worthless -- which is why `test_the_relative_import_resolver_...` below pins the
 resolver against synthetic sources first.
@@ -59,10 +59,10 @@ SOURCE_ROOT = REPO_ROOT / "src"
 #: whose modules are not this layer's business and are never scanned.
 BOSS_AGENT_ROOT = SOURCE_ROOT / "boss_agent"
 
-PAGES_PACKAGE = "boss_agent.pages"
+PAGES_PACKAGE = "boss_agent.adapters.outbound.device.pages"
 
 #: The page layer's own directory, read off disk by the discovery below.
-PAGES_ROOT = BOSS_AGENT_ROOT / "pages"
+PAGES_ROOT = BOSS_AGENT_ROOT / "adapters" / "outbound" / "device" / "pages"
 
 #: The submodules the split produced, kept as a *required* set rather than the source of truth.
 #: Rules 2 and 5 range over `_feature_submodules()` instead, so a sixth submodule added later is
@@ -88,7 +88,7 @@ def _dotted_names(path: Path) -> tuple[str, str]:
 
     A package `__init__` *is* its package -- `boss_agent/pages/__init__.py` is the module
     `boss_agent.pages` -- so it must drop the `__init__` segment. Naming it
-    `boss_agent.pages.__init__` instead would resolve its relative imports against a package
+    `boss_agent.adapters.outbound.device.pages.__init__` instead would resolve its relative imports against a package
     that does not exist, and the facade's edges would vanish from the cycle rule exactly when
     they matter most.
     """
@@ -199,42 +199,46 @@ class ResolverCase(NamedTuple):
 #: `from ..pages.base import X` from inside the layer, which reaches *up* and back *down*.
 RESOLVER_CASES = [
     ResolverCase(
-        "boss_agent",
+        "boss_agent.adapters.outbound.device",
         "from .pages.communication import ChatPage",
-        "boss_agent.pages.communication",
+        "boss_agent.adapters.outbound.device.pages.communication",
         "ChatPage",
     ),
-    ResolverCase("boss_agent", "from .pages import JobListPage", "boss_agent.pages", "JobListPage"),
+    ResolverCase(
+        "boss_agent.adapters.outbound.device",
+        "from .pages import JobListPage",
+        "boss_agent.adapters.outbound.device.pages",
+        "JobListPage",
+    ),
     ResolverCase(
         "boss_agent",
-        "from boss_agent.pages.system import LoginPage",
-        "boss_agent.pages.system",
+        "from boss_agent.adapters.outbound.device.pages.system import LoginPage",
+        "boss_agent.adapters.outbound.device.pages.system",
         "LoginPage",
     ),
     ResolverCase(
         "boss_agent",
-        "import boss_agent.pages.job_feed",
-        "boss_agent.pages.job_feed",
-        "boss_agent.pages.job_feed",
+        "import boss_agent.adapters.outbound.device.pages.job_feed",
+        "boss_agent.adapters.outbound.device.pages.job_feed",
+        "boss_agent.adapters.outbound.device.pages.job_feed",
     ),
-    ResolverCase("boss_agent", "from . import pages", "boss_agent.pages", "pages"),
     ResolverCase(
-        "boss_agent.pages",
+        "boss_agent.adapters.outbound.device",
+        "from . import pages",
+        "boss_agent.adapters.outbound.device.pages",
+        "pages",
+    ),
+    ResolverCase(
+        PAGES_PACKAGE,
         "from .base import BaseBossPage",
-        "boss_agent.pages.base",
+        "boss_agent.adapters.outbound.device.pages.base",
         "BaseBossPage",
     ),
     ResolverCase(
-        "boss_agent.pages",
-        "from ..job_entities import JobCardBrief",
-        "boss_agent.job_entities",
+        PAGES_PACKAGE,
+        "from .....core.job.domain.job_entities import JobCardBrief",
+        "boss_agent.core.job.domain.job_entities",
         "JobCardBrief",
-    ),
-    ResolverCase(
-        "boss_agent.pages",
-        "from ..pages.base import BaseBossPage",
-        "boss_agent.pages.base",
-        "BaseBossPage",
     ),
 ]
 
@@ -345,18 +349,16 @@ def test_job_feed_never_imports_the_communication_screens() -> None:
 def test_the_feed_engine_keeps_its_accepted_chat_screen_dependency() -> None:
     """The one deliberate cross-feature edge, stated so nobody deletes it as a mistake.
 
-    `JobFeedPipeline` opens `ChatPage` to send the greeting draft it just evaluated. That is
-    a real runtime dependency, so it is permitted -- but it is permitted *here*, in the
-    orchestrator, not by relaxing the rules above. This test deliberately checks for the
-    dependency and not for the module it is spelled on: re-reading `ChatPage` through the
-    facade is still a violation of ticket #400, and a live greeting dispatch must keep
-    working.
+    `JobFeedPipeline` opens `ChatPage` to send the greeting draft it just evaluated. With
+    the device world injected, that construction lives in `pages.feed_bundle`, which is
+    where the feed engine's page composition belongs. This checks the dependency still
+    exists there; re-reading `ChatPage` through the facade would still be a violation.
     """
-    path = BOSS_AGENT_ROOT / "feed_pipeline.py"
+    path = PAGES_ROOT / "feed_bundle.py"
     chat_imports = [record for record in _page_imports(path) if record.symbol == "ChatPage"]
 
     assert chat_imports, (
-        "feed_pipeline no longer imports ChatPage. The greeting dispatch opened the chat "
+        "feed_bundle no longer imports ChatPage. The greeting dispatch opened the chat "
         "screen to send the draft it evaluated; if that moved, re-decide it deliberately."
     )
 
@@ -460,31 +462,31 @@ def test_page_submodule_discovery_still_covers_the_submodules_the_split_named() 
 SCREEN_DRIVERS = frozenset(
     {
         "boss_agent",
-        "boss_agent.chat_triage",
-        "boss_agent.feed_pipeline",
-        "boss_agent.workflows",
+        "boss_agent.main",
+        "boss_agent.adapters.outbound.device.takeover",
     }
 )
 
 #: Subtrees excluded from the domain sweep: `pages` is the layer under guard, and `worker` is
 #: the automation driver whose handlers exist to press the screens `pages` models.
-NOT_DOMAIN = ("boss_agent.pages", "boss_agent.worker")
+NOT_DOMAIN = ("boss_agent.adapters.outbound.device.pages", "boss_agent.adapters.inbound.worker")
 
 #: The modules the ticket names as the minimum the domain sweep must reach. Discovery below
 #: is derived from the tree rather than pinned by hand, so a rename that quietly drops a
 #: required module out of coverage fails here instead of shrinking the guard in silence.
 REQUIRED_DOMAIN_MODULES = (
-    "boss_agent.candidate_entities",
-    "boss_agent.card_parser",
-    "boss_agent.enums",
-    "boss_agent.feed_records",
-    "boss_agent.identifier_helpers",
-    "boss_agent.job_entities",
-    "boss_agent.keyword_constants",
-    "boss_agent.matching",
-    "boss_agent.rejection",
-    "boss_agent.screening",
-    "boss_agent.search_entities",
+    "boss_agent.core.candidate.domain.candidate_profile",
+    "boss_agent.core.job.domain.card_parser",
+    "boss_agent.core.shared.enums",
+    "boss_agent.core.job.domain.feed_records",
+    "boss_agent.core.shared.identifier_helpers",
+    "boss_agent.core.job.domain.job_entities",
+    "boss_agent.core.shared.keyword_constants",
+    "boss_agent.core.job.domain.matching",
+    "boss_agent.core.chat.domain.rejection",
+    "boss_agent.core.chat.use_cases.triage",
+    "boss_agent.core.job.domain.screening",
+    "boss_agent.core.search.domain.models",
 )
 
 

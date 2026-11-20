@@ -17,8 +17,8 @@ So this tier removes the waiting, not the logic behind it:
   the value a satisfied one returns are all untouched;
 * the pause `HumanizedGestureExecutor` takes between gestures — jitter, tap duration, and
   every action it performs are untouched;
-* the fixed settling pauses `boss_agent.pages` and `boss_agent.workflows` take between an
-  action and the read that confirms it landed. These are the same dead time as the two
+* the fixed settling pauses `boss_agent.adapters.outbound.device.pages` and the verification
+  adapters take between an action and the read that confirms it landed. These are the same dead time as the two
   above: a mocked driver never paints the element the pause is waiting for, so the wait can
   only expire. They are worth more than they look — dropping them took the tier from ~64s to
   ~9s, because a handful of smoke-harness tests walk the same settle-then-read sequence
@@ -82,7 +82,7 @@ def any_job_store(request) -> Any:
     """
     from _job_store_harness import pocketbase_job_store
 
-    from boss_agent.job_store import InMemoryJobRecordStore
+    from boss_agent.adapters.memory.job_store import InMemoryJobRecordStore
 
     if request.param == "in_memory":
         return InMemoryJobRecordStore()
@@ -92,14 +92,15 @@ def any_job_store(request) -> Any:
 @pytest.fixture(autouse=True)
 def instant_ui_pacing(monkeypatch: pytest.MonkeyPatch) -> None:
     """Let UI wait loops exhaust their budget, and gestures play out, without waiting."""
-    from boss_agent import workflows
+    from boss_agent.adapters.inbound.verification import feed_verification
+    from boss_agent.adapters.outbound.device import takeover
 
-    for module in (locators, gestures, workflows, *_pages_pacing_modules()):
+    for module in (locators, gestures, takeover, feed_verification, *_pages_pacing_modules()):
         monkeypatch.setattr(module, "time", _InstantPacingTime(time))
 
 
 def _pages_pacing_modules() -> tuple[Any, ...]:
-    """Every `boss_agent.pages` submodule that owns its own `import time`.
+    """Every `boss_agent.adapters.outbound.device.pages` submodule that owns its `import time`.
 
     `pages` became a package in spec #395, so the settling pauses are no longer neutralised by
     one `monkeypatch.setattr(pages, "time", ...)`: each submodule holds its own `time` reference,
@@ -107,7 +108,7 @@ def _pages_pacing_modules() -> tuple[Any, ...]:
     from seconds into minutes with no failure to explain it. Walking the package keeps this fixture
     correct as submodules are added, rather than pinning today's file list by hand.
     """
-    from boss_agent import pages
+    from boss_agent.adapters.outbound.device import pages
 
     modules = []
     for info in pkgutil.iter_modules(pages.__path__):

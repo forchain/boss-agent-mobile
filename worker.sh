@@ -55,92 +55,51 @@ WORKER_PID_FILE=".boss_agent/worker.pid"
 WORKER_LOG_FILE=".boss_agent/worker.log"
 WORKER_STOP_TIMEOUT_SEC="${WORKER_STOP_TIMEOUT_SEC:-10}"
 
+# The one description of the Automation Worker, shared by every command below.
+#
+# The lifecycle itself — which process is stopped, in what order, with which budget, and
+# which events are recorded — belongs to the library; this is only *what* the Automation
+# Worker is (ticket #476).
+runner_service_reset
+RUNNER_SERVICE_LABEL="Automation Worker"
+RUNNER_SERVICE_NAME="Automation Worker daemon"
+RUNNER_SERVICE_PID_FILE="${WORKER_PID_FILE}"
+RUNNER_SERVICE_LOG_FILE="${WORKER_LOG_FILE}"
+RUNNER_SERVICE_STOP_TIMEOUT_SEC="${WORKER_STOP_TIMEOUT_SEC}"
+RUNNER_SERVICE_STOP_DETAIL="Automation Worker daemon"
+RUNNER_SERVICE_STOP_COMPLETE_DETAIL="Automation Worker daemon released the Virtual Device Session"
+RUNNER_SERVICE_RESTART_DETAIL="Automation Worker daemon"
+RUNNER_SERVICE_RESTART_COMPLETE_DETAIL="Automation Worker daemon back online"
+# The daemon is found by the script it runs: it has no port of its own, and its launcher
+# is what a worktree's pidfile names.
+RUNNER_SERVICE_FIND_PATTERN="scripts/worker.py"
+# A leftover daemon from another worktree is quick to go: two seconds is its whole budget.
+RUNNER_SERVICE_RESIDUAL_TIMEOUT_SEC="2"
+RUNNER_SERVICE_RESIDUAL_PATTERN="scripts/worker.py"
+RUNNER_SERVICE_STOP_CHILDREN="1"
+RUNNER_SERVICE_RESTART_TOLERATES_STOP="1"
+RUNNER_SERVICE_STOP_BANNER="🛑 Stopping Automation Worker daemon..."
+RUNNER_SERVICE_IDLE_MESSAGE="No running Worker daemon found."
+RUNNER_SERVICE_STOPPED_MESSAGE="Automation Worker daemon stopped."
+RUNNER_SERVICE_STATUS_CHECKING="Checking Automation Worker status..."
+RUNNER_SERVICE_STATUS_UP="Automation Worker daemon is RUNNING (PID: {pid})."
+RUNNER_SERVICE_STATUS_DOWN="Automation Worker daemon is NOT RUNNING."
+RUNNER_SERVICE_STATUS_LOG_LINE="   Log File: {log}"
+RUNNER_SERVICE_ATTACH_MISSING="Cannot attach to log stream. Start worker first via: ./worker.sh"
 
-get_running_worker_pid() {
-    if [[ -f "${WORKER_PID_FILE}" ]]; then
-        local PID
-        PID="$(cat "${WORKER_PID_FILE}" 2>/dev/null || true)"
-        if [[ -n "${PID}" ]] && runner_process_alive "${PID}" && runner_process_cwd_alive "${PID}"; then
-            echo "${PID}"
-            return 0
-        fi
-    fi
-
-    # Fallback to process search across worktrees
-    local FOUND_PID
-    while IFS= read -r FOUND_PID; do
-        [[ -z "${FOUND_PID}" ]] && continue
-        if runner_process_alive "${FOUND_PID}" && runner_process_cwd_alive "${FOUND_PID}"; then
-            echo "${FOUND_PID}" > "${WORKER_PID_FILE}"
-            echo "${FOUND_PID}"
-            return 0
-        fi
-    done < <(pgrep -f "scripts/worker.py" 2>/dev/null || true)
-    echo ""
-}
 
 cmd_attach() {
-    local PID
-    PID="$(get_running_worker_pid)"
-    if [[ -z "${PID}" ]] || ! runner_process_alive "${PID}"; then
-        echo "🔴 Automation Worker daemon is NOT RUNNING." >&2
-        echo "   Cannot attach to log stream. Start worker first via: ./worker.sh" >&2
-        return 1
-    fi
-    runner_attached_logs "${PID}" "${WORKER_LOG_FILE}" "Automation Worker daemon" "" "${WORKER_PID_FILE}"
+    runner_service_attach
 }
 
 
 cmd_status() {
-    echo "🔍 Checking Automation Worker status..."
-    local PID
-    PID="$(get_running_worker_pid)"
-
-    if [[ -n "${PID}" ]] && runner_process_alive "${PID}"; then
-        echo "🟢 Automation Worker daemon is RUNNING (PID: ${PID})."
-        echo "   Log File: ${WORKER_LOG_FILE}"
-        return 0
-    else
-        echo "🔴 Automation Worker daemon is NOT RUNNING."
-        rm -f "${WORKER_PID_FILE}"
-        return 1
-    fi
+    runner_service_status
 }
 
+
 cmd_stop() {
-    echo "🛑 Stopping Automation Worker daemon..."
-    local STOPPED=0
-    local PID
-    PID="$(get_running_worker_pid)"
-
-    if [[ -n "${PID}" ]]; then
-        runner_log_stop_request "${WORKER_LOG_FILE}" "Automation Worker" "${PID}" "Automation Worker daemon"
-        # Children first: the recorded PID is the launcher, and the Automation Worker holding
-        # the Virtual Device Session is its child. Signalling the parent first re-parents the
-        # child to init, where it can no longer be found or stopped at all.
-        pkill -P "${PID}" 2>/dev/null || true
-        runner_graceful_stop "${PID}" "${WORKER_STOP_TIMEOUT_SEC}" "Automation Worker" "${WORKER_LOG_FILE}"
-        STOPPED=1
-    fi
-
-    # Reclaim from any lingering scripts/worker.py (e.g. from another worktree)
-    local RESIDUAL_PIDS
-    RESIDUAL_PIDS="$(pgrep -f "scripts/worker.py" 2>/dev/null || true)"
-    if [[ -n "${RESIDUAL_PIDS}" ]]; then
-        for r_pid in ${RESIDUAL_PIDS}; do
-            runner_graceful_stop "${r_pid}" 2 "Automation Worker" "${WORKER_LOG_FILE}"
-            STOPPED=1
-        done
-    fi
-
-    rm -f "${WORKER_PID_FILE}"
-
-    if [[ ${STOPPED} -eq 1 ]]; then
-        runner_log_stop_complete "${WORKER_LOG_FILE}" "Automation Worker" "Automation Worker daemon released the Virtual Device Session"
-        echo "✅ Automation Worker daemon stopped."
-    else
-        echo "ℹ️ No running Worker daemon found."
-    fi
+    runner_service_stop
 }
 
 # ------------------------------------------------------------------------------
@@ -212,7 +171,7 @@ cmd_start() {
     done
 
     local RUNNING_PID
-    RUNNING_PID="$(get_running_worker_pid)"
+    RUNNING_PID="$(runner_service_resolve_pid)"
     if [[ -n "${RUNNING_PID}" ]] && runner_process_alive "${RUNNING_PID}"; then
         if [[ "${IS_DAEMON}" -eq 1 || "${DAEMON:-0}" -eq 1 ]]; then
             echo "ℹ️ Automation Worker daemon is already running in background (PID: ${RUNNING_PID})."
@@ -270,13 +229,10 @@ cmd_start() {
 
 cmd_restart() {
     echo "🔄 Restarting Automation Worker daemon..."
-    runner_log_restart_request "${WORKER_LOG_FILE}" "Automation Worker" "Automation Worker daemon"
-    cmd_stop || true
-    sleep 0.5
-    cmd_start "$@"
-    # Only reached when `cmd_start` returns rather than attaching the live log stream; in
-    # daemon mode that is the point at which the replacement daemon is genuinely up.
-    runner_log_restart_complete "${WORKER_LOG_FILE}" "Automation Worker" "Automation Worker daemon back online"
+    # The completion event is only reached when `cmd_start` returns rather than attaching
+    # the live log stream; in daemon mode that is the point at which the replacement
+    # daemon is genuinely up.
+    runner_service_restart "$@"
 }
 
 ACTION="${1:-start}"

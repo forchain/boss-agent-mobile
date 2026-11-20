@@ -10,10 +10,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from boss_agent.candidate_entities import CandidateProfile
-from boss_agent.greeting_prompt import load_greeting_prompt
-from boss_agent.job_entities import JobPosting
-from boss_agent.matching import JobMatchGreetingService
+from boss_agent.adapters.outbound.config.greeting_prompt import load_greeting_prompt
+from boss_agent.core.candidate.domain.candidate_profile import CandidateProfile
+from boss_agent.core.job.domain.job_entities import JobPosting
+from boss_agent.core.job.use_cases.matching import JobMatchGreetingService
 
 SEED_TEXT = "# 默认种子提示词\n严禁模板化套话。"
 LOCAL_TEXT = "# 沉淀后的最终记忆\n第一句直击 JD 痛点，并突出海外留学与英文面试意愿。"
@@ -36,7 +36,7 @@ def test_load_reads_explicit_path_verbatim(tmp_path):
 
 
 def test_local_document_wins_over_seed(tmp_path, monkeypatch):
-    import boss_agent.greeting_prompt as gp
+    import boss_agent.adapters.outbound.config.greeting_prompt as gp
 
     _make_config(tmp_path, local=LOCAL_TEXT)
     monkeypatch.setattr(gp, "resolve_git_common_root", lambda: tmp_path)
@@ -46,7 +46,7 @@ def test_local_document_wins_over_seed(tmp_path, monkeypatch):
 def test_empty_local_document_is_honored_not_replaced_by_seed(tmp_path, monkeypatch):
     """Clearing the settled memory must be expressible: an empty local file
     means an empty prompt, never a silent resurrection of the seed."""
-    import boss_agent.greeting_prompt as gp
+    import boss_agent.adapters.outbound.config.greeting_prompt as gp
 
     _make_config(tmp_path, local="")
     monkeypatch.setattr(gp, "resolve_git_common_root", lambda: tmp_path)
@@ -54,7 +54,7 @@ def test_empty_local_document_is_honored_not_replaced_by_seed(tmp_path, monkeypa
 
 
 def test_seed_serves_as_default_before_first_save(tmp_path, monkeypatch):
-    import boss_agent.greeting_prompt as gp
+    import boss_agent.adapters.outbound.config.greeting_prompt as gp
 
     _make_config(tmp_path, seed=SEED_TEXT)
     monkeypatch.setattr(gp, "resolve_git_common_root", lambda: tmp_path)
@@ -65,7 +65,7 @@ def test_stray_cwd_local_never_outranks_shared_root_document(tmp_path, monkeypat
     """A stray local document dropped in some unrelated working directory must
     not shadow the shared-root document the Settings UI reads and writes —
     web and automation must always greet from the same settled memory."""
-    import boss_agent.greeting_prompt as gp
+    import boss_agent.adapters.outbound.config.greeting_prompt as gp
 
     root = tmp_path / "root"
     _make_config(root, seed=SEED_TEXT)
@@ -77,7 +77,7 @@ def test_stray_cwd_local_never_outranks_shared_root_document(tmp_path, monkeypat
 
 
 def test_shared_root_local_wins_over_cwd_documents(tmp_path, monkeypatch):
-    import boss_agent.greeting_prompt as gp
+    import boss_agent.adapters.outbound.config.greeting_prompt as gp
 
     root = tmp_path / "root"
     _make_config(root, seed=SEED_TEXT, local=LOCAL_TEXT)
@@ -89,7 +89,7 @@ def test_shared_root_local_wins_over_cwd_documents(tmp_path, monkeypatch):
 
 
 def test_missing_document_fails_loudly(tmp_path, monkeypatch):
-    import boss_agent.greeting_prompt as gp
+    import boss_agent.adapters.outbound.config.greeting_prompt as gp
 
     monkeypatch.setattr(gp, "resolve_git_common_root", lambda: tmp_path)
     monkeypatch.chdir(tmp_path)
@@ -175,16 +175,11 @@ def test_refine_greeting_prompt_rewrites_whole_document_preserving_points():
     assert "Senior AI Architect" in user_prompt
 
 
-def test_refine_greeting_prompt_lazy_loads_current_document(tmp_path, monkeypatch):
-    import boss_agent.greeting_prompt as gp
-
-    _make_config(tmp_path, local=LOCAL_TEXT)
-    monkeypatch.setattr(gp, "resolve_git_common_root", lambda: tmp_path)
-    monkeypatch.chdir(tmp_path)
-
+def test_refine_greeting_prompt_uses_the_injected_document_as_its_base():
+    """The edge loads the document; the service uses the string it was given."""
     mock_llm = MagicMock()
     mock_llm.chat_completion_json.return_value = {"prompt": "改进后的完整文档。"}
-    service = JobMatchGreetingService(llm_client=mock_llm)
+    service = JobMatchGreetingService(llm_client=mock_llm, greeting_prompt=LOCAL_TEXT)
     service.refine_greeting_prompt(
         job=_job(),
         original_greeting="a",
@@ -224,13 +219,7 @@ def test_refine_greeting_prompt_rejects_empty_llm_output():
         )
 
 
-def test_evaluate_lazy_loads_prompt_file(tmp_path, monkeypatch):
-    import boss_agent.greeting_prompt as gp
-
-    _make_config(tmp_path, local=LOCAL_TEXT)
-    monkeypatch.setattr(gp, "resolve_git_common_root", lambda: tmp_path)
-    monkeypatch.chdir(tmp_path)
-
+def test_evaluate_uses_the_injected_greeting_prompt():
     mock_llm = MagicMock()
     mock_llm.chat_completion_json.return_value = {
         "match_score": 70,
@@ -238,7 +227,7 @@ def test_evaluate_lazy_loads_prompt_file(tmp_path, monkeypatch):
         "match_reasons": [],
         "greeting_message": "hi",
     }
-    service = JobMatchGreetingService(llm_client=mock_llm)
+    service = JobMatchGreetingService(llm_client=mock_llm, greeting_prompt=LOCAL_TEXT)
     service.evaluate_and_draft_greeting(job=_job())
     system_prompt = mock_llm.chat_completion_json.call_args[0][0][0]["content"]
     assert LOCAL_TEXT in system_prompt

@@ -15,17 +15,39 @@ from unittest.mock import MagicMock, patch
 import pytest
 from _card_fixtures import located
 
-from boss_agent.broker.models import TaskStatus, TaskType
-from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
-from boss_agent.enums import ChatButtonState
-from boss_agent.identifier_helpers import classify_chat_button
-from boss_agent.job_entities import JobCardBrief
-from boss_agent.pages.job_detail import JobDetailPage
-from boss_agent.worker.config import WorkerConfig
-from boss_agent.worker.context import WorkerContext
-from boss_agent.worker.daemon import AutomationWorker
-from boss_agent.worker.handlers.auto_apply import AutoApplyHandler
-from boss_agent.worker.handlers.scrape_jobs import ScrapeJobsHandler
+from boss_agent.adapters.inbound.worker.config import WorkerConfig
+from boss_agent.adapters.inbound.worker.context import WorkerContext
+from boss_agent.adapters.inbound.worker.daemon import AutomationWorker
+from boss_agent.adapters.inbound.worker.handlers.auto_apply import AutoApplyHandler
+from boss_agent.adapters.inbound.worker.handlers.scrape_jobs import ScrapeJobsHandler
+from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
+from boss_agent.adapters.outbound.config.settings import load_feed_config_defaults
+from boss_agent.adapters.outbound.device.pages.feed_bundle import build_feed_device_world
+from boss_agent.adapters.outbound.device.pages.job_detail import JobDetailPage
+from boss_agent.core.job.domain.job_entities import JobCardBrief
+from boss_agent.core.job.use_cases.screening import CandidateScreener
+from boss_agent.core.shared.enums import ChatButtonState
+from boss_agent.core.shared.identifier_helpers import classify_chat_button
+from boss_agent.core.task.domain.models import TaskStatus, TaskType
+
+
+def _scrape_handler(broker, llm_client=None) -> ScrapeJobsHandler:
+    return ScrapeJobsHandler(
+        screener=CandidateScreener(llm_client=llm_client or MagicMock()),
+        pages=build_feed_device_world,
+        job_store=broker.job_store,
+        feed_config_defaults_loader=load_feed_config_defaults,
+    )
+
+
+def _apply_handler(broker, llm_client=None) -> AutoApplyHandler:
+    return AutoApplyHandler(
+        screener=CandidateScreener(llm_client=llm_client or MagicMock()),
+        pages=build_feed_device_world,
+        job_store=broker.job_store,
+        candidate_memory=broker.candidate_memory,
+        feed_config_defaults_loader=load_feed_config_defaults,
+    )
 
 
 @pytest.mark.parametrize(
@@ -124,7 +146,7 @@ async def test_scrape_records_platform_historical_contact_and_backs_out(broker):
         config=config,
         broker=broker,
         context=context,
-        handlers=[ScrapeJobsHandler(llm_client=MagicMock())],
+        handlers=[_scrape_handler(broker)],
     )
 
     task = await broker.create_task(
@@ -133,10 +155,16 @@ async def test_scrape_records_platform_historical_contact_and_backs_out(broker):
     )
 
     with (
-        patch("boss_agent.feed_pipeline.StartupDialogPage") as mock_startup_cls,
-        patch("boss_agent.feed_pipeline.JobListPage") as mock_list_cls,
-        patch("boss_agent.feed_pipeline.SearchPage") as mock_search_cls,
-        patch("boss_agent.feed_pipeline.JobDetailPage") as mock_detail_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.StartupDialogPage"
+        ) as mock_startup_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobListPage") as mock_list_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.SearchPage"
+        ) as mock_search_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.JobDetailPage"
+        ) as mock_detail_cls,
     ):
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_list = mock_list_cls.return_value
@@ -186,7 +214,7 @@ async def test_scrape_marks_expired_posting_as_ignored_and_backs_out(broker):
         config=config,
         broker=broker,
         context=context,
-        handlers=[ScrapeJobsHandler(llm_client=MagicMock())],
+        handlers=[_scrape_handler(broker)],
     )
 
     task = await broker.create_task(
@@ -195,10 +223,16 @@ async def test_scrape_marks_expired_posting_as_ignored_and_backs_out(broker):
     )
 
     with (
-        patch("boss_agent.feed_pipeline.StartupDialogPage") as mock_startup_cls,
-        patch("boss_agent.feed_pipeline.JobListPage") as mock_list_cls,
-        patch("boss_agent.feed_pipeline.SearchPage") as mock_search_cls,
-        patch("boss_agent.feed_pipeline.JobDetailPage") as mock_detail_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.StartupDialogPage"
+        ) as mock_startup_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobListPage") as mock_list_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.SearchPage"
+        ) as mock_search_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.JobDetailPage"
+        ) as mock_detail_cls,
     ):
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_list = mock_list_cls.return_value
@@ -238,7 +272,7 @@ async def test_auto_apply_aborts_without_llm_waste_on_communicated_job(broker):
     context = WorkerContext(config=config, driver=mock_driver)
 
     mock_llm = MagicMock()
-    apply_handler = AutoApplyHandler(llm_client=mock_llm)
+    apply_handler = _apply_handler(broker, llm_client=mock_llm)
 
     worker = AutomationWorker(
         config=config,
@@ -270,10 +304,14 @@ async def test_auto_apply_aborts_without_llm_waste_on_communicated_job(broker):
     )
 
     with (
-        patch("boss_agent.feed_pipeline.StartupDialogPage") as mock_startup_cls,
-        patch("boss_agent.feed_pipeline.JobListPage"),
-        patch("boss_agent.feed_pipeline.SearchPage"),
-        patch("boss_agent.feed_pipeline.JobDetailPage") as mock_detail_cls,
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.StartupDialogPage"
+        ) as mock_startup_cls,
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.JobListPage"),
+        patch("boss_agent.adapters.outbound.device.pages.feed_bundle.SearchPage"),
+        patch(
+            "boss_agent.adapters.outbound.device.pages.feed_bundle.JobDetailPage"
+        ) as mock_detail_cls,
     ):
         mock_startup_cls.return_value.is_dialog_present.return_value = False
         mock_detail = mock_detail_cls.return_value

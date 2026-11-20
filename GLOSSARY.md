@@ -12,17 +12,53 @@ _Avoid_: Boss automation engine, base scripts, appium helper
 The Boss-specific application module implementing page objects, candidate profiles, matching rules, greeting templates, and application workflows on top of `droid_agent_core`.
 _Avoid_: Core app, main module
 
+**Core (`boss_agent.core`)**:
+The framework-free Domain + Application layer. It holds business rules, ports, and Use Cases, imports only the standard library, its own tree, and the framework's LLM decision abstraction, and never reaches into `adapters/`. Dependency direction points inward: adapters → core.
+_Avoid_: Domain layer package, business dump, shared helpers folder
+
+**Aggregate Triad (`domain` / `interfaces` / `use_cases`)**:
+The three subpackages every core business aggregate exposes: `domain` for entities and pure rules, `interfaces` for the ports the aggregate needs, and `use_cases` for the application services that orchestrate them. Aggregates are grouped by shared domain model (`task`, `job`, `candidate`, `search`, `chat`).
+_Avoid_: God module, service layer, repository package
+
+**Shared Kernel (`boss_agent.core.shared`)**:
+The cross-aggregate primitives — enums, keyword constants, identifier helpers, port-level exception vocabulary, and callable-seam type aliases — importable without pulling in any entity graph.
+_Avoid_: utils, common, helpers
+
+**FeedDeviceWorld**:
+The structural Protocol bundle the Mobile Job Feed Pipeline drives instead of constructing page objects: startup, list, search, detail, chat, and filter screens. Production composition is `adapters.outbound.device.pages.feed_bundle`; page objects satisfy it structurally, with no wrapper classes. The world is the engine's only public seam — the screens it holds are private and bound at construction, so nothing rebinds a page after the fact.
+_Avoid_: Page factory, device adapter, screen wrapper
+
+**FeedCardHandle**:
+The typed card the list screen hands across the device seam: a parsed `JobCardBrief` plus the opaque device handle it was read from and its viewport position. Core reads the brief and the position; the handle itself is never inspected, tapped, or coordinate-read outside the screen that produced it — the same typed-data boundary Chat Triage proved in ADR 0016.
+_Avoid_: Element wrapper, card element, Appium handle
+
+**FeedBoundary**:
+The feed's bottom-boundary banner as a value rather than a driver element: whether it is visible, and the viewport coordinate it sits at. A card at or below that coordinate is a recommendation, not a search result. The comparison is the list screen's job, so the coordinate vocabulary stays in the adapter.
+_Avoid_: Boundary element, feed tip, banner handle
+
+**BlacklistSink**:
+The one-method port through which Chat Triage persists a company blacklist entry. The production implementation writes through the Configuration Realm adapter; core never performs file IO for a triage run.
+_Avoid_: Blacklist writer, config saver, persistence helper
+
+**ResumeTextSource**:
+The port for extracting text from a resume file. The production adapter wraps PDF/DOCX parsing, so core resume Use Cases see text rather than a parsing library.
+_Avoid_: PDF parser, resume loader, file reader
+
+**Composition Root (`boss_agent/main.py`)**:
+The single module outside `adapters/` that knows and constructs every concrete adapter, and the builders CLI scripts call. Swapping a database, LLM host, or device layer is a change here and in adapters, never in business rules.
+_Avoid_: Main module, bootstrap, wiring file
+
 **Decomposed Entity Modules**:
 The focused, independently importable domain entity modules replacing the retired monolithic `models.py`:
-- `boss_agent.enums`: Pure enumerations and rank mappings (`JobRecordStatus`, `TargetAction`, etc.).
-- `boss_agent.keyword_constants`: Keyword lists, company blacklist regexes, and domain constants.
-- `boss_agent.identifier_helpers`: Pure string parsing, recruiter name normalization, and job fingerprint calculations with zero entity imports.
-- `boss_agent.job_entities`: Job data models (`JobCardBrief`, `JobRecord`, `JobPosting`).
-- `boss_agent.candidate_entities`: Candidate profile data models (`CandidateProfile`).
-- `boss_agent.search_entities`: Search and filter configuration models (`SearchConfig`, `FilterConfig`, `SavedSearch`).
-- `boss_agent.screening_policy`: Deterministic card and posting screening policies (`ScreeningPolicy`).
-- `boss_agent.screening_config`: Configuration Realm file persistence and loader for screening policies.
-- `boss_agent.entities`: Facade re-exporting the seven core domain entities.
+- `boss_agent.core.shared.enums`: Pure enumerations and rank mappings (`JobRecordStatus`, `TargetAction`, etc.).
+- `boss_agent.core.shared.keyword_constants`: Keyword lists, company blacklist regexes, and domain constants.
+- `boss_agent.core.shared.identifier_helpers`: Pure string parsing, recruiter name normalization, and job fingerprint calculations with zero entity imports.
+- `boss_agent.core.job.domain.job_entities`: Job data models (`JobCardBrief`, `JobRecord`, `JobPosting`).
+- `boss_agent.core.candidate.domain.candidate_profile`: Candidate profile data models (`CandidateProfile`).
+- `boss_agent.core.search.domain.models`: Search and filter configuration models (`SearchConfig`, `FilterConfig`, `SavedSearch`).
+- `boss_agent.core.job.domain.screening_policy`: Deterministic card and posting screening policies (`ScreeningPolicy`).
+- `boss_agent.adapters.outbound.config.screening_config`: Configuration Realm file persistence and loader for screening policies.
+- `boss_agent.entities`: Facade re-exporting the core domain entities.
 _Avoid_: `boss_agent.models`, monolithic models module, God model
 
 **Environment Provisioner**:
@@ -33,9 +69,9 @@ _Avoid_: Install script, setup helper, env checker
 The managed lifecycle of an Android Virtual Device (AVD) instance, its hardware profile, headless/GUI runtime states, and ADB port bindings.
 _Avoid_: Emulator runner, VM instance
 
-**Smoke Harness**:
-The verification adapter over the Mobile Job Feed Pipeline: it translates an operator's SearchConfig, FilterConfig and ScreeningPolicy into one feed run, gates that run on an authenticated session, and returns the JobPosting the run extracted. It owns no navigation of its own — activation and the auth challenge are the only two things it keeps, because the pipeline assumes a usable session and cannot answer either — so a verification run exercises the same engine the Automation Worker runs rather than a second implementation of a feed.
-_Avoid_: E2E test script, sanity check, launch test, second feed implementation
+**Feed Verification**:
+The composition around one verification feed run over the Mobile Job Feed Pipeline: it translates an operator's SearchConfig, FilterConfig and ScreeningPolicy into one feed run, gates that run on an authenticated session, wires the run's log to the operator's console, and returns the JobPosting the run extracted. It owns no navigation of its own — so a verification run exercises the same engine the Automation Worker runs rather than a second implementation of a feed.
+_Avoid_: Smoke Harness, E2E test script, sanity check, launch test, second feed implementation
 
 **Session Persistence**:
 The mechanism that detects user authentication status and preserves the logged-in app state across virtual device restarts to prevent repeated manual logins.
@@ -106,7 +142,7 @@ The wire format a client speaks to a model host — exactly one of `openai` (Cha
 _Avoid_: provider brand, vendor type, model house, service type
 
 **Model Factory**:
-The single seam (`boss_agent.llm_config.create_llm_client`) that turns a configured Protocol into a concrete `LLMDecisionClient`, so every caller — the Automation Worker, the Mobile Job Feed Pipeline, and the CLI evaluation scripts — holds the decision interface rather than a protocol-specific class. It is the one place that knows what a provider name means; clients know only their own wire format.
+The single seam (`boss_agent.adapters.outbound.llm.llm_config.create_llm_client`, exposed to CLI scripts via `boss_agent.main.build_llm_client`) that turns a configured Protocol into a concrete `LLMDecisionClient`, so every caller — the Automation Worker, the Mobile Job Feed Pipeline, and the CLI evaluation scripts — holds the decision interface rather than a protocol-specific class. It is the one place that knows what a provider name means; clients know only their own wire format.
 _Avoid_: client builder, LLM helper, provider switch
 
 **Anthropic Messages Client**:

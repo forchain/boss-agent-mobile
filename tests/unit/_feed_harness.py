@@ -4,11 +4,17 @@ tests/unit/_feed_harness.py
 Shared scripted device for tests that drive the Mobile Job Feed Pipeline.
 
 The pipeline is deep: pagination, screening, greeting dispatch and quota degradation all
-sit behind ``stream_jobs``. Testing it without a device means standing in four page
+sit behind ``stream_jobs``. Testing it without a device means standing in seven page
 objects, a screener and a Job Record Store, and a second suite that needs the same seam
 should not have to copy them — that is how a scripted feed drifts from the real one. So
 ``test_job_feed_pipeline.py`` and the greeting-provenance and JD-reuse suites all build
 their pipeline through ``_pipeline()`` here.
+
+The world is composed **whole** and injected at construction. The pipeline used to expose
+its seven page objects as public attributes so a test could rebind them afterwards
+(issue #481); that seam is gone — a page is either in the world the pipeline was built
+with, or it is not there at all. ``scripted_world()`` is the one place that assembles a
+complete set, so no suite can discover a missing screen the way the engine would.
 
 Everything is in-memory: no Appium session, no bound port, no live LLM endpoint. Pass a
 stub client into ``CandidateScreener`` — the screener fails open without one, and the only
@@ -17,15 +23,16 @@ symptom of forgetting is latency and a token bill — which is what ``stub_llm()
 
 from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
-from boss_agent.candidate_entities import CandidateProfile
-from boss_agent.enums import ChatButtonState, TargetAction
-from boss_agent.feed_pipeline import FeedStreamConfig, JobFeedPipeline
-from boss_agent.job_entities import JobCardBrief, JobPosting
-from boss_agent.job_store import JobRecordStore
-from boss_agent.pages.job_feed import LocatedJobCard
-from boss_agent.screening import CandidateScreener
+from boss_agent.adapters.memory.job_store import InMemoryJobRecordStore, JobRecordStore
+from boss_agent.adapters.outbound.device.pages.job_feed import LocatedJobCard, element_y_position
+from boss_agent.core.candidate.domain.candidate_profile import CandidateProfile
+from boss_agent.core.job.domain.job_entities import JobCardBrief, JobPosting
+from boss_agent.core.job.interfaces.device import FeedBoundary, FeedDeviceWorld
+from boss_agent.core.job.use_cases.feed_pipeline import FeedStreamConfig, JobFeedPipeline
+from boss_agent.core.job.use_cases.screening import CandidateScreener
+from boss_agent.core.shared.enums import ChatButtonState, TargetAction
 
 TODAY = datetime.now(UTC).isoformat()
 
@@ -90,31 +97,57 @@ def stub_llm(approved: bool = True, reason: str = "stub verdict") -> MagicMock:
 
 
 class ScriptedFeed:
-    """Viewport-by-viewport stand-in for a Boss search result feed."""
+    """Viewport-by-viewport stand-in for a Boss search result feed.
 
-    def __init__(self, viewports: list[list[LocatedJobCard]], boundary_after: int | None = None):
+    It speaks the list screen's typed vocabulary: a boundary is a ``FeedBoundary``
+    (present-or-not plus a coordinate), a card is a brief plus an opaque handle, and
+    opening a card is the screen's job — not the engine's.
+    """
+
+    def __init__(
+        self,
+        viewports: list[list[LocatedJobCard]],
+        boundary_after: int | None = None,
+        boundary_element: Any = None,
+    ):
         self._viewports = viewports
         self._boundary_after = boundary_after
+        # The banner's device handle, when a test wants one that has gone stale. The
+        # screen reads its position the way the real one does, so an evicted handle
+        # costs the position, not the run.
+        self._boundary_element = boundary_element
         self.scrolls = 0
         # How many times the pipeline reset to the home feed before browsing. Home
         # recovery is a step the pipeline takes on a keyword-less run, and a test that
         # cannot see it can only assert that the run happened, not where it started.
         self.home_visits = 0
+        # The cards the engine asked this screen to open, in order.
+        self.opened_cards: list[Any] = []
 
     @property
     def _index(self) -> int:
         return min(self.scrolls, len(self._viewports) - 1)
 
-    def get_feed_bottom_boundary(self) -> Any | None:
+    def get_feed_boundary(self) -> FeedBoundary:
+        """The bottom-boundary banner: present or not, and where it sits."""
         if self._boundary_after is not None and self.scrolls >= self._boundary_after:
-            boundary = MagicMock()
-            boundary.text = "暂无其他符合职位，为你推荐"
-            boundary.location = {"x": 0, "y": 1200}
-            return boundary
-        return None
+            if self._boundary_element is None:
+                return FeedBoundary(visible=True, y_position=1200)
+            return FeedBoundary(
+                visible=True,
+                y_position=element_y_position(self._boundary_element),
+            )
+        return FeedBoundary()
 
     def is_feed_bottom_reached(self) -> bool:
-        return self.get_feed_bottom_boundary() is not None
+        return self.get_feed_boundary().visible
+
+    def is_card_below_boundary(self, card: Any, boundary: FeedBoundary) -> bool:
+        """Whether ``card`` sits at or below the banner — a recommendation, not a result."""
+        if boundary.y_position is None:
+            return False
+        card_y = getattr(card, "y_position", None)
+        return card_y is not None and card_y >= boundary.y_position
 
     def extract_visible_job_cards(self, max_cards: int = 10) -> list[LocatedJobCard]:
         return list(self._viewports[self._index])
@@ -125,6 +158,11 @@ class ScriptedFeed:
     def select_first_job(self, timeout_sec: float = 10.0) -> bool:
         return True
 
+    def open_card(self, card: Any = None, *, timeout_sec: float = 2.0) -> bool:
+        """Open a card's detail page; the engine never touches the handle itself."""
+        self.opened_cards.append(card)
+        return True
+
     def navigate_to_home(self) -> bool:
         self.home_visits += 1
         return True
@@ -133,31 +171,41 @@ class ScriptedFeed:
         return True
 
 
-def script_pages(
-    pipeline: JobFeedPipeline,
+def _scripted_search() -> MagicMock:
+    """A search screen that is already on the search page and accepts any keyword."""
+    search = MagicMock()
+    search.is_search_page.return_value = True
+    search.search.return_value = True
+    return search
+
+
+def scripted_world(
     *,
     feed: ScriptedFeed | None = None,
-    detail: MagicMock | None = None,
+    detail: Any = None,
     search: Any = None,
-    chat: MagicMock | None = None,
-) -> JobFeedPipeline:
-    """Seat scripted page objects on a pipeline that is already built.
+    chat: Any = None,
+    startup: Any = None,
+    filter_page: Any = None,
+    industry_filter_page: Any = None,
+) -> FeedDeviceWorld:
+    """Compose a **complete** scripted device world.
 
-    A run composes its own engine — the worker through ``for_task``, the interactive
-    SmokeHarness in its constructor — so a test that wants a scripted device has nothing
-    left to inject at construction time. Rebinding afterwards is that seam, and it is the
-    same one ``_pipeline`` uses on the pipeline it builds, so a scripted feed cannot mean
-    one thing here and another there.
+    Every screen the engine may reach for is present, so a suite can never pass by
+    accident because a screen was missing: the world is built once, whole, and injected
+    at construction (issue #481).
     """
-    if feed is not None:
-        pipeline.list_page = feed
-    if detail is not None:
-        pipeline.detail_page = detail
-    if search is not None:
-        pipeline.search_page = search
-    if chat is not None:
-        pipeline.chat_page = chat
-    return pipeline
+    return FeedDeviceWorld(
+        startup_page=startup if startup is not None else MagicMock(),
+        list_page=feed if feed is not None else ScriptedFeed([]),
+        search_page=search if search is not None else _scripted_search(),
+        detail_page=detail if detail is not None else MagicMock(),
+        chat_page=chat if chat is not None else MagicMock(),
+        filter_page=filter_page if filter_page is not None else MagicMock(),
+        industry_filter_page=(
+            industry_filter_page if industry_filter_page is not None else MagicMock()
+        ),
+    )
 
 
 def _pipeline(
@@ -169,32 +217,28 @@ def _pipeline(
     log: Any = None,
     is_cancelled: Any = None,
     chat: MagicMock | None = None,
+    search: Any = None,
+    filter_page: Any = None,
+    industry_filter_page: Any = None,
+    world: FeedDeviceWorld | None = None,
 ) -> JobFeedPipeline:
-    """Build a pipeline whose page objects are scripted stand-ins."""
-    driver = MagicMock()
-    driver.get_window_size.return_value = {"width": 1080, "height": 2400}
-
-    with (
-        patch("boss_agent.feed_pipeline.StartupDialogPage"),
-        patch("boss_agent.feed_pipeline.JobListPage", return_value=feed or ScriptedFeed([])),
-        patch("boss_agent.feed_pipeline.SearchPage") as search_cls,
-        patch("boss_agent.feed_pipeline.JobDetailPage", return_value=detail or MagicMock()),
-        patch("boss_agent.feed_pipeline.ChatPage", return_value=chat or MagicMock()),
-    ):
-        search_cls.return_value.is_search_page.return_value = True
-        search_cls.return_value.search.return_value = True
-        pipeline = JobFeedPipeline(
-            driver=driver,
-            store=store,
-            screener=screener,
-            log=log,
-            is_cancelled=is_cancelled,
-        )
-    # Rebind the scripted page objects: the patches above only applied during construction.
-    script_pages(pipeline, feed=feed, detail=detail, chat=chat)
-    pipeline.search_page.is_search_page.return_value = True
-    pipeline.search_page.search.return_value = True
-    return pipeline
+    """Build a pipeline whose device world is composed from scripted stand-ins."""
+    return JobFeedPipeline(
+        world=world
+        if world is not None
+        else scripted_world(
+            feed=feed,
+            detail=detail,
+            chat=chat,
+            search=search,
+            filter_page=filter_page,
+            industry_filter_page=industry_filter_page,
+        ),
+        store=store if store is not None else InMemoryJobRecordStore(),
+        screener=screener,
+        log=log,
+        is_cancelled=is_cancelled,
+    )
 
 
 def _detail_page(

@@ -24,14 +24,18 @@ from _chat_triage_harness import (
     throwaway_config,
 )
 
-from boss_agent.broker.models import TaskType
-from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
-from boss_agent.rejection import ChatAcknowledgmentSettings
-from boss_agent.screening_policy import ScreeningPolicy
-from boss_agent.worker.config import WorkerConfig
-from boss_agent.worker.context import WorkerContext
-from boss_agent.worker.handlers import check_chat as check_chat_module
-from boss_agent.worker.handlers.check_chat import CheckChatHandler
+from boss_agent.adapters.inbound.worker.config import WorkerConfig
+from boss_agent.adapters.inbound.worker.context import WorkerContext
+from boss_agent.adapters.inbound.worker.handlers import check_chat as check_chat_module
+from boss_agent.adapters.inbound.worker.handlers.check_chat import CheckChatHandler
+from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
+from boss_agent.adapters.outbound.config.screening_config import (
+    ScreeningConfigBlacklistSink,
+    load_screening_policy,
+)
+from boss_agent.core.chat.domain.rejection import ChatAcknowledgmentSettings
+from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
+from boss_agent.core.task.domain.models import TaskType
 
 #: Every key the dashboard reads off a finished CHECK_CHAT task. Pinned as a literal
 #: set: a key added, dropped or renamed must fail this suite rather than reach the
@@ -75,6 +79,7 @@ def context() -> WorkerContext:
 def make_handler(harness: Harness, policy: ScreeningPolicy, settings=None) -> CheckChatHandler:
     return CheckChatHandler(
         classifier=FakeClassifier({REJECTION_TEXT: True, OTHER_REJECTION_TEXT: True}),
+        blacklist_sink=ScreeningConfigBlacklistSink(),
         settings=settings or ChatAcknowledgmentSettings(),
         policy=policy,
         pages=scripted_pages(harness),
@@ -90,7 +95,7 @@ def summary_line(task) -> str:
 @pytest.mark.asyncio
 async def test_a_full_pass_pins_every_output_key_and_value(context, config_path):
     """One run over a mixed screen: every counter and every key, frozen."""
-    policy = ScreeningPolicy.load_default(config_path=config_path)
+    policy = load_screening_policy(config_path=config_path)
     harness = Harness(
         [
             card(REJECTION_TEXT, sender="严胜", descriptor=DESCRIPTOR),
@@ -136,7 +141,7 @@ async def test_a_full_pass_pins_every_output_key_and_value(context, config_path)
 @pytest.mark.asyncio
 async def test_a_full_pass_pins_the_summary_line(context, config_path):
     """The line the dashboard renders verbatim, down to its wording and ordering."""
-    policy = ScreeningPolicy.load_default(config_path=config_path)
+    policy = load_screening_policy(config_path=config_path)
     harness = Harness(
         [
             card(REJECTION_TEXT, sender="严胜", descriptor=DESCRIPTOR),
@@ -169,7 +174,7 @@ async def test_a_full_pass_pins_the_summary_line(context, config_path):
 async def test_a_dry_run_reports_a_rehearsal_and_never_a_write(context, config_path):
     """演练 keeps every telemetry key, and says so in the summary."""
     before = config_path.read_text(encoding="utf-8")
-    policy = ScreeningPolicy.load_default(config_path=config_path)
+    policy = load_screening_policy(config_path=config_path)
     harness = Harness([card(REJECTION_TEXT, sender="严胜", descriptor=DESCRIPTOR)])
     broker = InMemoryTaskBroker()
     task = await broker.create_task(task_type=TaskType.CHECK_CHAT, payload={"dry_run": True})

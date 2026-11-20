@@ -197,38 +197,49 @@ export function loadMergedSettings(): SystemSettings {
 
 	const parsed = JSON.parse(rawJson.trim());
 
+	// Trust the Configuration Realm resolver (`scripts/resolve_config.py`) for all
+	// baseline defaults; keep only untrusted-boundary type/shape normalization here.
 	const settings: SystemSettings = {
-		device: parsed.device || 'emulator-5554',
-		avd_name: parsed.avd_name || 'boss_avd_arm64',
-		server_url: parsed.server_url || 'http://127.0.0.1:4723',
-		pocketbase_url: parsed.pocketbase_url || 'http://127.0.0.1:8090',
+		device: parsed.device,
+		avd_name: parsed.avd_name,
+		server_url: parsed.server_url,
+		pocketbase_url: parsed.pocketbase_url,
 		// Saved YAML may still carry a legacy vendor value (minimax/deepseek);
 		// normalize at this untrusted boundary so it lands on a real protocol (#418).
-		provider: parsed.provider ? normalizeLlmProvider(parsed.provider) : 'openai',
-		base_url: parsed.base_url || 'https://api.minimaxi.com/v1',
-		api_key: (parsed.api_key === 'your-api-key-here' || !parsed.api_key) ? '' : parsed.api_key,
-		model: parsed.model || 'MiniMax-M3',
-		temperature: typeof parsed.temperature === 'number' ? parsed.temperature : 0.2,
-		timeout_sec: typeof parsed.timeout_sec === 'number' ? parsed.timeout_sec : 120.0,
-		max_tokens: typeof parsed.max_tokens === 'number' ? parsed.max_tokens : 262144,
+		provider: normalizeLlmProvider(parsed.provider),
+		base_url: parsed.base_url,
+		api_key: parsed.api_key === 'your-api-key-here' || !parsed.api_key ? '' : parsed.api_key,
+		model: parsed.model,
+		temperature: Number(parsed.temperature),
+		timeout_sec: Number(parsed.timeout_sec),
+		max_tokens: Number(parsed.max_tokens),
 		langsmith_tracing: Boolean(parsed.langsmith_tracing),
-		langsmith_api_key: (parsed.langsmith_api_key === 'your-langsmith-api-key-here' || !parsed.langsmith_api_key) ? '' : parsed.langsmith_api_key,
-		langsmith_project: parsed.langsmith_project || 'boss-agent-mobile',
-		daily_greeting_limit: typeof parsed.daily_greeting_limit === 'number' ? parsed.daily_greeting_limit : 20,
-		preview_timeout_sec: typeof parsed.preview_timeout_sec === 'number' ? parsed.preview_timeout_sec : 3.0,
+		langsmith_api_key:
+			parsed.langsmith_api_key === 'your-langsmith-api-key-here' || !parsed.langsmith_api_key
+				? ''
+				: parsed.langsmith_api_key,
+		langsmith_project: parsed.langsmith_project,
+		daily_greeting_limit: Number(parsed.daily_greeting_limit),
+		preview_timeout_sec: Number(parsed.preview_timeout_sec),
 		enable_greeting: parsed.enable_greeting !== false,
 		communication_cooldown_days: resolveCooldownDays(parsed.communication_cooldown_days),
 		enable_screening: parsed.enable_screening !== false,
-		channel_preference: ['all', 'direct_only', 'headhunter_only'].includes(parsed.channel_preference)
+		channel_preference: ['all', 'direct_only', 'headhunter_only'].includes(
+			parsed.channel_preference
+		)
 			? parsed.channel_preference
 			: 'all',
 		max_commute_distance_km: normalizeCommuteLimit(parsed.max_commute_distance_km),
 		title_whitelist: Array.isArray(parsed.title_whitelist) ? parsed.title_whitelist : [],
-		title_blacklist: Array.isArray(parsed.title_blacklist) ? parsed.title_blacklist : ['销售', '电话销售', '电销', '管培生', '实习', '助理', '讲师', '课程顾问', '客服'],
+		title_blacklist: Array.isArray(parsed.title_blacklist) ? parsed.title_blacklist : [],
 		company_blacklist: Array.isArray(parsed.company_blacklist) ? parsed.company_blacklist : [],
-		jd_blacklist: Array.isArray(parsed.jd_blacklist) ? parsed.jd_blacklist : ['驻场', '外包', '电销', '无底薪', '纯提成'],
-		business_district_blacklist: Array.isArray(parsed.business_district_blacklist) ? parsed.business_district_blacklist : [],
-		business_district_inspect_list: Array.isArray(parsed.business_district_inspect_list) ? parsed.business_district_inspect_list : [],
+		jd_blacklist: Array.isArray(parsed.jd_blacklist) ? parsed.jd_blacklist : [],
+		business_district_blacklist: Array.isArray(parsed.business_district_blacklist)
+			? parsed.business_district_blacklist
+			: [],
+		business_district_inspect_list: Array.isArray(parsed.business_district_inspect_list)
+			? parsed.business_district_inspect_list
+			: [],
 		run_cleanup_on_startup: parsed.run_cleanup_on_startup !== false,
 		chat: normalizeChatAcknowledgment(parsed.chat)
 	};

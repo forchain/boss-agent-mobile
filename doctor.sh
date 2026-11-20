@@ -15,8 +15,10 @@ set -uo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${ROOT_DIR}"
 
-# Shared lifecycle primitives and the one config read. This script only *displays*
-# resolved values and probes readiness; its remediation flows are its own.
+# Shared lifecycle primitives and the one config read. Readiness probing is delegated to
+# each runner's `status` verb, so the configured ports, the LISTEN-only port checks, the
+# cwd-alive checks and the bounded ADB probes are the runners' rules, not copies of them.
+# What stays here is the cross-service narrative and the remediation guidance.
 # shellcheck source=runner_lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/runner_lib.sh"
 
@@ -65,16 +67,12 @@ echo -e "${BOLD}${CYAN}═══════════════════
 # ------------------------------------------------------------------------------
 echo -e "${BOLD}${BLUE}[1/5] PocketBase State Stream 数据库与状态流${NC}"
 POCKETBASE_URL="${POCKETBASE_URL:-$(runner_config_value pocketbase_url http://127.0.0.1:8090 pb_url)}"
-HEALTH_URL="${POCKETBASE_URL%/}/api/health"
+# The runner's status probes the port it is configured for; hand it the configured URL so a
+# non-default broker is what gets checked rather than the historical default.
+export PB_HTTP="${PB_HTTP:-${POCKETBASE_URL#*://}}"
 
-
-if curl -s -f "${HEALTH_URL}" >/dev/null 2>&1; then
-    PB_PID="$(cat .boss_agent/pocketbase.pid 2>/dev/null || lsof -ti :8090 2>/dev/null | head -n 1 || echo '')"
-    if [[ -n "${PB_PID}" ]]; then
-        log_pass "PocketBase 服务在线 (${POCKETBASE_URL}, PID: ${PB_PID}, 日志: .boss_agent/pocketbase.log)"
-    else
-        log_pass "PocketBase 服务在线 (${POCKETBASE_URL})"
-    fi
+if ./pocketbase.sh status >/dev/null 2>&1; then
+    log_pass "PocketBase 服务在线 (${POCKETBASE_URL}, 日志: .boss_agent/pocketbase.log)"
 
     # Check collections
     if curl -s -f "${POCKETBASE_URL%/}/api/collections/automation_tasks/records?perPage=1" >/dev/null 2>&1; then
@@ -115,14 +113,10 @@ else
     log_fail "Web 前端依赖未安装" "运行: npm --prefix web install"
 fi
 
-if curl -s -f "http://127.0.0.1:5173" >/dev/null 2>&1; then
-    WEB_PID="$(cat .boss_agent/web.pid 2>/dev/null || lsof -ti :5173 2>/dev/null | head -n 1 || echo '')"
-    if [[ -n "${WEB_PID}" ]] && ! runner_process_cwd_alive "${WEB_PID}"; then
-        WEB_CWD="$(runner_process_cwd "${WEB_PID}")"
-        log_fail "SvelteKit Web 服务运行于已删除的旧目录 (${WEB_CWD:-未知})，无法加载页面模块！" "运行: ./dashboard.sh restart"
-    else
-        log_pass "SvelteKit Web 服务正在运行 (http://127.0.0.1:5173${WEB_PID:+, PID: ${WEB_PID}}, 日志: .boss_agent/web.log)"
-    fi
+if WEB_STATUS="$(./dashboard.sh status 2>&1)"; then
+    log_pass "SvelteKit Web 服务正在运行 (http://127.0.0.1:${WEB_PORT:-5173}, 日志: .boss_agent/web.log)"
+elif [[ "${WEB_STATUS}" == *STALE* ]]; then
+    log_fail "SvelteKit Web 服务运行于已删除的旧目录，无法加载页面模块！" "运行: ./dashboard.sh restart"
 else
     log_warn "SvelteKit Web 服务尚未启动" "运行: ./dashboard.sh"
 fi
@@ -144,9 +138,8 @@ else
     log_fail "未找到 Python 3 或 uv" "请安装 uv: curl -LsSf https://astral.sh/uv/install.sh | sh"
 fi
 
-if pgrep -f "scripts/worker.py" >/dev/null 2>&1; then
-    WORKER_PID="$(pgrep -f "scripts/worker.py" | head -n 1)"
-    log_pass "Python Worker 守护进程正在运行 (PID: ${WORKER_PID}, 日志: .boss_agent/worker.log)"
+if ./worker.sh status >/dev/null 2>&1; then
+    log_pass "Python Worker 守护进程正在运行 (日志: .boss_agent/worker.log)"
 else
     log_warn "Python Worker 守护进程尚未启动" "运行: ./run.sh (监听并消费 PocketBase 自动化任务)"
 fi
@@ -158,65 +151,37 @@ echo ""
 # ------------------------------------------------------------------------------
 echo -e "${BOLD}${BLUE}[4/5] Appium 服务与专用 Android AVD 模拟器${NC}"
 
-TARGET_AVD="${ANDROID_AVD:-${AVD_NAME:-$(runner_config_value avd_name boss_avd_arm64)}}"
+# `emulator.sh status` is the one owner of the AVD/bridge verdicts: it resolves the
+# dedicated AVD, bounds every ADB query, and distinguishes ONLINE, BOOTING and absent.
+EMU_STATUS=""
+if EMU_STATUS="$(./emulator.sh status 2>&1)"; then
+    log_pass "专用 Android AVD 已开机并就绪 (日志: .boss_agent/emulator.log)"
 
-if command -v adb >/dev/null 2>&1; then
-    RUNNING_AVD_SERIAL=""
-    DEV_LIST="$(adb devices 2>/dev/null | grep -E "emulator-[0-9]+" | awk '{print $1}' || true)"
-    for dev in ${DEV_LIST}; do
-        AVD_FOUND="$(adb -s "${dev}" emu avd name 2>/dev/null | head -n 1 | tr -d '\r\n' || true)"
-        if [[ "${AVD_FOUND}" == "${TARGET_AVD}" ]]; then
-            RUNNING_AVD_SERIAL="${dev}"
-            break
-        fi
-    done
-
-    if [[ -n "${RUNNING_AVD_SERIAL}" ]]; then
-        BOOT_STATUS="$(adb -s "${RUNNING_AVD_SERIAL}" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r\n' || true)"
-        if [[ "${BOOT_STATUS}" == "1" ]]; then
-            log_pass "专用 Android AVD '${TARGET_AVD}' 已开机并就绪 (${RUNNING_AVD_SERIAL}, 日志: .boss_agent/emulator.log)"
-
-            # A booted AVD whose bridge has died is the outage that looks healthy from the
-            # console and only shows up as "cannot connect" for a remote client, so it is
-            # called out separately -- with the command that repairs it, because the obvious
-            # reflex (restart the emulator) throws away the running session for nothing.
-            #
-            # The port is not the whole story: a bridge can be listening while its transport
-            # has dropped, and that state must not be reported as healthy when
-            # `emulator.sh status` calls it DISCONNECTED.
-            BRIDGE_PORT="${REMOTE_ADB_PORT:-6555}"
-            BRIDGE_PID="$(runner_port_listener_pid "${BRIDGE_PORT}")"
-            LAN_SERIAL=""
-            if [[ -n "${HOST_LAN_IP:-}" && "${HOST_LAN_IP}" != "127.0.0.1" ]]; then
-                LAN_SERIAL="${HOST_LAN_IP}:${BRIDGE_PORT}"
-            fi
-            if [[ -z "${BRIDGE_PID}" ]]; then
-                log_warn "Remote ADB Bridge 未运行 (端口 ${BRIDGE_PORT})，远程客户端将无法连接" "运行: ./emulator.sh reconnect（无需重启模拟器即可恢复局域网 ADB 访问）"
-            elif [[ -n "${LAN_SERIAL}" ]] && ! adb devices 2>/dev/null | awk -v s="${LAN_SERIAL}" '$1 == s && $2 == "device" {found=1} END {exit !found}'; then
-                log_warn "Remote ADB Bridge 在运行，但局域网 ADB 连接已断开 (${LAN_SERIAL})" "运行: ./emulator.sh reconnect（无需重启模拟器即可恢复局域网 ADB 访问）"
-            else
-                log_pass "Remote ADB Bridge 正在运行 (PID: ${BRIDGE_PID}, 端口: ${BRIDGE_PORT})"
-            fi
-        else
-            log_warn "专用 Android AVD '${TARGET_AVD}' 正在启动中..." "请等待模拟器启动完毕: ./emulator.sh status"
-        fi
-    else
-        log_warn "专用 Android AVD '${TARGET_AVD}' 尚未启动" "运行: ./emulator.sh 或 ./run.sh emu (启动专用模拟器)"
+    # A booted AVD whose bridge has died is the outage that looks healthy from the console
+    # and only shows up as "cannot connect" for a remote client, so it is called out
+    # separately -- with the command that repairs it, because the obvious reflex (restart
+    # the emulator) throws away the running session for nothing. The runner already told
+    # us which of the two failure shapes it saw.
+    if [[ "${EMU_STATUS}" == *"Remote ADB Bridge is NOT RUNNING"* ]]; then
+        log_warn "Remote ADB Bridge 未运行，远程客户端将无法连接" "运行: ./emulator.sh reconnect（无需重启模拟器即可恢复局域网 ADB 访问）"
+    elif [[ "${EMU_STATUS}" == *"LAN ADB Connection is DISCONNECTED"* ]]; then
+        log_warn "Remote ADB Bridge 在运行，但局域网 ADB 连接已断开" "运行: ./emulator.sh reconnect（无需重启模拟器即可恢复局域网 ADB 访问）"
     fi
+elif [[ "${EMU_STATUS}" == *"BOOTING"* ]]; then
+    log_warn "专用 Android AVD 正在启动中..." "请等待模拟器启动完毕: ./emulator.sh status"
 else
-    log_warn "未在 PATH 中找到 'adb' 命令" "请安装 Android Platform Tools: brew install android-platform-tools"
+    log_warn "专用 Android AVD 尚未启动" "运行: ./emulator.sh 或 ./run.sh emu (启动专用模拟器)"
 fi
 
 APPIUM_URL="${APPIUM_URL:-$(runner_config_value server_url http://127.0.0.1:4723 appium_url)}"
+if [[ -z "${APPIUM_PORT:-}" ]]; then
+    APPIUM_PORT="${APPIUM_URL##*:}"
+    APPIUM_PORT="${APPIUM_PORT%%/*}"
+fi
+export APPIUM_PORT
 
-CHECK_URL="${APPIUM_URL%/}"
-CHECK_URL="${CHECK_URL/0.0.0.0/127.0.0.1}"
-APPIUM_PORT="${APPIUM_URL##*:}"
-APPIUM_PORT="${APPIUM_PORT%%/*}"
-
-if curl -s -f "${CHECK_URL}/status" >/dev/null 2>&1; then
-    APPIUM_PID="$(cat .boss_agent/appium.pid 2>/dev/null || lsof -ti ":${APPIUM_PORT}" 2>/dev/null | head -n 1 || echo '')"
-    log_pass "Appium 服务正在运行 (${APPIUM_URL}${APPIUM_PID:+, PID: ${APPIUM_PID}}, 日志: .boss_agent/appium.log)"
+if ./appium.sh status >/dev/null 2>&1; then
+    log_pass "Appium 服务正在运行 (${APPIUM_URL}, 日志: .boss_agent/appium.log)"
 else
     log_warn "Appium 服务尚未启动" "运行: ./appium.sh 或 ./run.sh appium (或 ./appium.sh start --daemon)"
 fi

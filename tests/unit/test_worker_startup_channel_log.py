@@ -14,12 +14,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from boss_agent.broker.pocketbase_adapter import InMemoryTaskBroker
-from boss_agent.feed_pipeline import FeedStreamResult
-from boss_agent.worker.config import WorkerConfig
-from boss_agent.worker.context import WorkerContext
-from boss_agent.worker.handlers.auto_apply import AutoApplyHandler
-from boss_agent.worker.handlers.scrape_jobs import ScrapeJobsHandler
+from boss_agent.adapters.inbound.worker.config import WorkerConfig
+from boss_agent.adapters.inbound.worker.context import WorkerContext
+from boss_agent.adapters.inbound.worker.handlers.auto_apply import AutoApplyHandler
+from boss_agent.adapters.inbound.worker.handlers.scrape_jobs import ScrapeJobsHandler
+from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
+from boss_agent.adapters.outbound.config.settings import load_feed_config_defaults
+from boss_agent.adapters.outbound.device.pages.feed_bundle import build_feed_device_world
+from boss_agent.core.job.use_cases.feed_pipeline import FeedStreamResult
+from boss_agent.core.job.use_cases.screening import CandidateScreener
 
 
 @pytest.fixture
@@ -49,17 +52,31 @@ async def _run(handler, broker, context, payload) -> str:
 
 
 def handler_module(handler):
-    import boss_agent.worker.handlers.auto_apply as auto_apply_module
-    import boss_agent.worker.handlers.scrape_jobs as scrape_jobs_module
+    import boss_agent.adapters.inbound.worker.handlers.auto_apply as auto_apply_module
+    import boss_agent.adapters.inbound.worker.handlers.scrape_jobs as scrape_jobs_module
 
     return auto_apply_module if isinstance(handler, AutoApplyHandler) else scrape_jobs_module
+
+
+def _make_handler(handler_type, broker):
+    extra = (
+        {"job_store": broker.job_store, "candidate_memory": broker.candidate_memory}
+        if handler_type is AutoApplyHandler
+        else {"job_store": broker.job_store}
+    )
+    return handler_type(
+        screener=CandidateScreener(llm_client=MagicMock()),
+        pages=build_feed_device_world,
+        feed_config_defaults_loader=load_feed_config_defaults,
+        **extra,
+    )
 
 
 @pytest.mark.parametrize("handler_type", [AutoApplyHandler, ScrapeJobsHandler])
 @pytest.mark.asyncio
 async def test_startup_log_announces_the_strategy_channel(handler_type, broker, context):
     startup = await _run(
-        handler_type(llm_client=MagicMock()),
+        _make_handler(handler_type, broker),
         broker,
         context,
         {
@@ -82,7 +99,7 @@ async def test_startup_log_announces_the_effective_inherited_channel(handler_typ
     gave no hint why, and the only way to tell was to read the config file afterwards.
     """
     startup = await _run(
-        handler_type(llm_client=MagicMock()),
+        _make_handler(handler_type, broker),
         broker,
         context,
         {
@@ -104,7 +121,7 @@ async def test_startup_log_keeps_its_existing_fields(handler_type, broker, conte
     are asserted here — enough to show the channel was appended rather than swapped in.
     """
     startup = await _run(
-        handler_type(llm_client=MagicMock()),
+        _make_handler(handler_type, broker),
         broker,
         context,
         {

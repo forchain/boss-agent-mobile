@@ -15,10 +15,10 @@ from pathlib import Path
 
 import pytest
 
-from boss_agent.candidate_entities import CandidateProfile
+from boss_agent.core.candidate.domain.candidate_profile import CandidateProfile
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-SOURCE_FILE = REPO_ROOT / "src/boss_agent/candidate_entities.py"
+SOURCE_FILE = REPO_ROOT / "src/boss_agent/core/candidate/domain/candidate_profile.py"
 
 # The 11 persisted keys are a DB contract (candidate_memory_store DDL); the order here
 # mirrors the dataclass field order so a dropped or renamed field fails loudly.
@@ -569,7 +569,7 @@ def test_format_for_prompt_on_a_default_profile_is_exactly_the_metadata_block():
 
 def test_structured_alias_is_an_identity_alias_not_a_subclass():
     """screening.py:835 dispatches on isinstance(profile, StructuredCandidateProfile)."""
-    from boss_agent.candidate_entities import StructuredCandidateProfile
+    from boss_agent.core.candidate.domain.candidate_profile import StructuredCandidateProfile
 
     assert StructuredCandidateProfile is CandidateProfile
     assert isinstance(CandidateProfile(name="张三"), StructuredCandidateProfile)
@@ -577,22 +577,24 @@ def test_structured_alias_is_an_identity_alias_not_a_subclass():
 
 def test_memory_reexports_the_same_class_object():
     """memory.py must hand out the identical class, or isinstance() silently fails."""
-    from boss_agent.candidate_entities import StructuredCandidateProfile as canonical
-    from boss_agent.memory import StructuredCandidateProfile as legacy
+    from boss_agent.adapters.outbound.resume.memory import StructuredCandidateProfile as legacy
+    from boss_agent.core.candidate.domain.candidate_profile import (
+        StructuredCandidateProfile as canonical,
+    )
 
     assert legacy is canonical is CandidateProfile
 
 
 def test_memory_reexports_candidate_profile_by_its_canonical_name():
     """The new name is importable from the legacy module too."""
-    from boss_agent.memory import CandidateProfile as canonical
+    from boss_agent.adapters.outbound.resume.memory import CandidateProfile as canonical
 
     assert canonical is CandidateProfile
 
 
 def test_memory_still_exports_its_legacy_surface():
     """12 test files, 3 scripts, and __init__.py import these four names from memory."""
-    from boss_agent import memory
+    from boss_agent.adapters.outbound.resume import memory
 
     for symbol in (
         "ProfileNormalizer",
@@ -605,8 +607,8 @@ def test_memory_still_exports_its_legacy_surface():
 
 def test_profile_normalizer_education_extraction_delegates_to_the_entity_module():
     """There must be exactly one implementation of the education heuristic."""
-    from boss_agent.candidate_entities import extract_education_from_text
-    from boss_agent.memory import ProfileNormalizer
+    from boss_agent.adapters.outbound.resume.memory import ProfileNormalizer
+    from boss_agent.core.candidate.domain.candidate_profile import extract_education_from_text
 
     corpus = "- 沙迦美国大学 | 硕士 | 计算机工程\n- 湘潭大学 | 本科 | 计算机科学与技术"
 
@@ -656,10 +658,11 @@ FORBIDDEN_IN_CLOSURE = {
     "httpx",
     "openai",
     "droid_agent_core",
-    "boss_agent.memory",
-    "boss_agent.llm_config",
-    "boss_agent.graph",
-    "boss_agent.candidate_memory_store",
+    "boss_agent.adapters.outbound.resume.memory",
+    "boss_agent.adapters.outbound.llm.llm_config",
+    "boss_agent.adapters.outbound.resume.graph",
+    "boss_agent.adapters.memory.candidate_memory_store",
+    "boss_agent.adapters.outbound.pocketbase.candidate_memory_store",
 }
 
 PACKAGE_ROOT = REPO_ROOT / "src" / "boss_agent"
@@ -729,12 +732,14 @@ def test_candidate_entities_reaches_no_other_first_party_module():
     A zero-length closure cannot be weakened later by someone adding a first-party
     import, because that first-party module would appear here.
     """
-    assert _first_party_import_closure("boss_agent.candidate_entities") == {
-        "boss_agent.candidate_entities"
+    assert _first_party_import_closure("boss_agent.core.candidate.domain.candidate_profile") == {
+        "boss_agent.core.candidate.domain.candidate_profile"
     }
 
 
-@pytest.mark.parametrize("entry", ["boss_agent.candidate_entities", "boss_agent.entities"])
+@pytest.mark.parametrize(
+    "entry", ["boss_agent.core.candidate.domain.candidate_profile", "boss_agent.entities"]
+)
 def test_entity_import_closure_excludes_llm_and_network_modules(entry):
     """Neither the entity nor the facade can reach an LLM client, tracer, or network lib."""
     closure = _first_party_import_closure(entry)
@@ -761,7 +766,7 @@ def test_candidate_entities_imports_only_stdlib_at_the_ast_level():
             imported_modules.add(node.module)
 
     assert imported_modules <= {"__future__", "re", "unicodedata", "dataclasses", "typing"}, (
-        f"candidate_entities.py must import stdlib only, found: {imported_modules}"
+        f"candidate_profile.py must import stdlib only, found: {imported_modules}"
     )
 
 
@@ -769,9 +774,9 @@ def test_candidate_entities_never_references_the_memory_module():
     """A single reference would reintroduce the candidate_entities -> memory cycle."""
     source = SOURCE_FILE.read_text(encoding="utf-8")
 
-    assert "boss_agent.memory" not in source
+    assert "boss_agent.adapters.outbound.resume.memory" not in source
     assert "from .memory" not in source
-    assert "from boss_agent import memory" not in source
+    assert "from boss_agent.adapters.outbound.resume import memory" not in source
 
 
 def test_candidate_entities_does_not_import_json_or_pathlib():

@@ -8,7 +8,7 @@ nothing but the standard library. ``tests/unit/test_candidate_entities.py`` alre
 proves that by reading the module's own AST and walking its transitive first-party
 imports. That proof has a hole: it never executes the package ``__init__``. And
 importing *any* submodule of a package executes that ``__init__`` first, so
-``import boss_agent.candidate_entities`` was enough to pull in ``memory`` ->
+``import boss_agent.core.candidate.domain.candidate_profile`` was enough to pull in ``memory`` ->
 ``langsmith`` / ``rich`` / ``droid_agent_core.llm`` and roughly 1300 modules with
 it. The entity was pure; the act of importing it was not.
 
@@ -61,7 +61,7 @@ FORBIDDEN_ROOTS = (
 
 #: Both spellings of the entity. The facade re-exports it, and the facade is reached
 #: through the same package ``__init__``, so both must be covered.
-ENTITY_MODULES = ("boss_agent.candidate_entities", "boss_agent.entities")
+ENTITY_MODULES = ("boss_agent.core.candidate.domain.candidate_profile", "boss_agent.entities")
 
 _MISSING = object()
 
@@ -192,17 +192,29 @@ def test_the_spy_would_actually_catch_a_forbidden_import() -> None:
     see it, the assertion proves nothing.
     """
     spy = _ImportSpy(FORBIDDEN_ROOTS)
-    with _fresh_package_import(spy, "boss_agent.memory") as (_, failure, _):
-        assert failure is None, f"importing boss_agent.memory failed: {failure}"
+    with _fresh_package_import(spy, "boss_agent.adapters.outbound.resume.memory") as (
+        _,
+        failure,
+        _,
+    ):
+        assert failure is None, (
+            f"importing boss_agent.adapters.outbound.resume.memory failed: {failure}"
+        )
 
-    assert spy.attempts, "the spy observed no forbidden import while importing boss_agent.memory"
+    assert spy.attempts, (
+        "the spy observed no forbidden import while importing boss_agent.adapters.outbound.resume.memory"
+    )
 
 
 def test_the_isolation_harness_restores_sys_modules() -> None:
     """The harness is itself code under test: it must leave no residue behind."""
     before = dict(sys.modules)
     spy = _ImportSpy(FORBIDDEN_ROOTS)
-    with _fresh_package_import(spy, "boss_agent.candidate_entities") as (_, _, _):
+    with _fresh_package_import(spy, "boss_agent.core.candidate.domain.candidate_profile") as (
+        _,
+        _,
+        _,
+    ):
         pass
 
     assert dict(sys.modules).keys() == before.keys()
@@ -247,12 +259,12 @@ def test_the_compatibility_alias_stays_on_the_light_module() -> None:
         assert failure is None, f"importing boss_agent failed: {failure}"
         assert boss_agent is not None
 
-        from boss_agent.candidate_entities import CandidateProfile as leaf
+        from boss_agent.core.candidate.domain.candidate_profile import CandidateProfile as leaf
 
         # Identity, not merely equivalence: ``screening.py`` dispatches on ``isinstance``.
         assert boss_agent.StructuredCandidateProfile is leaf
-        assert "boss_agent.memory" not in sys.modules, (
-            "resolving the compatibility alias imported boss_agent.memory"
+        assert "boss_agent.adapters.outbound.resume.memory" not in sys.modules, (
+            "resolving the compatibility alias imported boss_agent.adapters.outbound.resume.memory"
         )
         assert spy.attempts == [], (
             f"resolving the alias imported {len(spy.attempts)} modules under {spy.touched_roots}"
@@ -274,7 +286,7 @@ def test_a_symbol_whose_module_cannot_import_raises_attribute_error() -> None:
 
     class _BlockMatching(MetaPathFinder):
         def find_spec(self, fullname, path=None, target=None) -> None:
-            if fullname == "boss_agent.matching":
+            if fullname == "boss_agent.core.job.use_cases.matching":
                 raise ModuleNotFoundError(f"No module named {fullname!r}", name=fullname)
             return None
 

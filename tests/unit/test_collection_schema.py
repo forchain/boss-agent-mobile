@@ -18,7 +18,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from boss_agent.broker.collection_schema import (
+from boss_agent.adapters.outbound.pocketbase.collection_schema import (
     AUTOMATION_TASKS,
     COLLECTIONS,
     JOB_RECORDS,
@@ -36,9 +36,12 @@ from boss_agent.broker.collection_schema import (
     validate_identifier,
     wire_payload,
 )
-from boss_agent.broker.provisioner import provision_remote_pocketbase, provision_sqlite_database
-from boss_agent.saved_search_store import record_to_saved_search
-from boss_agent.search_entities import SavedSearch
+from boss_agent.adapters.outbound.pocketbase.provisioner import (
+    provision_remote_pocketbase,
+    provision_sqlite_database,
+)
+from boss_agent.adapters.outbound.pocketbase.saved_search_store import record_to_saved_search
+from boss_agent.core.search.domain.models import SavedSearch
 
 _COLLECTIONS_DDL = """
     CREATE TABLE _collections (
@@ -328,12 +331,20 @@ def test_the_job_record_write_payload_is_the_schema() -> None:
 
 def test_the_store_payload_rejects_keys_the_schema_does_not_declare() -> None:
     """An undeclared key must not be smuggled onto the wire."""
-    from boss_agent.job_store import _record_fields
+    from boss_agent.adapters.outbound.pocketbase.job_store import _record_fields
 
     fields = _record_fields({"title": "工程师", "smuggled": "nope"}, "fp", "now")
     assert "smuggled" not in fields
     assert fields["fingerprint"] == "fp"
     assert set(fields) == set(JOB_RECORDS.field_names) - {"id"}
+
+
+def test_shared_job_record_wire_defaults_match_collection_schema() -> None:
+    """``adapters/shared/records.py`` stays in lockstep with ``JOB_RECORDS`` without importing it."""
+    from boss_agent.adapters.outbound.pocketbase.collection_schema import wire_defaults
+    from boss_agent.adapters.shared.records import JOB_RECORD_WIRE_DEFAULTS
+
+    assert wire_defaults(JOB_RECORDS) == JOB_RECORD_WIRE_DEFAULTS
 
 
 def test_reading_an_older_record_degrades_to_the_declared_default() -> None:
