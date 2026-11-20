@@ -11,7 +11,7 @@ device and hid the real cost from the caller.
 
 import pytest
 
-from droid_agent_core import locators
+from boss_agent.core.automation.use_cases import wait as locators
 
 
 @pytest.fixture
@@ -19,7 +19,7 @@ def fake_clock(monkeypatch):
     """Drive wait_until's clock and record every sleep it requests."""
     clock = {"now": 1000.0}
     sleeps: list[float] = []
-    monkeypatch.setattr(locators.time, "time", lambda: clock["now"])
+    monkeypatch.setattr(locators.time, "monotonic", lambda: clock["now"])
     monkeypatch.setattr(locators.time, "sleep", lambda seconds: sleeps.append(seconds))
     return clock, sleeps
 

@@ -24,14 +24,12 @@ from typing import Any
 
 from rich.console import Console
 
+from boss_agent.adapters.outbound.config.locator_registry import YamlLocatorRegistry
+from boss_agent.core.automation.domain.locators import UISelector
+from boss_agent.core.automation.interfaces.locator_store import LocatorStorePort
+from boss_agent.core.automation.use_cases.gestures import HumanizedGestureExecutor
+from boss_agent.core.automation.use_cases.wait import wait_until
 from boss_agent.core.shared.keyword_constants import PLATFORM_BADGE_MARKERS
-from droid_agent_core.gestures import HumanizedGestureExecutor
-from droid_agent_core.locators import (
-    LocatorRegistry,
-    UISelector,
-    get_global_locator_registry,
-    wait_until,
-)
 
 logger = logging.getLogger("boss_agent.pages")
 ui_logger = logging.getLogger("droid_agent_core.ui")
@@ -76,10 +74,10 @@ class BaseBossPage:
 
     BOSS_PACKAGE_NAME: str = "com.hpbr.bosszhipin"
 
-    def __init__(self, driver: Any, locator_registry: LocatorRegistry | None = None):
+    def __init__(self, driver: Any, locator_registry: LocatorStorePort | None = None):
         self.driver = driver
         self.gestures = HumanizedGestureExecutor(driver)
-        self.locators = locator_registry or get_global_locator_registry()
+        self.locators = locator_registry or YamlLocatorRegistry()
 
     def activate_app(self, package_name: str = BOSS_PACKAGE_NAME) -> bool:
         """Ensure the Boss application is active and in foreground."""

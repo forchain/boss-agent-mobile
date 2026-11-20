@@ -70,8 +70,7 @@ JD 输入 → AI 契合度评分 → 自动生成招呼语草稿
 
 ## 🏗️ 架构与项目结构 (Project Structure)
 
-- `src/droid_agent_core/`: 通用、业务解耦的 Android 移动自动化框架，包含贝塞尔手势合成、统一定位器管理、弹窗拦截器、UI 遥测与 LLM 决策接口。
-- `src/boss_agent/`: Boss 直聘业务领域实现（Page Object 模型、双锚点检索工作流、`JobFeedPipeline` 移动端 Feed 流水线、`CandidateScreener` 深度筛选器、`JobRecordStore` 职位记录仓库、解耦领域实体模块（`enums`/`job_entities`/`candidate_entities`/`search_entities`/`screening_policy` 等）、`CHECK_CHAT` 未读角标有界分页与双级预检、LangGraph 筛选流水线、PocketBase 状态流适配器与守护进程 Worker）。
+- `src/boss_agent/`: Boss 直聘业务领域与设备自动化实现（`core/automation/` 纯领域几何与选择器规则、`adapters/outbound/device/appium/` Appium/ADB 适配、`adapters/outbound/config/locator_registry.py` 定位配置、`adapters/outbound/llm/` LLM 协议与 LangSmith 观测；以及 Page Object 模型、双锚点检索工作流、`JobFeedPipeline` 移动端 Feed 流水线、`CandidateScreener` 深度筛选器、`JobRecordStore` 职位记录仓库、解耦领域实体模块（`enums`/`job_entities`/`candidate_entities`/`search_entities`/`screening_policy` 等）、`CHECK_CHAT` 未读角标有界分页与双级预检、LangGraph 筛选流水线、PocketBase 状态流适配器与守护进程 Worker）。
 - `web/`: 现代化 SvelteKit Web 管理控制台（职位流看板、实时任务管理、候选人结构化简历编辑、SavedSearch 策略库与系统配置面板）。
 - `doctor.sh`: 系统全栈健康检查与自动诊断修复工具（[System Doctor](GLOSSARY.md)）。
 - `pocketbase.sh`: PocketBase 状态流持久化与实时 SSE Broker 服务管理脚本。

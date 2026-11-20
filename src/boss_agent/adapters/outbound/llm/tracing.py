@@ -1,27 +1,119 @@
 """
 boss_agent.adapters.outbound.llm.tracing
 ========================================
-LangSmith spans for the core job use cases, applied at the adapter boundary.
+LangSmith spans for LLM clients and the core job use cases, applied at the adapter
+boundary.
 
-The span names and run types are telemetry contracts: dashboards and past traces key on
-them, so they are reproduced here verbatim even though the decorated methods themselves
-now live in framework-free core. Compose these classes instead of the core ones wherever
-a run should be traced.
+Span names and run types are telemetry contracts: dashboards and past traces key on
+them, so they are reproduced here verbatim.
 """
 
 from __future__ import annotations
 
+from typing import Any
+
 from langsmith import traceable
+from langsmith.run_helpers import get_current_run_tree
 
 from boss_agent.core.job.use_cases.matching import JobMatchGreetingService
 from boss_agent.core.job.use_cases.screening import CandidateScreener
-from droid_agent_core.llm import LLMDecisionClient
+from boss_agent.core.shared.llm import LLMDecisionClient
 
 __all__ = [
     "TracedCandidateScreener",
     "TracedJobMatchGreetingService",
+    "TracedLLMDecisionClient",
     "build_traced_screener",
 ]
+
+
+class TracedLLMDecisionClient(LLMDecisionClient):
+    """Wrap an LLM client so its calls emit the protocol's named spans.
+
+    The span prefix is the wrapped client's class name, preserving the historical
+    ``OpenAIChatClient.chat_completion`` / ``AnthropicChatClient.chat_completion``
+    names, and the model/base_url/usage metadata is copied onto the span.
+    """
+
+    def __init__(self, inner: LLMDecisionClient, *, span_prefix: str | None = None) -> None:
+        self.inner = inner
+        self.config = getattr(inner, "config", None)
+        prefix = span_prefix or type(inner).__name__
+        self._traced_chat = traceable(name=f"{prefix}.chat_completion", run_type="llm")(
+            self._chat_completion
+        )
+        self._traced_chat_json = traceable(name=f"{prefix}.chat_completion_json", run_type="chain")(
+            self._chat_completion_json
+        )
+
+    def _record_metadata(self) -> None:
+        run_tree = get_current_run_tree()
+        if run_tree is None:
+            return
+        if self.config is not None:
+            run_tree.metadata["model"] = self.config.model
+            run_tree.metadata["base_url"] = self.config.base_url
+        usage = getattr(self.inner, "last_usage", None)
+        if isinstance(usage, dict):
+            run_tree.metadata["usage"] = usage
+
+    def _chat_completion(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        response_format: dict[str, Any] | None = None,
+        extra_payload: dict[str, Any] | None = None,
+    ) -> str:
+        result = self.inner.chat_completion(
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            response_format=response_format,
+            extra_payload=extra_payload,
+        )
+        self._record_metadata()
+        return result
+
+    def _chat_completion_json(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        response_format: dict[str, Any] | None = None,
+        extra_payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        result = self.inner.chat_completion_json(
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            response_format=response_format,
+            extra_payload=extra_payload,
+        )
+        self._record_metadata()
+        return result
+
+    def chat_completion(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        response_format: dict[str, Any] | None = None,
+        extra_payload: dict[str, Any] | None = None,
+    ) -> str:
+        return self._traced_chat(messages, temperature, max_tokens, response_format, extra_payload)
+
+    def chat_completion_json(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        response_format: dict[str, Any] | None = None,
+        extra_payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return self._traced_chat_json(
+            messages, temperature, max_tokens, response_format, extra_payload
+        )
 
 
 class TracedJobMatchGreetingService(JobMatchGreetingService):

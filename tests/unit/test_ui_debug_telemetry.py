@@ -17,7 +17,8 @@ from unittest.mock import patch
 import pytest
 
 from boss_agent.adapters.outbound.device.pages.job_feed import JobListPage, SearchPage
-from droid_agent_core.gestures import HumanizedGestureExecutor, Point
+from boss_agent.core.automation.domain.geometry import Point
+from boss_agent.core.automation.use_cases.gestures import HumanizedGestureExecutor
 
 UI_LOGGER = "droid_agent_core.ui"
 

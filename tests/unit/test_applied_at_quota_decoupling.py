@@ -20,13 +20,13 @@ from boss_agent.adapters.inbound.worker.context import WorkerContext
 from boss_agent.adapters.inbound.worker.daemon import AutomationWorker
 from boss_agent.adapters.inbound.worker.handlers.auto_apply import AutoApplyHandler
 from boss_agent.adapters.memory.task_broker import InMemoryTaskBroker
+from boss_agent.adapters.outbound.config.locator_registry import YamlLocatorRegistry
 from boss_agent.adapters.outbound.config.settings import load_feed_config_defaults
 from boss_agent.adapters.outbound.device.pages.feed_bundle import build_feed_device_world
 from boss_agent.adapters.outbound.pocketbase.collection_schema import JOB_RECORDS, pocketbase_fields
 from boss_agent.adapters.outbound.pocketbase.provisioner import provision_sqlite_database
 from boss_agent.core.job.use_cases.screening import CandidateScreener
 from boss_agent.core.task.domain.models import TaskStatus, TaskType
-from droid_agent_core.locators import get_global_locator_registry
 
 
 def test_job_records_schema_declares_applied_at():
@@ -336,7 +336,7 @@ async def test_auto_apply_draft_only_mode_leaves_applied_at_empty(broker, mock_d
 
 def _hide_locator_keys(mock_driver: MagicMock, *keys: str) -> None:
     """Make the given locator keys unresolvable, leaving every other lookup intact."""
-    registry = get_global_locator_registry()
+    registry = YamlLocatorRegistry()
     hidden = {
         (selector.by.value, selector.value)
         for key in keys

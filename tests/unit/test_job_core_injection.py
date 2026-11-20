@@ -42,7 +42,7 @@ FORBIDDEN_CORE_ROOTS = (
     "boss_agent.adapters.inbound.worker",
     "selenium",
     "appium",
-    "droid_agent_core.driver",
+    "boss_agent.adapters.outbound.device.appium",
 )
 
 

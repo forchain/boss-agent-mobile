@@ -20,12 +20,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from boss_agent.adapters.outbound.config import config_realm
-from droid_agent_core.llm import (
-    AnthropicChatClient,
-    LLMConfig,
-    LLMDecisionClient,
-    OpenAIChatClient,
-)
+from boss_agent.core.shared.llm import LLMDecisionClient
+
+from .anthropic_client import AnthropicChatClient
+from .config import LLMConfig, configure_langsmith
+from .openai_client import OpenAIChatClient
+from .tracing import TracedLLMDecisionClient
 
 #: Wire protocol -> client. The keys are *protocols*, not vendors: a vendor is reached by
 #: naming its protocol, and anything absent speaks the default one. That is what lets a
@@ -89,7 +89,9 @@ def create_llm_client(
     protocol is currently configured.
     """
     cfg = config if config is not None else load_llm_config(config_path=config_path)
-    return client_class_for_provider(cfg.provider)(cfg)
+    # Tracing is wired here, at the adapter factory, never inside the client itself.
+    configure_langsmith(cfg)
+    return TracedLLMDecisionClient(client_class_for_provider(cfg.provider)(cfg))
 
 
 __all__ = [

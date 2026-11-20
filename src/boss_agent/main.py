@@ -17,8 +17,9 @@ from __future__ import annotations
 import json
 import logging
 import sys
-from collections.abc import Coroutine
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, replace
+from functools import partial
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -42,6 +43,7 @@ from boss_agent.adapters.outbound.config.config_realm import (
     is_mask_placeholder,
 )
 from boss_agent.adapters.outbound.config.greeting_prompt import load_greeting_prompt
+from boss_agent.adapters.outbound.config.locator_registry import YamlLocatorRegistry
 from boss_agent.adapters.outbound.config.screening_config import (
     ScreeningConfigBlacklistSink,
     load_screening_policy,
@@ -54,9 +56,12 @@ from boss_agent.adapters.outbound.config.settings import (
     resolve_pocketbase_url,
     resolve_server_url,
 )
+from boss_agent.adapters.outbound.device.appium import AppiumSession, DriverConfig
+from boss_agent.adapters.outbound.device.appium.interceptors import AndroidSystemDialogInterceptor
 from boss_agent.adapters.outbound.device.pages.chat_bundle import build_triage_world
 from boss_agent.adapters.outbound.device.pages.feed_bundle import build_feed_device_world
 from boss_agent.adapters.outbound.device.takeover import TakeoverHandler
+from boss_agent.adapters.outbound.llm.config import LLMConfig
 from boss_agent.adapters.outbound.llm.llm_config import create_llm_client, load_llm_config
 from boss_agent.adapters.outbound.llm.tracing import (
     TracedCandidateScreener,
@@ -75,6 +80,8 @@ from boss_agent.adapters.outbound.pocketbase.saved_search_store import (
 from boss_agent.adapters.outbound.resume.graph import run_resume_lifecycle_graph
 from boss_agent.adapters.outbound.resume.memory import ResumeMemoryManager, ResumeTextExtractor
 from boss_agent.adapters.shared.prompts import load_prompt_or_default
+from boss_agent.core.automation.interfaces.locator_store import LocatorStorePort
+from boss_agent.core.automation.use_cases.interceptors import InterceptorRegistry
 from boss_agent.core.candidate.domain.candidate_profile import (
     CandidateProfile,
     stored_profile_is_substantive,
@@ -87,11 +94,10 @@ from boss_agent.core.job.interfaces.store import JobRecordStore
 from boss_agent.core.job.use_cases.matching import JobMatchGreetingService
 from boss_agent.core.job.use_cases.screening import CandidateScreener
 from boss_agent.core.search.interfaces.store import SavedSearchStore
+from boss_agent.core.shared.llm import LLMDecisionClient
 from boss_agent.core.task.interfaces.broker import BaseTaskBroker
 from boss_agent.core.task.use_cases.startup_cleanup import StartupCleanupGate
 from boss_agent.core.task.use_cases.sweeper import TaskLeaseSweeper
-from droid_agent_core.driver import AppiumSession, DriverConfig
-from droid_agent_core.llm import LLMConfig, LLMDecisionClient
 
 _T = TypeVar("_T")
 
@@ -266,8 +272,12 @@ def build_worker(
     pocketbase_url: str | None = None,
     poll_interval_sec: float = 2.0,
     enable_scheduler: bool | None = None,
+    locator_store: LocatorStorePort | None = None,
 ) -> AutomationWorker:
     """Compose one worker process: broker, session factory, handlers, and startup gate."""
+    store = locator_store or build_locator_store()
+    feed_pages: Callable[[Any], Any] = partial(build_feed_device_world, locator_store=store)
+    triage_pages: Callable[[Any], Any] = partial(build_triage_world, locator_store=store)
     resolved_pb_url = resolve_pocketbase_url(explicit_url=pocketbase_url)
     resolved_appium_url = resolve_server_url(explicit_url=appium_url)
 
@@ -301,16 +311,16 @@ def build_worker(
         broker=broker,
         context=context,
         handlers=[
-            CheckLoginHandler(),
+            CheckLoginHandler(locator_store=store),
             ScrapeJobsHandler(
                 screener=screener,
-                pages=build_feed_device_world,
+                pages=feed_pages,
                 job_store=broker.job_store,
                 feed_config_defaults_loader=load_feed_config_defaults,
             ),
             AutoApplyHandler(
                 screener=screener,
-                pages=build_feed_device_world,
+                pages=feed_pages,
                 job_store=broker.job_store,
                 candidate_memory=broker.candidate_memory,
                 feed_config_defaults_loader=load_feed_config_defaults,
@@ -319,7 +329,7 @@ def build_worker(
                 classifier=RejectionClassifier(llm_client=llm_client),
                 blacklist_sink=ScreeningConfigBlacklistSink(),
                 settings=chat_acknowledgment,
-                pages=build_triage_world,
+                pages=triage_pages,
                 policy_loader=load_screening_policy,
             ),
         ],
@@ -378,6 +388,19 @@ def build_supervised_services(
 # --------------------------------------------------------------------- device/session
 
 
+def build_locator_store(
+    base_config_path: str | None = None,
+    local_config_path: str | None = None,
+) -> LocatorStorePort:
+    """The one locator configuration every page and interceptor in a run reads."""
+    return YamlLocatorRegistry(base_config_path, local_config_path)
+
+
+def build_interceptor_registry(locator_store: LocatorStorePort) -> InterceptorRegistry:
+    """The ordered screen-interceptor chain for this application."""
+    return InterceptorRegistry([AndroidSystemDialogInterceptor(locator_store)])
+
+
 def build_device_session(*, device_udid: str, server_url: str) -> AppiumSession:
     """A not-yet-started Appium session configured for the Boss 直聘 app."""
     return AppiumSession(
@@ -402,8 +425,17 @@ def build_device_session(*, device_udid: str, server_url: str) -> AppiumSession:
     )
 
 
-def build_takeover_handler(driver: Any, *, auto_confirm_for_test: bool = False) -> TakeoverHandler:
-    return TakeoverHandler(driver, auto_confirm_for_test=auto_confirm_for_test)
+def build_takeover_handler(
+    driver: Any,
+    *,
+    auto_confirm_for_test: bool = False,
+    locator_store: LocatorStorePort | None = None,
+) -> TakeoverHandler:
+    return TakeoverHandler(
+        driver,
+        auto_confirm_for_test=auto_confirm_for_test,
+        locator_store=locator_store or build_locator_store(),
+    )
 
 
 def build_resume_memory_manager(
@@ -476,6 +508,7 @@ def build_verification_pipeline(
     screener: CandidateScreener | None = None,
     world: FeedDeviceWorld | None = None,
     store: JobRecordStore | None = None,
+    locator_store: LocatorStorePort | None = None,
     **kwargs: Any,
 ) -> Any:
     """One verification feed run, composing the traced screener and prompt at this edge."""
@@ -488,7 +521,8 @@ def build_verification_pipeline(
     return _build_verification_pipeline(
         driver,
         screener=resolved_screener,
-        world=world or build_feed_device_world(driver),
+        world=world
+        or build_feed_device_world(driver, locator_store=locator_store or build_locator_store()),
         store=store or InMemoryJobRecordStore(),
         **kwargs,
     )
@@ -543,7 +577,9 @@ __all__ = [
     "ResumePipeline",
     "build_default_screening_policy",
     "build_device_session",
+    "build_interceptor_registry",
     "build_llm_client",
+    "build_locator_store",
     "build_matching_service",
     "build_resume_memory_manager",
     "build_resume_pipeline",

@@ -22,9 +22,9 @@ console = Console()
 class TakeoverHandler:
     """Detects security challenges (captchas, SMS, login expired) and facilitates manual takeover."""
 
-    def __init__(self, driver: Any, auto_confirm_for_test: bool = False):
+    def __init__(self, driver: Any, auto_confirm_for_test: bool = False, locator_store: Any = None):
         self.driver = driver
-        self.login_page = LoginPage(driver)
+        self.login_page = LoginPage(driver, locator_registry=locator_store)
         self.auto_confirm_for_test = auto_confirm_for_test
 
     def check_and_handle_takeover(self, timeout_sec: int = 300) -> AuthStatus:

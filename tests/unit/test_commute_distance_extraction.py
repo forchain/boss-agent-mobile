@@ -53,9 +53,9 @@ def _distance_element(text: str) -> MagicMock:
 
 def test_locators_register_detail_page_distance_widget():
     """The ViewFlipper home_tip_vf widget must be discoverable by key."""
-    from droid_agent_core.locators import get_global_locator_registry
+    from boss_agent.adapters.outbound.config.locator_registry import YamlLocatorRegistry
 
-    selectors = get_global_locator_registry().get_selectors("job_detail.distance_tip")
+    selectors = YamlLocatorRegistry().get_selectors("job_detail.distance_tip")
     assert selectors, "job_detail.distance_tip must be registered in config/locators.yaml"
     joined = " ".join(s.value for s in selectors)
     assert "home_tip_vf" in joined

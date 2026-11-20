@@ -14,8 +14,8 @@ import time
 
 import pytest
 
-from droid_agent_core import locators
-from droid_agent_core.gestures import HumanizedGestureExecutor
+from boss_agent.core.automation.use_cases import wait as locators
+from boss_agent.core.automation.use_cases.gestures import HumanizedGestureExecutor
 
 DEFAULT_BUDGET_SEC = 10.0
 

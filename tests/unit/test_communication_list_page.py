@@ -10,13 +10,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from boss_agent.adapters.outbound.config.locator_registry import LocatorRegistry
 from boss_agent.adapters.outbound.device.pages.communication import (
     CommunicationCard,
     CommunicationListPage,
     parse_company_from_descriptor,
 )
 from boss_agent.core.chat.domain.rejection import DISINTEREST_REASON
-from droid_agent_core.locators import LocatorRegistry
 
 NEW_LOCATOR_KEYS = (
     "communication_list.entry_tab",

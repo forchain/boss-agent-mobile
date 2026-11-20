@@ -11,15 +11,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
-from droid_agent_core.llm import (
-    AnthropicChatClient,
-    LLMAuthError,
-    LLMConfig,
-    LLMDecisionClient,
-    LLMError,
-    LLMTimeoutError,
-    OpenAIChatClient,
-)
+from boss_agent.adapters.outbound.llm.anthropic_client import AnthropicChatClient
+from boss_agent.adapters.outbound.llm.config import LLMConfig
+from boss_agent.adapters.outbound.llm.openai_client import OpenAIChatClient
+from boss_agent.adapters.outbound.llm.tracing import TracedLLMDecisionClient
+from boss_agent.core.shared.errors import LLMAuthError, LLMError, LLMTimeoutError
+from boss_agent.core.shared.llm import LLMDecisionClient
 
 
 def _anthropic_config(**overrides) -> LLMConfig:
@@ -586,7 +583,7 @@ def test_create_llm_client_dispatches_to_the_anthropic_protocol(provider):
 
     client = create_llm_client(config=LLMConfig(provider=provider))
 
-    assert isinstance(client, AnthropicChatClient)
+    assert isinstance(client.inner, AnthropicChatClient)
 
 
 @pytest.mark.parametrize("provider", ["openai", "OpenAI"])
@@ -595,7 +592,7 @@ def test_create_llm_client_dispatches_to_the_openai_protocol(provider):
 
     client = create_llm_client(config=LLMConfig(provider=provider))
 
-    assert isinstance(client, OpenAIChatClient)
+    assert isinstance(client.inner, OpenAIChatClient)
 
 
 @pytest.mark.parametrize("provider", ["minimax", "deepseek", "", "something-else"])
@@ -604,7 +601,7 @@ def test_create_llm_client_converges_legacy_providers_to_the_default_protocol(pr
 
     client = create_llm_client(config=LLMConfig(provider=provider))
 
-    assert isinstance(client, OpenAIChatClient)
+    assert isinstance(client.inner, OpenAIChatClient)
 
 
 def test_create_llm_client_returns_the_shared_abstraction():
@@ -614,6 +611,7 @@ def test_create_llm_client_returns_the_shared_abstraction():
 
     assert isinstance(client, LLMDecisionClient)
     assert not isinstance(client, OpenAIChatClient)
+    assert isinstance(client, TracedLLMDecisionClient)
 
 
 def test_create_llm_client_passes_the_resolved_config_through():
@@ -623,4 +621,5 @@ def test_create_llm_client_passes_the_resolved_config_through():
     client = create_llm_client(config=config)
 
     assert client.config is config
+    assert client.inner.config is config
     assert client.config.model == "some-anthropic-model"

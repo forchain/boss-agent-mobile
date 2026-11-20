@@ -82,9 +82,9 @@ def test_a_line_that_names_no_station_parses_to_no_station(raw: str):
 # The location line is registered and read
 # --------------------------------------------------------------------------- #
 def test_locators_register_the_detail_page_location_line():
-    from droid_agent_core.locators import get_global_locator_registry
+    from boss_agent.adapters.outbound.config.locator_registry import YamlLocatorRegistry
 
-    selectors = get_global_locator_registry().get_selectors("job_detail.location_line")
+    selectors = YamlLocatorRegistry().get_selectors("job_detail.location_line")
     assert selectors, "job_detail.location_line must be registered in config/locators.yaml"
     assert "tv_required_location" in " ".join(s.value for s in selectors)
 

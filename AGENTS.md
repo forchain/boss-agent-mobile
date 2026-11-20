@@ -26,6 +26,10 @@ Three-tier testing: iterate on the single touched file, verify the fast unit tie
 
 Descriptive branch naming (`forchain/<name>` or `feat/<name>`), single PR per worktree discipline, and explicit issue-closing keywords (`Closes #123`). See `docs/agents/git-workflow.md`.
 
+### Architecture
+
+Architecture, layering, or refactoring: Python Hexagonal/Clean iron rules (DIP/Composition Root, `core/` vs `adapters/`, blueprint-then-TDD). See `docs/architecture/iron-rules.md`.
+
 ## Quick Commands
 
 - **Unit Tests (Pre-completion gate)**: `uv run --extra dev pytest`

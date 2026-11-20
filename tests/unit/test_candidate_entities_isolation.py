@@ -52,7 +52,7 @@ import pytest
 #: is listed as a dotted root on purpose: the bare ``droid_agent_core`` package is a
 #: legitimate dependency of the UI tier, the LLM client inside it is not.
 FORBIDDEN_ROOTS = (
-    "droid_agent_core.llm",
+    "boss_agent.adapters.outbound.llm.openai_client",
     "httpx",
     "langsmith",
     "requests",

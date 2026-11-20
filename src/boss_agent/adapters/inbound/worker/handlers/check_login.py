@@ -16,6 +16,9 @@ from boss_agent.core.task.interfaces.broker import BaseTaskBroker
 class CheckLoginHandler(BaseTaskHandler):
     """Executes login readiness and session persistence check."""
 
+    def __init__(self, locator_store: object | None = None) -> None:
+        self._locator_store = locator_store
+
     @property
     def task_type(self) -> TaskType:
         return TaskType.CHECK_LOGIN
@@ -35,16 +38,16 @@ class CheckLoginHandler(BaseTaskHandler):
             task.id, f"Checking session readiness on device {context.config.device_id}"
         )
 
-        startup_page = StartupDialogPage(driver)
+        startup_page = StartupDialogPage(driver, locator_registry=self._locator_store)
         if startup_page.is_dialog_present():
             await broker.append_log(task.id, "Startup dialog detected, dismissing...")
             startup_page.dismiss_dialog()
 
-        login_page = LoginPage(driver)
+        login_page = LoginPage(driver, locator_registry=self._locator_store)
         auth_status = login_page.get_auth_status()
 
         if auth_status == AuthStatus.AUTHENTICATED:
-            job_list_page = JobListPage(driver)
+            job_list_page = JobListPage(driver, locator_registry=self._locator_store)
             job_list_page.navigate_to_home()
             await broker.append_log(task.id, "Session authenticated successfully")
             return HandlerResult(success=True)

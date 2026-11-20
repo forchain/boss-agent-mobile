@@ -14,6 +14,8 @@ from langsmith import traceable
 from langsmith.run_helpers import get_current_run_tree, tracing_context
 from langsmith.run_trees import RunTree
 
+from boss_agent.adapters.outbound.llm.config import LLMConfig, configure_langsmith
+from boss_agent.adapters.outbound.llm.openai_client import OpenAIChatClient
 from boss_agent.adapters.outbound.llm.tracing import (
     TracedCandidateScreener,
     TracedJobMatchGreetingService,
@@ -22,7 +24,6 @@ from boss_agent.adapters.outbound.resume.memory import ResumeMemoryManager
 from boss_agent.core.job.domain.job_entities import JobCardBrief, JobPosting
 from boss_agent.core.job.domain.screening_policy import ScreeningPolicy
 from boss_agent.core.job.use_cases.screening import CardVerdictStage, JobVerdictStage
-from droid_agent_core.llm import LLMConfig, OpenAIChatClient, configure_langsmith
 
 
 def _tracing_root() -> RunTree:
@@ -335,7 +336,7 @@ def test_candidate_screener_inherits_caller_tags_and_metadata():
 
 def test_openai_chat_client_error_propagation():
     """Verify exceptions in chat_completion propagate through @traceable correctly."""
-    from droid_agent_core.llm import LLMError
+    from boss_agent.core.shared.errors import LLMError
 
     cfg = LLMConfig()
     client = OpenAIChatClient(cfg)

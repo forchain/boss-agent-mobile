@@ -100,7 +100,11 @@ def test_the_framework_fallback_defaults_agree_with_the_realm() -> None:
     same fixture keeps that fallback from becoming a second opinion — which is exactly
     what the 16384-vs-262144 split was.
     """
-    from droid_agent_core.llm import FRAMEWORK_DEFAULTS, MASK_MARKERS, PLACEHOLDER_API_KEY
+    from boss_agent.adapters.outbound.llm.config import (
+        FRAMEWORK_DEFAULTS,
+        MASK_MARKERS,
+        PLACEHOLDER_API_KEY,
+    )
 
     expected = _fixture()["shared_defaults"]
     for key, value in FRAMEWORK_DEFAULTS.items():
