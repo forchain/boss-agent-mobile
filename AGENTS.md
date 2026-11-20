@@ -1,5 +1,47 @@
 # Agent Guidelines
 
+## 铁律 / Iron Rules — Architecture
+
+Act as a senior Python architect applying **DDD**, **Hexagonal Architecture**, and **Clean Architecture**. Every PR writing or refactoring Python code must satisfy all four rules below.
+
+### 1. Layering & Dependency Direction (Volatile → Stable)
+
+Enforce three strict layers with dependencies pointing strictly inward:
+
+- **Domain (innermost, most stable)**: Define ubiquitous language, core data models, pure business rules, and domain exceptions in pure Python. Keep Domain free of framework (FastAPI, SQLAlchemy), database, and network imports.
+- **Application (orchestration)**: Implement Use Cases that coordinate Domain models, and define outbound **ports** (`Repository`, `Client`, `Store`) using `abc.ABC` + `@abstractmethod` or `Protocol`. Import only Domain and Application's own ports—never concrete implementations.
+- **Adapters (outermost, most volatile)**: Translate external technology to and from internal domain language.
+  - **Inbound** (e.g. FastAPI/Flask routes, CLI): Parse external requests, invoke Application Use Cases, and translate domain exceptions into external responses (e.g. `HTTPException`).
+  - **Outbound**: Implement Application ports for DB CRUD, third-party APIs/LLMs, and file storage.
+
+### 2. Dependency Inversion & Composition Root
+
+- **DIP**: Define abstract ports in Application; write concrete implementations in Adapters so details depend on abstractions.
+- **DI**: Inject all port dependencies through constructors or function parameters; instantiate concrete classes only outside Domain and Application.
+- **Composition Root**: Assemble all concrete adapters and inject them into Application Use Cases in a single outermost entry point (e.g. `main.py`). Swapping a database or external service must touch only the Composition Root and the new adapter.
+
+### 3. Directory Structure (Inner/Outer Split + Business Aggregation)
+
+- **Separate outer tech**: Place all framework, I/O, and external-service implementations under `adapters/`.
+- **Aggregate inner code by core domain model**: Under `core/` (or `modules/`), co-locate Use Cases that share a core domain model in one business package (e.g. `account/` containing `domain.py`, `use_cases.py`, `interfaces.py` for transfer + freeze), rather than flat technical-layer folders or single-feature silos that duplicate models. Give independent domain models (e.g. points, notifications) their own packages.
+- **Self-evident tree**: Make business rules, exposed Use Cases, and adapter swap points identifiable from the directory tree alone without opening files.
+
+### 4. Refactoring Execution Order (Blueprint → Inward-Out TDD)
+
+When refactoring existing Python code, execute in two phases:
+
+1. **Diagnose & Blueprint**: Identify every coupling violation against Rules 1–3, output the complete target directory tree, and list every Domain model, Domain exception, Use Case, and abstract port to extract. Pause for user confirmation of the blueprint before writing code (when working interactively).
+2. **Inward-Out TDD**: Refactor strictly in order: `Domain → Application → Adapters → Composition Root`. For each module, write fast unit tests against in-memory/mock adapters first (no live DB or network), then implement until green.
+
+### Architecture Compliance Gate
+
+Verify every item before marking Python changes complete:
+
+- [ ] Domain and Application contain zero framework, DB, network, or concrete adapter imports.
+- [ ] All concrete adapter instantiations live solely in the Composition Root.
+- [ ] Shared-model Use Cases are aggregated in one business package; external tech lives under `adapters/`.
+- [ ] Refactors follow `Domain → Application → Adapters → Composition Root` with in-memory/mock unit tests written first and passing.
+
 ## Agent skills
 
 ### Issue tracker
