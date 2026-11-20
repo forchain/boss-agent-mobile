@@ -48,17 +48,17 @@ def test_the_llm_loader_reads_the_realm_baseline(monkeypatch) -> None:
     Asserted through the public loader rather than the table, because the bug was never
     a wrong constant — it was a second defaults table that nothing compared.
     """
-    from boss_agent import llm_config
+    from boss_agent.adapters import llm_factory
 
     for _key, names in config_realm.ENV_OVERRIDES:
         for name in names:
             monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(
-        llm_config, "llm_config_chain", lambda: [Path("config/settings.example.yaml")]
+        llm_factory, "llm_config_chain", lambda: [Path("config/settings.example.yaml")]
     )
     config_realm.invalidate_cache()
 
-    config = llm_config.load_llm_config()
+    config = llm_factory.load_llm_config()
     expected = _fixture()["shared_defaults"]
     assert config.max_tokens == expected["max_tokens"]
     assert config.timeout_sec == expected["timeout_sec"]
@@ -68,18 +68,18 @@ def test_the_llm_loader_reads_the_realm_baseline(monkeypatch) -> None:
 
 def test_create_llm_client_instantiates_with_realm_baseline(monkeypatch) -> None:
     """create_llm_client must yield a configured client reflecting realm defaults and overrides."""
-    from boss_agent import llm_config
+    from boss_agent.adapters import llm_factory
 
     for _key, names in config_realm.ENV_OVERRIDES:
         for name in names:
             monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("LLM_MODEL", "realm-override-model")
     monkeypatch.setattr(
-        llm_config, "llm_config_chain", lambda: [Path("config/settings.example.yaml")]
+        llm_factory, "llm_config_chain", lambda: [Path("config/settings.example.yaml")]
     )
     config_realm.invalidate_cache()
 
-    client = llm_config.create_llm_client()
+    client = llm_factory.create_llm_client()
     assert client.config.model == "realm-override-model"
     expected = _fixture()["shared_defaults"]
     assert client.config.base_url == expected["base_url"]

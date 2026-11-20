@@ -5,11 +5,8 @@ from pathlib import Path
 
 import yaml
 
-from boss_agent.automation.locators import (
-    By,
-    LocatorRegistry,
-    parse_selector,
-)
+from boss_agent.adapters.locator_registry import LocatorRegistry
+from boss_agent.automation.locators import By, parse_selector
 
 
 def test_parse_selector_auto_strategy_detection():

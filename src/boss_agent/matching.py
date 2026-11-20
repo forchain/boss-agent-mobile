@@ -12,7 +12,7 @@ from langsmith import traceable
 from rich.console import Console
 from rich.panel import Panel
 
-from boss_agent.llm import LLMDecisionClient
+from boss_agent.llm_port import LLMDecisionClient
 
 from .candidate_entities import CandidateProfile
 from .greeting_prompt import load_greeting_prompt
@@ -22,7 +22,6 @@ from .identifier_helpers import (
     is_substantive_jd,
 )
 from .job_entities import JobPosting
-from .llm_config import create_llm_client
 from .screening_policy import ScreeningPolicy
 
 console = Console(stderr=True)
@@ -191,7 +190,11 @@ class JobMatchGreetingService:
         llm_client: LLMDecisionClient | None = None,
         candidate_profile: CandidateProfile | None = None,
     ):
-        self.llm_client = llm_client or create_llm_client()
+        if llm_client is None:
+            from .adapters.llm_factory import create_llm_client
+
+            llm_client = create_llm_client()
+        self.llm_client = llm_client
         self.candidate_profile = candidate_profile
 
     def set_candidate_profile(self, profile: CandidateProfile) -> None:

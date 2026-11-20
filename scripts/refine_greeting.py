@@ -16,10 +16,10 @@ root_dir = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(root_dir))
 sys.path.insert(0, str(root_dir / "src"))
 
+from boss_agent.adapters.llm_factory import create_llm_client, load_llm_config  # noqa: E402
 from boss_agent.candidate_entities import CandidateProfile  # noqa: E402
 from boss_agent.job_entities import JobPosting  # noqa: E402
-from boss_agent.llm import LLMConfig, LLMDecisionClient  # noqa: E402
-from boss_agent.llm_config import create_llm_client, load_llm_config  # noqa: E402
+from boss_agent.llm_port import LLMConfig, LLMDecisionClient  # noqa: E402
 from boss_agent.matching import JobMatchGreetingService  # noqa: E402
 
 

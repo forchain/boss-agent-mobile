@@ -6,8 +6,8 @@ Runtime execution context holding device driver and configurations for handlers.
 
 import logging
 from collections.abc import Callable
-from typing import Any
 
+from boss_agent.automation.port import DriverPort
 from boss_agent.worker.config import WorkerConfig
 
 logger = logging.getLogger("boss_agent.worker")
@@ -22,20 +22,20 @@ class WorkerContext:
     def __init__(
         self,
         config: WorkerConfig,
-        driver: Any | None = None,
-        driver_factory: Callable[[], Any] | None = None,
+        driver: DriverPort | None = None,
+        driver_factory: Callable[[], DriverPort] | None = None,
     ) -> None:
         self.config = config
         self._driver = driver
         self._driver_factory = driver_factory
 
     @property
-    def driver(self) -> Any:
+    def driver(self) -> DriverPort | None:
         if self._driver is None and self._driver_factory is not None:
             self._driver = self._driver_factory()
         return self._driver
 
-    def set_driver(self, driver: Any) -> None:
+    def set_driver(self, driver: DriverPort | None) -> None:
         self._driver = driver
 
     def has_device_session(self) -> bool:

@@ -13,8 +13,9 @@ import time
 from collections.abc import Callable
 from typing import Any
 
+from boss_agent.adapters.locator_registry import LocatorRegistry
 from boss_agent.automation.gestures import Point, calculate_probe_coordinate
-from boss_agent.automation.locators import LocatorRegistry
+from boss_agent.automation.port import DriverPort
 
 from ..enums import ChatButtonState
 from ..identifier_helpers import classify_chat_button, jd_is_truncated
@@ -54,7 +55,7 @@ COMMUTE_PROBE_STALLED_SWIPES = 2
 class JobDetailPage(BaseBossPage):
     """Extracts job posting details and interacts with the job detail screen."""
 
-    def __init__(self, driver: Any, locator_registry: LocatorRegistry | None = None):
+    def __init__(self, driver: DriverPort | None, locator_registry: LocatorRegistry | None = None):
         super().__init__(driver, locator_registry)
         self._current_description: str = ""
 

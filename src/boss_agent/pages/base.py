@@ -24,13 +24,13 @@ from typing import Any
 
 from rich.console import Console
 
-from boss_agent.automation.gestures import HumanizedGestureExecutor, ui_logger
-from boss_agent.automation.locators import (
+from boss_agent.adapters.locator_registry import (
     LocatorRegistry,
-    UISelector,
     get_global_locator_registry,
-    wait_until,
 )
+from boss_agent.automation.gestures import HumanizedGestureExecutor, ui_logger
+from boss_agent.automation.locators import UISelector, wait_until
+from boss_agent.automation.port import DriverPort, ElementHandle
 
 from ..keyword_constants import PLATFORM_BADGE_MARKERS
 
@@ -76,7 +76,7 @@ class BaseBossPage:
 
     BOSS_PACKAGE_NAME: str = "com.hpbr.bosszhipin"
 
-    def __init__(self, driver: Any, locator_registry: LocatorRegistry | None = None):
+    def __init__(self, driver: DriverPort | None, locator_registry: LocatorRegistry | None = None):
         self.driver = driver
         self.gestures = HumanizedGestureExecutor(driver)
         self.locators = locator_registry or get_global_locator_registry()
@@ -105,7 +105,7 @@ class BaseBossPage:
                 pass
         return {"width": 1080, "height": 2400}
 
-    def _find_by_selectors(self, selectors: list[UISelector]):
+    def _find_by_selectors(self, selectors: list[UISelector]) -> ElementHandle | None:
         if not self.driver or not selectors:
             return None
         for sel in selectors:
@@ -122,7 +122,7 @@ class BaseBossPage:
 
     def _find_elements_by_key(
         self, key: str, format_args: dict[str, Any] | None = None
-    ) -> list[Any]:
+    ) -> list[ElementHandle]:
         """Return every element matched by the first locator for `key` that hits anything."""
         if not self.driver:
             return []

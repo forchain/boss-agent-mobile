@@ -4,8 +4,8 @@ import builtins
 
 import pytest
 
-from boss_agent.automation import appium_adapter
-from boss_agent.automation.appium_adapter import AppiumDriver
+from boss_agent.adapters import appium_driver as appium_adapter
+from boss_agent.adapters.appium_driver import AppiumDriver
 from boss_agent.automation.port import By
 
 
@@ -166,6 +166,68 @@ def test_the_adapter_forwards_the_rest_of_the_port_surface():
 
     driver.quit()
     assert remote.quit_called is True
+
+
+class FakeElement:
+    """The raw WebElement surface the adapter wraps, and nothing else."""
+
+    def __init__(self, text: str = "Continue") -> None:
+        self.text = text
+        self.class_name = "android.widget.Button"
+        self.rect = {"x": 1, "y": 2, "width": 3, "height": 4}
+        self.queries: list = []
+
+    def click(self) -> None:
+        self.clicked = True
+
+    def send_keys(self, text: str) -> None:
+        self.sent = text
+
+    def clear(self) -> None:
+        self.cleared = True
+
+    def get_attribute(self, name: str):
+        return "true"
+
+    def find_element(self, by, value):
+        self.queries.append((by, value))
+        return FakeElement("child")
+
+    def find_elements(self, by, value):
+        self.queries.append((by, value))
+        return [FakeElement("child")]
+
+
+class ElementRemote(FakeRemote):
+    def __init__(self, elements: list[FakeElement]) -> None:
+        super().__init__()
+        self._elements = elements
+
+    def find_elements(self, by, value):
+        self.queries.append((by, value))
+        return self._elements
+
+
+def test_elements_are_wrapped_in_the_neutral_handle():
+    raw = FakeElement()
+    driver = AppiumDriver(ElementRemote([raw]))
+
+    elements = driver.find_elements(By.ID, "com.example:id/button")
+
+    assert len(elements) == 1
+    handle = elements[0]
+    assert handle.text == "Continue"
+    assert handle.rect == {"x": 1, "y": 2, "width": 3, "height": 4}
+    assert handle.find_elements(By.XPATH, "//child")[0].text == "child"
+    assert raw.queries == [("xpath", "//child")]
+
+
+def test_non_port_members_are_not_proxied():
+    """Only the port surface is reachable; the raw Remote is not leaked through getattr."""
+    driver = AppiumDriver(FakeRemote())
+
+    with pytest.raises(AttributeError):
+        driver.get_page_source  # noqa: B018 - the access is the assertion
 
 
 def test_w3c_action_chains_is_resolved_once_and_cached(monkeypatch):

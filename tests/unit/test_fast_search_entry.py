@@ -16,7 +16,8 @@ from unittest.mock import patch
 
 import pytest
 
-from boss_agent.automation.locators import By, LocatorRegistry
+from boss_agent.adapters.locator_registry import LocatorRegistry
+from boss_agent.automation.locators import By
 from boss_agent.pages.job_feed import JobListPage, SearchPage
 
 EXACT_SEARCH_ICON_XPATH = (

@@ -17,7 +17,7 @@ import time
 
 import pytest
 
-from boss_agent.automation.appium_adapter import AppiumSession, DriverConfig
+from boss_agent.adapters.appium_driver import AppiumSession, DriverConfig
 from boss_agent.pages import JobListPage, SearchPage, StartupDialogPage
 
 # The 148s regression this pipeline replaced; anything near it means the cascading

@@ -1,26 +1,27 @@
 """
-boss_agent.automation.appium_adapter
-====================================
+boss_agent.adapters.appium_driver
+=================================
 The one module allowed to import Appium/Selenium.
 
 Everything else in ``boss_agent`` speaks :class:`~boss_agent.automation.port.DriverPort`.
 :class:`AppiumDriver` is the thin translation layer: an Appium ``Remote`` behind the
 port, with the W3C pointer batch (the only gesture the raw client cannot express)
-implemented here rather than in the platform-neutral gesture engine.
+implemented here rather than in the platform-neutral gesture engine. Elements come back
+as :class:`_RemoteElement`, so callers never reach for an Appium ``WebElement`` directly.
 """
 
 import contextlib
 import logging
 import random
-import subprocess
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
 from appium import webdriver
 from appium.options.android import UiAutomator2Options
 
-from .port import By
+from boss_agent.automation.port import By, ElementHandle
 
 ui_logger = logging.getLogger("boss_agent.automation.ui")
 
@@ -58,18 +59,83 @@ def _by_value(by: By | str) -> str:
     return by.value if isinstance(by, By) else by
 
 
+def _wrap(element: Any) -> ElementHandle | None:
+    """Translate a raw Appium element into the neutral handle, or pass ``None`` through."""
+    return None if element is None else _RemoteElement(element)
+
+
+class _RemoteElement:
+    """An Appium ``WebElement`` exposed only through the neutral ``ElementHandle`` surface."""
+
+    def __init__(self, element: Any):
+        self._element = element
+
+    @property
+    def rect(self) -> dict[str, int] | None:
+        return self._element.rect
+
+    @property
+    def text(self) -> str:
+        return self._element.text
+
+    @property
+    def class_name(self) -> str:
+        return self._element.class_name
+
+    def click(self) -> None:
+        self._element.click()
+
+    def send_keys(self, text: str) -> None:
+        self._element.send_keys(text)
+
+    def clear(self) -> None:
+        self._element.clear()
+
+    def get_attribute(self, name: str) -> str | None:
+        return self._element.get_attribute(name)
+
+    def find_element(self, by: By | str, value: str) -> ElementHandle | None:
+        return _wrap(self._element.find_element(by=_by_value(by), value=value))
+
+    def find_elements(self, by: By | str, value: str) -> list[ElementHandle]:
+        return [
+            handle
+            for handle in (
+                _wrap(element)
+                for element in self._element.find_elements(by=_by_value(by), value=value)
+            )
+            if handle is not None
+        ]
+
+
 class AppiumDriver:
     """An Appium ``Remote`` exposed through the platform-neutral driver port."""
 
     def __init__(self, remote: webdriver.Remote):
         self._remote = remote
 
-    def __getattr__(self, name: str) -> Any:
-        """Forward the port surface this adapter does not translate (size, focus, keys)."""
-        return getattr(self._remote, name)
+    def find_elements(self, by: By | str, value: str) -> list[ElementHandle]:
+        return [
+            handle
+            for handle in (
+                _wrap(element)
+                for element in self._remote.find_elements(by=_by_value(by), value=value)
+            )
+            if handle is not None
+        ]
 
-    def find_elements(self, by: By | str, value: str) -> list[Any]:
-        return self._remote.find_elements(by=_by_value(by), value=value)
+    def tap(self, points: Sequence[tuple[float, float]], duration: int = 0) -> None:
+        self._remote.tap(points, duration=duration)
+
+    def swipe(
+        self,
+        start_x: int,
+        start_y: int,
+        end_x: int,
+        end_y: int,
+        duration: int = 0,
+    ) -> None:
+        self._remote.swipe(start_x, start_y, end_x, end_y, duration=duration)
 
     def double_tap(
         self,
@@ -110,6 +176,22 @@ class AppiumDriver:
             ui_logger.debug("[UI] double_click W3C batch unavailable: %s", exc)
             return False
         return True
+
+    def activate_app(self, app_id: str) -> None:
+        self._remote.activate_app(app_id)
+
+    def press_keycode(self, keycode: int) -> None:
+        self._remote.press_keycode(keycode)
+
+    def back(self) -> None:
+        self._remote.back()
+
+    def get_window_size(self) -> dict[str, int]:
+        return self._remote.get_window_size()
+
+    @property
+    def current_package(self) -> str | None:
+        return self._remote.current_package
 
     def quit(self) -> None:
         self._remote.quit()
@@ -159,7 +241,7 @@ class AppiumSession:
         if "://0.0.0.0" in executor:
             executor = executor.replace("://0.0.0.0", "://127.0.0.1")
         self.driver = AppiumDriver(webdriver.Remote(command_executor=executor, options=options))
-        if self.config.app_package and hasattr(self.driver, "activate_app"):
+        if self.config.app_package:
             with contextlib.suppress(Exception):
                 self.driver.activate_app(self.config.app_package)
         return self.driver
@@ -167,7 +249,7 @@ class AppiumSession:
     def activate_app(self, app_id: str | None = None) -> bool:
         """Activate the specified application or the configured app_package."""
         target = app_id or self.config.app_package
-        if target and self.driver and hasattr(self.driver, "activate_app"):
+        if target and self.driver:
             try:
                 self.driver.activate_app(target)
                 return True
@@ -186,22 +268,4 @@ class AppiumSession:
         return self.driver is not None
 
 
-class AdbClient:
-    """Helper for executing direct ADB commands on target device."""
-
-    def __init__(self, device_id: str | None = None):
-        self.device_id = device_id
-
-    def run(self, args: list[str]) -> subprocess.CompletedProcess:
-        cmd = ["adb"]
-        if self.device_id:
-            cmd.extend(["-s", self.device_id])
-        cmd.extend(args)
-        return subprocess.run(cmd, capture_output=True, text=True, check=False)
-
-    def get_current_focus(self) -> str:
-        res = self.run(["shell", "dumpsys", "window", "|", "grep", "-E", "'mCurrentFocus'"])
-        return res.stdout.strip()
-
-
-__all__ = ["AdbClient", "AppiumDriver", "AppiumSession", "DriverConfig"]
+__all__ = ["AppiumDriver", "AppiumSession", "DriverConfig"]

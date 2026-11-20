@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from boss_agent.automation.locators import LocatorRegistry
+from boss_agent.adapters.locator_registry import LocatorRegistry
 from boss_agent.pages.communication import (
     CommunicationCard,
     CommunicationListPage,

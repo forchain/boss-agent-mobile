@@ -11,14 +11,13 @@ from typing import Any
 from langsmith import traceable
 from rich.console import Console
 
-from boss_agent.llm import LLMDecisionClient
+from boss_agent.llm_port import LLMDecisionClient
 
 from .candidate_entities import (
     CandidateProfile,
     StructuredCandidateProfile,
     extract_education_from_text,
 )
-from .llm_config import create_llm_client
 
 console = Console()
 
@@ -299,7 +298,11 @@ class ResumeMemoryManager:
         memory_file_path: str | Path | None = None,
         candidate_config_path: str | Path | None = None,
     ):
-        self.llm_client = llm_client or create_llm_client()
+        if llm_client is None:
+            from .adapters.llm_factory import create_llm_client
+
+            llm_client = create_llm_client()
+        self.llm_client = llm_client
         self.extractor = ResumeTextExtractor()
 
         # Load candidate config if available

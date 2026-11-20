@@ -4,9 +4,9 @@ boss_agent.automation.port
 The platform-neutral driver/session contract the automation layers depend on.
 
 Gestures, locators, interceptors and the page objects speak only this port. The one
-platform adapter today (``appium_adapter``) is the sole module allowed to import Appium
-or Selenium, so a future Web-platform worker can supply its own adapter without the
-domain layer noticing.
+platform adapter today (``boss_agent.adapters.appium_driver``) is the sole module allowed
+to import Appium or Selenium, so a future Web-platform worker can supply its own adapter
+without the domain layer noticing.
 """
 
 from __future__ import annotations
@@ -44,6 +44,10 @@ class ElementHandle(Protocol):
     def send_keys(self, text: str) -> None: ...
 
     def clear(self) -> None: ...
+
+    def get_attribute(self, name: str) -> str | None: ...
+
+    def find_element(self, by: By | str, value: str) -> ElementHandle | None: ...
 
     def find_elements(self, by: By | str, value: str) -> list[ElementHandle]: ...
 

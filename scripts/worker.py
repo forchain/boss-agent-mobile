@@ -13,7 +13,7 @@ import sys
 from collections.abc import Coroutine, Sequence
 from typing import Any
 
-from boss_agent.automation.appium_adapter import AppiumSession, DriverConfig
+from boss_agent.adapters.appium_driver import AppiumSession, DriverConfig
 from boss_agent.broker.pocketbase_adapter import BaseTaskBroker, PocketBaseTaskBroker
 from boss_agent.broker.sweeper import TaskLeaseSweeper
 from boss_agent.settings import (

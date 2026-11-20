@@ -10,7 +10,7 @@ import time
 
 import pytest
 
-from boss_agent.automation.appium_adapter import AppiumSession, DriverConfig
+from boss_agent.adapters.appium_driver import AppiumSession, DriverConfig
 from boss_agent.pages import LoginPage, StartupDialogPage
 
 

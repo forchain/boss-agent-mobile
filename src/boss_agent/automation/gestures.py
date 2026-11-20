@@ -13,6 +13,8 @@ import random
 import time
 from dataclasses import dataclass
 
+from .port import DriverPort, ElementHandle
+
 ui_logger = logging.getLogger("boss_agent.automation.ui")
 
 # Android's system double-tap detector pairs a second tap with the first only when
@@ -28,7 +30,7 @@ _DOUBLE_TAP_INTERVAL_CAP = DOUBLE_TAP_MAX_INTERVAL - 0.03
 TAP_DURATION_MS = (60, 120)
 
 
-def _describe_element(element) -> str:
+def _describe_element(element: ElementHandle | None) -> str:
     """Compact, non-sensitive element description for UI debug telemetry."""
     if element is None:
         return "None"
@@ -162,7 +164,7 @@ class BézierTouchSynthesizer:
 class HumanizedGestureExecutor:
     """Applies humanized delays and gesture actions on a driver-port instance."""
 
-    def __init__(self, driver=None):
+    def __init__(self, driver: DriverPort | None = None):
         self.driver = driver
 
     def random_sleep(self, min_sec: float = 1.0, max_sec: float = 2.5) -> None:
@@ -170,7 +172,7 @@ class HumanizedGestureExecutor:
         delay = random.uniform(min_sec, max_sec)
         time.sleep(delay)
 
-    def human_click(self, element, jitter: bool = True) -> None:
+    def human_click(self, element: ElementHandle | None, jitter: bool = True) -> None:
         """Perform a humanized click on a mobile element."""
         if not self.driver or not element:
             return
@@ -241,7 +243,7 @@ class HumanizedGestureExecutor:
             self.driver.tap([(target_x, target_y)], duration=dur)
         self.random_sleep(0.1, 0.3)
 
-    def _double_click_element(self, element, interval: float) -> None:
+    def _double_click_element(self, element: ElementHandle, interval: float) -> None:
         """Two sequential `element.click()` calls, ``interval`` apart.
 
         The fallback for a driver with neither a pointer-action seam nor an element
@@ -287,7 +289,7 @@ class HumanizedGestureExecutor:
 
     def human_double_click(
         self,
-        element,
+        element: ElementHandle | None,
         interval_range: tuple[float, float] = (0.10, 0.22),
         jitter: bool = True,
         duration_ms: tuple[int, int] = TAP_DURATION_MS,
@@ -374,7 +376,9 @@ class HumanizedGestureExecutor:
         )
         self.random_sleep(0.1, 0.3)
 
-    def human_type(self, element, text: str, clear_first: bool = False) -> None:
+    def human_type(
+        self, element: ElementHandle | None, text: str, clear_first: bool = False
+    ) -> None:
         """Type text into an input element with realistic humanized timing."""
         if not element or not text:
             return

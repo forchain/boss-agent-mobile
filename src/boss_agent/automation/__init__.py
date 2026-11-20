@@ -1,12 +1,13 @@
 """
 boss_agent.automation
 =====================
-Platform-neutral automation primitives: the driver port, humanized gestures, locator
-configuration, and dialog interceptors.
+Platform-neutral automation primitives: the driver port, humanized gestures, selector
+definitions, and dialog interceptors.
 
-Platform adapters are deliberately *not* re-exported here, so importing this facade never
-imports Appium. A composition root that opens a device session names its adapter directly
-(``boss_agent.automation.appium_adapter``).
+This package is free of platform clients, filesystem I/O and application configuration.
+Platform adapters and the YAML-backed locator registry live under
+``boss_agent.adapters``; a composition root that opens a device session names its
+adapter directly (``boss_agent.adapters.appium_driver``).
 """
 
 from .gestures import (
@@ -18,10 +19,8 @@ from .gestures import (
 )
 from .interceptors import BaseInterceptor, InterceptorRegistry, SystemDialogInterceptor
 from .locators import (
-    LocatorRegistry,
     UISelector,
     ViewDescriptor,
-    get_global_locator_registry,
     parse_selector,
     wait_until,
 )
@@ -35,14 +34,12 @@ __all__ = [
     "ElementHandle",
     "HumanizedGestureExecutor",
     "InterceptorRegistry",
-    "LocatorRegistry",
     "Point",
     "SystemDialogInterceptor",
     "UISelector",
     "ViewDescriptor",
     "calculate_bounding_box_jitter",
     "calculate_probe_coordinate",
-    "get_global_locator_registry",
     "parse_selector",
     "wait_until",
 ]
